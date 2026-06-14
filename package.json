@@ -1,0 +1,54 @@
+{
+  "name": "symphony-core",
+  "version": "0.1.0",
+  "description": "Deterministic, auditable AI agent orchestration framework. Pattern-driven state machine for structured multi-agent workflows.",
+  "keywords": [
+    "ai",
+    "orchestration",
+    "agents",
+    "state-machine",
+    "workflow",
+    "patterns"
+  ],
+  "homepage": "https://github.com/pirty6/symphony-core#readme",
+  "bugs": {
+    "url": "https://github.com/pirty6/symphony-core/issues"
+  },
+  "license": "ISC",
+  "author": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pirty6/symphony-core.git"
+  },
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./orchestrator": {
+      "types": "./dist/orchestrator/index.d.ts",
+      "default": "./dist/orchestrator/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.0.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.9",
+    "typescript": "^5.7.0"
+  }
+}
