@@ -1,6 +1,6 @@
 {
-  "name": "symphony-core",
-  "version": "0.1.0",
+  "name": "@perezgarciam/symphony-core",
+  "version": "0.2.0",
   "description": "Deterministic, auditable AI agent orchestration framework. Pattern-driven state machine for structured multi-agent workflows.",
   "keywords": [
     "ai",
@@ -35,6 +35,7 @@
   },
   "files": [
     "dist",
+    "hooks",
     "README.md",
     "LICENSE"
   ],
