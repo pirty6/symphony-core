@@ -1,7 +1,8 @@
+import 'dotenv/config';
 import { CopilotClient } from '@github/copilot-sdk';
 import type { SessionConfig } from '@github/copilot-sdk';
-import {onErrorOccurred} from './hooks/onErrorOccurred';
-import { onUserPromptSubmitted } from './hooks/onUserPromptSubmitted';
+import {onErrorOccurred} from './hooks/onErrorOccurred.js';
+import { onUserPromptSubmitted } from './hooks/onUserPromptSubmitted.js';
 
 type SessionHooks = NonNullable<SessionConfig['hooks']>;
 
@@ -53,11 +54,19 @@ const hooks: SessionHooks = {
 
 
 async function main(): Promise<void> {
-    const client = new CopilotClient();
+    const token = process.env.TOKEN;
+    if (!token) {
+      throw new Error('TOKEN environment variable is required');
+    }
+
+    const model = process.env.MODEL ?? 'claude-opus-4.6';
+
+    const client = new CopilotClient({ gitHubToken: token });
     await client.start();
 
     const session = await client.createSession({
     hooks,
+    model,
   });
 
   const done = new Promise<void>((resolve) => {

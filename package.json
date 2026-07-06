@@ -40,6 +40,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "start": "node dist/cli.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "jest",
@@ -59,6 +60,7 @@
     "typescript": "^5.7.0"
   },
   "dependencies": {
-    "@github/copilot-sdk": "^1.0.4"
+    "@github/copilot-sdk": "^1.0.4",
+    "dotenv": "^17.4.2"
   }
 }
