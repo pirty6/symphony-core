@@ -20,7 +20,7 @@
     "type": "git",
     "url": "git+https://github.com/pirty6/symphony-core.git"
   },
-  "type": "commonjs",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -43,13 +43,22 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "yarn build",
+    "lint": "oxlint src/",
+    "lint:fix": "oxlint --fix src/",
+    "format": "oxfmt src/",
+    "format:check": "oxfmt --check src/"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^22.0.0",
     "jest": "^30.4.2",
+    "oxfmt": "^0.56.0",
+    "oxlint": "^1.71.0",
     "ts-jest": "^29.4.9",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@github/copilot-sdk": "^1.0.4"
   }
 }
