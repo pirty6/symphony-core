@@ -113,7 +113,7 @@ describe('Sidebar', () => {
 
   it('debug button appears before run button', () => {
     render(<Sidebar onExport={noop} onRun={noopRun} />)
-    const actions = screen.getByTestId('btn-run').closest('.sidebar-actions')!
+    const actions = screen.getByTestId('btn-run').closest('.sidebar-actions') as HTMLElement
     const buttons = within(actions).getAllByRole('button')
     expect(buttons[0]).toBe(screen.getByTestId('btn-debug'))
     expect(buttons[1]).toHaveTextContent('Run Workflow')

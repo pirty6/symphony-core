@@ -35,7 +35,7 @@ export function createInitialExecutionState(debug: boolean): ExecutionState {
 
 interface GraphNode {
   id: string
-  type: string
+  type?: string
   data: Record<string, unknown>
 }
 
@@ -109,7 +109,7 @@ export function walkStep(
 
     const log: StepLog = {
       nodeId: orchestrator.id,
-      nodeType: orchestrator.type,
+      nodeType: orchestrator.type ?? 'unknown',
       label: String(orchestrator.data.label ?? ''),
       prompt: String(orchestrator.data.prompt ?? ''),
       state: initialState,

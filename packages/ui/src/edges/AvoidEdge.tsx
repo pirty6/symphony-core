@@ -13,7 +13,7 @@ export function AvoidEdge(props: EdgeProps) {
   const dx = Math.abs(props.targetX - props.sourceX)
   const offset = dx < maxWidth ? maxWidth / 2 + NODE_PADDING : NODE_PADDING
 
-  const [path, labelX, labelY] = getSmoothStepPath({
+  const [path] = getSmoothStepPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
     targetX: props.targetX,
