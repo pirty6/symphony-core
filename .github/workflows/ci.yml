@@ -11,13 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: yarn
-      - run: yarn install --frozen-lockfile
-      - run: yarn test
-      - run: yarn build
-      - run: cd packages/ui && yarn install --frozen-lockfile
-      - run: cd packages/ui && yarn test
-      - run: cd packages/ui && yarn build
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm test:ui
+      - run: pnpm --filter ui build
