@@ -1,6 +1,7 @@
 {
   "name": "@perezgarciam/symphony-core",
   "version": "0.2.0",
+  "packageManager": "pnpm@10.33.0",
   "description": "Deterministic, auditable AI agent orchestration framework. Pattern-driven state machine for structured multi-agent workflows.",
   "keywords": [
     "ai",
