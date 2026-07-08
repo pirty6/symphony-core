@@ -18,3 +18,6 @@ jobs:
       - run: yarn install --frozen-lockfile
       - run: yarn test
       - run: yarn build
+      - run: cd packages/ui && yarn install --frozen-lockfile
+      - run: cd packages/ui && yarn test
+      - run: cd packages/ui && yarn build

@@ -41,6 +41,7 @@
   ],
   "scripts": {
     "start": "node dist/cli.js",
+    "start:ui": "yarn --cwd packages/ui dev",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "jest",
