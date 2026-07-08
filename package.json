@@ -45,6 +45,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "jest",
+    "test:ui": "yarn --cwd packages/ui test",
     "prepublishOnly": "yarn build",
     "lint": "oxlint src/",
     "lint:fix": "oxlint --fix src/",

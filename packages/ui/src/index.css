@@ -234,6 +234,12 @@ html, body, #root {
 .react-flow__edge-path {
   stroke: #4a4a6a !important;
   stroke-width: 2 !important;
+  cursor: pointer;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #90caf9 !important;
+  stroke-width: 3 !important;
 }
 
 .react-flow__connection-line {

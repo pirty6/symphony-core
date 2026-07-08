@@ -6,6 +6,7 @@ import {
   MiniMap,
   MarkerType,
   addEdge,
+  reconnectEdge,
   useNodesState,
   useEdgesState,
   type Connection,
@@ -20,7 +21,7 @@ import { ExecutorNode } from './nodes/ExecutorNode'
 import { EndNode } from './nodes/EndNode'
 import { ConditionNode } from './nodes/ConditionNode'
 import { Sidebar } from './components/Sidebar'
-import type { DraggableNodeType } from './types'
+import { isDraggableNodeType, AGENT_ITEMS, CONTROL_ITEMS } from './types'
 
 const nodeTypes = {
   orchestrator: OrchestratorNode,
@@ -46,7 +47,7 @@ const initialNodes: Node[] = [
     id: 'orchestrator-1',
     type: 'orchestrator',
     position: { x: 300, y: 50 },
-    data: { label: 'Orchestrator', description: 'Entry point — routes to instruments' },
+    data: { label: 'Orchestrator', description: 'Entry point — routes to instruments', maxEdges: 1 },
     deletable: false,
   },
 ]
@@ -59,12 +60,7 @@ function getNextId() {
   return `instrument-${++nodeId}`
 }
 
-const descriptions: Record<DraggableNodeType, string> = {
-  assessor: 'Read-only evidence gatherer',
-  executor: 'Write-focused change applier',
-  end: 'Terminal point of a path',
-  condition: 'Conditional branch (then/else)',
-}
+const allPaletteItems = [...AGENT_ITEMS, ...CONTROL_ITEMS]
 
 export default function App() {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
@@ -72,7 +68,22 @@ export default function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
+    (params: Connection) =>
+      setEdges((eds) => {
+        const sourceNode = nodes.find((n) => n.id === params.source)
+        const maxEdges = Number(sourceNode?.data.maxEdges ?? 1)
+
+        if (maxEdges === 0) return eds
+
+        const filtered = eds.filter((e) => e.source !== params.source)
+        return addEdge(params, filtered)
+      }),
+    [setEdges, nodes],
+  )
+
+  const onReconnect = useCallback(
+    (oldEdge: Edge, newConnection: Connection) =>
+      setEdges((eds) => reconnectEdge(oldEdge, newConnection, eds)),
     [setEdges],
   )
 
@@ -85,8 +96,9 @@ export default function App() {
     (event: DragEvent) => {
       event.preventDefault()
 
-      const type = event.dataTransfer.getData('application/reactflow') as DraggableNodeType
-      if (!type) return
+      const raw = event.dataTransfer.getData('application/reactflow')
+      if (!isDraggableNodeType(raw)) return
+      const type = raw
 
       const wrapperBounds = reactFlowWrapper.current?.getBoundingClientRect()
       if (!wrapperBounds) return
@@ -96,20 +108,17 @@ export default function App() {
         y: event.clientY - wrapperBounds.top - 30,
       }
 
-      const labels: Record<DraggableNodeType, string> = {
-        assessor: 'Assessor',
-        executor: 'Executor',
-        end: 'End',
-        condition: 'If',
-      }
+      const paletteItem = allPaletteItems.find((p) => p.type === type)
+      if (!paletteItem) return
 
       const newNode: Node = {
         id: getNextId(),
         type,
         position,
         data: {
-          label: labels[type],
-          description: descriptions[type],
+          label: paletteItem.label,
+          description: paletteItem.description,
+          maxEdges: paletteItem.maxEdges,
         },
       }
 
@@ -123,8 +132,8 @@ export default function App() {
       nodes: nodes.map((n) => ({
         id: n.id,
         type: n.type,
-        label: (n.data as { label: string }).label,
-        description: (n.data as { description: string }).description,
+        label: String(n.data.label ?? ''),
+        description: String(n.data.description ?? ''),
       })),
       edges: edges.map((e) => ({
         id: e.id,
@@ -152,10 +161,12 @@ export default function App() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onReconnect={onReconnect}
           onDrop={onDrop}
           onDragOver={onDragOver}
           nodeTypes={nodeTypes}
           defaultEdgeOptions={defaultEdgeOptions}
+          edgesReconnectable
           fitView
           deleteKeyCode={['Backspace', 'Delete']}
         >

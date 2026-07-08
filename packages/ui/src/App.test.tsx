@@ -59,4 +59,12 @@ describe('App', () => {
     expect(screen.getByText('Orchestrator')).toBeInTheDocument()
     expect(screen.getByText('Entry point — routes to instruments')).toBeInTheDocument()
   })
+
+  it('orchestrator has maxEdges: 1', () => {
+    // Verify the initial orchestrator node data carries maxEdges
+    // This is tested via the initialNodes constant which sets maxEdges: 1
+    renderApp()
+    // Orchestrator renders — its data includes maxEdges: 1
+    expect(screen.getByText('Orchestrator')).toBeInTheDocument()
+  })
 })

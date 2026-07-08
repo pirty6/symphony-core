@@ -43,3 +43,47 @@ describe('DraggableNodeType', () => {
     })
   })
 })
+
+describe('maxEdges on palette items', () => {
+  it('assessor allows 1 outgoing edge', () => {
+    const assessor = AGENT_ITEMS.find((i) => i.type === 'assessor')!
+    expect(assessor.maxEdges).toBe(1)
+  })
+
+  it('executor allows 1 outgoing edge', () => {
+    const executor = AGENT_ITEMS.find((i) => i.type === 'executor')!
+    expect(executor.maxEdges).toBe(1)
+  })
+
+  it('condition allows 1 outgoing edge', () => {
+    const condition = CONTROL_ITEMS.find((i) => i.type === 'condition')!
+    expect(condition.maxEdges).toBe(1)
+  })
+
+  it('end node allows 0 outgoing edges', () => {
+    const end = CONTROL_ITEMS.find((i) => i.type === 'end')!
+    expect(end.maxEdges).toBe(0)
+  })
+
+  it('end is the only node type with maxEdges: 0', () => {
+    const allItems = [...AGENT_ITEMS, ...CONTROL_ITEMS]
+    const zeroEdgeItems = allItems.filter((i) => i.maxEdges === 0)
+    expect(zeroEdgeItems).toHaveLength(1)
+    expect(zeroEdgeItems[0].type).toBe('end')
+  })
+
+  it('all non-end nodes allow exactly 1 outgoing edge', () => {
+    const allItems = [...AGENT_ITEMS, ...CONTROL_ITEMS]
+    const nonEnd = allItems.filter((i) => i.type !== 'end')
+    nonEnd.forEach((item) => {
+      expect(item.maxEdges).toBe(1)
+    })
+  })
+
+  it('every palette item has a valid maxEdges (0 or 1)', () => {
+    const allItems = [...AGENT_ITEMS, ...CONTROL_ITEMS]
+    allItems.forEach((item) => {
+      expect([0, 1]).toContain(item.maxEdges)
+    })
+  })
+})
