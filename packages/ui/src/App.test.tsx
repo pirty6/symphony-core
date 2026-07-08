@@ -55,8 +55,8 @@ describe('App', () => {
   })
 
   it('renders the orchestrator as non-deletable', () => {
-    const { container } = renderApp()
-    const orchestratorGroup = container.querySelector('[data-id="orchestrator-1"]')
-    expect(orchestratorGroup).toBeInTheDocument()
+    renderApp()
+    expect(screen.getByText('Orchestrator')).toBeInTheDocument()
+    expect(screen.getByText('Entry point — routes to instruments')).toBeInTheDocument()
   })
 })

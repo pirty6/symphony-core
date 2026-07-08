@@ -38,10 +38,8 @@ describe('EndNode', () => {
   })
 
   it('has only a target handle (no source — it is the terminal)', () => {
-    const { container } = renderNode()
-    const targetHandles = container.querySelectorAll('.react-flow__handle-top')
-    const sourceHandles = container.querySelectorAll('.react-flow__handle-bottom')
-    expect(targetHandles).toHaveLength(1)
-    expect(sourceHandles).toHaveLength(0)
+    renderNode()
+    expect(screen.getByTestId('handle-target')).toBeInTheDocument()
+    expect(screen.queryByTestId('handle-source')).not.toBeInTheDocument()
   })
 })

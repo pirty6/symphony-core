@@ -11,7 +11,7 @@ export function OrchestratorNode({ data }: NodeProps<OrchestratorNode>) {
         <div className="node-title">{data.label}</div>
       </div>
       <div className="node-subtitle">{data.description}</div>
-      <Handle type="source" position={Position.Bottom} />
+      <Handle type="source" position={Position.Bottom} data-testid="handle-source" />
     </div>
   )
 }

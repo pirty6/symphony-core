@@ -32,10 +32,8 @@ describe('ExecutorNode', () => {
   })
 
   it('has both target and source handles (can be chained)', () => {
-    const { container } = renderNode()
-    const targetHandles = container.querySelectorAll('.react-flow__handle-top')
-    const sourceHandles = container.querySelectorAll('.react-flow__handle-bottom')
-    expect(targetHandles).toHaveLength(1)
-    expect(sourceHandles).toHaveLength(1)
+    renderNode()
+    expect(screen.getByTestId('handle-target')).toBeInTheDocument()
+    expect(screen.getByTestId('handle-source')).toBeInTheDocument()
   })
 })

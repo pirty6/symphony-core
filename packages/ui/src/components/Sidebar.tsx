@@ -26,7 +26,7 @@ export function Sidebar({ onExport }: { onExport: () => void }) {
         </div>
       ))}
 
-      <div className="sidebar-separator" />
+      <div className="sidebar-separator" role="separator" />
 
       <h2>Nodes</h2>
 
@@ -45,7 +45,7 @@ export function Sidebar({ onExport }: { onExport: () => void }) {
         </div>
       ))}
 
-      <div className="sidebar-separator" />
+      <div className="sidebar-separator" role="separator" />
 
       <div className="sidebar-actions">
         <button className="btn-export" onClick={onExport}>

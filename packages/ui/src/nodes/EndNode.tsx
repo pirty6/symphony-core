@@ -11,7 +11,7 @@ export function EndNode({ data }: NodeProps<EndNode>) {
         <div className="node-title">{data.label}</div>
       </div>
       <div className="node-subtitle">{data.description}</div>
-      <Handle type="target" position={Position.Top} />
+      <Handle type="target" position={Position.Top} data-testid="handle-target" />
     </div>
   )
 }

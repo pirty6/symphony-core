@@ -38,10 +38,8 @@ describe('OrchestratorNode', () => {
   })
 
   it('has only a source handle (no target — it is the start)', () => {
-    const { container } = renderNode()
-    const sourceHandles = container.querySelectorAll('.react-flow__handle-bottom')
-    const targetHandles = container.querySelectorAll('.react-flow__handle-top')
-    expect(sourceHandles).toHaveLength(1)
-    expect(targetHandles).toHaveLength(0)
+    renderNode()
+    expect(screen.getByTestId('handle-source')).toBeInTheDocument()
+    expect(screen.queryByTestId('handle-target')).not.toBeInTheDocument()
   })
 })

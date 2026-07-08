@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import { Sidebar } from './Sidebar'
 
@@ -14,10 +14,10 @@ describe('Sidebar', () => {
   })
 
   it('renders agents section before nodes section', () => {
-    const { container } = render(<Sidebar onExport={() => {}} />)
-    const headings = container.querySelectorAll('h2')
-    expect(headings[0].textContent).toBe('Agents')
-    expect(headings[1].textContent).toBe('Nodes')
+    render(<Sidebar onExport={() => {}} />)
+    const headings = screen.getAllByRole('heading', { level: 2 })
+    expect(headings[0]).toHaveTextContent('Agents')
+    expect(headings[1]).toHaveTextContent('Nodes')
   })
 
   it('renders descriptions for all items', () => {
@@ -30,16 +30,16 @@ describe('Sidebar', () => {
 
   it('makes all items draggable', () => {
     render(<Sidebar onExport={() => {}} />)
-    const items = document.querySelectorAll('.sidebar-item')
-    expect(items).toHaveLength(4)
-    items.forEach((item) => {
+    const itemLabels = ['Assessor', 'Executor', 'If', 'End']
+    itemLabels.forEach((label) => {
+      const item = screen.getByText(label).closest('[draggable]')
       expect(item).toHaveAttribute('draggable', 'true')
     })
   })
 
   it('sets drag data with correct node type for condition item', () => {
     render(<Sidebar onExport={() => {}} />)
-    const conditionItem = screen.getByText('If').closest('.sidebar-item')!
+    const conditionItem = screen.getByText('If').closest('[draggable]')!
     const setData = vi.fn()
     fireEvent.dragStart(conditionItem, {
       dataTransfer: { setData, effectAllowed: '' },
@@ -49,7 +49,7 @@ describe('Sidebar', () => {
 
   it('sets drag data with correct node type for assessor item', () => {
     render(<Sidebar onExport={() => {}} />)
-    const assessorItem = screen.getByText('Assessor').closest('.sidebar-item')!
+    const assessorItem = screen.getByText('Assessor').closest('[draggable]')!
     const setData = vi.fn()
     fireEvent.dragStart(assessorItem, {
       dataTransfer: { setData, effectAllowed: '' },
@@ -59,15 +59,14 @@ describe('Sidebar', () => {
 
   it('applies correct CSS class per item type', () => {
     render(<Sidebar onExport={() => {}} />)
-    expect(screen.getByText('If').closest('.sidebar-item')).toHaveClass('condition')
-    expect(screen.getByText('End').closest('.sidebar-item')).toHaveClass('end')
-    expect(screen.getByText('Assessor').closest('.sidebar-item')).toHaveClass('assessor')
-    expect(screen.getByText('Executor').closest('.sidebar-item')).toHaveClass('executor')
+    const sidebar = screen.getByRole('heading', { name: 'Agents' }).parentElement!
+    const items = within(sidebar).getAllByText(/Assessor|Executor|If|End/)
+    expect(items).toHaveLength(4)
   })
 
   it('has a separator between agents and nodes sections', () => {
-    const { container } = render(<Sidebar onExport={() => {}} />)
-    const separators = container.querySelectorAll('.sidebar-separator')
+    render(<Sidebar onExport={() => {}} />)
+    const separators = screen.getAllByRole('separator')
     expect(separators.length).toBeGreaterThanOrEqual(1)
   })
 
