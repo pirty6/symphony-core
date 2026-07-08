@@ -40,12 +40,14 @@ describe('App', () => {
     expect(screen.getByText('Assessor')).toBeInTheDocument()
     expect(screen.getByText('Executor')).toBeInTheDocument()
     expect(screen.getByText('If')).toBeInTheDocument()
+    expect(screen.getByText('Approval')).toBeInTheDocument()
     expect(screen.getByText('End')).toBeInTheDocument()
   })
 
-  it('shows descriptions for condition and end in sidebar', () => {
+  it('shows descriptions for condition, approval, and end in sidebar', () => {
     renderApp()
     expect(screen.getByText('Conditional branch (then/else)')).toBeInTheDocument()
+    expect(screen.getByText('Human-in-the-loop approval gate')).toBeInTheDocument()
     expect(screen.getByText('Terminal point of a path')).toBeInTheDocument()
   })
 
@@ -66,5 +68,17 @@ describe('App', () => {
     renderApp()
     // Orchestrator renders — its data includes maxEdges: 1
     expect(screen.getByText('Orchestrator')).toBeInTheDocument()
+  })
+
+  it('orchestrator renders a prompt textarea on the canvas', () => {
+    renderApp()
+    const textarea = screen.getByTestId('node-prompt')
+    expect(textarea).toBeInTheDocument()
+    expect(textarea.tagName).toBe('TEXTAREA')
+  })
+
+  it('orchestrator prompt defaults to empty', () => {
+    renderApp()
+    expect(screen.getByTestId('node-prompt')).toHaveValue('')
   })
 })

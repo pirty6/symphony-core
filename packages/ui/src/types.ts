@@ -1,12 +1,12 @@
 export type InstrumentType = 'assessor' | 'executor'
-export type ControlNodeType = 'end' | 'condition'
+export type ControlNodeType = 'end' | 'condition' | 'approval'
 export type DraggableNodeType = InstrumentType | ControlNodeType
 export type NodeType = DraggableNodeType | 'orchestrator'
 
-export type MaxEdges = 0 | 1
+export type MaxEdges = 0 | 1 | null
 
 export function isDraggableNodeType(value: string): value is DraggableNodeType {
-  return value === 'assessor' || value === 'executor' || value === 'end' || value === 'condition'
+  return value === 'assessor' || value === 'executor' || value === 'end' || value === 'condition' || value === 'approval'
 }
 
 export interface WorkflowNode {
@@ -14,6 +14,7 @@ export interface WorkflowNode {
   type: DraggableNodeType | 'orchestrator'
   label: string
   description?: string
+  prompt?: string
 }
 
 export interface WorkflowEdge {
@@ -41,14 +42,14 @@ export const AGENT_ITEMS: PaletteItem[] = [
     label: 'Assessor',
     description: 'Read-only evidence gatherer',
     icon: '🔍',
-    maxEdges: 1,
+    maxEdges: null,
   },
   {
     type: 'executor',
     label: 'Executor',
     description: 'Write-focused change applier',
     icon: '⚡',
-    maxEdges: 1,
+    maxEdges: null,
   },
 ]
 
@@ -58,7 +59,14 @@ export const CONTROL_ITEMS: PaletteItem[] = [
     label: 'If',
     description: 'Conditional branch (then/else)',
     icon: '◆',
-    maxEdges: 1,
+    maxEdges: null,
+  },
+  {
+    type: 'approval',
+    label: 'Approval',
+    description: 'Human-in-the-loop approval gate',
+    icon: '✋',
+    maxEdges: null,
   },
   {
     type: 'end',

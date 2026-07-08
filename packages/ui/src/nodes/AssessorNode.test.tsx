@@ -3,13 +3,13 @@ import { ReactFlowProvider } from '@xyflow/react'
 import { describe, it, expect } from 'vitest'
 import { AssessorNode } from './AssessorNode'
 
-function renderNode() {
+function renderNode(prompt?: string) {
   return render(
     <ReactFlowProvider>
       <AssessorNode
         id="assessor-1"
         type="assessor"
-        data={{ label: 'Assessor', description: 'Read-only evidence gatherer' }}
+        data={{ label: 'Assessor', description: 'Read-only evidence gatherer', prompt }}
         dragging={false}
         draggable={true}
         selectable={true}
@@ -35,5 +35,33 @@ describe('AssessorNode', () => {
     renderNode()
     expect(screen.getByTestId('handle-target')).toBeInTheDocument()
     expect(screen.getByTestId('handle-source')).toBeInTheDocument()
+  })
+
+  it('renders a prompt textarea', () => {
+    renderNode()
+    const textarea = screen.getByTestId('node-prompt')
+    expect(textarea).toBeInTheDocument()
+    expect(textarea.tagName).toBe('TEXTAREA')
+  })
+
+  it('displays the prompt value', () => {
+    renderNode('Check for vulnerabilities')
+    expect(screen.getByTestId('node-prompt')).toHaveValue('Check for vulnerabilities')
+  })
+
+  it('shows placeholder when prompt is empty', () => {
+    renderNode()
+    const textarea = screen.getByTestId('node-prompt')
+    expect(textarea).toHaveAttribute('placeholder', 'What should this assessor investigate?')
+  })
+
+  it('defaults to empty string when prompt is undefined', () => {
+    renderNode()
+    expect(screen.getByTestId('node-prompt')).toHaveValue('')
+  })
+
+  it('textarea has the node-prompt class', () => {
+    renderNode()
+    expect(screen.getByTestId('node-prompt')).toHaveClass('node-prompt')
   })
 })

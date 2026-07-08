@@ -184,3 +184,65 @@ Pattern (Stage)           →  compileScore()  →  ExecutableScore (Score)
 ## License
 
 ISC
+
+## TODO
+
+### Global Settings Panel
+A configuration panel separate from the canvas for orchestrator-level settings:
+- **Confidence threshold** — minimum confidence percentage (0–100) before the orchestrator auto-proceeds vs. falls back to human clarification
+- **Max assessor spawns** — upper limit on how many assessors the orchestrator can spawn per step based on complexity
+- **Retry policy** — max retries per node, backoff strategy when a step fails or returns low confidence
+- **Model selection** — which LLM model to use for orchestration (e.g. claude-opus-4.6, gpt-4o, etc.)
+
+### State/Context Model
+A typed object that flows through edges and persists across the workflow execution:
+- Each node reads from and writes to a shared context bag
+- Context is scoped per session (survives across loop iterations)
+- Schema is user-definable per workflow (e.g. `{ word: string, guessedLetters: string[], wrongGuesses: string[], maxTries: number }`)
+- Enables the orchestrator to maintain memory across multiple LLM calls within the same session
+
+### Node Configuration Panel
+Clicking a node opens a side panel to configure that step:
+- **Instruction/prompt** — what this step should accomplish (the directive for the LLM)
+- **Expected output schema** — what data this step produces so downstream nodes know what they receive
+- **Node-specific settings** — e.g. condition expressions for If nodes, approval message for Approval nodes
+
+### Edge Data
+Edges carry context from one node's output to the next node's input:
+- Define which fields from the source node's output map to the target node's input
+- Support data transformation/filtering between nodes
+- Visual indication of what data flows through each connection
+
+### Runtime Engine
+The backend that actually executes the workflow graph:
+- Walks the graph node by node, calling the LLM at each step with accumulated context
+- Orchestrator logic at every transition: spawn assessors, check confidence, handle clarification
+- Manages the If node branching (evaluate conditions against current context)
+- Handles Approval nodes (pause execution, wait for human input, resume)
+- Supports loops (detect cycles, carry state across iterations)
+- Produces a Performance recording for auditing and replay
+
+### Hook Wiring
+`onUserPromptSubmitted` currently returns the prompt unchanged ([src/hooks/onUserPromptSubmitted.ts](src/hooks/onUserPromptSubmitted.ts)). It should:
+- Match the incoming prompt against available patterns
+- Compile the matched pattern into an ExecutableScore
+- Start the engine state machine (`createEngine` → `advance` loop)
+- Route pause resolutions back through the copilot-sdk conversation
+
+### Instrument Ontology Reconciliation
+The two instrument models (role-based and epistemic) are not competing — they operate at different layers:
+
+```
+Canvas layer (UI):      assessor / executor / condition / approval / end
+                        ↓ what the user draws
+Beat layer (runtime):   analyze / decide / question / order / integrate
+                        ↓ what the orchestrator decomposes each node into
+Tool layer (agent):     read-only / read-write
+                        ↓ what the agent is allowed to do
+```
+
+- The **user draws** an assessor or executor node on the canvas and writes a prompt (e.g. "investigate the auth module for vulnerabilities")
+- The **orchestrator decomposes** that node into beats, each with an epistemic instrument: `analyze` (structural scan) → `question` (explore edge cases) → `integrate` (synthesize findings). Each beat gets legality constraints based on its abstraction level
+- Each beat runs with **tool permissions** inherited from the parent node type: assessor nodes → read-only tools, executor nodes → read-write tools
+
+This keeps the UI simple (2 agent types users understand), gives the runtime fine-grained deterministic control (5 instruments with legality rules), and makes tool permissions enforceable. Users never see the epistemic layer unless they inspect a Performance recording at the beat level.

@@ -76,7 +76,7 @@ describe('workflow connections', () => {
       { id: 'e-1', source: 'orchestrator-1', target: 'assessor-1' },
     ]
 
-    const maxEdges = 1 // from node data
+    const maxEdges = 1 // from orchestrator node data
     const connection: Connection = {
       source: 'orchestrator-1',
       target: 'executor-1',
@@ -84,8 +84,7 @@ describe('workflow connections', () => {
       targetHandle: null,
     }
 
-    // When maxEdges > 0, filter existing edges from that source before adding
-    const filtered = maxEdges > 0
+    const filtered = maxEdges != null
       ? edges.filter((e) => e.source !== connection.source)
       : edges
     const result = addEdge(connection, filtered)
@@ -94,11 +93,12 @@ describe('workflow connections', () => {
     expect(result[0].target).toBe('executor-1')
   })
 
-  it('replaces existing edge for assessor (maxEdges: 1)', () => {
+  it('allows multiple edges when source node has maxEdges: null', () => {
     const edges: Edge[] = [
       { id: 'e-1', source: 'assessor-1', target: 'executor-1' },
     ]
 
+    const maxEdges = null // from assessor node data (unlimited)
     const connection: Connection = {
       source: 'assessor-1',
       target: 'end-1',
@@ -106,11 +106,14 @@ describe('workflow connections', () => {
       targetHandle: null,
     }
 
-    const filtered = edges.filter((e) => e.source !== connection.source)
+    const filtered = maxEdges != null
+      ? edges.filter((e) => e.source !== connection.source)
+      : edges
     const result = addEdge(connection, filtered)
 
-    expect(result).toHaveLength(1)
-    expect(result[0].target).toBe('end-1')
+    expect(result).toHaveLength(2)
+    expect(result[0].target).toBe('executor-1')
+    expect(result[1].target).toBe('end-1')
   })
 
   it('blocks edges when source node has maxEdges: 0', () => {

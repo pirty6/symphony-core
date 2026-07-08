@@ -1,9 +1,21 @@
-import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
+import { useCallback, type ChangeEvent } from 'react'
+import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
 
-type ExecutorData = { label: string; description: string }
+type ExecutorData = { label: string; description: string; prompt?: string }
 type ExecutorNode = Node<ExecutorData, 'executor'>
 
-export function ExecutorNode({ data }: NodeProps<ExecutorNode>) {
+export function ExecutorNode({ id, data }: NodeProps<ExecutorNode>) {
+  const { setNodes } = useReactFlow()
+
+  const onPromptChange = useCallback(
+    (e: ChangeEvent<HTMLTextAreaElement>) => {
+      setNodes((nds) =>
+        nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, prompt: e.target.value } } : n)),
+      )
+    },
+    [id, setNodes],
+  )
+
   return (
     <div className="workflow-node executor">
       <div className="node-header">
@@ -11,6 +23,13 @@ export function ExecutorNode({ data }: NodeProps<ExecutorNode>) {
         <div className="node-title">{data.label}</div>
       </div>
       <div className="node-subtitle">{data.description}</div>
+      <textarea
+        className="node-prompt"
+        placeholder="What should this executor do?"
+        value={data.prompt ?? ''}
+        onChange={onPromptChange}
+        data-testid="node-prompt"
+      />
       <Handle type="target" position={Position.Top} data-testid="handle-target" />
       <Handle type="source" position={Position.Bottom} data-testid="handle-source" />
     </div>

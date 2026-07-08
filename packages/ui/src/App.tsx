@@ -20,6 +20,7 @@ import { AssessorNode } from './nodes/AssessorNode'
 import { ExecutorNode } from './nodes/ExecutorNode'
 import { EndNode } from './nodes/EndNode'
 import { ConditionNode } from './nodes/ConditionNode'
+import { ApprovalNode } from './nodes/ApprovalNode'
 import { Sidebar } from './components/Sidebar'
 import { isDraggableNodeType, AGENT_ITEMS, CONTROL_ITEMS } from './types'
 
@@ -29,6 +30,7 @@ const nodeTypes = {
   executor: ExecutorNode,
   end: EndNode,
   condition: ConditionNode,
+  approval: ApprovalNode,
 }
 
 const defaultEdgeOptions: DefaultEdgeOptions = {
@@ -71,12 +73,17 @@ export default function App() {
     (params: Connection) =>
       setEdges((eds) => {
         const sourceNode = nodes.find((n) => n.id === params.source)
-        const maxEdges = Number(sourceNode?.data.maxEdges ?? 1)
+        const rawMaxEdges = sourceNode?.data.maxEdges
+        const maxEdges = typeof rawMaxEdges === 'number' ? rawMaxEdges : null
 
         if (maxEdges === 0) return eds
 
-        const filtered = eds.filter((e) => e.source !== params.source)
-        return addEdge(params, filtered)
+        if (maxEdges != null) {
+          const filtered = eds.filter((e) => e.source !== params.source)
+          return addEdge(params, filtered)
+        }
+
+        return addEdge(params, eds)
       }),
     [setEdges, nodes],
   )
@@ -134,6 +141,7 @@ export default function App() {
         type: n.type,
         label: String(n.data.label ?? ''),
         description: String(n.data.description ?? ''),
+        prompt: String(n.data.prompt ?? ''),
       })),
       edges: edges.map((e) => ({
         id: e.id,
@@ -179,6 +187,7 @@ export default function App() {
               if (n.type === 'executor') return '#ce93d8'
               if (n.type === 'end') return '#ef5350'
               if (n.type === 'condition') return '#ffb74d'
+              if (n.type === 'approval') return '#66bb6a'
               return '#666'
             }}
           />

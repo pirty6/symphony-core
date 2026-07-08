@@ -10,6 +10,7 @@ describe('Sidebar', () => {
     expect(screen.getByText('Assessor')).toBeInTheDocument()
     expect(screen.getByText('Executor')).toBeInTheDocument()
     expect(screen.getByText('If')).toBeInTheDocument()
+    expect(screen.getByText('Approval')).toBeInTheDocument()
     expect(screen.getByText('End')).toBeInTheDocument()
   })
 
@@ -25,12 +26,13 @@ describe('Sidebar', () => {
     expect(screen.getByText('Read-only evidence gatherer')).toBeInTheDocument()
     expect(screen.getByText('Write-focused change applier')).toBeInTheDocument()
     expect(screen.getByText('Conditional branch (then/else)')).toBeInTheDocument()
+    expect(screen.getByText('Human-in-the-loop approval gate')).toBeInTheDocument()
     expect(screen.getByText('Terminal point of a path')).toBeInTheDocument()
   })
 
   it('makes all items draggable', () => {
     render(<Sidebar onExport={() => {}} />)
-    const itemLabels = ['Assessor', 'Executor', 'If', 'End']
+    const itemLabels = ['Assessor', 'Executor', 'If', 'Approval', 'End']
     itemLabels.forEach((label) => {
       const item = screen.getByText(label).closest('[draggable]')
       expect(item).toHaveAttribute('draggable', 'true')
@@ -60,8 +62,8 @@ describe('Sidebar', () => {
   it('applies correct CSS class per item type', () => {
     render(<Sidebar onExport={() => {}} />)
     const sidebar = screen.getByRole('heading', { name: 'Agents' }).parentElement!
-    const items = within(sidebar).getAllByText(/Assessor|Executor|If|End/)
-    expect(items).toHaveLength(4)
+    const items = within(sidebar).getAllByText(/Assessor|Executor|If|Approval|End/)
+    expect(items).toHaveLength(5)
   })
 
   it('has a separator between agents and nodes sections', () => {

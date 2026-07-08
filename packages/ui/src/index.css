@@ -90,6 +90,11 @@ html, body, #root {
   color: #ffb74d;
 }
 
+.sidebar-item.approval .icon {
+  background: #1a3c1a;
+  color: #a5d6a7;
+}
+
 .sidebar-separator {
   height: 1px;
   background: #2a2a4a;
@@ -163,6 +168,30 @@ html, body, #root {
   margin-top: 2px;
 }
 
+.workflow-node .node-prompt {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  color: #e0e0e0;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  resize: vertical;
+  outline: none;
+}
+
+.workflow-node .node-prompt::placeholder {
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.workflow-node .node-prompt:focus {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
 /* Orchestrator node */
 .workflow-node.orchestrator {
   background: #1a2a1a;
@@ -224,6 +253,17 @@ html, body, #root {
   font-size: 10px;
   opacity: 0.5;
   margin-top: 6px;
+}
+
+/* Approval (Human-in-the-loop) node */
+.workflow-node.approval {
+  background: #1a2a1a;
+  border-color: #66bb6a;
+}
+
+.workflow-node.approval .node-icon {
+  background: #1a3c1a;
+  color: #a5d6a7;
 }
 
 /* React Flow overrides */
