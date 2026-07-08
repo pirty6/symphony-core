@@ -64,4 +64,28 @@ describe('AssessorNode', () => {
     renderNode()
     expect(screen.getByTestId('node-prompt')).toHaveClass('node-prompt')
   })
+
+  it('workflow-node is inside a selected wrapper when selected', () => {
+    render(
+      <ReactFlowProvider>
+        <AssessorNode
+          id="assessor-1"
+          type="assessor"
+          data={{ label: 'Assessor', description: 'Read-only evidence gatherer' }}
+          dragging={false}
+          draggable={true}
+          selectable={true}
+          deletable={true}
+          selected={true}
+          isConnectable={true}
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          zIndex={0}
+        />
+      </ReactFlowProvider>,
+    )
+    const node = screen.getByText('Assessor').closest('.workflow-node')
+    expect(node).toBeInTheDocument()
+    expect(node).toHaveClass('workflow-node', 'assessor')
+  })
 })

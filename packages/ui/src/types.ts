@@ -5,6 +5,11 @@ export type NodeType = DraggableNodeType | 'orchestrator'
 
 export type MaxEdges = 0 | 1 | null
 
+export interface StateField {
+  name: string
+  type: string
+}
+
 export function isDraggableNodeType(value: string): value is DraggableNodeType {
   return value === 'assessor' || value === 'executor' || value === 'end' || value === 'condition' || value === 'approval'
 }
@@ -15,6 +20,7 @@ export interface WorkflowNode {
   label: string
   description?: string
   prompt?: string
+  stateFields?: StateField[]
 }
 
 export interface WorkflowEdge {

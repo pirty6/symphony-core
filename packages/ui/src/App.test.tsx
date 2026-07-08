@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { ReactFlowProvider } from '@xyflow/react'
 import { describe, it, expect } from 'vitest'
 import App from './App'
@@ -80,5 +80,32 @@ describe('App', () => {
   it('orchestrator prompt defaults to empty', () => {
     renderApp()
     expect(screen.getByTestId('node-prompt')).toHaveValue('')
+  })
+
+  it('clicking a node adds the selected class to its wrapper', () => {
+    renderApp()
+    const nodeContent = screen.getByText('Orchestrator')
+    const reactFlowNode = nodeContent.closest('.react-flow__node')
+    expect(reactFlowNode).toBeInTheDocument()
+    expect(reactFlowNode).not.toHaveClass('selected')
+
+    fireEvent.click(nodeContent)
+
+    expect(reactFlowNode).toHaveClass('selected')
+  })
+
+  it('clicking elsewhere deselects the node', () => {
+    renderApp()
+    const nodeContent = screen.getByText('Orchestrator')
+    const reactFlowNode = nodeContent.closest('.react-flow__node')
+
+    fireEvent.click(nodeContent)
+    expect(reactFlowNode).toHaveClass('selected')
+
+    const canvas = document.querySelector('.react-flow__pane')
+    if (canvas) {
+      fireEvent.click(canvas)
+      expect(reactFlowNode).not.toHaveClass('selected')
+    }
   })
 })

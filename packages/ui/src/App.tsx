@@ -1,4 +1,4 @@
-import { useCallback, useRef, type DragEvent } from 'react'
+import { useCallback, useRef, useState, useEffect, type DragEvent } from 'react'
 import {
   ReactFlow,
   Background,
@@ -22,7 +22,10 @@ import { EndNode } from './nodes/EndNode'
 import { ConditionNode } from './nodes/ConditionNode'
 import { ApprovalNode } from './nodes/ApprovalNode'
 import { Sidebar } from './components/Sidebar'
+import { AvoidEdge } from './edges/AvoidEdge'
+import { DebugPanel } from './components/DebugPanel'
 import { isDraggableNodeType, AGENT_ITEMS, CONTROL_ITEMS } from './types'
+import { createInitialExecutionState, walkStep, type ExecutionState } from './runtime'
 
 const nodeTypes = {
   orchestrator: OrchestratorNode,
@@ -33,8 +36,13 @@ const nodeTypes = {
   approval: ApprovalNode,
 }
 
+const edgeTypes = {
+  avoid: AvoidEdge,
+}
+
 const defaultEdgeOptions: DefaultEdgeOptions = {
   animated: true,
+  type: 'avoid',
   markerEnd: {
     type: MarkerType.ArrowClosed,
     width: 16,
@@ -68,6 +76,19 @@ export default function App() {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+  const [execution, setExecution] = useState<ExecutionState>(createInitialExecutionState(false))
+
+  // Apply active/visited classes to nodes based on execution state
+  const styledNodes = nodes.map((n) => {
+    const isActive = execution.activeNodeId === n.id
+    const isVisited = execution.visitedNodeIds.includes(n.id) && !isActive
+    const className = [
+      isActive ? 'node-active' : '',
+      isVisited ? 'node-visited' : '',
+    ].filter(Boolean).join(' ') || undefined
+
+    return className ? { ...n, className } : n
+  })
 
   const onConnect = useCallback(
     (params: Connection) =>
@@ -142,6 +163,9 @@ export default function App() {
         label: String(n.data.label ?? ''),
         description: String(n.data.description ?? ''),
         prompt: String(n.data.prompt ?? ''),
+        ...(Array.isArray(n.data.stateFields) && n.data.stateFields.length > 0
+          ? { stateFields: n.data.stateFields }
+          : {}),
       })),
       edges: edges.map((e) => ({
         id: e.id,
@@ -159,12 +183,58 @@ export default function App() {
     URL.revokeObjectURL(url)
   }, [nodes, edges])
 
+  const onRun = useCallback((debug: boolean) => {
+    setExecution(createInitialExecutionState(debug))
+    // Start by stepping into the orchestrator
+    setExecution((prev) => walkStep(prev, nodes, edges))
+  }, [nodes, edges])
+
+  const onStep = useCallback(() => {
+    setExecution((prev) => walkStep(prev, nodes, edges))
+  }, [nodes, edges])
+
+  const onResume = useCallback(() => {
+    // Resume from approval pause — step to next node
+    setExecution((prev) => {
+      if (prev.status !== 'paused') return prev
+      return walkStep({ ...prev, status: 'running' }, nodes, edges)
+    })
+  }, [nodes, edges])
+
+  const onStop = useCallback(() => {
+    setExecution((prev) => createInitialExecutionState(prev.debug))
+  }, [])
+
+  // Auto-step when running (not paused/completed/error)
+  useEffect(() => {
+    if (execution.status !== 'running' || execution.activeNodeId === null) return
+
+    const currentNode = nodes.find((n) => n.id === execution.activeNodeId)
+    if (!currentNode) return
+
+    // Don't auto-step on approval nodes (wait for user) or end nodes
+    if (currentNode.type === 'approval' || currentNode.type === 'end') return
+
+    const timer = setTimeout(() => {
+      setExecution((prev) => walkStep(prev, nodes, edges))
+    }, 800)
+
+    return () => clearTimeout(timer)
+  }, [execution.status, execution.activeNodeId, nodes, edges])
+
   return (
     <div className="app">
-      <Sidebar onExport={onExport} />
+      <Sidebar
+        onExport={onExport}
+        onRun={onRun}
+        onStep={onStep}
+        onResume={onResume}
+        onStop={onStop}
+        execution={execution}
+      />
       <div className="canvas" ref={reactFlowWrapper}>
         <ReactFlow
-          nodes={nodes}
+          nodes={styledNodes}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
@@ -173,6 +243,7 @@ export default function App() {
           onDrop={onDrop}
           onDragOver={onDragOver}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           defaultEdgeOptions={defaultEdgeOptions}
           edgesReconnectable
           fitView
@@ -182,7 +253,7 @@ export default function App() {
           <Controls />
           <MiniMap
             nodeColor={(n) => {
-              if (n.type === 'orchestrator') return '#4caf50'
+              if (n.type === 'orchestrator') return '#888'
               if (n.type === 'assessor') return '#4fc3f7'
               if (n.type === 'executor') return '#ce93d8'
               if (n.type === 'end') return '#ef5350'
@@ -193,6 +264,9 @@ export default function App() {
           />
         </ReactFlow>
       </div>
+      {execution.debug && execution.status !== 'idle' && (
+        <DebugPanel execution={execution} />
+      )}
     </div>
   )
 }

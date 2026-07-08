@@ -64,4 +64,28 @@ describe('ExecutorNode', () => {
     renderNode()
     expect(screen.getByTestId('node-prompt')).toHaveClass('node-prompt')
   })
+
+  it('workflow-node is inside a selected wrapper when selected', () => {
+    render(
+      <ReactFlowProvider>
+        <ExecutorNode
+          id="executor-1"
+          type="executor"
+          data={{ label: 'Executor', description: 'Write-focused change applier' }}
+          dragging={false}
+          draggable={true}
+          selectable={true}
+          deletable={true}
+          selected={true}
+          isConnectable={true}
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          zIndex={0}
+        />
+      </ReactFlowProvider>,
+    )
+    const node = screen.getByText('Executor').closest('.workflow-node')
+    expect(node).toBeInTheDocument()
+    expect(node).toHaveClass('workflow-node', 'executor')
+  })
 })

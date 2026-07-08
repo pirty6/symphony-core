@@ -124,6 +124,80 @@ html, body, #root {
   background: #2a3a5a;
 }
 
+.btn-run {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #2e7d32;
+  background: #1b5e20;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: center;
+}
+
+.btn-run:hover {
+  background: #2e7d32;
+}
+
+.run-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-debug {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #2a2a4a;
+  background: #1e2a4a;
+  color: #e0e0e0;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.btn-debug:hover {
+  background: #2a3a5a;
+  border-color: #ffb74d;
+}
+
+.btn-step {
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #1565c0;
+  background: #0d47a1;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: center;
+}
+
+.btn-step:hover {
+  background: #1565c0;
+}
+
+.btn-stop {
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #c62828;
+  background: #b71c1c;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: center;
+}
+
+.btn-stop:hover {
+  background: #c62828;
+}
+
 /* Canvas */
 .canvas {
   flex: 1;
@@ -192,15 +266,119 @@ html, body, #root {
   border-color: rgba(255, 255, 255, 0.25);
 }
 
+/* State fields (orchestrator) */
+.state-section {
+  margin-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 6px;
+}
+
+.state-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.state-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.5;
+}
+
+.state-add {
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #e0e0e0;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.state-add:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.state-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 3px;
+}
+
+.state-field-name {
+  flex: 1;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  color: #e0e0e0;
+  font-family: monospace;
+  font-size: 10px;
+  outline: none;
+}
+
+.state-field-name::placeholder {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.state-field-name:focus {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.state-field-type {
+  width: 80px;
+  padding: 3px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  color: #e0e0e0;
+  font-family: monospace;
+  font-size: 10px;
+  outline: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+}
+
+.state-field-remove {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.state-field-remove:hover {
+  color: #ef5350;
+  background: rgba(239, 83, 80, 0.15);
+}
+
 /* Orchestrator node */
 .workflow-node.orchestrator {
-  background: #1a2a1a;
-  border-color: #4caf50;
+  background: #2a2a2e;
+  border-color: #888;
 }
 
 .workflow-node.orchestrator .node-icon {
-  background: #2e7d32;
-  color: #a5d6a7;
+  background: #3a3a3e;
+  color: #bbb;
 }
 
 /* Assessor node */
@@ -282,6 +460,10 @@ html, body, #root {
   stroke-width: 3 !important;
 }
 
+.react-flow__node.selected .workflow-node {
+  box-shadow: 0 0 0 2px #90caf9, 0 2px 12px rgba(144, 202, 249, 0.3);
+}
+
 .react-flow__connection-line {
   stroke: #8888aa !important;
   stroke-width: 2 !important;
@@ -320,4 +502,152 @@ html, body, #root {
 
 .react-flow__controls button:hover {
   background: #2a3a5a !important;
+}
+
+/* Active node (currently executing) */
+.react-flow__node.node-active .workflow-node {
+  box-shadow: 0 0 0 2px #ffd54f, 0 0 16px rgba(255, 213, 79, 0.4);
+  animation: pulse-active 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-active {
+  0%, 100% { box-shadow: 0 0 0 2px #ffd54f, 0 0 16px rgba(255, 213, 79, 0.4); }
+  50% { box-shadow: 0 0 0 3px #ffd54f, 0 0 24px rgba(255, 213, 79, 0.6); }
+}
+
+/* Visited node (already executed) */
+.react-flow__node.node-visited .workflow-node {
+  opacity: 0.5;
+}
+
+/* Debug panel */
+.debug-panel {
+  width: 280px;
+  background: #16213e;
+  border-left: 1px solid #2a2a4a;
+  padding: 12px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.debug-title {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #8888aa;
+}
+
+.debug-status {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.debug-status-running {
+  background: rgba(255, 213, 79, 0.2);
+  color: #ffd54f;
+}
+
+.debug-status-paused {
+  background: rgba(255, 183, 77, 0.2);
+  color: #ffb74d;
+}
+
+.debug-status-completed {
+  background: rgba(102, 187, 106, 0.2);
+  color: #66bb6a;
+}
+
+.debug-status-error {
+  background: rgba(239, 83, 80, 0.2);
+  color: #ef5350;
+}
+
+.debug-section {
+  margin-bottom: 12px;
+}
+
+.debug-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #8888aa;
+  margin-bottom: 4px;
+}
+
+.debug-json {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: monospace;
+  font-size: 10px;
+  color: #90caf9;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+.debug-logs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.debug-log-entry {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.debug-log-entry.active {
+  background: rgba(255, 213, 79, 0.1);
+  border-left: 2px solid #ffd54f;
+}
+
+.debug-log-index {
+  font-size: 10px;
+  font-weight: 700;
+  color: #8888aa;
+  min-width: 16px;
+}
+
+.debug-log-label {
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.debug-log-type {
+  font-size: 10px;
+  color: #8888aa;
+  margin-left: auto;
+}
+
+.debug-log-prompt {
+  width: 100%;
+  font-size: 10px;
+  color: #90caf9;
+  opacity: 0.7;
+}
+
+.debug-error {
+  background: rgba(239, 83, 80, 0.15);
+  border-radius: 6px;
+  padding: 8px;
+  color: #ef5350;
+  font-size: 11px;
 }

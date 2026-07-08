@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { AGENT_ITEMS, CONTROL_ITEMS, isDraggableNodeType } from './types'
-import type { PaletteItem, DraggableNodeType, WorkflowNode } from './types'
+import type { PaletteItem, DraggableNodeType, WorkflowNode, StateField } from './types'
 
 describe('AGENT_ITEMS', () => {
   it('contains assessor and executor', () => {
@@ -121,6 +121,31 @@ describe('WorkflowNode', () => {
       prompt: 'Build a hangman game',
     }
     expect(node.prompt).toBe('Build a hangman game')
+  })
+
+  it('accepts stateFields on orchestrator', () => {
+    const fields: StateField[] = [
+      { name: 'word', type: 'string' },
+      { name: 'guessedLetters', type: 'string[]' },
+      { name: 'wrongGuesses', type: 'number' },
+    ]
+    const node: WorkflowNode = {
+      id: 'orch-2',
+      type: 'orchestrator',
+      label: 'Orchestrator',
+      stateFields: fields,
+    }
+    expect(node.stateFields).toHaveLength(3)
+    expect(node.stateFields![0]).toEqual({ name: 'word', type: 'string' })
+  })
+
+  it('stateFields is optional', () => {
+    const node: WorkflowNode = {
+      id: 'orch-3',
+      type: 'orchestrator',
+      label: 'Orchestrator',
+    }
+    expect(node.stateFields).toBeUndefined()
   })
 })
 
