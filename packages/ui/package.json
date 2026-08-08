@@ -7,11 +7,15 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
+    "test:unit": "vitest run --exclude '**/**.integration.test.*'",
+    "test:integration": "vitest run integration",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@github/copilot-sdk": "^1.0.6",
     "@xyflow/react": "^12.11.1",
+    "dotenv": "^17.4.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

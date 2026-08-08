@@ -460,6 +460,18 @@ html, body, #root {
   stroke-width: 3 !important;
 }
 
+.edge-label {
+  background: #2a2a4a;
+  color: #b0b0d0;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #4a4a6a;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
 .react-flow__node.selected .workflow-node {
   box-shadow: 0 0 0 2px #90caf9, 0 2px 12px rgba(144, 202, 249, 0.3);
 }

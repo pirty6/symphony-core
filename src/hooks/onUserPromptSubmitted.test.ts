@@ -21,14 +21,17 @@ describe('onUserPromptSubmitted', () => {
     expect(result!.modifiedPrompt).toHaveLength(500);
   });
 
-  it('logs a truncated preview of the prompt', async () => {
+  it('logs the prompt with session ID and char count', async () => {
     const spy = jest.spyOn(console, 'log').mockImplementation();
     const prompt = 'x'.repeat(100);
 
     await onUserPromptSubmitted({ ...baseInput, prompt });
 
     expect(spy).toHaveBeenCalledWith(
-      `User prompt received: ${'x'.repeat(80)}...`
+      `[server] ─── onUserPromptSubmitted (session=test-session) ───`
+    );
+    expect(spy).toHaveBeenCalledWith(
+      `  prompt (100 chars): ${'x'.repeat(100)}`
     );
     spy.mockRestore();
   });

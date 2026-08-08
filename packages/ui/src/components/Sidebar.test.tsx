@@ -120,9 +120,9 @@ describe('Sidebar', () => {
     expect(buttons[2]).toHaveTextContent('Export Workflow JSON')
   })
 
-  it('shows step and stop buttons when running', () => {
+  it('shows step and stop buttons when running in debug mode', () => {
     const execution: ExecutionState = {
-      ...createInitialExecutionState(false),
+      ...createInitialExecutionState(true),
       status: 'running',
       activeNodeId: 'node-1',
     }
@@ -138,6 +138,25 @@ describe('Sidebar', () => {
     expect(screen.getByTestId('btn-step')).toBeInTheDocument()
     expect(screen.getByTestId('btn-stop')).toBeInTheDocument()
     expect(screen.queryByTestId('btn-run')).not.toBeInTheDocument()
+  })
+
+  it('hides step button when running in non-debug mode', () => {
+    const execution: ExecutionState = {
+      ...createInitialExecutionState(false),
+      status: 'running',
+      activeNodeId: 'node-1',
+    }
+    render(
+      <Sidebar
+        onExport={noop}
+        onRun={noopRun}
+        onStep={noop}
+        onStop={noop}
+        execution={execution}
+      />,
+    )
+    expect(screen.queryByTestId('btn-step')).not.toBeInTheDocument()
+    expect(screen.getByTestId('btn-stop')).toBeInTheDocument()
   })
 
   it('shows resume button when paused', () => {

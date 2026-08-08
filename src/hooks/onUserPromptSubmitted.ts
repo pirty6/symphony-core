@@ -2,7 +2,8 @@ import type {  UserPromptSubmittedHookOutput, UserPromptSubmittedHookInput } fro
 
 
 export async function onUserPromptSubmitted(input: UserPromptSubmittedHookInput): Promise<UserPromptSubmittedHookOutput> {
-  console.log(`User prompt received: ${input.prompt.slice(0, 80)}...`);
+  console.log(`[server] ─── onUserPromptSubmitted (session=${input.sessionId}) ───`);
+  console.log(`  prompt (${input.prompt.length} chars): ${input.prompt.slice(0, 200)}${input.prompt.length > 200 ? '…' : ''}`);
   return {
     modifiedPrompt: input.prompt,
   };

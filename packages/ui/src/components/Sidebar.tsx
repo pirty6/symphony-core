@@ -77,7 +77,7 @@ export function Sidebar({ onExport, onRun, onStep, onResume, onStop, execution }
                 ▶ Resume
               </button>
             )}
-            {onStep && (
+            {execution?.debug && onStep && (
               <button className="btn-step" onClick={onStep} data-testid="btn-step">
                 ⏭ Step
               </button>

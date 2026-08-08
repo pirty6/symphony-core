@@ -19,6 +19,12 @@ export interface ExecutionState {
   logs: StepLog[]
   error: string | null
   debug: boolean
+  /** The prompt sent to the Copilot SDK session (populated on run) */
+  sdkPrompt: string | null
+  /** Messages received from the SDK session */
+  sdkMessages: string[]
+  /** Active session ID for stopping */
+  sdkSessionId: string | null
 }
 
 export function createInitialExecutionState(debug: boolean): ExecutionState {
@@ -30,6 +36,9 @@ export function createInitialExecutionState(debug: boolean): ExecutionState {
     logs: [],
     error: null,
     debug,
+    sdkPrompt: null,
+    sdkMessages: [],
+    sdkSessionId: null,
   }
 }
 
