@@ -1,29 +1,20 @@
-import { useState } from 'react'
-import type { ExecutionState } from '../runtime'
+import type { ExecutionState, SessionLogEntry } from '../runtime'
+
+function LogIcon({ type }: { type: SessionLogEntry['type'] }) {
+  switch (type) {
+    case 'orchestrator': return <span className="log-icon">🧠</span>
+    case 'tool-start': return <span className="log-icon">▶</span>
+    case 'tool-end': return <span className="log-icon">✓</span>
+    case 'state-change': return <span className="log-icon">📊</span>
+    case 'error': return <span className="log-icon">⚠</span>
+  }
+}
 
 export function DebugPanel({
   execution,
-  onSendMessage,
 }: {
   execution: ExecutionState
-  onSendMessage?: (message: string) => void
 }) {
-  const [input, setInput] = useState('')
-
-  const handleSend = () => {
-    const trimmed = input.trim()
-    if (!trimmed || !onSendMessage) return
-    onSendMessage(trimmed)
-    setInput('')
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
-
   return (
     <div className="debug-panel" data-testid="debug-panel">
       <div className="debug-header">
@@ -42,32 +33,22 @@ export function DebugPanel({
         </div>
       )}
 
-      {execution.sdkMessages.length > 0 && (
+      {execution.sessionLogs.length > 0 && (
         <div className="debug-section">
-          <div className="debug-section-title">SDK Messages</div>
-          <div className="debug-messages" data-testid="debug-sdk-messages">
-            {execution.sdkMessages.map((msg, i) => (
-              <div key={i} className="debug-message">{msg}</div>
+          <div className="debug-section-title">Session Activity</div>
+          <div className="debug-session-logs" data-testid="debug-session-logs">
+            {execution.sessionLogs.map((entry, i) => (
+              <div key={i} className={`session-log-entry session-log-${entry.type}`} data-testid="session-log-entry">
+                <div className="session-log-header">
+                  <LogIcon type={entry.type} />
+                  {entry.agent && <span className="session-log-agent">{entry.agent}</span>}
+                  <span className="session-log-content">{entry.content}</span>
+                </div>
+                {entry.details && (
+                  <pre className="session-log-details">{entry.details}</pre>
+                )}
+              </div>
             ))}
-          </div>
-        </div>
-      )}
-
-      {execution.sdkSessionId && onSendMessage && (
-        <div className="debug-section">
-          <div className="debug-section-title">Send Message</div>
-          <div className="debug-chat-input" data-testid="debug-chat-input">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Type a message to the session..."
-              rows={3}
-              data-testid="debug-chat-field"
-            />
-            <button onClick={handleSend} disabled={!input.trim()} data-testid="debug-chat-send">
-              Send
-            </button>
           </div>
         </div>
       )}
@@ -78,27 +59,6 @@ export function DebugPanel({
           <pre className="debug-json" data-testid="debug-state">
             {JSON.stringify(execution.state, null, 2)}
           </pre>
-        </div>
-      )}
-
-      {execution.logs.length > 0 && (
-        <div className="debug-section">
-          <div className="debug-section-title">Steps</div>
-          <div className="debug-logs" data-testid="debug-logs">
-            {execution.logs.map((log, i) => (
-              <div
-                key={i}
-                className={`debug-log-entry ${log.nodeId === execution.activeNodeId ? 'active' : ''}`}
-              >
-                <span className="debug-log-index">{i + 1}</span>
-                <span className="debug-log-label">{log.label}</span>
-                <span className="debug-log-type">{log.nodeType}</span>
-                {log.prompt && (
-                  <div className="debug-log-prompt">{log.prompt}</div>
-                )}
-              </div>
-            ))}
-          </div>
         </div>
       )}
 

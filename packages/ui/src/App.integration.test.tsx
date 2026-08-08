@@ -229,29 +229,15 @@ describe('App', () => {
       expect(capturedCallbacks).not.toBeNull()
     }
 
-    it('shows chat input after SDK session is established', () => {
-      startDebugSession()
-
-      // Before session ID is set, no chat input
-      expect(screen.queryByTestId('debug-chat-input')).not.toBeInTheDocument()
-
-      // Simulate SDK assigning a session ID
-      act(() => { capturedCallbacks!.onSessionId('42') })
-
-      // Chat input should now be visible
-      expect(screen.getByTestId('debug-chat-input')).toBeInTheDocument()
-      expect(screen.getByTestId('debug-chat-field').tagName).toBe('TEXTAREA')
-    })
-
     it('displays SDK messages in the debug panel', () => {
       startDebugSession()
       act(() => { capturedCallbacks!.onSessionId('42') })
 
       act(() => { capturedCallbacks!.onMessage('I picked a word: _ _ _ _ _') })
 
-      const messages = screen.getByTestId('debug-sdk-messages')
-      expect(messages).toBeInTheDocument()
-      expect(messages.textContent).toContain('I picked a word: _ _ _ _ _')
+      const logs = screen.getByTestId('debug-session-logs')
+      expect(logs).toBeInTheDocument()
+      expect(logs.textContent).toContain('I picked a word: _ _ _ _ _')
     })
 
     it('accumulates multiple SDK messages', () => {
@@ -261,90 +247,94 @@ describe('App', () => {
       act(() => { capturedCallbacks!.onMessage('First message') })
       act(() => { capturedCallbacks!.onMessage('Second message') })
 
-      const messages = screen.getByTestId('debug-sdk-messages')
-      expect(messages.textContent).toContain('First message')
-      expect(messages.textContent).toContain('Second message')
-    })
-
-    it('sends a follow-up message via the chat input', () => {
-      startDebugSession()
-      act(() => { capturedCallbacks!.onSessionId('42') })
-
-      const chatField = screen.getByTestId('debug-chat-field')
-      fireEvent.change(chatField, { target: { value: 'guess A' } })
-      fireEvent.click(screen.getByTestId('debug-chat-send'))
-
-      expect(mockSendMessage).toHaveBeenCalledWith('42', 'guess A')
-    })
-
-    it('clears the chat input after sending', () => {
-      startDebugSession()
-      act(() => { capturedCallbacks!.onSessionId('42') })
-
-      const chatField = screen.getByTestId('debug-chat-field') as HTMLTextAreaElement
-      fireEvent.change(chatField, { target: { value: 'guess B' } })
-      fireEvent.click(screen.getByTestId('debug-chat-send'))
-
-      expect(chatField.value).toBe('')
-    })
-
-    it('send button is disabled when input is empty', () => {
-      startDebugSession()
-      act(() => { capturedCallbacks!.onSessionId('42') })
-
-      const sendBtn = screen.getByTestId('debug-chat-send') as HTMLButtonElement
-      expect(sendBtn.disabled).toBe(true)
-
-      fireEvent.change(screen.getByTestId('debug-chat-field'), { target: { value: 'hello' } })
-      expect(sendBtn.disabled).toBe(false)
-
-      fireEvent.change(screen.getByTestId('debug-chat-field'), { target: { value: '   ' } })
-      expect(sendBtn.disabled).toBe(true)
-    })
-
-    it('Enter key sends the message (without Shift)', () => {
-      startDebugSession()
-      act(() => { capturedCallbacks!.onSessionId('42') })
-
-      const chatField = screen.getByTestId('debug-chat-field')
-      fireEvent.change(chatField, { target: { value: 'guess C' } })
-      fireEvent.keyDown(chatField, { key: 'Enter', shiftKey: false })
-
-      expect(mockSendMessage).toHaveBeenCalledWith('42', 'guess C')
-    })
-
-    it('Shift+Enter does not send (allows newline)', () => {
-      startDebugSession()
-      act(() => { capturedCallbacks!.onSessionId('42') })
-
-      const chatField = screen.getByTestId('debug-chat-field')
-      fireEvent.change(chatField, { target: { value: 'multi\nline' } })
-      fireEvent.keyDown(chatField, { key: 'Enter', shiftKey: true })
-
-      expect(mockSendMessage).not.toHaveBeenCalled()
+      const logs = screen.getByTestId('debug-session-logs')
+      expect(logs.textContent).toContain('First message')
+      expect(logs.textContent).toContain('Second message')
     })
 
     it('chat input disappears after stopping the session', () => {
       startDebugSession()
       act(() => { capturedCallbacks!.onSessionId('42') })
-      expect(screen.getByTestId('debug-chat-input')).toBeInTheDocument()
 
       fireEvent.click(screen.getByTestId('btn-stop'))
 
       // After stop, execution resets — debug panel hidden
-      expect(screen.queryByTestId('debug-chat-input')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('debug-panel')).not.toBeInTheDocument()
     })
 
-    it('onTurnDone does not end the session — keeps chat open', () => {
+    it('onTurnDone does not end the session', () => {
       startDebugSession()
       act(() => { capturedCallbacks!.onSessionId('42') })
       act(() => { capturedCallbacks!.onMessage('Your turn') })
       act(() => { capturedCallbacks!.onTurnDone() })
 
-      // Session should still be active — chat input visible
-      expect(screen.getByTestId('debug-chat-input')).toBeInTheDocument()
       // Status should still be running, not completed
       expect(screen.getByTestId('debug-status').textContent).toBe('running')
+    })
+
+    it('session logs record orchestrator messages', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+      act(() => { capturedCallbacks!.onMessage('I picked a word!') })
+
+      const logEntries = screen.getAllByTestId('session-log-entry')
+      expect(logEntries.length).toBe(1)
+      expect(logEntries[0].textContent).toContain('I picked a word!')
+      expect(logEntries[0]).toHaveClass('session-log-orchestrator')
+    })
+
+    it('session logs record tool start and end with agent name', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+      act(() => { capturedCallbacks!.onToolStart('task', { name: 'Pick Word', prompt: 'Pick a random word' }) })
+      act(() => { capturedCallbacks!.onToolEnd('task', 'Pick Word', 'The word is hello') })
+
+      const logEntries = screen.getAllByTestId('session-log-entry')
+      expect(logEntries.length).toBe(2)
+      expect(logEntries[0]).toHaveClass('session-log-tool-start')
+      expect(logEntries[0].textContent).toContain('Pick Word')
+      expect(logEntries[0].textContent).toContain('Pick a random word')
+      expect(logEntries[1]).toHaveClass('session-log-tool-end')
+      expect(logEntries[1].textContent).toContain('Pick Word')
+      expect(logEntries[1].textContent).toContain('The word is hello')
+    })
+
+    it('session logs record state changes from tool results', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+      act(() => { capturedCallbacks!.onToolEnd('task', 'assessor', '{"state":{"word":"hello"}}') })
+
+      const logEntries = screen.getAllByTestId('session-log-entry')
+      const stateEntry = logEntries.find((el) => el.classList.contains('session-log-state-change'))
+      expect(stateEntry).toBeDefined()
+      expect(stateEntry!.textContent).toContain('word')
+    })
+
+    it('session logs record errors', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+      act(() => { capturedCallbacks!.onError('Token expired') })
+
+      const logEntries = screen.getAllByTestId('session-log-entry')
+      const errorEntry = logEntries.find((el) => el.classList.contains('session-log-error'))
+      expect(errorEntry).toBeDefined()
+      expect(errorEntry!.textContent).toContain('Token expired')
+    })
+
+    it('session logs accumulate chronologically across the full session', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+      act(() => { capturedCallbacks!.onMessage('Starting game') })
+      act(() => { capturedCallbacks!.onToolStart('task', { name: 'Pick Word', prompt: 'Pick' }) })
+      act(() => { capturedCallbacks!.onToolEnd('task', 'Pick Word', 'done') })
+      act(() => { capturedCallbacks!.onMessage('Word picked, your turn') })
+
+      const logEntries = screen.getAllByTestId('session-log-entry')
+      expect(logEntries.length).toBe(4)
+      expect(logEntries[0]).toHaveClass('session-log-orchestrator')
+      expect(logEntries[1]).toHaveClass('session-log-tool-start')
+      expect(logEntries[2]).toHaveClass('session-log-tool-end')
+      expect(logEntries[3]).toHaveClass('session-log-orchestrator')
     })
 
     it('orchestrator is active when debug session starts', () => {
@@ -406,6 +396,128 @@ describe('App', () => {
       expect(mockApproveStep).toHaveBeenCalledWith('42')
       // Status returns to running after approval
       expect(screen.getByTestId('debug-status').textContent).toBe('running')
+    })
+
+    it('onToolStart highlights the matching instrument node', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+
+      act(() => { capturedCallbacks!.onToolStart('task', { name: 'Pick Word', prompt: 'Pick a word' }) })
+
+      const pickWordEl = document.querySelector('.react-flow__node-assessor')
+      expect(pickWordEl).toHaveClass('node-active')
+      // Orchestrator should no longer be active
+      const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
+      expect(orchestratorEl).not.toHaveClass('node-active')
+    })
+
+    it('onStepPending highlights the pending instrument node', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+
+      act(() => { capturedCallbacks!.onStepPending('task', { name: 'Pick Word', prompt: 'Pick a word' }) })
+
+      const pickWordEl = document.querySelector('.react-flow__node-assessor')
+      expect(pickWordEl).toHaveClass('node-active')
+      const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
+      expect(orchestratorEl).not.toHaveClass('node-active')
+    })
+
+    it('focus moves through full state transition cycle', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+
+      const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
+      const pickWordEl = document.querySelector('.react-flow__node-assessor')
+      const guessEl = document.querySelector('.react-flow__node-approval')
+
+      // Initially orchestrator is active
+      expect(orchestratorEl).toHaveClass('node-active')
+
+      // SDK calls Pick Word tool → focus moves to Pick Word
+      act(() => { capturedCallbacks!.onToolStart('task', { name: 'Pick Word', prompt: 'Pick a word' }) })
+      expect(pickWordEl).toHaveClass('node-active')
+      expect(orchestratorEl).not.toHaveClass('node-active')
+
+      // Tool ends → focus returns to orchestrator
+      act(() => { capturedCallbacks!.onToolEnd('task', 'assessor', '{"state":{"word":"hello"}}') })
+      expect(orchestratorEl).toHaveClass('node-active')
+      expect(pickWordEl).not.toHaveClass('node-active')
+      expect(pickWordEl).toHaveClass('node-visited')
+
+      // SDK calls Guess Letter → focus moves to Guess Letter
+      act(() => { capturedCallbacks!.onToolStart('task', { name: 'Guess Letter', prompt: 'Ask for guess' }) })
+      expect(guessEl).toHaveClass('node-active')
+      expect(orchestratorEl).not.toHaveClass('node-active')
+
+      // Tool ends → focus returns to orchestrator
+      act(() => { capturedCallbacks!.onToolEnd('task', 'approval', '{}') })
+      expect(orchestratorEl).toHaveClass('node-active')
+      expect(guessEl).not.toHaveClass('node-active')
+      expect(guessEl).toHaveClass('node-visited')
+    })
+
+    it('onStepPending followed by Step moves focus correctly', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+
+      // Step pending highlights the instrument
+      act(() => { capturedCallbacks!.onStepPending('task', { name: 'Pick Word', prompt: 'Pick a word' }) })
+      const pickWordEl = document.querySelector('.react-flow__node-assessor')
+      expect(pickWordEl).toHaveClass('node-active')
+
+      // User clicks Step → approves
+      fireEvent.click(screen.getByTestId('btn-step'))
+
+      // After tool start fires, node stays highlighted
+      act(() => { capturedCallbacks!.onToolStart('task', { name: 'Pick Word', prompt: 'Pick a word' }) })
+      expect(pickWordEl).toHaveClass('node-active')
+
+      // Tool ends → back to orchestrator
+      act(() => { capturedCallbacks!.onToolEnd('task', 'assessor', '{}') })
+      const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
+      expect(orchestratorEl).toHaveClass('node-active')
+      expect(pickWordEl).not.toHaveClass('node-active')
+    })
+
+    it('approval node waiting for human input moves focus back on response', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+
+      // Orchestrator calls Guess Letter (approval node) — focus moves there
+      act(() => { capturedCallbacks!.onToolStart('task', { name: 'Guess Letter', prompt: 'Ask for guess' }) })
+      const guessEl = document.querySelector('.react-flow__node-approval')
+      const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
+      expect(guessEl).toHaveClass('node-active')
+      expect(orchestratorEl).not.toHaveClass('node-active')
+
+      // User sends message via VS Code chat → SDK processes → tool ends
+      act(() => { capturedCallbacks!.onToolEnd('task', 'approval', '{"guess":"A"}') })
+
+      // Focus returns to orchestrator
+      expect(orchestratorEl).toHaveClass('node-active')
+      expect(guessEl).not.toHaveClass('node-active')
+      expect(guessEl).toHaveClass('node-visited')
+    })
+
+    it('approval node paused via onStepPending moves focus back after turn completes', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+
+      // Step pending on approval node — focus moves to Guess Letter
+      act(() => { capturedCallbacks!.onStepPending('task', { name: 'Guess Letter', prompt: 'Ask for guess' }) })
+      const guessEl = document.querySelector('.react-flow__node-approval')
+      const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
+      expect(guessEl).toHaveClass('node-active')
+      expect(orchestratorEl).not.toHaveClass('node-active')
+
+      // User sends response via VS Code chat → SDK resumes → message + turnDone
+      act(() => { capturedCallbacks!.onMessage('The letter A is correct!') })
+      act(() => { capturedCallbacks!.onTurnDone() })
+
+      // Focus returns to orchestrator
+      expect(orchestratorEl).toHaveClass('node-active')
+      expect(guessEl).not.toHaveClass('node-active')
     })
   })
 })

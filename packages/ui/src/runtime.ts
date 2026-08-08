@@ -2,6 +2,14 @@ import type { StateField } from './types'
 
 export type ExecutionStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error'
 
+export interface SessionLogEntry {
+  type: 'orchestrator' | 'tool-start' | 'tool-end' | 'state-change' | 'error'
+  timestamp: number
+  agent?: string
+  content: string
+  details?: string
+}
+
 export interface StepLog {
   nodeId: string
   nodeType: string
@@ -17,6 +25,7 @@ export interface ExecutionState {
   visitedNodeIds: string[]
   state: Record<string, unknown>
   logs: StepLog[]
+  sessionLogs: SessionLogEntry[]
   error: string | null
   debug: boolean
   /** The prompt sent to the Copilot SDK session (populated on run) */
@@ -34,6 +43,7 @@ export function createInitialExecutionState(debug: boolean): ExecutionState {
     visitedNodeIds: [],
     state: {},
     logs: [],
+    sessionLogs: [],
     error: null,
     debug,
     sdkPrompt: null,

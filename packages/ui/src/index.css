@@ -616,6 +616,71 @@ html, body, #root {
   gap: 4px;
 }
 
+.debug-session-logs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.session-log-entry {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid transparent;
+}
+
+.session-log-orchestrator {
+  border-left-color: #90caf9;
+}
+
+.session-log-tool-start {
+  border-left-color: #a5d6a7;
+}
+
+.session-log-tool-end {
+  border-left-color: #66bb6a;
+}
+
+.session-log-state-change {
+  border-left-color: #ffd54f;
+}
+
+.session-log-error {
+  border-left-color: #ef5350;
+}
+
+.session-log-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.log-icon {
+  flex-shrink: 0;
+}
+
+.session-log-agent {
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.session-log-content {
+  color: #b0b0c0;
+}
+
+.session-log-details {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #8888aa;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
 .debug-log-entry {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 4px;

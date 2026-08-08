@@ -103,8 +103,8 @@ describe('UI ↔ Backend Integration', () => {
 
     it('session event establishes the SDK session ID', () => {
       startSession()
-      // Session is established — chat input should be visible
-      expect(screen.getByTestId('debug-chat-input')).toBeInTheDocument()
+      // Session is established — debug panel shows status
+      expect(screen.getByTestId('debug-status').textContent).toBe('running')
     })
 
     it('message events are displayed in the debug panel', () => {
@@ -112,18 +112,16 @@ describe('UI ↔ Backend Integration', () => {
       act(() => { capturedCallbacks!.onMessage('Welcome to the game!') })
       act(() => { capturedCallbacks!.onMessage('I picked a 5-letter word.') })
 
-      const messages = screen.getByTestId('debug-sdk-messages')
-      expect(messages.textContent).toContain('Welcome to the game!')
-      expect(messages.textContent).toContain('I picked a 5-letter word.')
+      const logs = screen.getByTestId('debug-session-logs')
+      expect(logs.textContent).toContain('Welcome to the game!')
+      expect(logs.textContent).toContain('I picked a 5-letter word.')
     })
 
-    it('turn-done keeps session active for follow-up messages', () => {
+    it('turn-done keeps session active', () => {
       startSession()
       act(() => { capturedCallbacks!.onMessage('Your turn') })
       act(() => { capturedCallbacks!.onTurnDone() })
 
-      // Chat input still available
-      expect(screen.getByTestId('debug-chat-input')).toBeInTheDocument()
       expect(screen.getByTestId('debug-status').textContent).toBe('running')
     })
 
@@ -146,29 +144,16 @@ describe('UI ↔ Backend Integration', () => {
       act(() => { capturedCallbacks!.onTurnDone() })
     }
 
-    it('full conversation flow: send message → receive response → send another', () => {
+    it('full conversation flow: messages accumulate in debug panel', () => {
       startSessionWithMessages()
 
-      // User sends first guess
-      const chatField = screen.getByTestId('debug-chat-field')
-      fireEvent.change(chatField, { target: { value: 'guess A' } })
-      fireEvent.click(screen.getByTestId('debug-chat-send'))
-
-      expect(mockSendMessage).toHaveBeenCalledWith('sess-1', 'guess A')
-
-      // Backend responds
+      // Backend responds with more messages
       act(() => { capturedCallbacks!.onMessage('A is correct! _ A _ _ _') })
       act(() => { capturedCallbacks!.onTurnDone() })
 
-      const messages = screen.getByTestId('debug-sdk-messages')
-      expect(messages.textContent).toContain('A is correct! _ A _ _ _')
-
-      // User sends second guess
-      fireEvent.change(chatField, { target: { value: 'guess E' } })
-      fireEvent.click(screen.getByTestId('debug-chat-send'))
-
-      expect(mockSendMessage).toHaveBeenCalledWith('sess-1', 'guess E')
-      expect(mockSendMessage).toHaveBeenCalledTimes(2)
+      const logs = screen.getByTestId('debug-session-logs')
+      expect(logs.textContent).toContain('A is correct! _ A _ _ _')
+      expect(logs.textContent).toContain('I picked a word: _ _ _ _ _')
     })
 
     it('stopping the session calls stopRun and resets state', () => {
@@ -178,7 +163,7 @@ describe('UI ↔ Backend Integration', () => {
 
       expect(mockStopRun).toHaveBeenCalledWith('sess-1')
       // Debug panel is gone after stop
-      expect(screen.queryByTestId('debug-chat-input')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('debug-panel')).not.toBeInTheDocument()
     })
   })
 
@@ -345,11 +330,11 @@ describe('UI ↔ Backend Integration', () => {
 
       // 2. Session established
       act(() => { capturedCallbacks!.onSessionId('full-sess') })
-      expect(screen.getByTestId('debug-chat-input')).toBeInTheDocument()
+      expect(screen.getByTestId('debug-status').textContent).toBe('running')
 
       // 3. Receive initial message
       act(() => { capturedCallbacks!.onMessage('Starting analysis...') })
-      expect(screen.getByTestId('debug-sdk-messages').textContent).toContain('Starting analysis...')
+      expect(screen.getByTestId('debug-session-logs').textContent).toContain('Starting analysis...')
 
       // 4. Tool starts (step pending in debug mode)
       act(() => { capturedCallbacks!.onStepPending('task', { name: 'assessor', prompt: 'Check files' }) })
@@ -369,16 +354,10 @@ describe('UI ↔ Backend Integration', () => {
       act(() => { capturedCallbacks!.onMessage('Analysis complete. Found an issue.') })
       act(() => { capturedCallbacks!.onTurnDone() })
 
-      // 8. User sends follow-up
-      const chatField = screen.getByTestId('debug-chat-field')
-      fireEvent.change(chatField, { target: { value: 'fix it' } })
-      fireEvent.click(screen.getByTestId('debug-chat-send'))
-      expect(mockSendMessage).toHaveBeenCalledWith('full-sess', 'fix it')
-
-      // 9. Stop session
+      // 8. Stop session
       fireEvent.click(screen.getByTestId('btn-stop'))
       expect(mockStopRun).toHaveBeenCalledWith('full-sess')
-      expect(screen.queryByTestId('debug-chat-input')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('debug-panel')).not.toBeInTheDocument()
     })
 
     it('non-debug run does not show debug panel', () => {
@@ -386,7 +365,7 @@ describe('UI ↔ Backend Integration', () => {
       fireEvent.click(screen.getByTestId('btn-run'))
 
       expect(screen.queryByTestId('debug-sdk-prompt')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('debug-chat-input')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('debug-panel')).not.toBeInTheDocument()
     })
   })
 })

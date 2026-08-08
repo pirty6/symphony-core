@@ -28,7 +28,7 @@ import { DebugPanel } from './components/DebugPanel'
 import { isDraggableNodeType, AGENT_ITEMS, CONTROL_ITEMS } from './types'
 import { createInitialExecutionState, walkStep, type ExecutionState } from './runtime'
 import { buildOrchestratorInput, renderPrompt } from './prompt'
-import { startRun, stopRun, sendMessage, approveStep } from './api'
+import { startRun, stopRun, approveStep } from './api'
 
 /**
  * Try to extract a JSON object with a `state` key from a message string.
@@ -352,6 +352,12 @@ export default function App() {
             const next = {
               ...prev,
               sdkMessages: [...prev.sdkMessages, content],
+              sessionLogs: [...prev.sessionLogs, {
+                type: 'orchestrator' as const,
+                timestamp: Date.now(),
+                agent: 'Orchestrator',
+                content,
+              }],
             }
             // Try to extract state from the message
             const newState = extractState(content)
@@ -374,10 +380,12 @@ export default function App() {
         onToolStart: (_toolName, toolArgs) => {
           // Match tool args against node labels to highlight the right instrument
           const argsStr = JSON.stringify(toolArgs)
+          const args = toolArgs as Record<string, unknown>
           console.log(`[symphony:ui] Tool started — matching against nodes`)
           const matchedNode = nodes.find(
             (n) => n.type !== 'orchestrator' && n.data.label && argsStr.includes(String(n.data.label))
           )
+          const agentLabel = (args.name as string) ?? _toolName
           if (matchedNode) {
             console.log(`[symphony:ui] Activating node: ${matchedNode.data.label} (${matchedNode.id})`)
             setExecution((prev) => ({
@@ -386,6 +394,24 @@ export default function App() {
               visitedNodeIds: prev.activeNodeId && !prev.visitedNodeIds.includes(prev.activeNodeId)
                 ? [...prev.visitedNodeIds, prev.activeNodeId]
                 : prev.visitedNodeIds,
+              sessionLogs: [...prev.sessionLogs, {
+                type: 'tool-start' as const,
+                timestamp: Date.now(),
+                agent: agentLabel,
+                content: `Calling ${agentLabel}`,
+                details: (args.prompt as string) ?? undefined,
+              }],
+            }))
+          } else {
+            setExecution((prev) => ({
+              ...prev,
+              sessionLogs: [...prev.sessionLogs, {
+                type: 'tool-start' as const,
+                timestamp: Date.now(),
+                agent: agentLabel,
+                content: `Calling ${agentLabel}`,
+                details: (args.prompt as string) ?? undefined,
+              }],
             }))
           }
         },
@@ -399,6 +425,13 @@ export default function App() {
               visitedNodeIds: prev.activeNodeId && !prev.visitedNodeIds.includes(prev.activeNodeId)
                 ? [...prev.visitedNodeIds, prev.activeNodeId]
                 : prev.visitedNodeIds,
+              sessionLogs: [...prev.sessionLogs, {
+                type: 'tool-end' as const,
+                timestamp: Date.now(),
+                agent: agentName ?? _toolName,
+                content: `${agentName ?? _toolName} completed`,
+                details: result ?? undefined,
+              }],
             }
             // Try to extract state from tool result
             if (result) {
@@ -406,6 +439,12 @@ export default function App() {
               if (newState) {
                 console.log(`[symphony:ui] State extracted from ${agentName} result:`, JSON.stringify(newState))
                 next.state = { ...prev.state, ...newState }
+                next.sessionLogs = [...next.sessionLogs, {
+                  type: 'state-change' as const,
+                  timestamp: Date.now(),
+                  content: `State updated by ${agentName ?? _toolName}`,
+                  details: JSON.stringify(newState, null, 2),
+                }]
               }
             }
             return next
@@ -413,11 +452,33 @@ export default function App() {
         },
         onStepPending: (toolName, toolArgs) => {
           console.log(`[symphony:ui] Step pending — tool=${toolName}, waiting for user Step click`)
-          setExecution((prev) => ({ ...prev, status: 'paused' }))
+          const argsStr = JSON.stringify(toolArgs)
+          const matchedNode = nodes.find(
+            (n) => n.type !== 'orchestrator' && n.data.label && argsStr.includes(String(n.data.label))
+          )
+          setExecution((prev) => ({
+            ...prev,
+            status: 'paused',
+            ...(matchedNode ? {
+              activeNodeId: matchedNode.id,
+              visitedNodeIds: prev.activeNodeId && !prev.visitedNodeIds.includes(prev.activeNodeId)
+                ? [...prev.visitedNodeIds, prev.activeNodeId]
+                : prev.visitedNodeIds,
+            } : {}),
+          }))
         },
         onError: (message) => {
           console.error(`[symphony:ui] SDK error: ${message}`)
-          setExecution((prev) => ({ ...prev, status: 'error', error: message }))
+          setExecution((prev) => ({
+            ...prev,
+            status: 'error',
+            error: message,
+            sessionLogs: [...prev.sessionLogs, {
+              type: 'error' as const,
+              timestamp: Date.now(),
+              content: message,
+            }],
+          }))
         },
       }, debug)
       abortRef.current = controller
@@ -551,17 +612,7 @@ export default function App() {
         </ReactFlow>
       </div>
       {execution.debug && execution.status !== 'idle' && (
-        <DebugPanel
-          execution={execution}
-          onSendMessage={(message) => {
-            if (!execution.sdkSessionId) return
-            console.log(`[symphony:ui] Sending message to session ${execution.sdkSessionId}`)
-            sendMessage(execution.sdkSessionId, message).catch((err) => {
-              console.error('[symphony:ui] sendMessage failed:', err)
-              setExecution((prev) => ({ ...prev, error: err.message }))
-            })
-          }}
-        />
+        <DebugPanel execution={execution} />
       )}
     </div>
   )

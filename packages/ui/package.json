@@ -9,6 +9,8 @@
     "test": "vitest run",
     "test:unit": "vitest run --exclude '**/**.integration.test.*'",
     "test:integration": "vitest run integration",
+    "test:e2e": "playwright test",
+    "test:all": "vitest run && playwright test",
     "lint": "oxlint",
     "preview": "vite preview"
   },
@@ -20,6 +22,7 @@
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
