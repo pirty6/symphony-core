@@ -1,0 +1,97 @@
+import { describe, expect, it } from 'vitest';
+import { fix, hangman, investigate } from '../patterns/index.js';
+import { compileScore } from './compile.js';
+import { toPerformance } from './engine.js';
+import { runScripted } from './scripted.js';
+import { divergence, EMPTY_FRAME, framesOf, reduceFrame, replayPerformance } from './replay.js';
+import type { Pattern } from './types.js';
+
+function demoRun(p: Pattern) {
+  const score = compileScore(p, {
+    goal: p.demo?.goal ?? 'g',
+    context: p.demo?.context ?? {},
+    generatedAt: 't',
+  });
+  return { score, perf: toPerformance(runScripted(score, p.demo, { at: 't' }).state) };
+}
+
+describe('frames', () => {
+  it('track active node, statuses, edge counts and state', () => {
+    const { perf } = demoRun(hangman);
+    const frames = framesOf(perf.events);
+    const last = frames.at(-1)!;
+    expect(last.outcome).toBe('success');
+    expect(last.state).toEqual(perf.finalState);
+    expect(last.nodeStatus.win).toBe('done');
+    expect(last.edgeCounts['over-ask']).toBe(6);
+    expect(last.nodeVisits.ask).toBe(7);
+    const paused = frames.find((f) => f.pausedNodeId === 'pick')!;
+    expect(paused.nodeStatus.pick).toBe('paused');
+    const afterPick = frames.find(
+      (f) => f.event?.type === 'edge-taken' && f.lastEdge?.id === 'pick-ask',
+    )!;
+    expect(afterPick.lastEdge?.values).toEqual({ word: 'planet' });
+  });
+
+  it('marks failures on the failing node', () => {
+    const f = reduceFrame(
+      reduceFrame(EMPTY_FRAME, {
+        type: 'node-entered',
+        step: 1,
+        nodeId: 'a',
+        kind: 'agent',
+        stateHash: 'h',
+        moveKey: 'm',
+      }),
+      {
+        type: 'run-failed',
+        error: 'boom',
+        nodeId: 'a',
+      },
+    );
+    expect(f).toMatchObject({ outcome: 'failed', error: 'boom', nodeStatus: { a: 'failed' } });
+  });
+});
+
+describe('replayPerformance', () => {
+  it.each([hangman, investigate, fix].map((p) => [p.name, p] as const))(
+    '%s reproduces exactly',
+    (_n, p) => {
+      const { score, perf } = demoRun(p);
+      const { result, divergence: d } = replayPerformance(score, perf);
+      expect(d.reproduced).toBe(true);
+      expect(result.state.events).toEqual(perf.events);
+    },
+  );
+
+  it('detects tampered answers', () => {
+    const { score, perf } = demoRun(fix);
+    const steps = perf.steps.map((s) =>
+      s.nodeId === 'verify' && s.updates?.testsPassed === false
+        ? { ...s, updates: { ...s.updates, testsPassed: true } }
+        : s,
+    );
+    const { divergence: d } = replayPerformance(score, { ...perf, steps });
+    expect(d.reproduced).toBe(false);
+    expect(d.structural).toBe(true);
+  });
+});
+
+describe('divergence', () => {
+  it('reports semantic and environmental differences', () => {
+    const { perf } = demoRun(investigate);
+    const changed = {
+      ...perf,
+      steps: perf.steps.map((s, i) =>
+        i === 1
+          ? { ...s, verdict: { ...s.verdict!, outcome: 'failed' as const }, stateHashAfter: 'x' }
+          : s,
+      ),
+    };
+    const d = divergence(perf, changed);
+    expect(d.structural).toBe(false);
+    expect(d.semantic).toEqual([{ step: 2, a: 'applied', b: 'failed' }]);
+    expect(d.environmental).toEqual([2]);
+    expect(d.reproduced).toBe(false);
+  });
+});
