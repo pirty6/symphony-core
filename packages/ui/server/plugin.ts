@@ -21,7 +21,7 @@ export function symphonyPlugin(): Plugin {
       let api: Promise<Api> | undefined
       const load = () =>
         (api ??= server.ssrLoadModule(resolve(here, 'api.ts')).then((mod) =>
-          (mod as typeof import('./api')).createApi({
+          (mod as typeof import('./api.ts')).createApi({
             repoRoot: REPO_ROOT,
             workspace: process.env.SYMPHONY_WORKSPACE ?? REPO_ROOT,
             importer: (file) => server.ssrLoadModule(file),

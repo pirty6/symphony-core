@@ -44,8 +44,6 @@ export const RUNS_DIR = '.symphony/runs'
 export const DRAFTS_DIR = 'src/patterns/drafts'
 const TERMINAL = new Set(['done', 'failed', 'cancelled'])
 
-type PatternPayload = Omit<Pattern, 'demo'>
-
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = []
   for await (const c of req) chunks.push(c as Buffer)

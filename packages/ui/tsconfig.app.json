@@ -14,6 +14,8 @@
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
+    "strict": true,
+    "paths": { "@core/*": ["../../src/core/*"] },
     "jsx": "react-jsx",
 
     /* Linting */

@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { fix, hangman } from '../../../src/patterns/index.js'
-import { createApi } from './api'
+import { createApi } from './api.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'symphony-api-'))
 let server: Server
