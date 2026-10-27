@@ -130,4 +130,20 @@ describe('validatePattern', () => {
     expect(m).toMatch(/assignment to 'confidence'/);
     expect(m).toMatch(/'calc' is unreachable/);
   });
+
+  it('validates checks and capabilities on agent nodes', () => {
+    const gather = {
+      ...base.nodes[1]!,
+      checks: [
+        { expr: 'len(nope) > 0', message: 'm' },
+        { expr: 'len(notes) >', message: '' },
+      ],
+      capabilities: ['web', 'fax'],
+    } as ScoreNode;
+    const nodes = [base.nodes[0]!, gather, ...base.nodes.slice(2)];
+    const m = messages(withNodes(nodes));
+    expect(m).toMatch(/check references unknown field\(s\): nope/);
+    expect(m).toMatch(/needs a message/);
+    expect(m).toMatch(/unknown capability 'fax'/);
+  });
 });

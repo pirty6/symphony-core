@@ -14,6 +14,7 @@ const pause: AgentPause = {
   context: { question: 'why?' },
   input: { question: 'why?', findings: [] },
   outputSchema: [{ name: 'findings', type: 'string[]', description: 'evidence' }],
+  capabilities: [],
   attempt: 2,
   maxAttempts: 2,
   feedback: ['updates.findings is required'],

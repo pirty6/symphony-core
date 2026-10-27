@@ -17,9 +17,11 @@
  */
 import { evalExpr, evaluateGuard, parseExpr } from './expr.js';
 import { hashOf } from './hash.js';
-import { checkValue, validateNodeResult, validateUpdates } from './schema.js';
+import { checkValue, validateNodeResult, validateUpdates, type Checked } from './schema.js';
 import type {
+  AcceptanceCheck,
   AgentResolution,
+  NodeResult,
   AiTranscript,
   ApprovalResolution,
   EngineEvent,
@@ -255,6 +257,7 @@ function makePause(
       context: score.context,
       input: pick(ctx.state, node.reads),
       outputSchema: fieldsOf(score, node.writes),
+      capabilities: node.capabilities ?? [],
       attempt,
       maxAttempts: 1 + (node.retries ?? DEFAULT_RETRIES),
       ...(feedback ? { feedback } : {}),
@@ -429,6 +432,24 @@ export function advance(score: ExecutableScore, st: EngineState, res: Resolution
   return fromCtx(ctx);
 }
 
+/** Evaluate acceptance checks against state as it would be after applying the answer. */
+function acceptance(
+  checks: readonly AcceptanceCheck[],
+  state: Readonly<Record<string, unknown>>,
+  value: NodeResult,
+): Checked<NodeResult> {
+  const scope = { ...state, ...value.updates, verdict: value.verdict };
+  const errors: string[] = [];
+  for (const c of checks) {
+    try {
+      if (!evaluateGuard(c.expr, scope)) errors.push(`${c.message} (check failed: ${c.expr})`);
+    } catch (e) {
+      errors.push(`${c.message} (check '${c.expr}' errored: ${(e as Error).message})`);
+    }
+  }
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, value };
+}
+
 function resolveAgent(
   score: ExecutableScore,
   ctx: Ctx,
@@ -436,7 +457,11 @@ function resolveAgent(
   pause: Extract<Pause, { kind: 'agent' }>,
   res: AgentResolution,
 ): void {
-  const checked = validateNodeResult(res.result, pause.outputSchema);
+  const shape = validateNodeResult(res.result, pause.outputSchema);
+  const checked =
+    shape.ok && node.kind === 'agent' && node.checks?.length
+      ? acceptance(node.checks, ctx.state, shape.value)
+      : shape;
   const hashBefore = stateHashOf(ctx.state, ctx.env);
   if (!checked.ok) {
     ctx.attempts = [

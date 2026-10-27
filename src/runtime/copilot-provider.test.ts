@@ -16,6 +16,7 @@ const pause: AgentPause = {
   context: {},
   input: {},
   outputSchema: [{ name: 'word', type: 'string' }],
+  capabilities: [],
   attempt: 1,
   maxAttempts: 2,
   moveKey: 'm',

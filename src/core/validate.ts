@@ -4,7 +4,13 @@
  */
 import { ExprError, exprFields, parseExpr } from './expr.js';
 import { checkValue, isFieldType, isValidFieldName } from './schema.js';
-import type { Pattern, PatternGraph, ScoreEdge, ScoreNode } from './types.js';
+import {
+  CAPABILITIES,
+  type Pattern,
+  type PatternGraph,
+  type ScoreEdge,
+  type ScoreNode,
+} from './types.js';
 
 export interface Issue {
   readonly message: string;
@@ -19,6 +25,7 @@ export interface ValidationReport {
 
 const ID = /^[A-Za-z0-9_-]+$/;
 const ROLES: ReadonlySet<string> = new Set(['assessor', 'executor']);
+const CAPS: ReadonlySet<string> = new Set(CAPABILITIES);
 
 function checkExpr(
   src: string,
@@ -152,6 +159,14 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         unknownField(n.writes, 'writes');
         if (n.retries !== undefined && (!Number.isInteger(n.retries) || n.retries < 0)) {
           errors.push({ ...at, message: 'retries must be a non-negative integer' });
+        }
+        for (const c of n.checks ?? []) {
+          if (!c.message?.trim())
+            errors.push({ ...at, message: `check '${c.expr}' needs a message` });
+          checkExpr(c.expr, guardFields, at, 'check', errors);
+        }
+        for (const cap of n.capabilities ?? []) {
+          if (!CAPS.has(cap)) errors.push({ ...at, message: `unknown capability '${cap}'` });
         }
         break;
       case 'compute':

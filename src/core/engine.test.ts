@@ -249,3 +249,61 @@ describe('engine: approvals, termination, cancel', () => {
     expect(r0.state).toEqual(snapshot);
   });
 });
+
+describe('engine: acceptance checks', () => {
+  const coverage: Pattern = {
+    name: 'cover',
+    description: 'cover every item',
+    requiredContext: [],
+    state: [
+      { name: 'batch', type: 'string[]', initial: ['a.ts', 'b.ts'] },
+      { name: 'covered', type: 'string[]' },
+    ],
+    start: 's',
+    nodes: [
+      { id: 's', kind: 'start', label: 'S' },
+      {
+        id: 'look',
+        kind: 'agent',
+        role: 'assessor',
+        label: 'Look',
+        directive: 'report on every file',
+        reads: ['batch'],
+        writes: ['covered'],
+        retries: 1,
+        capabilities: ['web'],
+        checks: [{ expr: 'subset(batch, covered)', message: 'Report on every file in batch' }],
+      },
+      { id: 'e', kind: 'end', label: 'E' },
+    ],
+    edges: [
+      { id: '1', from: 's', to: 'look' },
+      { id: '2', from: 'look', to: 'e' },
+    ],
+  };
+  const s = compileScore(coverage, { goal: 'g' });
+
+  it('passes capabilities to the pause', () => {
+    expect(createEngine(s).state.pause).toMatchObject({ capabilities: ['web'] });
+  });
+
+  it('rejects answers that skip items and re-asks with the rule', () => {
+    let r = createEngine(s);
+    r = answerAgent(s, r, ok({ covered: ['a.ts'] }));
+    expect(r.state.pause).toMatchObject({ nodeId: 'look', attempt: 2 });
+    expect(r.state.pause?.feedback?.[0]).toMatch(
+      /Report on every file in batch \(check failed: subset\(batch, covered\)\)/,
+    );
+    expect(r.state.state.covered).toEqual([]);
+    r = answerAgent(s, r, ok({ covered: ['b.ts', 'a.ts'] }));
+    expect(r.state).toMatchObject({ kind: 'done', outcome: 'success' });
+  });
+
+  it('cannot be dodged by reporting failure', () => {
+    let r = createEngine(s);
+    r = answerAgent(s, r, ok({}, { outcome: 'skipped' }));
+    r = answerAgent(s, r, ok({}, { outcome: 'failed' }));
+    expect(r.state.kind).toBe('failed');
+    expect(r.state.reason).toMatch(/Report on every file/);
+  });
+});

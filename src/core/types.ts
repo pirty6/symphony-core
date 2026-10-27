@@ -11,6 +11,16 @@
  */
 
 export type Role = 'assessor' | 'executor';
+/** Extra sources an agent node may use beyond the workspace: web search/fetch and MCP servers. */
+export type Capability = 'web' | 'mcp';
+export const CAPABILITIES: readonly Capability[] = ['web', 'mcp'];
+
+/** A rule an agent answer must satisfy, evaluated on state merged with the answer's updates. */
+export interface AcceptanceCheck {
+  readonly expr: string;
+  /** Told to the agent when the check fails. */
+  readonly message: string;
+}
 export type FieldType = 'string' | 'number' | 'boolean' | 'string[]' | 'number[]' | 'object';
 
 export const FIELD_TYPES: readonly FieldType[] = [
@@ -55,6 +65,9 @@ export interface AgentNode extends NodeBase {
   readonly writes: readonly string[];
   /** Extra attempts after an invalid response. Default 1. */
   readonly retries?: number;
+  /** Deterministic acceptance rules; an answer failing any is rejected and re-asked. */
+  readonly checks?: readonly AcceptanceCheck[];
+  readonly capabilities?: readonly Capability[];
 }
 
 /** Deterministic state update: field <- expression, evaluated in order. */
@@ -205,6 +218,7 @@ export interface AgentPause {
   /** Snapshot of `reads` keys. */
   readonly input: Readonly<Record<string, unknown>>;
   readonly outputSchema: readonly StateField[];
+  readonly capabilities: readonly Capability[];
   readonly attempt: number;
   readonly maxAttempts: number;
   /** Validation errors from the previous attempt, if any. */
