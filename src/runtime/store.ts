@@ -19,12 +19,15 @@ export async function gitFingerprint(cwd: string): Promise<string> {
   const git = async (...args: string[]) =>
     (await exec('git', args, { cwd, maxBuffer: 64 * 1024 * 1024 })).stdout;
   try {
-    const [head, status, diff] = await Promise.all([
+    const [head, status, diff, untracked] = await Promise.all([
       git('rev-parse', 'HEAD').catch(() => ''),
       git('status', '--porcelain'),
       git('diff', 'HEAD').catch(() => git('diff')),
+      git('ls-files', '--others', '--exclude-standard'),
     ]);
-    return hashOf({ head: head.trim(), status, diff });
+    const files = untracked.split('\n').filter(Boolean);
+    const blobs = files.length > 0 ? await git('hash-object', '--', ...files) : '';
+    return hashOf({ head: head.trim(), status, diff, untracked: blobs });
   } catch {
     return '';
   }
@@ -55,8 +58,12 @@ export async function saveRun(dir: string, run: SavedRun): Promise<string> {
 
 export async function loadRun(file: string): Promise<{ run: SavedRun; issues: string[] }> {
   const run = JSON.parse(await readFile(file, 'utf8')) as SavedRun;
-  const issues = run.schemaVersion === 2 ? verifyScore(run.score).map((i) => i.message) : ['not a schemaVersion 2 run'];
-  if (run.performance?.scoreId !== run.score?.id) issues.push('performance.scoreId does not match score.id');
+  const issues =
+    run.schemaVersion === 2
+      ? verifyScore(run.score).map((i) => i.message)
+      : ['not a schemaVersion 2 run'];
+  if (run.performance?.scoreId !== run.score?.id)
+    issues.push('performance.scoreId does not match score.id');
   return { run, issues };
 }
 
@@ -104,7 +111,11 @@ export function runPath(dir: string, file: string): string | undefined {
 
 // ── user patterns (TypeScript files) ───────────────────────────────
 
-export async function savePatternFile(dir: string, pattern: Pattern, typesImport: string): Promise<string> {
+export async function savePatternFile(
+  dir: string,
+  pattern: Pattern,
+  typesImport: string,
+): Promise<string> {
   const report = validatePattern(pattern);
   if (report.errors.length > 0) throw new Error(report.errors.map((e) => e.message).join('; '));
   await mkdir(dir, { recursive: true });
@@ -120,7 +131,9 @@ export async function loadPatternFiles(
 ): Promise<Pattern[]> {
   let files: string[] = [];
   try {
-    files = (await readdir(dir)).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts')).toSorted();
+    files = (await readdir(dir))
+      .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+      .toSorted();
   } catch {
     return [];
   }
