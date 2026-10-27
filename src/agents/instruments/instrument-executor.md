@@ -36,7 +36,6 @@ FILES_CREATED=src/utils/helper.ts
 FILES_MODIFIED=src/index.ts
 CHANGES_SUMMARY=Added helper function, updated import in index
 
-
 ## Exit
 
 - Exit 0: always. RESULT=BLOCKED or RESULT=PARTIAL are valid

@@ -55,11 +55,11 @@ Infer the required state from the directive and prior outputs:
 
 Read the directive. Decide staffing:
 
-| Signal | Staffing |
-|--------|----------|
-| Single concern, clear action | 1 instrument |
-| Multiple concerns, independent | N instruments in parallel |
-| Dependent concerns (A feeds B) | N instruments in sequence |
+| Signal                         | Staffing                                               |
+| ------------------------------ | ------------------------------------------------------ |
+| Single concern, clear action   | 1 instrument                                           |
+| Multiple concerns, independent | N instruments in parallel                              |
+| Dependent concerns (A feeds B) | N instruments in sequence                              |
 | Conflicting evidence in priors | 2+ instruments with DIFFERENT prompts on same question |
 
 ### 2. Write Instrument Prompts
@@ -79,11 +79,11 @@ Each MUST exit 0. A non-zero exit from any instrument = EXIT 1 (error).
 
 After all instruments return:
 
-| Situation | Action |
-| ----------- | -------- |
-| All agree, clear result | Synthesize verdict → EXIT 0 |
+| Situation                            | Action                               |
+| ------------------------------------ | ------------------------------------ |
+| All agree, clear result              | Synthesize verdict → EXIT 0          |
 | Contradiction or high-risk ambiguity | Surface conflict → EXIT 2 (judgment) |
-| Any instrument error | EXIT 1 |
+| Any instrument error                 | EXIT 1                               |
 
 ### 5. Return
 

@@ -7,18 +7,18 @@
  */
 
 export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    if (value === undefined) return 'null';
-    if (typeof value === 'number' && !Number.isFinite(value)) return 'null';
+  if (value === null || typeof value !== "object") {
+    if (value === undefined) return "null";
+    if (typeof value === "number" && !Number.isFinite(value)) return "null";
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((v) => canonicalJson(v)).join(',')}]`;
+    return `[${value.map((v) => canonicalJson(v)).join(",")}]`;
   }
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, v]) => v !== undefined)
     .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`;
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
 }
 
 const K = new Uint32Array([
@@ -91,7 +91,7 @@ export function sha256(input: string): string {
     h[6] = (h[6]! + g) >>> 0;
     h[7] = (h[7]! + hh) >>> 0;
   }
-  return Array.from(h, (x) => x.toString(16).padStart(8, '0')).join('');
+  return Array.from(h, (x) => x.toString(16).padStart(8, "0")).join("");
 }
 
 export function hashOf(value: unknown): string {
