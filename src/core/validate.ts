@@ -229,6 +229,34 @@ export function validateGraph(g: PatternGraph): ValidationReport {
   if (g.maxSteps !== undefined && (!Number.isInteger(g.maxSteps) || g.maxSteps < 1)) {
     errors.push({ message: 'maxSteps must be a positive integer' });
   }
+  const grouped = new Set<string>();
+  const groupIds = new Set<string>();
+  for (const grp of g.groups ?? []) {
+    if (!ID.test(grp.id)) errors.push({ message: `invalid phase id '${grp.id}'` });
+    if (groupIds.has(grp.id) || nodes.has(grp.id)) {
+      errors.push({ message: `phase id '${grp.id}' clashes with another phase or node` });
+    }
+    groupIds.add(grp.id);
+    if (!grp.label?.trim()) errors.push({ message: `phase '${grp.id}' needs a label` });
+    if (grp.nodes.length === 0) errors.push({ message: `phase '${grp.id}' has no steps` });
+    for (const id of grp.nodes) {
+      const n = nodes.get(id);
+      if (!n) errors.push({ message: `phase '${grp.id}' lists unknown node '${id}'` });
+      else if (n.kind === 'start')
+        errors.push({ nodeId: id, message: 'the start node cannot be inside a phase' });
+      if (grouped.has(id))
+        errors.push({ nodeId: id, message: `node '${id}' is in more than one phase` });
+      grouped.add(id);
+    }
+  }
+  for (const n of g.nodes) {
+    if (n.kind === 'approval') {
+      for (const k of n.shows ?? []) {
+        if (!fieldNames.has(k))
+          errors.push({ nodeId: n.id, message: `shows unknown state field '${k}'` });
+      }
+    }
+  }
   if (g.complexity !== undefined && ![1, 2, 3, 4].includes(g.complexity)) {
     errors.push({ message: 'complexity must be 1, 2, 3 or 4' });
   }

@@ -328,6 +328,7 @@ function makePause(
     label: node.label,
     message: node.message,
     state: ctx.state,
+    shows: node.shows ?? [],
     outputSchema: fieldsOf(score, node.writes),
     ...(feedback ? { feedback } : {}),
     moveKey,

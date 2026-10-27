@@ -180,6 +180,13 @@ export async function sourceCatalog(
 ): Promise<{ names: string[]; descriptions: string[] }> {
   const entries: [string, string][] = [];
   const ws = ctx.workspace;
+  const inventory = await listRepoFiles(ws, { signal: ctx.signal }).catch(() => undefined);
+  if (inventory && inventory.files.length > 0) {
+    entries.push([
+      'workspace',
+      `${inventory.files.length} files in this workspace: every one is triaged and the relevant ones read completely`,
+    ]);
+  }
   try {
     const count = (await run('git', ['rev-list', '--count', 'HEAD'], ws, ctx.signal)).trim();
     entries.push([
@@ -225,6 +232,10 @@ export async function sourceCatalog(
   entries.push([
     'web',
     'the public internet: web_search(query) to find pages, web_fetch(url) to read them',
+  ]);
+  entries.push([
+    'experiment',
+    'run commands in the workspace to reproduce behaviour or measure performance (benchmarks, timing, profiling); needs your approval; scratch files only',
   ]);
   const mcp = await discoverMcpServers({ ...opts.mcp, workspace: ws });
   for (const name of Object.keys(mcp.servers).toSorted()) {

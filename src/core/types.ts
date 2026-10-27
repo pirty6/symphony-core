@@ -101,6 +101,8 @@ export interface ApprovalNode extends NodeBase {
   readonly message: string;
   /** State keys the human provides when approving (may be empty). */
   readonly writes: readonly string[];
+  /** State keys to show the human before they decide. */
+  readonly shows?: readonly string[];
 }
 
 /**
@@ -176,6 +178,17 @@ export interface ApprovalAnswer {
   readonly updates?: Readonly<Record<string, unknown>>;
 }
 
+/**
+ * A phase: a named group of steps shown as one collapsible node on the canvas
+ * ("List evidence", "Deep read"). Purely structural; the engine ignores it.
+ */
+export interface ScoreGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly nodes: readonly string[];
+}
+
 export interface PatternGraph {
   readonly state: readonly StateField[];
   readonly nodes: readonly ScoreNode[];
@@ -187,6 +200,8 @@ export interface PatternGraph {
   readonly complexity?: Complexity;
   /** Default improvisation level. */
   readonly improvisation?: Improvisation;
+  /** Phases: named groups of nodes, collapsed into one node on the canvas. */
+  readonly groups?: readonly ScoreGroup[];
 }
 
 export interface Pattern extends PatternGraph {
@@ -290,6 +305,7 @@ export interface ApprovalPause {
   readonly label: string;
   readonly message: string;
   readonly state: Readonly<Record<string, unknown>>;
+  readonly shows: readonly string[];
   readonly outputSchema: readonly StateField[];
   readonly feedback?: readonly string[];
   readonly moveKey: string;

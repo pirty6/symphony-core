@@ -57,6 +57,7 @@ export function scoreId(score: Hashable): string {
     initialState: score.initialState,
     complexity: score.complexity,
     improvisation: score.improvisation,
+    groups: score.groups,
   });
 }
 
@@ -107,6 +108,7 @@ export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableSco
     maxSteps: pattern.maxSteps ?? DEFAULT_MAX_STEPS,
     complexity: args.complexity ?? pattern.complexity ?? DEFAULT_COMPLEXITY,
     improvisation: args.improvisation ?? pattern.improvisation ?? 0,
+    ...(pattern.groups ? { groups: pattern.groups } : {}),
     initialState,
   });
   return deepFreeze({

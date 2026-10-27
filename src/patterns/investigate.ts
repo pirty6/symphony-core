@@ -10,21 +10,25 @@ const v = (reason: string, confidence = 0.9) => ({
 const RELEVANT = /engine|schema|validate/;
 
 /**
- * Thorough investigation. Coverage is owned by the engine, not the AI:
+ * Thorough investigation that adapts its evidence to the question. The engine
+ * owns every work queue; the planner only decides which kinds of evidence apply:
  *
- *   catalog + inventory (tools)   every source available, every file in the workspace
- *   plan                          AI splits the question and picks the best sources; every
- *                                 source must be used or explicitly skipped with a reason
- *   triage loop                   every file, in batches; an answer that leaves out a file is rejected
- *   deep-read loop                every relevant file read fully, following references and history
- *   source loop                   every chosen source searched (git history, GitHub, deps, web, MCP, ...)
- *   gap loop                      unanswered sub-questions get targeted research (bounded)
- *   answer                        cites evidence and reports coverage and what is still open
+ *   Plan research    list the evidence sources available; the AI splits the question and
+ *                    decides, with a reason for every skip, which sources it needs
+ *   List evidence    only what the plan needs: every workspace file (repo questions), the web
+ *                    pages worth reading (internet questions), experiments to run (behaviour
+ *                    or performance questions)
+ *   Triage files     every listed file, in batches; an answer that skips a file is rejected
+ *   Deep read        every relevant file and every listed page, read completely
+ *   Run experiments  after your approval, each experiment is run and measured
+ *   Search sources   history, GitHub, dependencies, MCP: each chosen source searched
+ *   Close gaps       unanswered sub-questions get targeted research, then a human hint
+ *   Answer           cited, with a coverage report
  */
 export const investigate: Pattern = {
   name: 'investigate',
   description:
-    'Answer a question exhaustively: triage every file, deep-read the relevant ones, search every useful source (history, GitHub, dependencies, web, MCP), close gaps, cite evidence.',
+    'Answer a question exhaustively with the evidence it needs: repo files, web pages, experiments, history, GitHub, dependencies, MCP. Nothing listed is skipped; every claim is cited.',
   verbTriggers: ['investigate', 'explain', 'why', 'how does', 'find out', 'research'],
   requiredContext: ['question'],
   maxSteps: 5000,
@@ -33,13 +37,19 @@ export const investigate: Pattern = {
     { name: 'hint', type: 'string', description: 'Optional human clarification' },
     { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
     { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
-    { name: 'repoFiles', type: 'string[]', description: 'Every file in the workspace' },
-    { name: 'excludedFiles', type: 'string[]', description: 'Files not triaged, with reasons' },
     { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
     { name: 'searchTerms', type: 'string[]', description: 'Queries for search-based sources' },
-    { name: 'useSources', type: 'string[]', description: 'Sources to search' },
-    { name: 'skipSources', type: 'string[]', description: 'Sources not searched' },
+    { name: 'useSources', type: 'string[]', description: 'Sources to use' },
+    { name: 'skipSources', type: 'string[]', description: 'Sources not used' },
     { name: 'skipReasons', type: 'string[]', description: 'Why each skipped source was skipped' },
+    { name: 'repoFiles', type: 'string[]', description: 'Every file in the workspace' },
+    { name: 'excludedFiles', type: 'string[]', description: 'Files not triaged, with reasons' },
+    { name: 'pages', type: 'string[]', description: 'Web pages to read in full (URLs)' },
+    {
+      name: 'experiments',
+      type: 'string[]',
+      description: 'Experiments to run: command, what it measures',
+    },
     { name: 'batchSize', type: 'number', initial: 25 },
     { name: 'pendingFiles', type: 'string[]' },
     { name: 'batch', type: 'string[]', description: 'Files to triage now' },
@@ -48,12 +58,15 @@ export const investigate: Pattern = {
     { name: 'relevantFiles', type: 'string[]' },
     { name: 'deepBatchSize', type: 'number', initial: 4 },
     { name: 'pendingDeep', type: 'string[]' },
-    { name: 'deepBatch', type: 'string[]', description: 'Files to read completely now' },
-    { name: 'examined', type: 'string[]', description: 'Files of the deep batch read completely' },
+    { name: 'deepBatch', type: 'string[]', description: 'Files and pages to read completely now' },
+    { name: 'examined', type: 'string[]', description: 'Items of the deep batch read completely' },
+    { name: 'pendingExperiments', type: 'string[]' },
+    { name: 'currentExperiment', type: 'string', description: 'Experiment to run now' },
+    { name: 'ran', type: 'string[]', description: 'Experiments run' },
     { name: 'pendingSources', type: 'string[]' },
     { name: 'currentSource', type: 'string', description: 'Source to search now' },
     { name: 'queries', type: 'string[]', description: 'Queries, commands and tool calls made' },
-    { name: 'consulted', type: 'string[]', description: 'Sources searched, with what was asked' },
+    { name: 'consulted', type: 'string[]', description: 'Sources searched' },
     { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
     { name: 'findings', type: 'string[]', description: 'All evidence, each with its location' },
     { name: 'gaps', type: 'string[]', description: 'Sub-questions without enough evidence' },
@@ -64,6 +77,66 @@ export const investigate: Pattern = {
     { name: 'openQuestions', type: 'string[]', description: 'Sub-questions still unanswered' },
   ],
   start: 'start',
+  groups: [
+    {
+      id: 'planPhase',
+      label: 'Plan research',
+      description: 'Available sources, sub-questions, which evidence applies',
+      nodes: ['catalog', 'plan', 'queue'],
+    },
+    {
+      id: 'listPhase',
+      label: 'List evidence',
+      description: 'Only what the plan needs: workspace files, web pages, experiments',
+      nodes: [
+        'needFiles',
+        'inventory',
+        'queueFiles',
+        'needWeb',
+        'listPages',
+        'needExperiments',
+        'designExperiments',
+      ],
+    },
+    {
+      id: 'triagePhase',
+      label: 'Triage files',
+      description: 'Every listed file, in batches',
+      nodes: ['filesLeft', 'takeBatch', 'triage', 'mergeTriage'],
+    },
+    {
+      id: 'deepPhase',
+      label: 'Deep read',
+      description: 'Every relevant file and listed page, completely',
+      nodes: ['deepQueue', 'deepLeft', 'takeDeep', 'deepRead', 'mergeDeep'],
+    },
+    {
+      id: 'experimentPhase',
+      label: 'Run experiments',
+      description: 'With your approval, run and measure',
+      nodes: [
+        'hasExperiments',
+        'allowExperiments',
+        'queueExperiments',
+        'experimentsLeft',
+        'takeExperiment',
+        'experiment',
+        'mergeExperiment',
+      ],
+    },
+    {
+      id: 'sourcePhase',
+      label: 'Search sources',
+      description: 'History, GitHub, dependencies, MCP',
+      nodes: ['sourcesLeft', 'takeSource', 'sweep', 'mergeSource'],
+    },
+    {
+      id: 'gapPhase',
+      label: 'Close gaps',
+      description: 'Targeted research, then a human hint',
+      nodes: ['assess', 'moreGaps', 'chase', 'mergeChase', 'confident', 'clarify', 'useHint'],
+    },
+  ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
     {
@@ -74,20 +147,13 @@ export const investigate: Pattern = {
       output: { names: 'sourceNames', descriptions: 'sourceInfo' },
     },
     {
-      id: 'inventory',
-      kind: 'tool',
-      label: 'List every file',
-      tool: 'repo.files',
-      output: { files: 'repoFiles', excluded: 'excludedFiles' },
-    },
-    {
       id: 'plan',
       kind: 'agent',
       role: 'assessor',
       label: 'Plan research',
       directive:
-        'Plan a thorough investigation of `question` (use `hint` if set). Split it into concrete sub-questions. Every workspace file will be triaged regardless of your plan; your job is to choose which ADDITIONAL sources from `sourceInfo` are the best fit. Prefer using a source over skipping it: skip only when it cannot plausibly hold relevant evidence, and say why. Write `searchTerms` as concrete queries for web, GitHub, history and MCP searches.',
-      reads: ['question', 'hint', 'sourceNames', 'sourceInfo', 'excludedFiles'],
+        'Plan a thorough investigation of `question` (use `hint` if set). Split it into concrete sub-questions. Then decide, for EVERY source in `sourceInfo`, whether it can hold evidence for this question: put it in `useSources` or in `skipSources` with one reason per skip in `skipReasons`. Match the evidence to the question: questions about this codebase need `workspace`; questions about the outside world (libraries, standards, other projects) need `web`; questions about behaviour or performance (does it work, why is it slow, which is faster) need `experiment` to reproduce or measure; why-questions about code usually need `git-history`. Prefer using a source over skipping it. Write `searchTerms` as concrete queries for web, GitHub, history and MCP searches.',
+      reads: ['question', 'hint', 'sourceNames', 'sourceInfo'],
       writes: ['subQuestions', 'searchTerms', 'useSources', 'skipSources', 'skipReasons'],
       retries: 2,
       checks: [
@@ -113,16 +179,76 @@ export const investigate: Pattern = {
           message:
             'Give exactly one reason in skipReasons per entry in skipSources, in the same order.',
         },
+        { expr: 'len(useSources) > 0', message: 'Use at least one source.' },
       ],
     },
     {
       id: 'queue',
       kind: 'compute',
-      label: 'Queue work',
+      label: 'Queue sources',
       assign: [
-        { field: 'pendingFiles', expr: 'repoFiles' },
-        { field: 'pendingSources', expr: 'unique(useSources)' },
+        {
+          field: 'pendingSources',
+          expr: 'without(unique(useSources), ["workspace", "web", "experiment"])',
+        },
       ],
+    },
+    {
+      id: 'needFiles',
+      kind: 'condition',
+      label: 'Workspace?',
+      expression: 'includes(useSources, "workspace")',
+    },
+    {
+      id: 'inventory',
+      kind: 'tool',
+      label: 'List every file',
+      tool: 'repo.files',
+      output: { files: 'repoFiles', excluded: 'excludedFiles' },
+    },
+    {
+      id: 'queueFiles',
+      kind: 'compute',
+      label: 'Queue files',
+      assign: [{ field: 'pendingFiles', expr: 'repoFiles' }],
+    },
+    { id: 'needWeb', kind: 'condition', label: 'Web?', expression: 'includes(useSources, "web")' },
+    {
+      id: 'listPages',
+      kind: 'agent',
+      role: 'assessor',
+      capabilities: ['web'],
+      label: 'List web pages',
+      directive:
+        'For EVERY sub-question, search the web with several queries (start from `searchTerms`) and list the pages worth reading in full: official documentation, changelogs, issue and discussion threads, benchmarks, papers. Look past the first results. Put one URL per entry in `pages`, most authoritative first (at most 15). Record every query in `queries`.',
+      reads: ['question', 'subQuestions', 'searchTerms'],
+      writes: ['pages', 'queries'],
+      retries: 2,
+      checks: [
+        {
+          expr: 'len(pages) > 0',
+          message: 'List at least one page to read, or explain in queries what you searched.',
+        },
+        { expr: 'len(queries) > 0', message: 'Record every query you made in queries.' },
+      ],
+    },
+    {
+      id: 'needExperiments',
+      kind: 'condition',
+      label: 'Experiments?',
+      expression: 'includes(useSources, "experiment")',
+    },
+    {
+      id: 'designExperiments',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Design experiments',
+      directive:
+        'Design the experiments that would answer the behaviour or performance parts of `question`: each entry of `experiments` is one experiment as "command(s) to run — what it measures or reproduces — how to read the result". Make them fair and repeatable (same inputs, warm-up, at least 3 timed repetitions for performance). Never anything that edits tracked files, installs globally, or needs secrets.',
+      reads: ['question', 'subQuestions', 'sourceInfo'],
+      writes: ['experiments'],
+      retries: 2,
+      checks: [{ expr: 'len(experiments) > 0', message: 'Design at least one experiment.' }],
     },
     {
       id: 'filesLeft',
@@ -174,7 +300,7 @@ export const investigate: Pattern = {
       id: 'deepQueue',
       kind: 'compute',
       label: 'Queue deep reads',
-      assign: [{ field: 'pendingDeep', expr: 'unique(relevantFiles)' }],
+      assign: [{ field: 'pendingDeep', expr: 'unique(relevantFiles + pages)' }],
     },
     {
       id: 'deepLeft',
@@ -195,16 +321,17 @@ export const investigate: Pattern = {
       id: 'deepRead',
       kind: 'agent',
       role: 'assessor',
+      capabilities: ['web'],
       label: 'Deep read',
       directive:
-        'Read every file in `deepBatch` completely, line by line. Follow references out of them: imports, callers, tests, config, and the history of the relevant lines (git log -p, git blame). Record every fact that bears on the question as "path:line — fact" in `newFindings`, without repeating `findings`. List each file of `deepBatch` you read completely in `examined`.',
+        'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`, without repeating `findings`. List each item of `deepBatch` you read completely in `examined`.',
       reads: ['question', 'subQuestions', 'deepBatch', 'findings'],
       writes: ['examined', 'newFindings'],
       retries: 2,
       checks: [
         {
           expr: 'subset(deepBatch, examined)',
-          message: 'Read EVERY file of deepBatch completely and list it in examined.',
+          message: 'Read EVERY item of deepBatch completely and list it in examined.',
         },
       ],
     },
@@ -213,6 +340,70 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Record deep read',
       assign: [{ field: 'findings', expr: 'findings + newFindings' }],
+    },
+    {
+      id: 'hasExperiments',
+      kind: 'condition',
+      label: 'Experiments listed?',
+      expression: 'len(experiments) > 0',
+    },
+    {
+      id: 'allowExperiments',
+      kind: 'approval',
+      label: 'Allow experiments?',
+      message:
+        'These experiments run commands in your workspace (scratch files only). Approve to run them, or reject to skip them.',
+      writes: [],
+      shows: ['experiments'],
+    },
+    {
+      id: 'queueExperiments',
+      kind: 'compute',
+      label: 'Queue experiments',
+      assign: [{ field: 'pendingExperiments', expr: 'experiments' }],
+    },
+    {
+      id: 'experimentsLeft',
+      kind: 'condition',
+      label: 'Experiments left?',
+      expression: 'len(pendingExperiments) > 0',
+    },
+    {
+      id: 'takeExperiment',
+      kind: 'compute',
+      label: 'Next experiment',
+      assign: [
+        { field: 'currentExperiment', expr: 'first(pendingExperiments)' },
+        { field: 'pendingExperiments', expr: 'drop(pendingExperiments, 1)' },
+      ],
+    },
+    {
+      id: 'experiment',
+      kind: 'agent',
+      role: 'executor',
+      maxVisits: 20,
+      label: 'Run experiment',
+      directive:
+        'Run `currentExperiment` in the workspace. Do not modify tracked files: put any scripts and output under .symphony/scratch/. For timings, warm up once and report the median of at least 3 runs with the raw numbers. Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings`. If it cannot run, say exactly why in `newFindings`.',
+      reads: ['question', 'currentExperiment'],
+      writes: ['queries', 'newFindings'],
+      retries: 1,
+      checks: [
+        { expr: 'len(queries) > 0', message: 'Record the commands you ran in queries.' },
+        {
+          expr: 'len(newFindings) > 0',
+          message: 'Report the results (or why the experiment could not run) in newFindings.',
+        },
+      ],
+    },
+    {
+      id: 'mergeExperiment',
+      kind: 'compute',
+      label: 'Record experiment',
+      assign: [
+        { field: 'findings', expr: 'findings + newFindings' },
+        { field: 'ran', expr: 'append(ran, currentExperiment)' },
+      ],
     },
     {
       id: 'sourcesLeft',
@@ -346,7 +537,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Write answer',
       directive:
-        'Answer `question` using only `findings`, citing evidence inline (path:line, URL, issue/PR #, commit). End with a "Coverage" section: files triaged and excluded (`excludedFiles`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put every unanswered sub-question in `openQuestions`.',
+        'Answer `question` using only `findings`, citing evidence inline (path:line, URL, issue/PR #, commit, experiment). End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put every unanswered sub-question in `openQuestions`.',
       reads: [
         'question',
         'subQuestions',
@@ -356,6 +547,8 @@ export const investigate: Pattern = {
         'skipSources',
         'skipReasons',
         'excludedFiles',
+        'pages',
+        'ran',
         'confidence',
       ],
       writes: ['answer', 'openQuestions'],
@@ -372,10 +565,24 @@ export const investigate: Pattern = {
   ],
   edges: [
     { id: 'start-catalog', from: 'start', to: 'catalog' },
-    { id: 'catalog-inventory', from: 'catalog', to: 'inventory' },
-    { id: 'inventory-plan', from: 'inventory', to: 'plan' },
+    { id: 'catalog-plan', from: 'catalog', to: 'plan' },
     { id: 'plan-queue', from: 'plan', to: 'queue' },
-    { id: 'queue-filesLeft', from: 'queue', to: 'filesLeft' },
+    { id: 'queue-needFiles', from: 'queue', to: 'needFiles' },
+    { id: 'needFiles-inventory', from: 'needFiles', to: 'inventory', branch: 'then' },
+    { id: 'needFiles-needWeb', from: 'needFiles', to: 'needWeb', branch: 'else' },
+    { id: 'inventory-queueFiles', from: 'inventory', to: 'queueFiles' },
+    { id: 'queueFiles-needWeb', from: 'queueFiles', to: 'needWeb' },
+    { id: 'needWeb-listPages', from: 'needWeb', to: 'listPages', branch: 'then' },
+    { id: 'needWeb-needExperiments', from: 'needWeb', to: 'needExperiments', branch: 'else' },
+    { id: 'listPages-needExperiments', from: 'listPages', to: 'needExperiments' },
+    {
+      id: 'needExperiments-design',
+      from: 'needExperiments',
+      to: 'designExperiments',
+      branch: 'then',
+    },
+    { id: 'needExperiments-filesLeft', from: 'needExperiments', to: 'filesLeft', branch: 'else' },
+    { id: 'design-filesLeft', from: 'designExperiments', to: 'filesLeft' },
     { id: 'filesLeft-takeBatch', from: 'filesLeft', to: 'takeBatch', branch: 'then' },
     { id: 'filesLeft-deepQueue', from: 'filesLeft', to: 'deepQueue', branch: 'else' },
     { id: 'takeBatch-triage', from: 'takeBatch', to: 'triage' },
@@ -383,10 +590,36 @@ export const investigate: Pattern = {
     { id: 'mergeTriage-filesLeft', from: 'mergeTriage', to: 'filesLeft', label: 'next batch' },
     { id: 'deepQueue-deepLeft', from: 'deepQueue', to: 'deepLeft' },
     { id: 'deepLeft-takeDeep', from: 'deepLeft', to: 'takeDeep', branch: 'then' },
-    { id: 'deepLeft-sourcesLeft', from: 'deepLeft', to: 'sourcesLeft', branch: 'else' },
+    { id: 'deepLeft-hasExperiments', from: 'deepLeft', to: 'hasExperiments', branch: 'else' },
     { id: 'takeDeep-deepRead', from: 'takeDeep', to: 'deepRead' },
     { id: 'deepRead-mergeDeep', from: 'deepRead', to: 'mergeDeep' },
-    { id: 'mergeDeep-deepLeft', from: 'mergeDeep', to: 'deepLeft', label: 'next file' },
+    { id: 'mergeDeep-deepLeft', from: 'mergeDeep', to: 'deepLeft', label: 'next' },
+    { id: 'hasExperiments-allow', from: 'hasExperiments', to: 'allowExperiments', branch: 'then' },
+    { id: 'hasExperiments-sourcesLeft', from: 'hasExperiments', to: 'sourcesLeft', branch: 'else' },
+    {
+      id: 'allow-queueExperiments',
+      from: 'allowExperiments',
+      to: 'queueExperiments',
+      branch: 'approved',
+    },
+    {
+      id: 'allow-sourcesLeft',
+      from: 'allowExperiments',
+      to: 'sourcesLeft',
+      branch: 'rejected',
+      label: 'skipped',
+    },
+    { id: 'queueExperiments-left', from: 'queueExperiments', to: 'experimentsLeft' },
+    { id: 'experimentsLeft-take', from: 'experimentsLeft', to: 'takeExperiment', branch: 'then' },
+    {
+      id: 'experimentsLeft-sourcesLeft',
+      from: 'experimentsLeft',
+      to: 'sourcesLeft',
+      branch: 'else',
+    },
+    { id: 'takeExperiment-experiment', from: 'takeExperiment', to: 'experiment' },
+    { id: 'experiment-merge', from: 'experiment', to: 'mergeExperiment' },
+    { id: 'mergeExperiment-left', from: 'mergeExperiment', to: 'experimentsLeft', label: 'next' },
     { id: 'sourcesLeft-takeSource', from: 'sourcesLeft', to: 'takeSource', branch: 'then' },
     { id: 'sourcesLeft-assess', from: 'sourcesLeft', to: 'assess', branch: 'else' },
     { id: 'takeSource-sweep', from: 'takeSource', to: 'sweep' },
@@ -409,10 +642,12 @@ export const investigate: Pattern = {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
       catalog: () => ({
-        names: ['git-history', 'web', 'prior-runs'],
+        names: ['workspace', 'git-history', 'web', 'experiment', 'prior-runs'],
         descriptions: [
+          'workspace: 5 files in this workspace',
           'git-history: commit history and blame',
           'web: web_search(query) and web_fetch(url)',
+          'experiment: run commands to reproduce or measure',
           'prior-runs: earlier Symphony runs',
         ],
       }),
@@ -430,7 +665,9 @@ export const investigate: Pattern = {
     agents: {
       plan: (s) => {
         const names = (s.sourceNames as string[]) ?? [];
-        const skip = names.filter((n) => n === 'prior-runs' || n.startsWith('mcp:'));
+        const skip = names.filter(
+          (n) => n === 'prior-runs' || n === 'experiment' || n.startsWith('mcp:'),
+        );
         return {
           updates: {
             subQuestions: [
@@ -440,11 +677,33 @@ export const investigate: Pattern = {
             searchTerms: ['validateNodeResult', 'deterministic state machine validation'],
             useSources: names.filter((n) => !skip.includes(n)),
             skipSources: skip,
-            skipReasons: skip.map((n) => `${n} is unlikely to explain this code`),
+            skipReasons: skip.map((n) => `${n} cannot explain where code validates answers`),
           },
           verdict: v('planned'),
         };
       },
+      listPages: () => ({
+        updates: {
+          pages: ['https://en.wikipedia.org/wiki/Finite-state_machine'],
+          queries: ['web_search: validate before state transition'],
+        },
+        verdict: v('pages listed'),
+      }),
+      designExperiments: () => ({
+        updates: {
+          experiments: [
+            'npm test -- src/core/engine.test.ts — does an invalid answer change state? — expect 0 changes',
+          ],
+        },
+        verdict: v('designed'),
+      }),
+      experiment: (s) => ({
+        updates: {
+          queries: [String(s.currentExperiment).split(' — ')[0] ?? 'npm test'],
+          newFindings: ['experiment | npm test — 0 state changes after an invalid answer (3 runs)'],
+        },
+        verdict: v('ran'),
+      }),
       triage: (s) => {
         const batch = (s.batch as string[]) ?? [];
         const relevant = batch.filter((f) => RELEVANT.test(f));
@@ -463,9 +722,11 @@ export const investigate: Pattern = {
           updates: {
             examined: batch,
             newFindings: batch.map((f) =>
-              f.endsWith('schema.ts')
-                ? `${f}:115 — validateNodeResult checks verdict and typed updates`
-                : `${f}:1 — reviewed fully`,
+              f.startsWith('http')
+                ? `${f} — state machines apply transitions only on valid input`
+                : f.endsWith('schema.ts')
+                  ? `${f}:115 — validateNodeResult checks verdict and typed updates`
+                  : `${f}:1 — reviewed fully`,
             ),
           },
           verdict: v('read fully'),
@@ -511,6 +772,7 @@ export const investigate: Pattern = {
       }),
     },
     approvals: {
+      allowExperiments: () => ({ approved: true }),
       clarify: () => ({ approved: true, updates: { hint: 'look at src/core/schema.ts' } }),
     },
   },

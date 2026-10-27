@@ -2,7 +2,7 @@
  * Pattern <-> visual graph conversion and a deterministic layered layout.
  * Pure, framework-free shapes that map 1:1 onto React Flow nodes/edges.
  */
-import type { Branch, NodeKind, PatternGraph, ScoreEdge, ScoreNode } from './types.js';
+import type { Branch, NodeKind, PatternGraph, ScoreEdge, ScoreGroup, ScoreNode } from './types.js';
 
 export interface VisualNode {
   readonly id: string;
@@ -263,4 +263,126 @@ export interface VisualEdgeLike {
   readonly target: string;
   readonly sourceHandle?: string | null;
   readonly data?: { readonly edge?: ScoreEdge };
+}
+
+// ── phases (collapsible groups) ─────────────────────────────────────
+
+export const NODE_WIDTH = 230;
+
+export interface PhaseNode {
+  readonly id: string;
+  /** 'node' = a real step, 'phase' = a collapsed group. */
+  readonly kind: 'node' | 'phase';
+  readonly position: { readonly x: number; readonly y: number };
+  readonly group?: ScoreGroup;
+  /** Real node ids it stands for (one for a step, all members for a phase). */
+  readonly members: readonly string[];
+}
+
+export interface PhaseEdge {
+  readonly id: string;
+  readonly source: string;
+  readonly target: string;
+  readonly sourceHandle?: Branch;
+  readonly label?: string;
+  /** Original edge ids drawn by this edge. */
+  readonly members: readonly string[];
+  readonly back: boolean;
+}
+
+export interface PhaseView {
+  readonly nodes: readonly PhaseNode[];
+  readonly edges: readonly PhaseEdge[];
+}
+
+/** The graph with the groups not in `expanded` drawn as one node each, laid out top-down. */
+export function phaseView(graph: PatternGraph, expanded: ReadonlySet<string>): PhaseView {
+  const collapsed = (graph.groups ?? []).filter((g) => !expanded.has(g.id) && g.nodes.length > 0);
+  const owner = new Map<string, ScoreGroup>();
+  for (const g of collapsed) for (const id of g.nodes) owner.set(id, g);
+  const site = (id: string) => owner.get(id)?.id ?? id;
+
+  const nodes: ScoreNode[] = [
+    ...graph.nodes.filter((n) => !owner.has(n.id)),
+    ...collapsed.map(
+      (g): ScoreNode => ({ id: g.id, kind: 'tool', label: g.label, tool: '', output: {} }),
+    ),
+  ];
+  const edges: (ScoreEdge & { members: string[] })[] = [];
+  for (const e of graph.edges) {
+    const from = site(e.from);
+    const to = site(e.to);
+    if (from === to && owner.has(e.from)) continue;
+    const branch = owner.has(e.from) ? undefined : e.branch;
+    const same = edges.find((x) => x.from === from && x.to === to && x.branch === branch);
+    if (same) {
+      same.members.push(e.id);
+      continue;
+    }
+    edges.push({
+      id: e.id,
+      from,
+      to,
+      ...(branch ? { branch } : {}),
+      ...(!owner.has(e.from) && e.label ? { label: e.label } : {}),
+      ...(!owner.has(e.from) && e.guard ? { guard: e.guard } : {}),
+      members: [e.id],
+    });
+  }
+  const reduced: PatternGraph = { state: graph.state, nodes, edges, start: graph.start };
+  const pos = layout(reduced);
+  const depth = depths(reduced);
+  return {
+    nodes: nodes.map((n) => {
+      const g = collapsed.find((x) => x.id === n.id);
+      return g
+        ? { id: g.id, kind: 'phase', position: pos.get(g.id)!, group: g, members: [...g.nodes] }
+        : { id: n.id, kind: 'node', position: pos.get(n.id)!, members: [n.id] };
+    }),
+    edges: edges.map((e): PhaseEdge => {
+      const edge: { -readonly [K in keyof PhaseEdge]: PhaseEdge[K] } = {
+        id: e.id,
+        source: e.from,
+        target: e.to,
+        members: e.members,
+        back: (depth.get(e.to) ?? 0) <= (depth.get(e.from) ?? 0),
+      };
+      const label = e.label ?? e.guard;
+      if (e.branch) edge.sourceHandle = e.branch;
+      if (label) edge.label = label;
+      return edge;
+    }),
+  };
+}
+
+export interface GroupFrame {
+  readonly id: string;
+  readonly label: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Bounding boxes of expanded groups, so the canvas can draw a frame behind their steps. */
+export function groupFrames(
+  graph: PatternGraph,
+  positions: ReadonlyMap<string, { readonly x: number; readonly y: number }>,
+  groups: readonly ScoreGroup[] = graph.groups ?? [],
+  pad = 24,
+): GroupFrame[] {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  return groups.flatMap((g) => {
+    const boxes = g.nodes.flatMap((id) => {
+      const p = positions.get(id);
+      const n = byId.get(id);
+      return p && n ? [{ x: p.x, y: p.y, w: NODE_WIDTH, h: estimateHeight(n) }] : [];
+    });
+    if (boxes.length === 0) return [];
+    const x = Math.min(...boxes.map((b) => b.x)) - pad;
+    const y = Math.min(...boxes.map((b) => b.y)) - pad - 18;
+    const right = Math.max(...boxes.map((b) => b.x + b.w)) + pad;
+    const bottom = Math.max(...boxes.map((b) => b.y + b.h)) + pad;
+    return [{ id: g.id, label: g.label, x, y, width: right - x, height: bottom - y }];
+  });
 }

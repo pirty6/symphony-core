@@ -43,12 +43,13 @@ describe('pattern library', () => {
       .filter((s) => s.nodeId === 'deepRead')
       .flatMap((s) => s.updates?.examined as string[]);
     expect(examined.toSorted()).toEqual([
+      'https://en.wikipedia.org/wiki/Finite-state_machine',
       'src/core/engine.ts',
       'src/core/schema.ts',
       'src/core/validate.ts',
     ]);
-    expect(r.state.state.consulted).toEqual(['git-history', 'web']);
-    expect(r.state.state.skipSources).toEqual(['prior-runs']);
+    expect(r.state.state.consulted).toEqual(['git-history']);
+    expect(r.state.state.skipSources).toEqual(['experiment', 'prior-runs']);
     expect(steps.filter((s) => s.nodeId === 'chase')).toHaveLength(1);
     expect(steps.filter((s) => s.nodeId === 'assess')).toHaveLength(2);
     expect(r.state.state.openQuestions).toEqual([]);

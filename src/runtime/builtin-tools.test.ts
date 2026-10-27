@@ -74,8 +74,16 @@ describe('sources.catalog', () => {
       '{ "servers": { "docs": { "type": "http", "url": "https://x" } } }',
     );
     const c = await sourceCatalog(ctx(dir), { probeGitHub: false, mcp: { includeUser: false } });
-    expect(c.names).toEqual(['git-history', 'dependencies', 'web', 'mcp:docs']);
-    expect(c.descriptions[0]).toMatch(/^git-history: 1 commits/);
+    expect(c.names).toEqual([
+      'workspace',
+      'git-history',
+      'dependencies',
+      'web',
+      'experiment',
+      'mcp:docs',
+    ]);
+    expect(c.descriptions[0]).toMatch(/^workspace: 6 files/);
+    expect(c.descriptions[1]).toMatch(/^git-history: 1 commits/);
   });
 
   it('is exposed through the default registry', async () => {

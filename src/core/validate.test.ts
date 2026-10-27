@@ -181,4 +181,24 @@ describe('validatePattern', () => {
     expect(m).toMatch(/complexity must be 1, 2, 3 or 4/);
     expect(m).toMatch(/improvisation must be 0..4/);
   });
+
+  it('validates phases and approval shows', () => {
+    const groups = [
+      { id: 'g1', label: 'Gather', nodes: ['gather', 'nope'] },
+      { id: 'g2', label: '', nodes: ['gather', 'start'] },
+    ];
+    const m = validateGraph({ ...base, groups })
+      .errors.map((e) => e.message)
+      .join('\n');
+    expect(m).toMatch(/phase 'g1' lists unknown node 'nope'/);
+    expect(m).toMatch(/phase 'g2' needs a label/);
+    expect(m).toMatch(/node 'gather' is in more than one phase/);
+    expect(m).toMatch(/the start node cannot be inside a phase/);
+    expect(
+      validateGraph({
+        ...base,
+        groups: [{ id: 'g1', label: 'Gather', nodes: ['gather', 'enough'] }],
+      }).errors,
+    ).toEqual([]);
+  });
 });

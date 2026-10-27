@@ -111,6 +111,7 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         kind: 'approval',
         message: str(raw.message) ?? label ?? id,
         writes: strList(raw.writes),
+        ...(strList(raw.shows).length ? { shows: strList(raw.shows) } : {}),
       };
     default:
       errors.push(`nodes[${i}] (${id}) has unknown kind '${String(raw.kind)}'`);
@@ -172,6 +173,19 @@ export function parseDraft(raw: unknown): Checked<Pattern> {
     ...(posInt(raw.maxSteps) ? { maxSteps: posInt(raw.maxSteps)! } : {}),
     ...(isComplexity(raw.complexity) ? { complexity: raw.complexity } : {}),
     ...(isImprovisation(raw.improvisation) ? { improvisation: raw.improvisation } : {}),
+    ...(Array.isArray(raw.groups) && raw.groups.length > 0
+      ? {
+          groups: raw.groups.filter(isObj).map((g) => {
+            const group = {
+              id: str(g.id) ?? '',
+              label: str(g.label) ?? str(g.id) ?? '',
+              nodes: strList(g.nodes),
+            };
+            const description = str(g.description);
+            return description ? Object.assign(group, { description }) : group;
+          }),
+        }
+      : {}),
   };
   errors.push(...validatePattern(pattern).errors.map((e) => e.message));
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: pattern };
@@ -192,11 +206,13 @@ Node kinds:
   assessor = read-only research/analysis; executor = may edit files and run commands. AI runs ONLY in agent nodes.
 - compute {id,kind:"compute",label,assign:[{field,expr}]}: deterministic state update (counters, flags, appends).
 - condition {id,kind:"condition",label,expression}: exactly two out edges with branch "then" and "else".
-- approval {id,kind:"approval",label,message,writes:[keys a human provides]}: out edges branch "approved" (and optional "rejected").
+- approval {id,kind:"approval",label,message,writes:[keys a human provides],shows?:[keys to display]}: out edges branch "approved" (and optional "rejected").
 - tool {id,kind:"tool",label,tool,args?,inputs?:{argName: stateKey},output:{toolKey: stateKey}}: deterministic I/O run by the system, not AI.
   Tools: "repo.files" -> {files, excluded} (every file in the workspace); "sources.catalog" -> {names, descriptions}
   (every evidence source available: git history, GitHub, dependencies, web, MCP servers, prior runs).
 - end {id,kind:"end",label,outcome?:"success"|"failed"|"partial"}.
+Optional "groups": [{id,label,description?,nodes:[node ids]}] name the phases of the flow (e.g. "List evidence",
+"Deep read"); each phase is shown as one collapsible step. Approval nodes may list state keys to show in "shows".
 
 Expressions (guards, conditions, compute): state keys by name, literals, == != < <= > >= && || ! + -,
 functions len(x) empty(x) includes(list,v) lower(s) append(list,v) if(c,a,b) chars(s) subset(a,b),

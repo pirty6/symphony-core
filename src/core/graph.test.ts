@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { fix, hangman, investigate } from '../patterns/index.js';
-import { graphToPattern, layout, loopBodies, patternToGraph } from './graph.js';
+import {
+  graphToPattern,
+  groupFrames,
+  layout,
+  loopBodies,
+  patternToGraph,
+  phaseView,
+} from './graph.js';
 import { validateGraph } from './validate.js';
 
 describe('patternToGraph', () => {
@@ -80,5 +87,57 @@ describe('loop layout', () => {
     expect(loopBodies(hangman).size).toBe(0);
     const g = patternToGraph(investigate);
     expect(g.edges.find((e) => e.id === 'mergeTriage-filesLeft')!.data.back).toBe(true);
+  });
+});
+
+describe('phases', () => {
+  it('collapses each phase into one node and keeps edges between phases', () => {
+    const v = phaseView(investigate, new Set());
+    const ids = v.nodes.map((n) => n.id);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        'start',
+        'planPhase',
+        'listPhase',
+        'triagePhase',
+        'deepPhase',
+        'answer',
+        'done',
+      ]),
+    );
+    expect(ids).not.toContain('triage');
+    const list = v.nodes.find((n) => n.id === 'listPhase')!;
+    expect(list).toMatchObject({
+      kind: 'phase',
+      members: expect.arrayContaining(['inventory', 'listPages']),
+    });
+    expect(v.edges.find((e) => e.source === 'planPhase' && e.target === 'listPhase')).toBeDefined();
+    expect(v.edges.some((e) => e.source === e.target)).toBe(false);
+    const toTriage = v.edges.filter((e) => e.target === 'triagePhase');
+    expect(toTriage).toHaveLength(1);
+    expect(toTriage[0]!.members.length).toBeGreaterThan(1);
+    expect(v.nodes.find((n) => n.id === 'deepPhase')!.position.y).toBeGreaterThan(list.position.y);
+  });
+
+  it('expands chosen phases back into their steps', () => {
+    const v = phaseView(investigate, new Set(['listPhase']));
+    const ids = v.nodes.map((n) => n.id);
+    expect(ids).toEqual(expect.arrayContaining(['inventory', 'listPages', 'needWeb']));
+    expect(ids).not.toContain('listPhase');
+    expect(ids).toContain('triagePhase');
+    expect(v.edges.find((e) => e.source === 'needFiles' && e.sourceHandle === 'then')?.target).toBe(
+      'inventory',
+    );
+  });
+
+  it('is the full graph when there are no phases, and frames expanded phases', () => {
+    expect(phaseView(fix, new Set()).nodes.map((n) => n.id)).toEqual(fix.nodes.map((n) => n.id));
+    const pos = layout(investigate);
+    const frames = groupFrames(investigate, pos);
+    expect(frames.map((f) => f.id)).toEqual(investigate.groups!.map((g) => g.id));
+    const deep = frames.find((f) => f.id === 'deepPhase')!;
+    const read = pos.get('deepRead')!;
+    expect(read.x).toBeGreaterThanOrEqual(deep.x);
+    expect(read.y).toBeGreaterThanOrEqual(deep.y);
   });
 });
