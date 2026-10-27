@@ -34,8 +34,9 @@ can explore every feature without credentials.
 
 ### Use real AI (GitHub Copilot)
 
-1. Have a GitHub account with Copilot. Sign in once with the Copilot CLI or `gh auth login`,
-   **or** put a token in `.env` (see `.env.example`).
+1. Have a GitHub account with Copilot and be signed in (VS Code, the Copilot CLI or `gh auth login`),
+   **or** put a token in `.env` (see `.env.example`). If that token is rejected, Symphony says so and
+   falls back to your signed-in GitHub user for the rest of the session.
 2. In the studio choose **AI → GitHub Copilot** (optionally a model) and run.
 
 Agents work in the repository folder by default; set `SYMPHONY_WORKSPACE=/path/to/project` in `.env`
@@ -113,7 +114,7 @@ chars subset`, and `verdict.outcome` / `verdict.confidence` of the last agent.
 | Every AI response is validated | `validateNodeResult`: verdict shape, typed `writes`, no undeclared keys. Invalid answers are re-asked with the errors (bounded `retries`), then the run fails. |
 | Never repeat `(moveType, targetSite, stateHash)` | The engine refuses a repeated move; `stateHash` covers run state plus a git workspace fingerprint. |
 | Every loop terminates | Per-node `maxVisits` and per-score `maxSteps`. |
-| Assessors are read-only | Permission policy in `src/runtime/provider.ts`. |
+| Assessors are read-only | Permission policy in `src/runtime/provider.ts`: reads and URLs allowed; shell only for allowlisted read-only commands (`git diff/log/show`, `grep`, `ls`, ...); writes, substitutions and redirections refused. |
 | Stale or duplicate input is ignored | Every resolution must echo the open `pauseId`. |
 | Runs are reproducible | `replayPerformance` re-runs the engine on recorded answers and diffs it. |
 

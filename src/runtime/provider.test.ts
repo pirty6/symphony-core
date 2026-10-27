@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentPause } from '../core/types.js';
-import { buildAgentPrompt, decidePermission, extractJson } from './provider.js';
+import { buildAgentPrompt, decidePermission, extractJson, isReadOnlyCommand } from './provider.js';
 
 const pause: AgentPause = {
   kind: 'agent',
@@ -78,5 +78,62 @@ describe('decidePermission', () => {
     });
     expect(rm).toEqual({ allowed: false, reason: 'assessor is read-only; refused: rm' });
     expect(decidePermission('assessor', { kind: 'shell', commands: [] }).allowed).toBe(false);
+  });
+});
+
+describe('isReadOnlyCommand', () => {
+  it.each([
+    'cd /repo && git --no-pager diff --stat HEAD~1..HEAD && echo "---" && git --no-pager diff HEAD~1..HEAD',
+    'git -C /repo --no-pager log -5 --oneline | head -20',
+    'grep -rn "foo; bar" src | wc -l',
+    'find . -name "*.ts" -not -path "./node_modules/*"',
+    'git status --porcelain 2>&1',
+    'git branch -a',
+    'ls -la && cat package.json | jq .scripts',
+  ])('allows %s', (cmd) => {
+    expect(isReadOnlyCommand(cmd)).toBe(true);
+  });
+
+  it.each([
+    'rm -rf dist',
+    'git commit -m x',
+    'git branch new-branch',
+    'git -c core.pager=sh diff',
+    'git diff --output=patch.txt',
+    'git diff --ext-diff',
+    'FOO=1 git diff',
+    'find . -name x -delete',
+    'find . -exec rm {} \\;',
+    'sed -i s/a/b/ f.txt',
+    'echo $(rm x)',
+    'echo `rm x`',
+    'sort -o out.txt in.txt',
+    'cat a > b',
+    'echo hi >> log',
+    'npm test',
+    'git diff | xargs rm',
+    'diff <(ls) >(cat)',
+  ])('refuses %s', (cmd) => {
+    expect(isReadOnlyCommand(cmd)).toBe(false);
+  });
+
+  it('lets assessors run git diff even when the CLI marks it as a write', () => {
+    const text = 'git --no-pager diff HEAD~1..HEAD';
+    expect(
+      decidePermission('assessor', {
+        kind: 'shell',
+        commands: [{ identifier: text, readOnly: false }],
+        hasWriteFileRedirection: false,
+        fullCommandText: text,
+      }).allowed,
+    ).toBe(true);
+    expect(
+      decidePermission('assessor', {
+        kind: 'shell',
+        commands: [{ identifier: 'rm x', readOnly: false }],
+        hasWriteFileRedirection: false,
+        fullCommandText: 'rm x',
+      }).allowed,
+    ).toBe(false);
   });
 });

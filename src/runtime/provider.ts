@@ -136,6 +136,138 @@ export interface PolicyDecision {
   readonly reason: string;
 }
 
+// Commands with no side effects. Anything not listed is treated as a write.
+const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
+  'cd',
+  'pwd',
+  'ls',
+  'cat',
+  'head',
+  'tail',
+  'wc',
+  'grep',
+  'egrep',
+  'fgrep',
+  'rg',
+  'echo',
+  'printf',
+  'cut',
+  'tr',
+  'tree',
+  'stat',
+  'file',
+  'which',
+  'basename',
+  'dirname',
+  'realpath',
+  'du',
+  'df',
+  'date',
+  'true',
+  'nl',
+  'diff',
+  'cmp',
+  'comm',
+  'jq',
+  'sort',
+  'find',
+  'git',
+]);
+const READ_ONLY_GIT: ReadonlySet<string> = new Set([
+  'diff',
+  'log',
+  'show',
+  'status',
+  'blame',
+  'ls-files',
+  'ls-tree',
+  'rev-parse',
+  'grep',
+  'describe',
+  'shortlog',
+  'cat-file',
+  'merge-base',
+  'rev-list',
+  'name-rev',
+  'branch',
+  'tag',
+  'remote',
+]);
+/** git subcommands that only list when given no positional arguments. */
+const LIST_ONLY_GIT: ReadonlySet<string> = new Set(['branch', 'tag', 'remote']);
+const FIND_WRITES = /^-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)$/;
+
+function tokens(segment: string): string[] {
+  return (segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((t) => t.replace(/^["']|["']$/g, ''));
+}
+
+/** Split on unquoted `&&`, `||`, `;`, `|` and newlines. */
+function splitCommands(text: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quote: string | undefined;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (quote) {
+      if (ch === quote) quote = undefined;
+      cur += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      cur += ch;
+    } else if (ch === ';' || ch === '|' || ch === '\n' || (ch === '&' && text[i + 1] === '&')) {
+      out.push(cur);
+      cur = '';
+      if ((ch === '&' || ch === '|') && text[i + 1] === ch) i += 1;
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+function segmentIsReadOnly(segment: string): boolean {
+  const t = tokens(segment);
+  const cmd = t[0];
+  if (!cmd) return true;
+  if (cmd.includes('=') || !READ_ONLY_COMMANDS.has(cmd)) return false;
+  const args = t.slice(1);
+  if (args.some((a) => a.startsWith('--output'))) return false;
+  if (cmd === 'sort') return !args.some((a) => a === '-o' || a.startsWith('-o'));
+  if (cmd === 'find') return !args.some((a) => FIND_WRITES.test(a));
+  if (cmd !== 'git') return true;
+  let i = 0;
+  while (i < args.length && args[i]!.startsWith('-')) {
+    const flag = args[i]!;
+    if (flag === '-c' || flag.startsWith('--exec-path') || flag.startsWith('--config'))
+      return false;
+    i += flag === '-C' || flag === '--git-dir' || flag === '--work-tree' ? 2 : 1;
+  }
+  const sub = args[i];
+  if (!sub || !READ_ONLY_GIT.has(sub)) return false;
+  const rest = args.slice(i + 1);
+  if (
+    rest.some(
+      (a) => a === '--ext-diff' || a === '-D' || a === '-d' || a === '-m' || a === '--delete',
+    )
+  )
+    return false;
+  if (LIST_ONLY_GIT.has(sub))
+    return rest.every((a) => a.startsWith('-') || (sub === 'remote' && a === 'show'));
+  return true;
+}
+
+/**
+ * Conservative read-only check for a shell command line: every segment between
+ * `&&`, `||`, `;` and `|` must be an allowlisted read-only command. Command
+ * substitution, process substitution and output redirection are refused.
+ */
+export function isReadOnlyCommand(text: string): boolean {
+  if (/\$\(|`|<\(|>\(/.test(text)) return false;
+  if (/(^|[^0-9&])>{1,2}(?!&)/.test(text.replace(/"[^"]*"|'[^']*'/g, ''))) return false;
+  return splitCommands(text).every((seg) => segmentIsReadOnly(seg.trim()));
+}
+
 /** Assessors may read; executors may do anything their step needs. */
 export function decidePermission(role: Role, req: PermissionLike): PolicyDecision {
   if (role === 'executor') return { allowed: true, reason: 'executor is read-write' };
@@ -149,6 +281,13 @@ export function decidePermission(role: Role, req: PermissionLike): PolicyDecisio
       const writes = cmds.filter((c) => !c.readOnly).map((c) => c.identifier);
       if (cmds.length > 0 && writes.length === 0 && !req.hasWriteFileRedirection) {
         return { allowed: true, reason: 'read-only command' };
+      }
+      if (
+        !req.hasWriteFileRedirection &&
+        req.fullCommandText &&
+        isReadOnlyCommand(req.fullCommandText)
+      ) {
+        return { allowed: true, reason: 'read-only command (allowlist)' };
       }
       return {
         allowed: false,
