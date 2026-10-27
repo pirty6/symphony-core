@@ -38,10 +38,10 @@ describe('OrchestratorNode', () => {
     expect(node).toHaveClass('orchestrator')
   })
 
-  it('has only a source handle (no target — it is the start)', () => {
+  it('has source and target handles', () => {
     renderNode()
     expect(screen.getByTestId('handle-source')).toBeInTheDocument()
-    expect(screen.queryByTestId('handle-target')).not.toBeInTheDocument()
+    expect(screen.getByTestId('handle-target')).toBeInTheDocument()
   })
 
   it('renders a prompt textarea', () => {

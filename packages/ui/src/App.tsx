@@ -28,7 +28,12 @@ import { DebugPanel } from './components/DebugPanel'
 import { isDraggableNodeType, AGENT_ITEMS, CONTROL_ITEMS } from './types'
 import { createInitialExecutionState, walkStep, type ExecutionState } from './runtime'
 import { buildOrchestratorInput, renderPrompt } from './prompt'
-import { startRun, stopRun, approveStep } from './api'
+import { startRun, stopRun, approveStep, sendMessage } from './api'
+
+// Normalize a string for fuzzy node matching (lowercase, strip non-alphanumeric)
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
 
 /**
  * Try to extract a JSON object with a `state` key from a message string.
@@ -101,7 +106,7 @@ const initialNodes: Node[] = [
     data: {
       label: 'Orchestrator',
       description: 'Hangman game controller',
-      prompt: 'You are the hangman game controller. You manage all state transitions yourself. When an instrument returns, YOU update state (guessedLetters, wrongCount, gameOver) based on the result. Follow the transition conditions to decide the next step. Display the masked word and remaining lives after each state update.',
+      prompt: 'You are the hangman game controller. You MUST delegate tasks to your instruments — never perform them yourself. To pick a word, call the Pick Word instrument. To get a guess, call the Guess Letter instrument. You only manage state transitions: when an instrument returns, update state (guessedLetters, wrongCount, gameOver) based on the result. Follow the transition conditions to decide the next step. Display the masked word and remaining lives after each state update.',
       maxEdges: 1,
       stateFields: [
         { name: 'word', type: 'string' },
@@ -341,6 +346,10 @@ export default function App() {
     // Start the SDK session
     if (sdkPrompt) {
       console.log('[symphony:ui] Starting SDK session…')
+      // Collect allowed instrument names from the graph (non-orchestrator, non-end nodes)
+      const allowedInstruments = nodes
+        .filter((n) => n.type !== 'orchestrator' && n.type !== 'end')
+        .map((n) => String(n.data.label))
       const controller = startRun(sdkPrompt, {
         onSessionId: (id) => {
           console.log(`[symphony:ui] SDK session started — id=${id}`)
@@ -359,47 +368,58 @@ export default function App() {
                 content,
               }],
             }
-            // Try to extract state from the message
-            const newState = extractState(content)
-            if (newState) {
-              console.log('[symphony:ui] State extracted from message:', JSON.stringify(newState))
-              next.state = { ...prev.state, ...newState }
-            }
             return next
           })
         },
         onTurnDone: () => {
-          console.log('[symphony:ui] SDK turn done — waiting for user input')
-          // When a turn completes, orchestrator takes back control
+          console.log('[symphony:ui] SDK turn done')
           const orchestratorNode = nodes.find((n) => n.type === 'orchestrator')
-          setExecution((prev) => ({
-            ...prev,
-            activeNodeId: orchestratorNode?.id ?? prev.activeNodeId,
-          }))
+          setExecution((prev) => {
+            // Auto-continue: if the session is still running, prompt the orchestrator to keep going
+            if (prev.sdkSessionId && prev.status === 'running') {
+              console.log('[symphony:ui] Auto-continuing — sending follow-up to orchestrator')
+              sendMessage(prev.sdkSessionId, 'Continue. Call the next instrument in the workflow.').catch((err) => {
+                console.error('[symphony:ui] Auto-continue failed:', err)
+              })
+            }
+            return {
+              ...prev,
+              activeNodeId: orchestratorNode?.id ?? prev.activeNodeId,
+            }
+          })
         },
         onToolStart: (_toolName, toolArgs) => {
-          // Match tool args against node labels to highlight the right instrument
-          const argsStr = JSON.stringify(toolArgs)
-          const args = toolArgs as Record<string, unknown>
+          // toolArgs may be a JSON string or object
+          const args: Record<string, unknown> = typeof toolArgs === 'string'
+            ? (() => { try { return JSON.parse(toolArgs) } catch { return {} } })()
+            : (toolArgs as Record<string, unknown>) ?? {}
+          const argsStr = JSON.stringify(args)
           console.log(`[symphony:ui] Tool started — matching against nodes`)
+          const normalizedArgs = normalize(argsStr)
           const matchedNode = nodes.find(
-            (n) => n.type !== 'orchestrator' && n.data.label && argsStr.includes(String(n.data.label))
+            (n) => n.type !== 'orchestrator' && n.data.label && normalizedArgs.includes(normalize(String(n.data.label)))
           )
-          const agentLabel = (args.name as string) ?? _toolName
+          const displayLabel = matchedNode ? String(matchedNode.data.label) : ((args.name as string) ?? _toolName)
+          const prompt = (args.prompt as string) ?? (args.description as string) ?? undefined
+          const logContent = `Orchestrator → ${displayLabel}`
+          const logDetails = prompt
+            ? `[LLM decision] "${prompt}"`
+            : `[LLM decision] args: ${argsStr}`
           if (matchedNode) {
             console.log(`[symphony:ui] Activating node: ${matchedNode.data.label} (${matchedNode.id})`)
             setExecution((prev) => ({
               ...prev,
               activeNodeId: matchedNode.id,
+              awaitingInput: false,
               visitedNodeIds: prev.activeNodeId && !prev.visitedNodeIds.includes(prev.activeNodeId)
                 ? [...prev.visitedNodeIds, prev.activeNodeId]
                 : prev.visitedNodeIds,
               sessionLogs: [...prev.sessionLogs, {
                 type: 'tool-start' as const,
                 timestamp: Date.now(),
-                agent: agentLabel,
-                content: `Calling ${agentLabel}`,
-                details: (args.prompt as string) ?? undefined,
+                agent: displayLabel,
+                content: logContent,
+                details: logDetails,
               }],
             }))
           } else {
@@ -408,9 +428,9 @@ export default function App() {
               sessionLogs: [...prev.sessionLogs, {
                 type: 'tool-start' as const,
                 timestamp: Date.now(),
-                agent: agentLabel,
-                content: `Calling ${agentLabel}`,
-                details: (args.prompt as string) ?? undefined,
+                agent: displayLabel,
+                content: logContent,
+                details: logDetails,
               }],
             }))
           }
@@ -452,19 +472,34 @@ export default function App() {
         },
         onStepPending: (toolName, toolArgs) => {
           console.log(`[symphony:ui] Step pending — tool=${toolName}, waiting for user Step click`)
-          const argsStr = JSON.stringify(toolArgs)
+          const args: Record<string, unknown> = typeof toolArgs === 'string'
+            ? (() => { try { return JSON.parse(toolArgs) } catch { return {} } })()
+            : (toolArgs as Record<string, unknown>) ?? {}
+          const argsStr = JSON.stringify(args)
+          const normalizedArgs = normalize(argsStr)
           const matchedNode = nodes.find(
-            (n) => n.type !== 'orchestrator' && n.data.label && argsStr.includes(String(n.data.label))
+            (n) => n.type !== 'orchestrator' && n.data.label && normalizedArgs.includes(normalize(String(n.data.label)))
           )
+          const isApproval = matchedNode?.type === 'approval'
+          const displayLabel = matchedNode ? String(matchedNode.data.label) : ((args.name as string) ?? toolName)
+          const prompt = (args.prompt as string) ?? (args.description as string) ?? undefined
+          const logDetails = prompt
+            ? `[LLM decision] "${prompt}"`
+            : `[LLM decision] args: ${argsStr}`
+          // Don't move activeNodeId — keep focus on orchestrator until user clicks Step
           setExecution((prev) => ({
             ...prev,
             status: 'paused',
-            ...(matchedNode ? {
-              activeNodeId: matchedNode.id,
-              visitedNodeIds: prev.activeNodeId && !prev.visitedNodeIds.includes(prev.activeNodeId)
-                ? [...prev.visitedNodeIds, prev.activeNodeId]
-                : prev.visitedNodeIds,
-            } : {}),
+            awaitingInput: isApproval,
+            sessionLogs: [...prev.sessionLogs, {
+              type: 'orchestrator' as const,
+              timestamp: Date.now(),
+              agent: 'Orchestrator',
+              content: isApproval
+                ? `⏸ Wants to call ${displayLabel} — waiting for your input`
+                : `Wants to call ${displayLabel} — click Step to approve`,
+              details: logDetails,
+            }],
           }))
         },
         onError: (message) => {
@@ -480,7 +515,7 @@ export default function App() {
             }],
           }))
         },
-      }, debug)
+      }, debug, allowedInstruments)
       abortRef.current = controller
     } else {
       console.warn('[symphony:ui] No SDK prompt — skipping SDK session')

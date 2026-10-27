@@ -40,6 +40,7 @@ function createHooks(
   sseSend: (event: string, data: unknown) => void,
   sessionId: string,
   debug: boolean,
+  allowedInstruments?: string[],
 ): SessionHooks {
   return {
     onSessionStart: async (input: { source: string }) => {
@@ -60,7 +61,19 @@ function createHooks(
       if (args.prompt) console.log(`  prompt: ${args.prompt.slice(0, 200)}${args.prompt.length > 200 ? '…' : ''}`)
       if (args.agent_type) console.log(`  agent_type: ${args.agent_type}`)
       if (args.mode) console.log(`  mode: ${args.mode}`)
-      sseSend('tool-start', { toolName: input.toolName, toolArgs: input.toolArgs })
+
+      // Enforce state machine: only allow instruments defined in the graph
+      if (allowedInstruments?.length && agentName) {
+        const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const isAllowed = allowedInstruments.some((i) => norm(i) === norm(agentName))
+        if (!isAllowed) {
+          console.log(`[server] Session ${sessionId} — DENIED: "${agentName}" is not in allowed instruments [${allowedInstruments.join(', ')}]`)
+          return {
+            permissionDecision: 'deny' as const,
+            denyMessage: `Instrument "${agentName}" is not part of this workflow. Allowed instruments: ${allowedInstruments.join(', ')}. Use only defined instruments.`,
+          }
+        }
+      }
 
       if (debug) {
         console.log(`[server] Session ${sessionId} — debug: waiting for step approval...`)
@@ -75,6 +88,8 @@ function createHooks(
         })
         console.log(`[server] Session ${sessionId} — debug: step approved for ${agentName}`)
       }
+
+      sseSend('tool-start', { toolName: input.toolName, toolArgs: input.toolArgs })
 
       return { permissionDecision: 'allow' as const, modifiedArgs: input.toolArgs }
     },
@@ -134,10 +149,10 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
   const model = process.env.MODEL ?? 'claude-opus-4.6'
   console.log(`[server] Using model: ${model}`)
 
-  let body: { prompt: string; debug?: boolean }
+  let body: { prompt: string; debug?: boolean; allowedInstruments?: string[] }
   try {
     body = JSON.parse(await readBody(req))
-    console.log(`[server] Prompt length: ${body.prompt.length} chars, debug: ${!!body.debug}`)
+    console.log(`[server] Prompt length: ${body.prompt.length} chars, debug: ${!!body.debug}, allowedInstruments: [${(body.allowedInstruments ?? []).join(', ')}]`)
   } catch {
     console.log('[server] ERROR: Invalid JSON body')
     res.writeHead(400, { 'Content-Type': 'application/json' })
@@ -170,7 +185,7 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
     console.log('[server] CopilotClient started')
 
     console.log('[server] Creating session...')
-    const session = await client.createSession({ hooks: createHooks(send, sessionId, !!body.debug), model })
+    const session = await client.createSession({ hooks: createHooks(send, sessionId, !!body.debug, body.allowedInstruments), model })
     console.log('[server] Session created')
 
     session.on('assistant.message', (event) => {

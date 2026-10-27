@@ -460,6 +460,24 @@ html, body, #root {
   stroke-width: 3 !important;
 }
 
+.react-flow__edgeupdater {
+  fill: #90caf9;
+  fill-opacity: 0;
+  r: 6;
+  cursor: grab;
+  transition: fill-opacity 0.15s ease;
+}
+
+.react-flow__edge:hover .react-flow__edgeupdater,
+.react-flow__edge.selected .react-flow__edgeupdater {
+  fill-opacity: 1;
+}
+
+.react-flow__edgeupdater:hover {
+  fill: #ffd54f;
+  r: 8;
+}
+
 .edge-label {
   background: #2a2a4a;
   color: #b0b0d0;
@@ -727,4 +745,21 @@ html, body, #root {
   padding: 8px;
   color: #ef5350;
   font-size: 11px;
+}
+
+.debug-awaiting-input {
+  background: rgba(255, 213, 79, 0.15);
+  border: 1px solid rgba(255, 213, 79, 0.4);
+  border-radius: 6px;
+  padding: 10px;
+  color: #ffd54f;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }

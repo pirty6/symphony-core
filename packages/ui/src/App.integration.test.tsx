@@ -337,6 +337,47 @@ describe('App', () => {
       expect(logEntries[3]).toHaveClass('session-log-orchestrator')
     })
 
+    it('orchestrator messages cannot set state directly — only instruments can', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+
+      // Orchestrator tries to set state via a message (should be ignored)
+      act(() => { capturedCallbacks!.onMessage('{"state":{"word":"cheating"}}') })
+      expect(screen.queryByTestId('debug-state')).not.toBeInTheDocument()
+
+      // But an instrument result CAN set state
+      act(() => { capturedCallbacks!.onToolEnd('task', 'Pick Word', '{"state":{"word":"hello"}}') })
+      const stateEl = screen.getByTestId('debug-state')
+      expect(stateEl.textContent).toContain('"word"')
+      expect(stateEl.textContent).toContain('hello')
+      expect(stateEl.textContent).not.toContain('cheating')
+    })
+
+    it('onToolStart matches node when SDK sends kebab-case name', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+
+      // SDK sends "pick-word" but node label is "Pick Word"
+      act(() => { capturedCallbacks!.onToolStart('task', { name: 'pick-word', prompt: 'Pick a word' }) })
+
+      const pickWordEl = document.querySelector('.react-flow__node-assessor')
+      expect(pickWordEl).toHaveClass('node-active')
+      const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
+      expect(orchestratorEl).not.toHaveClass('node-active')
+    })
+
+    it('onStepPending matches node when SDK sends kebab-case name', () => {
+      startDebugSession()
+      act(() => { capturedCallbacks!.onSessionId('42') })
+
+      act(() => { capturedCallbacks!.onStepPending('task', { name: 'guess-letter', prompt: 'Ask for guess' }) })
+
+      // Focus stays on orchestrator until user clicks Step
+      const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
+      expect(orchestratorEl).toHaveClass('node-active')
+      expect(screen.getByTestId('debug-status').textContent).toBe('paused')
+    })
+
     it('orchestrator is active when debug session starts', () => {
       startDebugSession()
       const orchestratorEl = screen.getAllByText('Orchestrator')[0].closest('.react-flow__node')
@@ -411,16 +452,16 @@ describe('App', () => {
       expect(orchestratorEl).not.toHaveClass('node-active')
     })
 
-    it('onStepPending highlights the pending instrument node', () => {
+    it('onStepPending keeps focus on orchestrator (does not highlight instrument yet)', () => {
       startDebugSession()
       act(() => { capturedCallbacks!.onSessionId('42') })
 
       act(() => { capturedCallbacks!.onStepPending('task', { name: 'Pick Word', prompt: 'Pick a word' }) })
 
-      const pickWordEl = document.querySelector('.react-flow__node-assessor')
-      expect(pickWordEl).toHaveClass('node-active')
       const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
-      expect(orchestratorEl).not.toHaveClass('node-active')
+      expect(orchestratorEl).toHaveClass('node-active')
+      const pickWordEl = document.querySelector('.react-flow__node-assessor')
+      expect(pickWordEl).not.toHaveClass('node-active')
     })
 
     it('focus moves through full state transition cycle', () => {
@@ -461,21 +502,22 @@ describe('App', () => {
       startDebugSession()
       act(() => { capturedCallbacks!.onSessionId('42') })
 
-      // Step pending highlights the instrument
+      // Step pending keeps focus on orchestrator
       act(() => { capturedCallbacks!.onStepPending('task', { name: 'Pick Word', prompt: 'Pick a word' }) })
-      const pickWordEl = document.querySelector('.react-flow__node-assessor')
-      expect(pickWordEl).toHaveClass('node-active')
+      const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
+      expect(orchestratorEl).toHaveClass('node-active')
 
       // User clicks Step → approves
       fireEvent.click(screen.getByTestId('btn-step'))
 
-      // After tool start fires, node stays highlighted
+      // After tool start fires, focus moves to instrument
+      const pickWordEl = document.querySelector('.react-flow__node-assessor')
       act(() => { capturedCallbacks!.onToolStart('task', { name: 'Pick Word', prompt: 'Pick a word' }) })
       expect(pickWordEl).toHaveClass('node-active')
+      expect(orchestratorEl).not.toHaveClass('node-active')
 
       // Tool ends → back to orchestrator
       act(() => { capturedCallbacks!.onToolEnd('task', 'assessor', '{}') })
-      const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
       expect(orchestratorEl).toHaveClass('node-active')
       expect(pickWordEl).not.toHaveClass('node-active')
     })
@@ -500,22 +542,25 @@ describe('App', () => {
       expect(guessEl).toHaveClass('node-visited')
     })
 
-    it('approval node paused via onStepPending moves focus back after turn completes', () => {
+    it('approval node paused via onStepPending keeps focus on orchestrator until Step', () => {
       startDebugSession()
       act(() => { capturedCallbacks!.onSessionId('42') })
 
-      // Step pending on approval node — focus moves to Guess Letter
+      // Step pending on approval node — focus stays on orchestrator
       act(() => { capturedCallbacks!.onStepPending('task', { name: 'Guess Letter', prompt: 'Ask for guess' }) })
       const guessEl = document.querySelector('.react-flow__node-approval')
       const orchestratorEl = document.querySelector('.react-flow__node-orchestrator')
+      expect(orchestratorEl).toHaveClass('node-active')
+      expect(guessEl).not.toHaveClass('node-active')
+
+      // User clicks Step → tool-start fires → focus moves to instrument
+      fireEvent.click(screen.getByTestId('btn-step'))
+      act(() => { capturedCallbacks!.onToolStart('task', { name: 'Guess Letter', prompt: 'Ask for guess' }) })
       expect(guessEl).toHaveClass('node-active')
       expect(orchestratorEl).not.toHaveClass('node-active')
 
-      // User sends response via VS Code chat → SDK resumes → message + turnDone
-      act(() => { capturedCallbacks!.onMessage('The letter A is correct!') })
-      act(() => { capturedCallbacks!.onTurnDone() })
-
-      // Focus returns to orchestrator
+      // Tool ends → focus returns to orchestrator
+      act(() => { capturedCallbacks!.onToolEnd('task', 'approval', '{}') })
       expect(orchestratorEl).toHaveClass('node-active')
       expect(guessEl).not.toHaveClass('node-active')
     })

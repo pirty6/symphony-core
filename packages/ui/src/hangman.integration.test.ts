@@ -8,7 +8,7 @@ describe('hangman workflow', () => {
       type: 'orchestrator',
       label: 'Orchestrator',
       description: 'Hangman game controller',
-      prompt: 'You are the hangman game controller. You manage all state transitions yourself.',
+      prompt: 'You are the hangman game controller. You MUST delegate tasks to your instruments — never perform them yourself. To pick a word, call the Pick Word instrument. To get a guess, call the Guess Letter instrument. You only manage state transitions.',
       stateFields: [
         { name: 'word', type: 'string' as const },
         { name: 'guessedLetters', type: 'string[]' as const },
@@ -33,7 +33,7 @@ describe('hangman workflow', () => {
   it('builds the correct state machine structure', () => {
     const input = buildOrchestratorInput(nodes, edges)
 
-    expect(input.directive).toBe('You are the hangman game controller. You manage all state transitions yourself.')
+    expect(input.directive).toContain('hangman game controller')
     expect(input.instruments).toHaveLength(1)
     expect(input.instruments[0]).toMatchObject({ type: 'assessor', label: 'Pick Word' })
     expect(input.stateFields).toHaveLength(5)

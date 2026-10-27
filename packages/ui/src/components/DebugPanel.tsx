@@ -33,6 +33,14 @@ export function DebugPanel({
         </div>
       )}
 
+      {execution.awaitingInput && (
+        <div className="debug-section">
+          <div className="debug-awaiting-input" data-testid="debug-awaiting-input">
+            💬 Waiting for your response in VS Code chat
+          </div>
+        </div>
+      )}
+
       {execution.sessionLogs.length > 0 && (
         <div className="debug-section">
           <div className="debug-section-title">Session Activity</div>

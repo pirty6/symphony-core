@@ -15,14 +15,14 @@ export interface RunCallbacks {
  * The session stays alive for follow-up messages until stopped.
  * Returns an AbortController to cancel the SSE stream.
  */
-export function startRun(prompt: string, callbacks: RunCallbacks, debug = false): AbortController {
+export function startRun(prompt: string, callbacks: RunCallbacks, debug = false, allowedInstruments?: string[]): AbortController {
   console.log(`[symphony:api] startRun called (prompt ${prompt.length} chars, debug=${debug})`)
   const controller = new AbortController()
 
   fetch(`${API_BASE}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, debug }),
+    body: JSON.stringify({ prompt, debug, allowedInstruments }),
     signal: controller.signal,
   })
     .then(async (res) => {

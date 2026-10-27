@@ -96,6 +96,7 @@ export function OrchestratorNode({ id, data }: NodeProps<OrchestratorNode>) {
           </div>
         ))}
       </div>
+      <Handle type="target" position={Position.Top} data-testid="handle-target" />
       <Handle type="source" position={Position.Bottom} data-testid="handle-source" />
     </div>
   )

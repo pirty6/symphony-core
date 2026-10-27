@@ -28,6 +28,8 @@ export interface ExecutionState {
   sessionLogs: SessionLogEntry[]
   error: string | null
   debug: boolean
+  /** When true, the workflow is waiting for user input (approval node) */
+  awaitingInput: boolean
   /** The prompt sent to the Copilot SDK session (populated on run) */
   sdkPrompt: string | null
   /** Messages received from the SDK session */
@@ -46,6 +48,7 @@ export function createInitialExecutionState(debug: boolean): ExecutionState {
     sessionLogs: [],
     error: null,
     debug,
+    awaitingInput: false,
     sdkPrompt: null,
     sdkMessages: [],
     sdkSessionId: null,

@@ -225,18 +225,15 @@ describe('UI ↔ Backend Integration', () => {
       act(() => { capturedCallbacks!.onSessionId('state-sess') })
     }
 
-    it('extracts JSON state from assistant messages', () => {
+    it('orchestrator messages do not extract state — only instruments can set state', () => {
       startSessionAndSendState()
 
-      // SDK sends a message with embedded state
+      // SDK sends a message with embedded state — should be ignored
       act(() => {
         capturedCallbacks!.onMessage('I updated the state. { "state": { "word": "hello", "guesses": 3 } }')
       })
 
-      const stateEl = screen.getByTestId('debug-state')
-      expect(stateEl.textContent).toContain('"word"')
-      expect(stateEl.textContent).toContain('"hello"')
-      expect(stateEl.textContent).toContain('"guesses"')
+      expect(screen.queryByTestId('debug-state')).not.toBeInTheDocument()
     })
 
     it('extracts state from tool results via onToolEnd', () => {
@@ -251,16 +248,14 @@ describe('UI ↔ Backend Integration', () => {
       expect(stateEl.textContent).toContain('"found"')
     })
 
-    it('handles state in ```json code blocks', () => {
+    it('orchestrator messages with json code blocks do not set state', () => {
       startSessionAndSendState()
 
       act(() => {
         capturedCallbacks!.onMessage('Here is the state:\n```json\n{ "state": { "status": "active" } }\n```')
       })
 
-      const stateEl = screen.getByTestId('debug-state')
-      expect(stateEl.textContent).toContain('"status"')
-      expect(stateEl.textContent).toContain('"active"')
+      expect(screen.queryByTestId('debug-state')).not.toBeInTheDocument()
     })
   })
 
