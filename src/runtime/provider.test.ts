@@ -96,6 +96,7 @@ describe('isReadOnlyCommand', () => {
     'gh search issues "flaky test" --repo o/r',
     'gh api repos/o/r/issues/1/comments',
     'gh api -X GET repos/o/r/pulls',
+    "sed -n '550,650p' node_modules/x/README.md",
   ])('allows %s', (cmd) => {
     expect(isReadOnlyCommand(cmd)).toBe(true);
   });
@@ -124,6 +125,9 @@ describe('isReadOnlyCommand', () => {
     'gh api -X POST repos/o/r/issues',
     'gh api repos/o/r/issues -f title=x',
     'gh auth token',
+    "sed -i 's/a/b/' f.ts",
+    "sed -n '1p;w out.txt' f",
+    "sed 's/a/b/' f",
   ])('refuses %s', (cmd) => {
     expect(isReadOnlyCommand(cmd)).toBe(false);
   });

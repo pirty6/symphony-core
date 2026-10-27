@@ -163,6 +163,7 @@ export interface PolicyDecision {
 // Commands with no side effects. Anything not listed is treated as a write.
 const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'gh',
+  'sed',
   'cd',
   'pwd',
   'ls',
@@ -290,6 +291,9 @@ function segmentIsReadOnly(segment: string): boolean {
   if (cmd === 'sort') return !args.some((a) => a === '-o' || a.startsWith('-o'));
   if (cmd === 'find') return !args.some((a) => FIND_WRITES.test(a));
   if (cmd === 'gh') return ghIsReadOnly(args);
+  // sed only as a line printer: sed -n 'N,Mp' file (no -i, no w/e commands).
+  if (cmd === 'sed')
+    return args[0] === '-n' && /^\d+(,\d+)?p$/.test(args[1] ?? '') && args.length >= 2;
   if (cmd !== 'git') return true;
   let i = 0;
   while (i < args.length && args[i]!.startsWith('-')) {
