@@ -53,6 +53,26 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
 }
 
+/**
+ * The API runs agents and writes pattern files, so it only accepts JSON POSTs from the studio's own
+ * origin. Browsers cannot send application/json cross-site without a CORS preflight, which is never granted.
+ */
+export function refuseCrossSite(req: IncomingMessage): string | undefined {
+  const type = String(req.headers['content-type'] ?? '')
+  if (!type.startsWith('application/json')) return 'content-type must be application/json'
+  const origin = req.headers.origin
+  if (origin) {
+    let host: string
+    try {
+      host = new URL(origin).host
+    } catch {
+      return 'invalid origin'
+    }
+    if (host !== req.headers.host) return 'cross-origin requests are not allowed'
+  }
+  return undefined
+}
+
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify(body))
@@ -149,18 +169,20 @@ export function createApi(opts: ApiOptions) {
     for (const m of [...run.messages]) write(m)
     if (closed) return
     const off = run.subscribe(write)
-    req.on('close', () => {
+    res.on('close', () => {
       closed = true
       off()
     })
   }
 
-  async function draft(body: Record<string, unknown>, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function draft(body: Record<string, unknown>, res: ServerResponse): Promise<void> {
     const request = typeof body.request === 'string' ? body.request.trim() : ''
     if (!request) return send(res, 400, { error: 'request is required' })
     const provider = providerFor(body.provider ?? 'scripted', body.model)
     const ctrl = new AbortController()
-    req.on('close', () => ctrl.abort())
+    res.on('close', () => {
+      if (!res.writableEnded) ctrl.abort()
+    })
     sseHeaders(res)
     try {
       const out = await draftPattern(provider, request, {
@@ -188,6 +210,11 @@ export function createApi(opts: ApiOptions) {
     const path = url.pathname
     if (!path.startsWith('/api/')) return false
     const method = req.method ?? 'GET'
+    const refused = method === 'POST' ? refuseCrossSite(req) : undefined
+    if (refused) {
+      send(res, 403, { error: refused })
+      return true
+    }
     try {
       if (method === 'GET' && path === '/api/patterns') {
         const items = await library()
@@ -222,7 +249,7 @@ export function createApi(opts: ApiOptions) {
         return true
       }
       if (method === 'POST' && path === '/api/draft') {
-        await draft(await readJson(req), req, res)
+        await draft(await readJson(req), res)
         return true
       }
       if (method === 'POST' && path === '/api/runs') {

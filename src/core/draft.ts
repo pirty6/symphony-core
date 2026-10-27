@@ -166,10 +166,20 @@ Keep it small: 4-10 nodes.`;
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
+/** Single-quoted string literal; JSON escaping covers every control and line-separator character. */
+function tsString(s: string): string {
+  const body = JSON.stringify(s)
+    .slice(1, -1)
+    .replace(/\\"/g, '"')
+    .replace(/'/g, "\\'")
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  return `'${body}'`;
+}
+
 function tsLiteral(value: unknown, indent: string): string {
   const next = `${indent}  `;
-  if (typeof value === 'string')
-    return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n')}'`;
+  if (typeof value === 'string') return tsString(value);
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
   if (Array.isArray(value)) {
     if (value.length === 0) return '[]';
@@ -178,7 +188,7 @@ function tsLiteral(value: unknown, indent: string): string {
   const entries = Object.entries(value).filter(([, v]) => v !== undefined);
   if (entries.length === 0) return '{}';
   return `{\n${entries
-    .map(([k, v]) => `${next}${IDENT.test(k) ? k : `'${k}'`}: ${tsLiteral(v, next)},`)
+    .map(([k, v]) => `${next}${IDENT.test(k) ? k : tsString(k)}: ${tsLiteral(v, next)},`)
     .join('\n')}\n${indent}}`;
 }
 

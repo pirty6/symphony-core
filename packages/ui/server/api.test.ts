@@ -131,4 +131,15 @@ describe('studio api', () => {
     const list = (await (await fetch(`${base}/api/patterns`)).json()) as { name: string; source: string }[]
     expect(list.find((p) => p.name === 'upgrade-dependencies-safely')?.source).toBe('draft')
   })
+
+  it('refuses cross-site and non-JSON POSTs', async () => {
+    const plain = await fetch(`${base}/api/patterns`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' })
+    expect(plain.status).toBe(403)
+    const cross = await fetch(`${base}/api/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+      body: JSON.stringify({ pattern: data(fix), provider: 'scripted' }),
+    })
+    expect(cross.status).toBe(403)
+  })
 })

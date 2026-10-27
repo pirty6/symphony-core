@@ -70,4 +70,21 @@ describe('patternToTypeScript', () => {
     expect(camelName('fix-flaky-tests')).toBe('fixFlakyTests');
     expect(camelName('2-step')).toBe('p2Step');
   });
+
+  it('cannot be tricked into emitting code through keys or strings', async () => {
+    const evil = "x': 0, y: (globalThis.pwnedByCodegen = 'yes'), 'z";
+    const p: Pattern = {
+      ...fix,
+      name: 'evil-keys',
+      demo: undefined,
+      description: 'line\rsep\u2028end',
+      state: [...fix.state, { name: 'blob', type: 'object', initial: { [evil]: 1, "a'b\n": 'c' } }],
+    };
+    const file = join(dir, 'evil.ts');
+    writeFileSync(file, patternToTypeScript(p));
+    const mod = (await import(pathToFileURL(file).href)) as Record<string, Pattern>;
+    expect((globalThis as Record<string, unknown>).pwnedByCodegen).toBeUndefined();
+    expect(mod.evilKeys?.state.at(-1)?.initial).toEqual({ [evil]: 1, "a'b\n": 'c' });
+    expect(mod.evilKeys?.description).toBe('line\rsep\u2028end');
+  });
 });
