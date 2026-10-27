@@ -101,6 +101,8 @@ interface SessionRun {
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
   readonly model?: string;
   readonly effort?: ReasoningEffort;
+  /** Tier the model came from; re-resolved if the client changes (token fallback). */
+  readonly complexity?: Complexity;
   readonly signal: AbortSignal;
   readonly onEvent: (e: ProviderEvent) => void;
 }
@@ -184,7 +186,16 @@ export class CopilotProvider implements Provider {
           text: 'Configured token was rejected; falling back to your signed-in GitHub user.',
         });
         await this.dropClient();
-        return this.runSession(run);
+        if (run.complexity === undefined) return this.runSession(run);
+        // The new account may offer different models: resolve the tier again.
+        const tier = await this.modelFor(run.complexity);
+        if (tier.note) run.onEvent({ type: 'info', text: tier.note });
+        const { model: _m, effort: _e, ...rest } = run;
+        return this.runSession({
+          ...rest,
+          ...(tier.model ? { model: tier.model } : {}),
+          ...(tier.effort ? { effort: tier.effort } : {}),
+        });
       }
       throw new Error(
         `${msg}. ${
@@ -365,6 +376,7 @@ export class CopilotProvider implements Provider {
       onlyCustomTools: isolated,
       ...(tier.model ? { model: tier.model } : {}),
       ...(tier.effort ? { effort: tier.effort } : {}),
+      complexity: pause.complexity,
       signal: req.signal,
       onEvent: req.onEvent,
     });

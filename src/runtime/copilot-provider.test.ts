@@ -176,6 +176,49 @@ describe('CopilotProvider', () => {
     expect(sessions[0]!.cfg.availableTools).toBeDefined();
   });
 
+  it('re-resolves the model after falling back from a rejected token', async () => {
+    const created: (string | undefined)[] = [];
+    const factory = (auth: { gitHubToken?: string }) => {
+      const { client } = fakeClient(async (cfg, emit) => {
+        await callTool(cfg, 'submit_result', { updates: { word: 'cat' } });
+        emit('session.idle');
+      });
+      if (!auth.gitHubToken) {
+        return {
+          ...client,
+          listModels: async () => [{ id: 'claude-haiku-5.5', supportedReasoningEfforts: ['low'] }],
+          createSession: async (cfg: Parameters<typeof client.createSession>[0]) => {
+            created.push(cfg.model);
+            return client.createSession(cfg);
+          },
+        };
+      }
+      return {
+        ...client,
+        listModels: async () => {
+          throw new Error('Authentication failed (401)');
+        },
+        createSession: async () => {
+          throw new Error('Authentication failed: Bad credentials');
+        },
+      };
+    };
+    const p = new CopilotProvider({
+      clientFactory: factory,
+      gitHubToken: 'bad',
+      model: 'gone-model',
+    });
+    const res = await p.runAgent({
+      pause: { ...pause, complexity: 1 },
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    expect(res.result).toEqual({ updates: { word: 'cat' } });
+    expect(created).toEqual(['claude-haiku-5.5']);
+  });
+
   it('falls back to the signed-in user when the configured token is rejected', async () => {
     const auths: { gitHubToken?: string }[] = [];
     const factory = (auth: { gitHubToken?: string }) => {
