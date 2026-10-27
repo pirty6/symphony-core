@@ -8,7 +8,7 @@
  *
  * Identifiers resolve against the run state (`state.` prefix optional).
  * Logical operators require booleans; a guard must evaluate to a boolean.
- * Arithmetic: + (numbers, strings, lists) and - (numbers). List literals: [a, b].
+ * Arithmetic: + (numbers, strings, lists) and - (numbers). Literals: [a, b] and {} (empty object).
  * Functions: len(x), empty(x), includes(listOrString, value), lower(s),
  *   append(list, v), if(cond, a, b), chars(s), subset(listA, listB),
  *   take(list, n), drop(list, n), first(list), unique(list), without(listA, listB),
@@ -88,6 +88,8 @@ const OPS = [
   ']',
   '+',
   '-',
+  '{',
+  '}',
 ];
 
 function tokenize(src: string): Tok[] {
@@ -175,6 +177,10 @@ export function parseExpr(src: string): Expr {
       const e = orExpr();
       expectOp(')');
       return e;
+    }
+    if (t.k === 'op' && t.v === '{') {
+      expectOp('}');
+      return { t: 'lit', v: {} };
     }
     if (t.k === 'op' && t.v === '[') {
       const items: Expr[] = [];

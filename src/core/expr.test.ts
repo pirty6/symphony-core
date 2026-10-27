@@ -62,6 +62,8 @@ describe('evalExpr values', () => {
     ['subset(chars("aea"), guessed)', true],
     ['subset(chars(word), guessed)', false],
     ['[]', []],
+    ['{}', {}],
+    ['if(true, {}, 1)', {}],
     ['[1, word, [true]]', [1, 'apple', [true]]],
     ['take(guessed, 1)', ['a']],
     ['take(guessed, 5)', ['a', 'e']],
