@@ -15,6 +15,11 @@ Pattern (TypeScript) ─ compileScore ─▶ ExecutableScore (read-only plan, co
                        Performance (steps, state diffs, AI transcripts, full event log)
 ```
 
+Think of it as an orchestra. The **maestro** composes the score: it routes the request to a
+pattern, judges its **complexity**, and runs a debate sized to that complexity. The **engine** is the
+conductor: it makes every musician (AI agent) play exactly the notes of the score, in order. How
+much the musicians may **improvise** is one knob, from 🎻 Classical (same song, same notes) to 🥁 Free jazz.
+
 ## Quick start (only Node.js needed)
 
 Requires **Node.js 20.19+ or 22.12+** (npm ships with Node). No pnpm, no build step.
@@ -26,7 +31,8 @@ npm install
 npm start            # opens the studio at http://localhost:5173
 ```
 
-Pick **hangman** in the library and press **▶ Run**. Everything works offline: the default
+Type a request in **🎼 Ask the maestro** and press **Compose & perform**, or pick **hangman** in
+the library and press **▶ Run**. Everything works offline: the default
 **Scripted (offline demo)** provider answers agent nodes from each pattern's demo script, so you
 can explore every feature without credentials.
 
@@ -37,7 +43,8 @@ can explore every feature without credentials.
 1. Have a GitHub account with Copilot and be signed in (VS Code, the Copilot CLI or `gh auth login`),
    **or** put a token in `.env` (see `.env.example`). If that token is rejected, Symphony says so and
    falls back to your signed-in GitHub user for the rest of the session.
-2. In the studio choose **AI → GitHub Copilot** (optionally a model) and run.
+2. In the studio choose **AI → GitHub Copilot** and run. Each agent call uses the model for its
+   complexity tier (see below); typing a model in the toolbar forces one model for every tier.
 
 Agents work in the repository folder by default; set `SYMPHONY_WORKSPACE=/path/to/project` in `.env`
 to point them at another project. **Executor nodes can edit files and run commands there**;
@@ -49,10 +56,10 @@ commands only).
 | Area | What it shows |
 |------|---------------|
 | Canvas | The pattern graph. Nodes light up as they run (active, waiting, done, failed) with a visit counter. Edges show their guard, the state keys they carry, a moving **data packet** on the edge just taken, and the actual values that travelled on it. Loops route around the side. |
-| Toolbar | AI provider, auto-approve, **step mode**, Run / Pause / Step / Resume / Stop. |
-| Inspector | **Gate card** when paused: before a node runs, or *after the AI answered but before the engine applies it* (shows the proposed JSON). **Approval card** for human nodes. **AI output** streams the agent's text, tool calls, permission denials and submitted result. **State** shows every key with what just changed. |
+| Toolbar | AI provider, **complexity** (auto or 1-4; hover for the model per tier), the **improvisation knob** (🎻 Classical … 🥁 Free), auto-approve, **step mode**, Run / Pause / Step / Resume / Stop. |
+| Inspector | **Gate card** when paused: before a node runs, or *after the AI answered but before the engine applies it* (shows the proposed JSON). **Approval card** for human nodes; at the maestro's go-gate it shows the composed score, the debate notes and the inputs. **AI output** streams the agent's text, model and tier, tool calls, permission denials and submitted result; in jazz, each take and the bandleader's merge. **State** shows every key with what just changed. |
 | Timeline | Every engine event. Scrub back and forth; the canvas and inspector follow. |
-| Library | Patterns, **Draft with AI** (describe a flow, the AI drafts a validated pattern onto the canvas), a drag-and-drop palette, and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). |
+| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). |
 
 Stop mid-process: **Pause** halts at the next gate, **breakpoints** (the dot on a node) halt
 before and after that node, **step mode** halts at every gate, and **Stop** aborts the live AI call
@@ -67,6 +74,9 @@ Pattern tab. Validation runs on every change and **Run** stays disabled until th
 ## CLI
 
 ```bash
+npm run cli -- maestro "Fix the flaky login test" --provider copilot   # compose, approve, perform
+npm run cli -- maestro "..." --compose-only --save   # only compose; save it as a TypeScript pattern
+npm run cli -- run analyze -i swing --complexity 3   # improvisation and complexity per run
 npm run cli -- list                                  # pattern library
 npm run cli -- show fix                              # nodes and edges
 npm run cli -- run hangman                           # play in the terminal
@@ -134,6 +144,64 @@ state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= &&
 | Stale or duplicate input is ignored | Every resolution must echo the open `pauseId`. |
 | Runs are reproducible | `replayPerformance` re-runs the engine on recorded answers and diffs it. |
 
+## The maestro, complexity and improvisation
+
+### The maestro (meta-algorithm)
+
+`maestro` is itself a pattern run by the same engine, so every decision it makes is recorded and
+replayable:
+
+1. **Route** (tools + AI): list the library, match verb triggers deterministically, then the AI
+   confirms the pattern (or `new`) and classifies **complexity 1-4**.
+2. **Debate**, roster by complexity. All debaters are isolated (no workspace tools): they plan,
+   they don't diagnose.
+
+   | Complexity | Debate |
+   |---|---|
+   | 1 | none if a pattern fits as is (pre-debated); proposer if new |
+   | 2 | proposer + skeptic |
+   | 3 | proposer + skeptic + pragmatist |
+   | 4 | + template-critic, who can reroute to another pattern once |
+
+   Their contracts are enforced, not requested: the pragmatist must triage **every** skeptic concern,
+   the critic's verdict must be CORRECT, WRONG or HYBRID and may only recommend real patterns.
+3. **Conductor**: folds the debate into one score (applies REAL concerns, ignores THEORETICAL ones).
+4. **Validate** (tool): the draft is checked deterministically; errors go back to the proposer
+   (max 6 rounds).
+5. **Read inputs** from the request, then the **go-gate**: approve with empty feedback to perform;
+   write feedback for another round (complexity escalates one tier); reject to stop.
+6. **Perform**: the composed score runs as its own linked, recorded run at the final complexity.
+
+### Complexity → model
+
+Each agent call uses the model of its tier, with reasoning effort when the model supports it.
+A node may pin its tier; otherwise a state field `complexity` (the maestro's) or the score's is used.
+
+| Tier | Default model (Copilot) |
+|---|---|
+| 1 routine | `claude-haiku-5.5` (low) |
+| 2 some judgement | `claude-sonnet-5` (medium) |
+| 3 risky | `claude-sonnet-5.5` (high) |
+| 4 novel | `claude-opus-5.5` (xhigh) |
+
+Override with `SYMPHONY_TIERS="1=claude-haiku-4.5,3=gpt-6.1-sol:high"`. Unavailable models fall
+back to your default model with a note. `MODEL`/`COPILOT_MODEL` force one model for every tier.
+
+### Classical to jazz: the improvisation knob
+
+| Level | What the musicians may do |
+|---|---|
+| 0 🎻 Classical | Same song (same score, inputs and workspace) ⇒ **exactly the same notes**: answers recorded for an identical move are replayed from the repertoire (`.symphony/runs`) instead of asking the AI again. Routes are scripted. |
+| 1 🎷 Cool | A fresh take every performance; routes still scripted. |
+| 2 🎷 Swing | **Solo points**: the AI chooses where the tune goes next among the score's labelled routes. |
+| 3 🎺 Bebop | Read-only agents play **2 independent takes**; a bandleader merges them (call and response). |
+| 4 🥁 Free | 3 takes, and agents are invited to try unconventional angles. |
+
+Whatever the level, every performance is recorded and replays exactly, executors (which change
+the world) always play one take, and a solo can only pick routes the score wrote. The `analyze`
+pattern is built for jazz: in classical it runs every budgeted analysis, from Swing the AI decides
+when it has enough evidence.
+
 ## The investigate pattern
 
 `investigate` answers a question without skipping information. The engine owns every work queue:
@@ -187,7 +255,7 @@ Write a pattern as a TypeScript module (see `src/patterns/*.ts`) and add it to
 ```text
 src/core/        pure, browser-safe: types, expr, schema, validate, compile, engine, graph, replay, draft, hash
 src/runtime/     I/O: providers (scripted, Copilot), run driver, drafting loop, store, factory
-src/patterns/    the pattern library (TypeScript); drafts/ for patterns saved from the studio
+src/patterns/    the pattern library (TypeScript), including maestro; drafts/ for saved patterns
 src/cli.ts       command line
 packages/ui/     the studio: Vite + React Flow; server/api.ts mounts REST + SSE on the dev server
 ```
