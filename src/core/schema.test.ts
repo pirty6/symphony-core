@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkValue,
+  formatFieldInput,
+  parseFieldInput,
   isValidFieldName,
   resultJsonSchema,
   validateNodeResult,
@@ -96,5 +98,28 @@ describe('resultJsonSchema', () => {
   it('describes updates + verdict', () => {
     const s = resultJsonSchema(writes) as { properties: { updates: { required: string[] } } };
     expect(s.properties.updates.required).toEqual(['word', 'tags']);
+  });
+});
+
+describe('parseFieldInput / formatFieldInput', () => {
+  it.each([
+    ['number', ' 3 ', 3],
+    ['number', '', 0],
+    ['boolean', 'yes', true],
+    ['boolean', 'no', false],
+    ['string[]', 'a, b,,c', ['a', 'b', 'c']],
+    ['string[]', '["x y"]', ['x y']],
+    ['number[]', '1,2', [1, 2]],
+    ['object', '{"a":1}', { a: 1 }],
+    ['string', ' keep ', ' keep '],
+  ] as const)('%s %j', (type, raw, expected) => {
+    expect(parseFieldInput(type, raw)).toEqual(expected);
+  });
+
+  it('formats values back', () => {
+    expect(formatFieldInput(['a', 'b'])).toBe('a, b');
+    expect(formatFieldInput({ a: 1 })).toBe('{"a":1}');
+    expect(formatFieldInput(undefined)).toBe('');
+    expect(formatFieldInput(2)).toBe('2');
   });
 });

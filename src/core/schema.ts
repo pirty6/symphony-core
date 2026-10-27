@@ -173,3 +173,36 @@ export function resultJsonSchema(writes: readonly StateField[]): Record<string, 
     additionalProperties: false,
   };
 }
+
+/** Parse a human-typed string into a value of `type` (CLI flags and studio forms). */
+export function parseFieldInput(type: FieldType, raw: string): unknown {
+  const t = raw.trim();
+  switch (type) {
+    case 'number':
+      return t === '' ? 0 : Number(t);
+    case 'boolean':
+      return /^(true|yes|y|1)$/i.test(t);
+    case 'string[]':
+    case 'number[]': {
+      if (t === '') return [];
+      const items = t.startsWith('[')
+        ? (JSON.parse(t) as unknown[])
+        : t
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+      return type === 'number[]' ? items.map(Number) : items.map(String);
+    }
+    case 'object':
+      return t === '' ? {} : (JSON.parse(t) as unknown);
+    default:
+      return raw;
+  }
+}
+
+/** Inverse of parseFieldInput, for pre-filling inputs. */
+export function formatFieldInput(value: unknown): string {
+  if (Array.isArray(value)) return value.map(String).join(', ');
+  if (value !== null && typeof value === 'object') return JSON.stringify(value);
+  return value === undefined || value === null ? '' : String(value);
+}

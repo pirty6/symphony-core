@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
 import { replayPerformance } from './core/replay.js';
+import { parseFieldInput } from './core/schema.js';
 import type { FieldType, Pattern } from './core/types.js';
 import { PATTERNS } from './patterns/index.js';
 import { Run, type RunMessage } from './runtime/driver.js';
@@ -53,27 +54,7 @@ export function parseContext(pairs: readonly string[], pattern: Pattern): Record
     const raw = pair.slice(eq + 1);
     const type = types.get(key);
     if (!type) throw new Error(`'${key}' is not a state field of '${pattern.name}'`);
-    switch (type) {
-      case 'number':
-        out[key] = Number(raw);
-        break;
-      case 'boolean':
-        out[key] = raw === 'true';
-        break;
-      case 'string[]':
-      case 'number[]': {
-        const items = raw.startsWith('[')
-          ? (JSON.parse(raw) as unknown[])
-          : raw.split(',').map((s) => s.trim());
-        out[key] = type === 'number[]' ? items.map(Number) : items.map(String);
-        break;
-      }
-      case 'object':
-        out[key] = JSON.parse(raw) as unknown;
-        break;
-      default:
-        out[key] = raw;
-    }
+    out[key] = parseFieldInput(type, raw);
   }
   return out;
 }
