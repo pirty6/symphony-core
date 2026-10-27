@@ -31,6 +31,10 @@ export interface AgentRequest {
   readonly visit: number;
   readonly signal: AbortSignal;
   readonly onEvent: (e: ProviderEvent) => void;
+  /** Jazz: which independent take this is (1-based) when the node plays several. */
+  readonly take?: number;
+  /** Jazz: the takes' results to merge; the call is then an isolated integration. */
+  readonly integrate?: readonly unknown[];
 }
 
 export interface AgentResponse {
@@ -84,9 +88,11 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
   lines.push(
     '',
     '## Sources you can use',
-    pause.role === 'assessor'
-      ? '- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff, gh issue/pr/run/search view|list, gh api GETs, ls, cat, find).'
-      : '- Workspace: read, edit and run commands as this step needs.',
+    pause.isolated
+      ? '- Only the input above. You have no workspace or shell tools for this step: reason from what you were given.'
+      : pause.role === 'assessor'
+        ? '- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff, gh issue/pr/run/search view|list, gh api GETs, ls, cat, find).'
+        : '- Workspace: read, edit and run commands as this step needs.',
     ...(pause.capabilities.includes('web')
       ? [
           '- Web: web_search(query) to find pages, then web_fetch(url) to read them. Cite every URL you rely on.',
@@ -104,7 +110,9 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
     pause.role === 'assessor'
       ? '- You are READ-ONLY: read files and run read-only commands only. Edits and writes will be denied.'
       : '- You may edit files and run commands needed for THIS step only.',
-    `- When finished, call the \`${SUBMIT_TOOL}\` tool exactly once with { updates, verdict }, then stop.`,
+    pause.choices
+      ? `- When finished, call the \`${SUBMIT_TOOL}\` tool exactly once with { updates, verdict, next }, then stop.`
+      : `- When finished, call the \`${SUBMIT_TOOL}\` tool exactly once with { updates, verdict }, then stop.`,
     '- `updates` must contain exactly these keys:',
     ...pause.outputSchema.map(
       (f) => `  - ${f.name} (${f.type})${f.description ? `: ${f.description}` : ''}`,
@@ -114,6 +122,21 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
   );
   if (pause.outputSchema.length === 0)
     lines.push('- This step writes no state: send `updates: {}`.');
+  if (pause.choices) {
+    lines.push(
+      '',
+      '## Solo: you choose where the tune goes next',
+      'Set `next` to exactly one of these route ids, based on what you found:',
+      ...pause.choices.map((c) => `- \`${c.edgeId}\`: ${c.label}`),
+    );
+  }
+  if (pause.improvisation >= 4) {
+    lines.push(
+      '',
+      '## Free improvisation',
+      'Unconventional angles are welcome: question the framing, try an approach others would not, and say what you tried.',
+    );
+  }
   if (pause.feedback && pause.feedback.length > 0) {
     lines.push(
       '',
@@ -366,4 +389,50 @@ export function decidePermission(role: Role, req: PermissionLike): PolicyDecisio
     default:
       return { allowed: false, reason: `assessor is read-only; '${req.kind}' is not allowed` };
   }
+}
+
+/** Prompt for merging independent takes of one step into a single answer (jazz). */
+export function buildIntegrationPrompt(pause: AgentPause, takes: readonly unknown[]): string {
+  return [
+    `You are the bandleader integrating ${takes.length} independent takes of ONE workflow step.`,
+    'Merge them into the single best answer for this step: keep every well-supported finding from any take,',
+    'resolve conflicts in favour of the best-evidenced take and say so in the verdict reason, drop duplicates.',
+    'You have no workspace tools: work only from the takes below.',
+    '',
+    '## Overall goal',
+    pause.goal,
+    '',
+    `## The step: ${pause.label}`,
+    pause.directive,
+    '',
+    '## Input the takes were given',
+    '```json',
+    JSON.stringify(pause.input, null, 2),
+    '```',
+    '',
+    ...takes.flatMap((t, i) => [
+      `## Take ${i + 1}`,
+      '```json',
+      JSON.stringify(t, null, 2),
+      '```',
+      '',
+    ]),
+    '## Rules',
+    `- Call the \`${SUBMIT_TOOL}\` tool exactly once with { updates, verdict${pause.choices ? ', next' : ''} }, then stop.`,
+    '- `updates` must contain exactly these keys:',
+    ...pause.outputSchema.map(
+      (f) => `  - ${f.name} (${f.type})${f.description ? `: ${f.description}` : ''}`,
+    ),
+    ...(pause.choices
+      ? [
+          '- `next`: one of ' +
+            pause.choices.map((c) => `\`${c.edgeId}\` (${c.label})`).join(', ') +
+            '.',
+        ]
+      : []),
+    '- `verdict`: { outcome, confidence 0..1, shouldTerminate (almost always false), reason }.',
+    ...(pause.feedback?.length
+      ? ['', '## Previous answer was rejected', ...pause.feedback.map((f) => `- ${f}`)]
+      : []),
+  ].join('\n');
 }

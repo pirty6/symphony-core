@@ -11,7 +11,7 @@ import { CopilotClient, defineTool, ToolSet } from '@github/copilot-sdk';
 import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
 import { webSearch, type SearchResult } from './web-search.js';
 import { resultJsonSchema } from '../core/schema.js';
-import type { Role, ToolCallRecord } from '../core/types.js';
+import type { Complexity, Role, ToolCallRecord } from '../core/types.js';
 import type {
   AgentRequest,
   AgentResponse,
@@ -19,7 +19,13 @@ import type {
   Provider,
   ProviderEvent,
 } from './provider.js';
-import { buildAgentPrompt, decidePermission, extractJson, SUBMIT_TOOL } from './provider.js';
+import {
+  buildAgentPrompt,
+  buildIntegrationPrompt,
+  decidePermission,
+  extractJson,
+  SUBMIT_TOOL,
+} from './provider.js';
 
 export const DRAFT_TOOL = 'submit_draft';
 export const WEB_SEARCH_TOOL = 'web_search';
@@ -37,8 +43,43 @@ export interface ClientLike {
   stop(): Promise<unknown>;
 }
 
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
+export interface Tier {
+  readonly model: string;
+  readonly effort?: ReasoningEffort;
+}
+
+/** Default model per complexity tier (overridable with SYMPHONY_TIERS). */
+export const DEFAULT_TIERS: Readonly<Record<Complexity, Tier>> = {
+  1: { model: 'claude-haiku-5.5', effort: 'low' },
+  2: { model: 'claude-sonnet-5', effort: 'medium' },
+  3: { model: 'claude-sonnet-5.5', effort: 'high' },
+  4: { model: 'claude-opus-5.5', effort: 'xhigh' },
+};
+
+/** Parse "1=model:effort,2=model,..." into tiers. */
+export function parseTiers(spec: string | undefined): Partial<Record<Complexity, Tier>> {
+  const out: Partial<Record<Complexity, Tier>> = {};
+  for (const part of (spec ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean)) {
+    const m = /^([1-4])\s*=\s*([^:\s]+)(?::(low|medium|high|xhigh))?$/.exec(part);
+    if (!m) throw new Error(`invalid tier '${part}' (expected N=model[:low|medium|high|xhigh])`);
+    out[Number(m[1]) as Complexity] = {
+      model: m[2]!,
+      ...(m[3] ? { effort: m[3] as ReasoningEffort } : {}),
+    };
+  }
+  return out;
+}
+
 export interface CopilotProviderOptions {
+  /** Forces one model for every tier (overrides `tiers`). */
   readonly model?: string;
+  /** Model per complexity tier; defaults to DEFAULT_TIERS. */
+  readonly tiers?: Partial<Record<Complexity, Tier>>;
   readonly workingDirectory?: string;
   /** MCP servers connected to nodes with the 'mcp' capability. */
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
@@ -58,6 +99,8 @@ interface SessionRun {
   readonly tools: readonly ReturnType<typeof defineTool>[];
   readonly onlyCustomTools: boolean;
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
+  readonly model?: string;
+  readonly effort?: ReasoningEffort;
   readonly signal: AbortSignal;
   readonly onEvent: (e: ProviderEvent) => void;
 }
@@ -99,7 +142,8 @@ export class CopilotProvider implements Provider {
     if (run.signal.aborted) throw abortError();
     const toolCalls: ToolCallRecord[] = [];
     const config: SessionConfig = {
-      ...(this.opts.model ? { model: this.opts.model } : {}),
+      ...(run.model ? { model: run.model } : {}),
+      ...(run.effort ? { reasoningEffort: run.effort } : {}),
       ...(this.opts.workingDirectory ? { workingDirectory: this.opts.workingDirectory } : {}),
       tools: [...run.tools],
       ...(run.onlyCustomTools
@@ -235,16 +279,65 @@ export class CopilotProvider implements Provider {
     return { output, toolCalls, ...(model ? { model } : {}) };
   }
 
+  /** Resolve the model and reasoning effort for a tier, checked against the models available. */
+  async modelFor(
+    complexity: Complexity,
+  ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
+    if (this.opts.model) return { model: this.opts.model };
+    const tier = { ...DEFAULT_TIERS, ...this.opts.tiers }[complexity];
+    const available = await this.availableModels();
+    if (available && !available.has(tier.model)) {
+      return {
+        note: `tier ${complexity} model '${tier.model}' is not available to you; using the default model`,
+      };
+    }
+    const efforts = available?.get(tier.model);
+    const effort =
+      tier.effort && (!efforts || efforts.includes(tier.effort)) ? tier.effort : undefined;
+    return { model: tier.model, ...(effort ? { effort } : {}) };
+  }
+
+  private models: Promise<Map<string, readonly string[]> | undefined> | undefined;
+
+  private availableModels(): Promise<Map<string, readonly string[]> | undefined> {
+    this.models ??= (async () => {
+      try {
+        const client = (await this.ensureClient()) as ClientLike & {
+          listModels?: () => Promise<unknown[]>;
+        };
+        if (!client.listModels) return undefined;
+        const list = (await client.listModels()) as {
+          id: string;
+          supportedReasoningEfforts?: string[];
+        }[];
+        return new Map(list.map((m) => [m.id, m.supportedReasoningEfforts ?? []]));
+      } catch {
+        return undefined;
+      }
+    })();
+    return this.models;
+  }
+
   async runAgent(req: AgentRequest): Promise<AgentResponse> {
     const { pause } = req;
-    const useMcp = pause.capabilities.includes('mcp');
+    const integrating = req.integrate !== undefined;
+    const isolated = pause.isolated || integrating;
+    const useMcp = pause.capabilities.includes('mcp') && !isolated;
     const mcpServers = useMcp ? (this.opts.mcpServers ?? {}) : {};
-    const prompt = buildAgentPrompt(pause, { mcpServers: Object.keys(mcpServers) });
+    const prompt = integrating
+      ? buildIntegrationPrompt(pause, req.integrate!)
+      : buildAgentPrompt(pause, { mcpServers: Object.keys(mcpServers) });
     const startedAt = this.opts.clock?.();
+    const tier = await this.modelFor(pause.complexity);
+    if (tier.note) req.onEvent({ type: 'info', text: tier.note });
+    req.onEvent({
+      type: 'info',
+      text: `${integrating ? 'integrating takes' : req.take ? `take ${req.take}` : 'playing'} · tier ${pause.complexity} · ${tier.model ?? 'default model'}${tier.effort ? ` (${tier.effort})` : ''}`,
+    });
     let submitted: unknown;
     const tool = defineTool(SUBMIT_TOOL, {
       description: `Submit the result of step '${pause.label}'. Call exactly once when done.`,
-      parameters: resultJsonSchema(pause.outputSchema),
+      parameters: resultJsonSchema(pause.outputSchema, pause.choices),
       skipPermission: true,
       handler: (args: unknown) => {
         submitted = args;
@@ -253,22 +346,27 @@ export class CopilotProvider implements Provider {
     });
     const tools = [
       tool,
-      ...(pause.capabilities.includes('web') ? [this.webSearchTool(req.signal)] : []),
+      ...(pause.capabilities.includes('web') && !integrating
+        ? [this.webSearchTool(req.signal)]
+        : []),
     ];
     const out = await this.runSession({
       prompt,
       role: pause.role,
       tools,
       mcpServers,
-      onlyCustomTools: false,
+      onlyCustomTools: isolated,
+      ...(tier.model ? { model: tier.model } : {}),
+      ...(tier.effort ? { effort: tier.effort } : {}),
       signal: req.signal,
       onEvent: req.onEvent,
     });
+    const model = out.model ?? tier.model;
     return {
       result: submitted ?? extractJson(out.output),
       transcript: {
         provider: this.name,
-        ...(out.model || this.opts.model ? { model: out.model ?? this.opts.model } : {}),
+        ...(model ? { model } : {}),
         prompt,
         output: out.output,
         toolCalls: out.toolCalls,
@@ -349,6 +447,7 @@ export class CopilotProvider implements Provider {
 
   private async dropClient(): Promise<void> {
     const client = this.client;
+    this.models = undefined;
     this.client = undefined;
     this.starting = undefined;
     await client?.stop().catch(() => {});

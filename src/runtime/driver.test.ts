@@ -7,6 +7,7 @@ import { performScore, Run, type RunMessage, type RunStatus } from './driver.js'
 import type { AgentRequest, AgentResponse, Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
 import { registry } from './tools.js';
+import { repertoireFrom } from './repertoire.js';
 
 const clock = () => 't';
 const hangmanScore = compileScore(hangman, { goal: 'play', generatedAt: 't' });
@@ -285,5 +286,104 @@ describe('Run', () => {
       (await new Run({ score, provider: new ScriptedProvider(), tools: broken, clock }).start())
         .reason,
     ).toMatch(/git not found/);
+  });
+
+  it('classical: same song, same notes — replays the repertoire instead of asking again', async () => {
+    const asked: string[] = [];
+    const flaky: Provider = {
+      name: 'flaky',
+      runAgent: async (req) => {
+        asked.push(req.pause.nodeId);
+        const word = `w${asked.length}x`;
+        return {
+          result: {
+            updates: { word },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+          },
+          transcript: { provider: 'flaky', prompt: '', output: `picked ${word}`, toolCalls: [] },
+        };
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const score = compileScore(hangman, { goal: 'g', improvisation: 0, generatedAt: 't' });
+    const first = await new Run({
+      score,
+      provider: flaky,
+      demo: hangman.demo,
+      autoApprove: true,
+      clock,
+    }).start();
+    expect(asked).toEqual(['pick']);
+    const repertoire = repertoireFrom([
+      { run: { schemaVersion: 2, score, performance: first }, file: 'first.json' },
+    ]);
+    const run2 = new Run({
+      score,
+      provider: flaky,
+      demo: hangman.demo,
+      autoApprove: true,
+      clock,
+      repertoire,
+    });
+    const second = await run2.start();
+    expect(asked).toEqual(['pick']);
+    expect(second.finalState).toEqual(first.finalState);
+    expect(second.steps.find((s) => s.nodeId === 'pick')?.transcript?.fromRepertoire).toBe(
+      'first.json',
+    );
+    expect(
+      run2.messages.some(
+        (m) => m.type === 'provider' && m.event.type === 'info' && /same notes/.test(m.event.text),
+      ),
+    ).toBe(true);
+
+    const jazz = compileScore(hangman, { goal: 'g', improvisation: 1, generatedAt: 't' });
+    const jazzRep = repertoireFrom([
+      { run: { schemaVersion: 2, score: jazz, performance: first }, file: 'x' },
+    ]);
+    await new Run({
+      score: jazz,
+      provider: flaky,
+      demo: hangman.demo,
+      autoApprove: true,
+      clock,
+      repertoire: jazzRep,
+    }).start();
+    expect(asked).toEqual(['pick', 'pick']);
+  });
+
+  it('bebop: plays takes in parallel and lets the bandleader merge them', async () => {
+    const calls: { take?: number; integrate?: number }[] = [];
+    const band: Provider = {
+      name: 'band',
+      runAgent: async (req) => {
+        calls.push({
+          ...(req.take ? { take: req.take } : {}),
+          ...(req.integrate ? { integrate: req.integrate.length } : {}),
+        });
+        const word = req.integrate ? 'merged' : `take${req.take}`;
+        req.onEvent({ type: 'info', text: word });
+        return {
+          result: {
+            updates: { word },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+          },
+          transcript: { provider: 'band', prompt: '', output: word, toolCalls: [] },
+        };
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const score = compileScore(hangman, { goal: 'g', improvisation: 4, generatedAt: 't' });
+    const run = new Run({ score, provider: band, demo: hangman.demo, autoApprove: true, clock });
+    const perf = await run.start();
+    expect(calls).toEqual([{ take: 1 }, { take: 2 }, { take: 3 }, { integrate: 3 }]);
+    expect(perf.finalState.word).toBe('merged');
+    expect(
+      perf.steps.find((s) => s.nodeId === 'pick')?.transcript?.takes?.map((t) => t.output),
+    ).toEqual(['take1', 'take2', 'take3']);
+    expect(
+      run.messages.filter((m) => m.type === 'provider').map((m) => m.type === 'provider' && m.take),
+    ).toEqual([1, 2, 3, 0]);
+    expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
   });
 });

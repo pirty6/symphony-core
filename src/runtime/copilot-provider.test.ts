@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionConfig } from '@github/copilot-sdk';
 import type { AgentPause } from '../core/types.js';
-import { CopilotProvider, type ClientLike, type SessionLike } from './copilot-provider.js';
+import {
+  CopilotProvider,
+  parseTiers,
+  type ClientLike,
+  type SessionLike,
+} from './copilot-provider.js';
 import type { ProviderEvent } from './provider.js';
 
 const pause: AgentPause = {
@@ -110,6 +115,7 @@ describe('CopilotProvider', () => {
     expect(res.transcript).toMatchObject({ provider: 'copilot', model: 'm1', output: 'Done.' });
     expect(res.transcript.toolCalls.some((c) => c.denied)).toBe(true);
     expect(events.map((e) => e.type)).toEqual([
+      'info',
       'delta',
       'permission',
       'tool-start',
@@ -148,7 +154,7 @@ describe('CopilotProvider', () => {
       state: {},
       visit: 0,
       signal: ctrl.signal,
-      onEvent: () => ctrl.abort(),
+      onEvent: (e) => e.type === 'delta' && ctrl.abort(),
     });
     await expect(run).rejects.toThrow(/aborted/);
     expect(sessions[0]!.aborted).toBe(true);
@@ -199,7 +205,7 @@ describe('CopilotProvider', () => {
     });
     expect(res.result).toEqual({ updates: { word: 'cat' } });
     expect(auths).toEqual([{ gitHubToken: 'bad' }, {}]);
-    expect(events[0]).toMatchObject({
+    expect(events.find((e) => e.type === 'info' && /falling/.test(e.text))).toMatchObject({
       type: 'info',
       text: expect.stringMatching(/falling back to your signed-in GitHub user/),
     });
@@ -294,5 +300,76 @@ describe('CopilotProvider', () => {
     await go([]);
     expect(sessions[1]!.cfg.tools!.map((t) => t.name)).toEqual(['submit_result']);
     expect(sessions[1]!.cfg.mcpServers).toBeUndefined();
+  });
+
+  it('picks the model and effort from the complexity tier, checked against available models', async () => {
+    const { client, sessions } = fakeClient(async (cfg, emit) => {
+      await callTool(cfg, 'submit_result', { updates: { word: 'x' } });
+      emit('session.idle');
+    });
+    const withModels = {
+      ...client,
+      listModels: async () => [
+        { id: 'claude-haiku-5.5', supportedReasoningEfforts: ['low', 'medium'] },
+        { id: 'claude-opus-5.5', supportedReasoningEfforts: [] },
+      ],
+    };
+    const events: ProviderEvent[] = [];
+    const p = new CopilotProvider({
+      clientFactory: () => withModels,
+      tiers: { 4: { model: 'claude-opus-5.5', effort: 'xhigh' } },
+    });
+    const go = (complexity: 1 | 2 | 3 | 4, extra = {}) =>
+      p.runAgent({
+        pause: { ...pause, complexity },
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: (e) => events.push(e),
+        ...extra,
+      });
+    await go(1);
+    expect(sessions[0]!.cfg).toMatchObject({ model: 'claude-haiku-5.5', reasoningEffort: 'low' });
+    await go(4);
+    expect(sessions[1]!.cfg.model).toBe('claude-opus-5.5');
+    expect(sessions[1]!.cfg.reasoningEffort).toBeUndefined();
+    await go(2);
+    expect(sessions[2]!.cfg.model).toBeUndefined();
+    expect(
+      events.some(
+        (e) => e.type === 'info' && /tier 2 model 'claude-sonnet-5' is not available/.test(e.text),
+      ),
+    ).toBe(true);
+    const merged = await go(1, {
+      integrate: [{ updates: { word: 'a' } }, { updates: { word: 'b' } }],
+    });
+    expect(merged.transcript.prompt).toContain('integrating 2 independent takes');
+    expect(sessions[3]!.cfg.availableTools).toBeDefined();
+    expect(parseTiers('1=m1:low, 4=m4')).toEqual({
+      1: { model: 'm1', effort: 'low' },
+      4: { model: 'm4' },
+    });
+    expect(() => parseTiers('5=x')).toThrow(/invalid tier/);
+  });
+
+  it('isolated agents get only the submit tool and solo answers carry next', async () => {
+    const { client, sessions } = fakeClient(async (cfg, emit) => {
+      await callTool(cfg, 'submit_result', { updates: {}, next: 'go' });
+      emit('session.idle');
+    });
+    const p = new CopilotProvider({ clientFactory: () => client });
+    const choices = [{ edgeId: 'go', label: 'act', to: 'act' }];
+    const res = await p.runAgent({
+      pause: { ...pause, isolated: true, choices },
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    expect(res.result).toMatchObject({ next: 'go' });
+    expect(sessions[0]!.cfg.availableTools).toBeDefined();
+    expect(res.transcript.prompt).toContain('## Solo: you choose where the tune goes next');
+    const schema = sessions[0]!.cfg.tools![0]!.parameters as { required: string[] };
+    expect(schema.required).toContain('next');
   });
 });

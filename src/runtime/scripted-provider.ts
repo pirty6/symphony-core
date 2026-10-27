@@ -145,11 +145,21 @@ export class ScriptedProvider implements Provider {
     const { pause } = req;
     const startedAt = this.opts.clock?.();
     const responder = this.opts.demo?.agents?.[pause.nodeId];
-    const result: NodeResult = responder
-      ? responder(req.state, req.visit)
-      : placeholderResult(pause);
+    const played: NodeResult = req.integrate
+      ? (req.integrate[0] as NodeResult)
+      : responder
+        ? responder(req.state, req.visit)
+        : placeholderResult(pause);
+    // At an active solo with no scripted choice, play the written route (first edge).
+    const result: NodeResult =
+      pause.choices && !played.next ? { ...played, next: pause.choices[0]!.edgeId } : played;
     const prompt = buildAgentPrompt(pause);
-    req.onEvent({ type: 'info', text: `scripted ${pause.role} answering '${pause.label}'` });
+    req.onEvent({
+      type: 'info',
+      text: req.integrate
+        ? `scripted bandleader merging ${req.integrate.length} takes of '${pause.label}'`
+        : `scripted ${pause.role} ${req.take ? `take ${req.take} of` : 'answering'} '${pause.label}' · tier ${pause.complexity}`,
+    });
     const thinking = `Working on "${pause.label}" (${pause.role}).\n${result.verdict.reason}.\n`;
     await stream(thinking, this.opts, req.signal, req.onEvent);
     const id = `scripted-${pause.pauseId}`;

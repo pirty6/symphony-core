@@ -11,6 +11,7 @@ import { patternToTypeScript } from '../core/draft.js';
 import { hashOf } from '../core/hash.js';
 import type { Pattern, SavedRun } from '../core/types.js';
 import { validatePattern } from '../core/validate.js';
+import { repertoireFrom, type Repertoire } from './repertoire.js';
 
 const exec = promisify(execFile);
 
@@ -152,4 +153,21 @@ export async function loadPatternFiles(
     }
   }
   return patterns;
+}
+
+/** Load every saved run, oldest first, so the first performance of a song is the one replayed. */
+export async function loadRepertoire(runsDir: string): Promise<Repertoire> {
+  const summaries = (await listRuns(runsDir)).toReversed();
+  const runs: { run: SavedRun; file: string }[] = [];
+  for (const s of summaries) {
+    try {
+      runs.push({
+        run: JSON.parse(await readFile(join(runsDir, s.file), 'utf8')) as SavedRun,
+        file: s.file,
+      });
+    } catch {
+      // unreadable runs are skipped
+    }
+  }
+  return repertoireFrom(runs);
 }

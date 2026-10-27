@@ -29,7 +29,9 @@ import type {
   SavedRun,
 } from '../core/types.js';
 import type { Provider, ProviderEvent } from './provider.js';
+import type { Repertoire } from './repertoire.js';
 import { checkToolPause, type ToolContext, type ToolRegistry } from './tools.js';
+import { playsFromRepertoire } from '../core/jazz.js';
 import { mapToolOutput } from '../core/engine.js';
 
 export type RunStatus =
@@ -49,6 +51,8 @@ export type RunMessage =
       readonly nodeId: string;
       readonly attempt: number;
       readonly event: ProviderEvent;
+      /** Jazz takes: 1..N for each take, 0 for the integrator. */
+      readonly take?: number;
     }
   | {
       readonly seq: number;
@@ -82,6 +86,8 @@ export interface RunOptions {
   readonly envHash?: () => Promise<string>;
   readonly clock?: () => string;
   readonly onSave?: (run: SavedRun) => Promise<string | undefined>;
+  /** Classical (improvisation 0): recorded answers to replay for identical moves. */
+  readonly repertoire?: Repertoire;
   /** Tools for `tool` nodes. Without a registry, tool nodes use the pattern's demo outputs. */
   readonly tools?: ToolRegistry;
   readonly toolContext?: Omit<ToolContext, 'signal'>;
@@ -207,21 +213,89 @@ export class Run {
     if (!this.stopRequested) this.setStatus('running', { nodeId });
   }
 
+  private emitFor(pause: AgentPause, take?: number) {
+    return (event: ProviderEvent) =>
+      this.push({
+        type: 'provider',
+        nodeId: pause.nodeId,
+        attempt: pause.attempt,
+        event,
+        ...(take !== undefined ? { take } : {}),
+      });
+  }
+
+  private async play(
+    pause: AgentPause,
+    signal: AbortSignal,
+    extra: { take?: number; integrate?: readonly unknown[] } = {},
+  ): Promise<{ result: unknown; transcript: AiTranscript }> {
+    return this.opts.provider.runAgent({
+      pause,
+      state: this.engine.state,
+      visit: (this.engine.visits[pause.nodeId] ?? 1) - 1,
+      signal,
+      onEvent: this.emitFor(pause, extra.integrate ? 0 : extra.take),
+      ...extra,
+    });
+  }
+
+  /** Classical: the same move of the same song replays the recorded notes. */
+  private fromRepertoire(
+    pause: AgentPause,
+  ): { result: unknown; transcript: AiTranscript } | undefined {
+    if (!playsFromRepertoire(pause.improvisation) || pause.role !== 'assessor') return undefined;
+    const take = this.opts.repertoire?.find(this.score.id, pause.moveKey, this.opts.provider.name);
+    if (!take) return undefined;
+    const emit = this.emitFor(pause);
+    emit({
+      type: 'info',
+      text: `🎼 replayed from repertoire (${take.file}): same song, same notes`,
+    });
+    if (take.transcript?.output) emit({ type: 'delta', text: take.transcript.output });
+    return {
+      result: take.result,
+      transcript: {
+        ...(take.transcript ?? {
+          provider: this.opts.provider.name,
+          prompt: '',
+          output: '',
+          toolCalls: [],
+        }),
+        fromRepertoire: take.file,
+      },
+    };
+  }
+
+  /** Jazz: independent takes in parallel, then a bandleader merges them. */
+  private async playTakes(
+    pause: AgentPause,
+    signal: AbortSignal,
+  ): Promise<{ result: unknown; transcript: AiTranscript }> {
+    const settled = await Promise.allSettled(
+      Array.from({ length: pause.takes }, (_, i) => this.play(pause, signal, { take: i + 1 })),
+    );
+    if (signal.aborted) throw new DOMException('aborted', 'AbortError');
+    const takes = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
+    if (takes.length === 0) throw (settled[0] as PromiseRejectedResult).reason;
+    if (takes.length === 1) return takes[0]!;
+    const merged = await this.play(pause, signal, { integrate: takes.map((t) => t.result) });
+    return {
+      result: merged.result,
+      transcript: { ...merged.transcript, takes: takes.map((t) => t.transcript) },
+    };
+  }
+
   private async runAgent(pause: AgentPause): Promise<Resolution | undefined> {
     await this.gate(pause.nodeId, 'before');
     if (this.stopRequested) return undefined;
     this.abort = new AbortController();
+    const signal = this.abort.signal;
     let result: unknown;
     let transcript: AiTranscript;
     try {
-      const res = await this.opts.provider.runAgent({
-        pause,
-        state: this.engine.state,
-        visit: (this.engine.visits[pause.nodeId] ?? 1) - 1,
-        signal: this.abort.signal,
-        onEvent: (event) =>
-          this.push({ type: 'provider', nodeId: pause.nodeId, attempt: pause.attempt, event }),
-      });
+      const res =
+        this.fromRepertoire(pause) ??
+        (pause.takes > 1 ? await this.playTakes(pause, signal) : await this.play(pause, signal));
       result = res.result;
       transcript = res.transcript;
     } catch (e) {
@@ -233,12 +307,7 @@ export class Run {
         output: `provider error: ${(e as Error).message}`,
         toolCalls: [],
       };
-      this.push({
-        type: 'provider',
-        nodeId: pause.nodeId,
-        attempt: pause.attempt,
-        event: { type: 'info', text: transcript.output },
-      });
+      this.emitFor(pause)({ type: 'info', text: transcript.output });
     } finally {
       this.abort = undefined;
     }
