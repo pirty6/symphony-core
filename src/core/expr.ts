@@ -11,7 +11,8 @@
  * Arithmetic: + (numbers, strings, lists) and - (numbers). List literals: [a, b].
  * Functions: len(x), empty(x), includes(listOrString, value), lower(s),
  *   append(list, v), if(cond, a, b), chars(s), subset(listA, listB),
- *   take(list, n), drop(list, n), first(list), unique(list), without(listA, listB).
+ *   take(list, n), drop(list, n), first(list), unique(list), without(listA, listB),
+ *   get(objectOrList, keyOrIndex) (null when missing), keys(object).
  */
 
 export type Expr =
@@ -36,7 +37,9 @@ type FnName =
   | 'drop'
   | 'first'
   | 'unique'
-  | 'without';
+  | 'without'
+  | 'get'
+  | 'keys';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -52,6 +55,8 @@ const FNS: Record<FnName, number> = {
   first: 1,
   unique: 1,
   without: 2,
+  get: 2,
+  keys: 1,
 };
 
 export class ExprError extends Error {
@@ -321,6 +326,18 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
         case 'unique':
           if (!Array.isArray(x)) throw new ExprError('unique() needs a list');
           return x.filter((v, i) => x.findIndex((w) => deepEqual(v, w)) === i);
+        case 'get': {
+          const k = args[1];
+          if (Array.isArray(x)) return typeof k === 'number' ? (x[k] ?? null) : null;
+          if (x && typeof x === 'object' && (typeof k === 'string' || typeof k === 'number')) {
+            return Object.hasOwn(x, k) ? (x as Record<string, unknown>)[k] : null;
+          }
+          return null;
+        }
+        case 'keys':
+          if (!x || typeof x !== 'object' || Array.isArray(x))
+            throw new ExprError('keys() needs an object');
+          return Object.keys(x).toSorted();
         case 'without': {
           const y = args[1];
           if (!Array.isArray(x) || !Array.isArray(y))

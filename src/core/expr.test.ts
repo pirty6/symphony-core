@@ -70,6 +70,11 @@ describe('evalExpr values', () => {
     ['first(guessed)', 'a'],
     ['unique(guessed + ["a", "z", "z"])', ['a', 'e', 'z']],
     ['without(guessed, ["a", "q"])', ['e']],
+    ['get(nested, "list")', [{ name: 'x' }]],
+    ['get(get(nested, "list"), 0)', { name: 'x' }],
+    ['get(nested, "nope")', null],
+    ['get(nested, "toString")', null],
+    ['keys(nested)', ['list']],
   ])('%s', (src, expected) => {
     expect(ev(src)).toEqual(expected);
   });
