@@ -352,6 +352,24 @@ describe('CopilotProvider', () => {
     expect(() => parseTiers('5=x')).toThrow(/invalid tier/);
   });
 
+  it('ignores a forced MODEL the account cannot use and falls back to the tiers', async () => {
+    const listModels = async () => [{ id: 'claude-haiku-5.5', supportedReasoningEfforts: ['low'] }];
+    const unavailable = new CopilotProvider({
+      clientFactory: () => ({ ...fakeClient(async () => {}).client, listModels }),
+      model: 'claude-opus-4.6',
+    });
+    expect(await unavailable.modelFor(1)).toEqual({
+      model: 'claude-haiku-5.5',
+      effort: 'low',
+      note: "model 'claude-opus-4.6' (MODEL) is not available to you; using tier 1 'claude-haiku-5.5'",
+    });
+    const ok = new CopilotProvider({
+      clientFactory: () => ({ ...fakeClient(async () => {}).client, listModels }),
+      model: 'claude-haiku-5.5',
+    });
+    expect(await ok.modelFor(4)).toEqual({ model: 'claude-haiku-5.5' });
+  });
+
   it('isolated agents get only the submit tool and solo answers carry next', async () => {
     const { client, sessions } = fakeClient(async (cfg, emit) => {
       await callTool(cfg, 'submit_result', { updates: {}, next: 'go' });

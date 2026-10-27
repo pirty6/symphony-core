@@ -283,18 +283,25 @@ export class CopilotProvider implements Provider {
   async modelFor(
     complexity: Complexity,
   ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
-    if (this.opts.model) return { model: this.opts.model };
-    const tier = { ...DEFAULT_TIERS, ...this.opts.tiers }[complexity];
     const available = await this.availableModels();
+    const forced = this.opts.model;
+    if (forced && (!available || available.has(forced))) return { model: forced };
+    // A forced model this account cannot use would fail every call: fall back to the tiers.
+    const skipped = forced ? `model '${forced}' (MODEL) is not available to you; ` : '';
+    const tier = { ...DEFAULT_TIERS, ...this.opts.tiers }[complexity];
     if (available && !available.has(tier.model)) {
       return {
-        note: `tier ${complexity} model '${tier.model}' is not available to you; using the default model`,
+        note: `${skipped}tier ${complexity} model '${tier.model}' is not available to you; using the default model`,
       };
     }
     const efforts = available?.get(tier.model);
     const effort =
       tier.effort && (!efforts || efforts.includes(tier.effort)) ? tier.effort : undefined;
-    return { model: tier.model, ...(effort ? { effort } : {}) };
+    return {
+      model: tier.model,
+      ...(effort ? { effort } : {}),
+      ...(skipped ? { note: `${skipped}using tier ${complexity} '${tier.model}'` } : {}),
+    };
   }
 
   private models: Promise<Map<string, readonly string[]> | undefined> | undefined;
