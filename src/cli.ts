@@ -73,6 +73,7 @@ function printMessage(m: RunMessage, write: (s: string) => void): void {
     if (e.type === 'delta') write(c.dim(e.text));
     else if (e.type === 'tool-start') write(`\n    ${c.cyan(`⚙ ${e.name}`)}\n`);
     else if (e.type === 'permission' && !e.allowed) write(`\n    ${c.red(`⛔ ${e.detail}`)}\n`);
+    else if (e.type === 'info') write(`\n    ${c.dim(e.text)}\n`);
     return;
   }
   if (m.type === 'status') {

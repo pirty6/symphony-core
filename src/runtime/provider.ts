@@ -88,7 +88,7 @@ export function buildAgentPrompt(pause: AgentPause): string {
       (f) => `  - ${f.name} (${f.type})${f.description ? `: ${f.description}` : ''}`,
     ),
     '- `verdict`: { outcome: "applied" | "failed" | "skipped", confidence: 0..1, shouldTerminate: boolean, reason: one sentence }.',
-    '- Use shouldTerminate=true only if the whole workflow must stop now.',
+    '- `shouldTerminate` is almost always false: the workflow moves on to its next step by itself. Set it to true ONLY to abort the entire workflow because continuing would be impossible or harmful.',
   );
   if (pause.outputSchema.length === 0)
     lines.push('- This step writes no state: send `updates: {}`.');

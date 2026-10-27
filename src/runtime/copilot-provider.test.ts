@@ -164,4 +164,24 @@ describe('CopilotProvider', () => {
     expect(res.result).toEqual({ name: 'x' });
     expect(sessions[0]!.cfg.availableTools).toBeDefined();
   });
+
+  it('explains authentication failures', async () => {
+    const client: ClientLike = {
+      start: async () => {},
+      stop: async () => {},
+      createSession: async () => {
+        throw new Error('Authentication failed: Bad credentials');
+      },
+    };
+    const p = new CopilotProvider({ clientFactory: () => client, gitHubToken: 'x' });
+    await expect(
+      p.runAgent({
+        pause,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      }),
+    ).rejects.toThrow(/remove GITHUB_TOKEN \/ TOKEN in \.env/);
+  });
 });

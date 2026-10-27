@@ -112,7 +112,21 @@ export class CopilotProvider implements Provider {
           : { kind: 'reject', feedback: decision.reason };
       },
     };
-    const session = await client.createSession(config);
+    let session: SessionLike;
+    try {
+      session = await client.createSession(config);
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (!/auth/i.test(msg)) throw e;
+      throw new Error(
+        `${msg}. ${
+          this.opts.gitHubToken
+            ? 'The configured token was rejected: fix or remove GITHUB_TOKEN / TOKEN in .env to use your signed-in GitHub user.'
+            : 'Sign in with the Copilot CLI or `gh auth login`, or set GITHUB_TOKEN in .env.'
+        }`,
+        { cause: e },
+      );
+    }
     let output = '';
     let model: string | undefined;
     let failure: string | undefined;
