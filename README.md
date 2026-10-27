@@ -85,7 +85,8 @@ npm run cli -- runs                                  # saved runs
 | Kind | Who acts | Purpose |
 |------|----------|---------|
 | `start` | engine | Entry point (exactly one). |
-| `agent` | **AI** | `role: 'assessor'` (read-only) or `'executor'` (read-write). Sees only its `reads`; must return its `writes`. |
+| `agent` | **AI** | `role: 'assessor'` (read-only) or `'executor'` (read-write). Sees only its `reads`; must return its `writes`. Optional `capabilities` (`web`, `mcp`) and acceptance `checks`. |
+| `tool` | runtime | Deterministic I/O, no AI: `repo.files` (every file, with exclusions explained), `sources.catalog` (every evidence source available). The result is recorded and replayed. |
 | `compute` | engine | Deterministic state update: `field = expression`. |
 | `condition` | engine | Branch on an expression: `then` / `else`. |
 | `approval` | human | Gate; the human may provide values (`writes`). `approved` / `rejected` edges. |
@@ -94,11 +95,25 @@ npm run cli -- runs                                  # saved runs
 Edges are tried in declared order; the first guard that is `true` wins; one unguarded default edge
 may come last.
 
+**Acceptance checks** are expressions evaluated on the state as it would be after the agent's answer.
+If any is false the answer is rejected and the agent is re-asked with the check's message. This is
+how a pattern forces full coverage instead of trusting the AI:
+
+```ts
+checks: [{ expr: 'subset(batch, triaged)', message: 'You skipped files. List EVERY file of batch.' }]
+```
+
+**Capabilities** give an agent node extra sources: `web` adds `web_search` (keyless, DuckDuckGo)
+next to Copilot's `web_fetch`; `mcp` connects the MCP servers from your VS Code user `mcp.json` and
+the workspace's `.vscode/mcp.json` / `.mcp.json`. Assessors may only call MCP tools marked read-only.
+Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the VS Code user file.
+
 ### Expressions
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
-state keys by name, literals, `== != < <= > >= && || ! + -`, `len empty includes lower append if
-chars subset`, and `verdict.outcome` / `verdict.confidence` of the last agent.
+state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + -`,
+`len empty includes lower append if chars subset take drop first unique without`, and
+`verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
 'confidence >= 0.7 && len(findings) > 0'
@@ -114,9 +129,35 @@ chars subset`, and `verdict.outcome` / `verdict.confidence` of the last agent.
 | Every AI response is validated | `validateNodeResult`: verdict shape, typed `writes`, no undeclared keys. Invalid answers are re-asked with the errors (bounded `retries`), then the run fails. |
 | Never repeat `(moveType, targetSite, stateHash)` | The engine refuses a repeated move; `stateHash` covers run state plus a git workspace fingerprint. |
 | Every loop terminates | Per-node `maxVisits` and per-score `maxSteps`. |
-| Assessors are read-only | Permission policy in `src/runtime/provider.ts`: reads and URLs allowed; shell only for allowlisted read-only commands (`git diff/log/show`, `grep`, `ls`, ...); writes, substitutions and redirections refused. |
+| Assessors are read-only | Permission policy in `src/runtime/provider.ts`: reads and URLs allowed; shell only for allowlisted read-only commands (`git diff/log/show/blame`, `gh issue/pr/run/search view\|list`, `gh api` GETs, `grep`, `ls`, ...); MCP only for read-only tools; writes, substitutions and redirections refused. |
+| Nothing is skipped | Acceptance checks reject answers that leave out items (files, sources, gaps); the engine, not the AI, owns the work queues. |
 | Stale or duplicate input is ignored | Every resolution must echo the open `pauseId`. |
 | Runs are reproducible | `replayPerformance` re-runs the engine on recorded answers and diffs it. |
+
+## The investigate pattern
+
+`investigate` answers a question without skipping information. The engine owns every work queue:
+
+1. **List sources** (tool): git history, GitHub issues/PRs/CI (if `gh` is signed in), installed
+   dependencies, the web, each MCP server, and earlier Symphony runs.
+2. **List every file** (tool): the whole workspace, git-aware; binaries, lockfiles and files over
+   512 KB are excluded and listed with the reason.
+3. **Plan** (AI): split the question into sub-questions and pick the best sources. Every source must
+   be used or skipped with a reason, or the plan is rejected.
+4. **Triage** (AI, loop): every file, in batches of `batchSize` (25). An answer that leaves out a
+   file is rejected.
+5. **Deep read** (AI, loop): every relevant file read completely, following imports, callers, tests
+   and `git blame`, `deepBatchSize` (4) at a time.
+6. **Search sources** (AI, loop): each chosen source searched with web search, `gh`, MCP or git, as
+   fits; every query is recorded.
+7. **Gaps** (AI, loop): unanswered sub-questions get targeted research (up to `maxGapRounds`), then
+   a human hint if confidence stays low.
+8. **Answer** (AI): cites evidence and ends with a coverage report: files triaged and excluded,
+   sources searched and skipped, what is still unknown.
+
+```bash
+npm run cli -- run investigate -c question="Why do runs replay exactly?" --provider copilot
+```
 
 ## Library API
 
