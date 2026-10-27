@@ -7,7 +7,7 @@ on:
     branches: [main, master]
 
 jobs:
-  test:
+  pnpm:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,7 +17,27 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
       - run: pnpm test:ui
       - run: pnpm --filter ui build
+      - run: pnpm --filter ui exec playwright install --with-deps chromium
+      - run: pnpm --filter ui test:e2e
+
+  # Proves a fresh clone runs with nothing but Node + npm.
+  npm:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm install
+      - run: npm test
+      - run: npm run test:ui
+      - run: npm run cli -- run fix --auto-approve --no-save
