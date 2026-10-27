@@ -28,20 +28,70 @@ describe('pattern library', () => {
     },
   );
 
-  it('investigate loops through the human hint before answering', () => {
+  it('investigate covers every file, every chosen source and closes gaps', () => {
+    const p = findPattern('investigate')!;
+    const score = compileScore(p, { goal: 'g', context: { ...p.demo!.context!, batchSize: 2 } });
+    const r = runScripted(score, p.demo);
+    expect(r.state.outcome).toBe('success');
+    const steps = r.state.steps;
+    const triaged = steps
+      .filter((s) => s.nodeId === 'triage')
+      .flatMap((s) => s.updates?.triaged as string[]);
+    expect(triaged.toSorted()).toEqual((r.state.state.repoFiles as string[]).toSorted());
+    expect(steps.filter((s) => s.nodeId === 'triage')).toHaveLength(3);
+    const examined = steps
+      .filter((s) => s.nodeId === 'deepRead')
+      .flatMap((s) => s.updates?.examined as string[]);
+    expect(examined.toSorted()).toEqual([
+      'src/core/engine.ts',
+      'src/core/schema.ts',
+      'src/core/validate.ts',
+    ]);
+    expect(r.state.state.consulted).toEqual(['git-history', 'web']);
+    expect(r.state.state.skipSources).toEqual(['prior-runs']);
+    expect(steps.filter((s) => s.nodeId === 'chase')).toHaveLength(1);
+    expect(steps.filter((s) => s.nodeId === 'assess')).toHaveLength(2);
+    expect(r.state.state.openQuestions).toEqual([]);
+  });
+
+  it('investigate rejects a plan that ignores a source and a triage that skips a file', () => {
     const p = findPattern('investigate')!;
     const score = compileScore(p, { goal: 'g', context: p.demo!.context! });
-    const r = runScripted(score, p.demo);
-    expect(r.state.steps.map((s) => s.nodeId)).toEqual([
-      'start',
-      'gather',
-      'confident',
-      'clarify',
-      'gather',
-      'confident',
-      'answer',
-      'done',
+    const calls = { plan: 0, triage: 0 };
+    const lazy = {
+      ...p.demo!,
+      agents: {
+        ...p.demo!.agents,
+        plan: (s: Readonly<Record<string, unknown>>, visit: number) => {
+          const good = p.demo!.agents!.plan!(s, visit);
+          return calls.plan++ === 0
+            ? {
+                ...good,
+                updates: { ...good.updates, useSources: [], skipSources: [], skipReasons: [] },
+              }
+            : good;
+        },
+        triage: (s: Readonly<Record<string, unknown>>, visit: number) => {
+          const good = p.demo!.agents!.triage!(s, visit);
+          return calls.triage++ === 0
+            ? { ...good, updates: { ...good.updates, triaged: [] } }
+            : good;
+        },
+      },
+    };
+    const r = runScripted(score, lazy);
+    expect(r.state.outcome).toBe('success');
+    const rejected = r.state.events.filter((e) => e.type === 'response-rejected');
+    expect(rejected.map((e) => e.type === 'response-rejected' && e.nodeId)).toEqual([
+      'plan',
+      'triage',
     ]);
+    expect(rejected[0]!.type === 'response-rejected' && rejected[0]!.errors.join()).toMatch(
+      /Decide on EVERY source/,
+    );
+    expect(rejected[1]!.type === 'response-rejected' && rejected[1]!.errors.join()).toMatch(
+      /You skipped files/,
+    );
   });
 
   it('fix retries apply/verify once then succeeds', () => {

@@ -80,18 +80,20 @@ describe('replayPerformance', () => {
 describe('divergence', () => {
   it('reports semantic and environmental differences', () => {
     const { perf } = demoRun(investigate);
+    const target = perf.steps.findIndex((s) => s.verdict);
     const changed = {
       ...perf,
       steps: perf.steps.map((s, i) =>
-        i === 1
+        i === target
           ? { ...s, verdict: { ...s.verdict!, outcome: 'failed' as const }, stateHashAfter: 'x' }
           : s,
       ),
     };
+    const step = perf.steps[target]!.step;
     const d = divergence(perf, changed);
     expect(d.structural).toBe(false);
-    expect(d.semantic).toEqual([{ step: 2, a: 'applied', b: 'failed' }]);
-    expect(d.environmental).toEqual([2]);
+    expect(d.semantic).toEqual([{ step, a: 'applied', b: 'failed' }]);
+    expect(d.environmental).toEqual([step]);
     expect(d.reproduced).toBe(false);
   });
 

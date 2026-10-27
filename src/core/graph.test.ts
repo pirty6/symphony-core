@@ -25,8 +25,8 @@ describe('patternToGraph', () => {
   });
 
   it('keeps explicit positions', () => {
-    const g = patternToGraph(investigate, { gather: { x: 7, y: 9 } });
-    expect(g.nodes.find((n) => n.id === 'gather')!.position).toEqual({ x: 7, y: 9 });
+    const g = patternToGraph(investigate, { plan: { x: 7, y: 9 } });
+    expect(g.nodes.find((n) => n.id === 'plan')!.position).toEqual({ x: 7, y: 9 });
   });
 });
 
