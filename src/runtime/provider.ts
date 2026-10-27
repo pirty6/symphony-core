@@ -26,6 +26,9 @@ export type ProviderEvent =
 
 export interface AgentRequest {
   readonly pause: AgentPause;
+  /** Full run state and visit index; only scripted/replay providers may use these. */
+  readonly state: Readonly<Record<string, unknown>>;
+  readonly visit: number;
   readonly signal: AbortSignal;
   readonly onEvent: (e: ProviderEvent) => void;
 }

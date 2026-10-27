@@ -1,10 +1,20 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc"],
+  "plugins": [
+    "typescript",
+    "unicorn",
+    "oxc"
+  ],
   "categories": {
     "correctness": "error",
     "suspicious": "warn",
     "perf": "warn"
   },
-  "ignorePatterns": ["dist", "node_modules"]
+  "ignorePatterns": [
+    "dist",
+    "node_modules"
+  ],
+  "rules": {
+    "no-await-in-loop": "off"
+  }
 }
