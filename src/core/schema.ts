@@ -58,7 +58,16 @@ export function isFieldType(t: unknown): t is FieldType {
 }
 
 export function validateVerdict(v: unknown): string[] {
-  if (v === null || typeof v !== 'object') return ['verdict must be an object'];
+  if (v === undefined) {
+    return [
+      'verdict is missing: send it next to updates, e.g. "verdict": { "outcome": "applied", "confidence": 0.8, "shouldTerminate": false, "reason": "..." }',
+    ];
+  }
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) {
+    return [
+      `verdict must be an object { outcome, confidence, shouldTerminate, reason }, got ${JSON.stringify(v)?.slice(0, 80)}`,
+    ];
+  }
   const r = v as Record<string, unknown>;
   const errors: string[] = [];
   if (!['applied', 'failed', 'skipped'].includes(r.outcome as string)) {
@@ -120,6 +129,14 @@ export function validateNodeResult(
     return { ok: false, errors: ['result must be an object with { updates, verdict }'] };
   }
   const r = raw as Record<string, unknown>;
+  if (typeof r.updates === 'string') {
+    return {
+      ok: false,
+      errors: [
+        'updates arrived as text, not a JSON object: call submit_result again with "updates" as an object of the listed keys',
+      ],
+    };
+  }
   const verdictErrors = validateVerdict(r.verdict);
   if (verdictErrors.length > 0) return { ok: false, errors: verdictErrors };
   const verdict = r.verdict as MoveVerdict;
@@ -134,6 +151,28 @@ export function validateNodeResult(
       ...(typeof r.next === 'string' ? { next: r.next } : {}),
     },
   };
+}
+
+/**
+ * Shape and route check for an agent's answer: what the engine enforces before
+ * acceptance checks. Shared so a provider can reject a bad submission while the
+ * AI still has its context.
+ */
+export function checkAgentResult(
+  raw: unknown,
+  writes: readonly StateField[],
+  choices?: readonly { readonly edgeId: string }[],
+): Checked<NodeResult> {
+  const shape = validateNodeResult(raw, writes);
+  if (shape.ok && choices && !choices.some((c) => c.edgeId === shape.value.next)) {
+    return {
+      ok: false,
+      errors: [
+        `This is a solo: 'next' must be one of ${choices.map((c) => `'${c.edgeId}'`).join(', ')}`,
+      ],
+    };
+  }
+  return shape;
 }
 
 function jsonProp(f: StateField): Record<string, unknown> {

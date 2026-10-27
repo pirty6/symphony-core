@@ -18,7 +18,7 @@
 import { evalExpr, evaluateGuard, parseExpr } from './expr.js';
 import { hashOf } from './hash.js';
 import { solosActive, takesFor } from './jazz.js';
-import { checkValue, validateNodeResult, validateUpdates, type Checked } from './schema.js';
+import { checkAgentResult, checkValue, validateUpdates, type Checked } from './schema.js';
 import type {
   AcceptanceCheck,
   Complexity,
@@ -564,16 +564,7 @@ function resolveAgent(
   pause: Extract<Pause, { kind: 'agent' }>,
   res: AgentResolution,
 ): void {
-  const shape = validateNodeResult(res.result, pause.outputSchema);
-  const routed: Checked<NodeResult> =
-    shape.ok && pause.choices && !pause.choices.some((c) => c.edgeId === shape.value.next)
-      ? {
-          ok: false,
-          errors: [
-            `This is a solo: 'next' must be one of ${pause.choices.map((c) => `'${c.edgeId}'`).join(', ')}`,
-          ],
-        }
-      : shape;
+  const routed = checkAgentResult(res.result, pause.outputSchema, pause.choices);
   const checked =
     routed.ok && node.kind === 'agent' && node.checks?.length
       ? acceptance(node.checks, ctx.state, routed.value)

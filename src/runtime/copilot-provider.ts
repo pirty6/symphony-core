@@ -10,7 +10,7 @@
 import { CopilotClient, defineTool, ToolSet } from '@github/copilot-sdk';
 import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
 import { webSearch, type SearchResult } from './web-search.js';
-import { resultJsonSchema } from '../core/schema.js';
+import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
 import type { Complexity, Role, ToolCallRecord } from '../core/types.js';
 import type {
   AgentRequest,
@@ -106,6 +106,9 @@ interface SessionRun {
   readonly signal: AbortSignal;
   readonly onEvent: (e: ProviderEvent) => void;
 }
+
+/** In-session retries of a malformed submit_result before the engine judges it. */
+const MAX_SUBMIT_CORRECTIONS = 2;
 
 const abortError = () => new DOMException('aborted', 'AbortError');
 
@@ -353,13 +356,29 @@ export class CopilotProvider implements Provider {
       text: `${integrating ? 'integrating takes' : req.take ? `take ${req.take}` : 'playing'} · tier ${pause.complexity} · ${tier.model ?? 'default model'}${tier.effort ? ` (${tier.effort})` : ''}`,
     });
     let submitted: unknown;
+    let corrections = 0;
     const tool = defineTool(SUBMIT_TOOL, {
       description: `Submit the result of step '${pause.label}'. Call exactly once when done.`,
       parameters: resultJsonSchema(pause.outputSchema, pause.choices),
       skipPermission: true,
       handler: (args: unknown) => {
         submitted = args;
-        return 'Result recorded. Your step is complete: stop now.';
+        // Catch a malformed answer while the AI still has its context, instead of
+        // a fresh attempt that redoes all the reading. The engine re-checks anyway.
+        const checked = checkAgentResult(args, pause.outputSchema, pause.choices);
+        if (checked.ok || corrections >= MAX_SUBMIT_CORRECTIONS) {
+          return 'Result recorded. Your step is complete: stop now.';
+        }
+        corrections += 1;
+        req.onEvent({
+          type: 'info',
+          text: `submit_result rejected (${corrections}/${MAX_SUBMIT_CORRECTIONS}), asking for a corrected call: ${checked.errors.join('; ')}`,
+        });
+        return [
+          'REJECTED: the result was not recorded.',
+          ...checked.errors.map((e) => `- ${e}`),
+          `Call ${SUBMIT_TOOL} again now with the complete corrected result ({ updates, verdict${pause.choices ? ', next' : ''} }). Do not redo your research.`,
+        ].join('\n');
       },
     });
     const tools = [

@@ -96,7 +96,7 @@ describe('CopilotProvider', () => {
       emit('tool.execution_start', { toolCallId: 't1', toolName: 'submit_result', arguments: {} });
       await callTool(cfg, 'submit_result', {
         updates: { word: 'cat' },
-        verdict: { outcome: 'applied' },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
       });
       emit('tool.execution_complete', { toolCallId: 't1', success: true });
       emit('assistant.message', { content: 'Done.', model: 'm1' });
@@ -111,7 +111,10 @@ describe('CopilotProvider', () => {
       signal: new AbortController().signal,
       onEvent: (e) => events.push(e),
     });
-    expect(res.result).toEqual({ updates: { word: 'cat' }, verdict: { outcome: 'applied' } });
+    expect(res.result).toEqual({
+      updates: { word: 'cat' },
+      verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+    });
     expect(res.transcript).toMatchObject({ provider: 'copilot', model: 'm1', output: 'Done.' });
     expect(res.transcript.toolCalls.some((c) => c.denied)).toBe(true);
     expect(events.map((e) => e.type)).toEqual([
@@ -174,6 +177,52 @@ describe('CopilotProvider', () => {
     });
     expect(res.result).toEqual({ name: 'x' });
     expect(sessions[0]!.cfg.availableTools).toBeDefined();
+  });
+
+  it('sends a malformed submission back to the AI in the same session', async () => {
+    const replies: unknown[] = [];
+    const verdict = { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'ok' };
+    const { client, sessions } = fakeClient(async (cfg, emit) => {
+      replies.push(await callTool(cfg, 'submit_result', { updates: '<parameter name="word">x' }));
+      replies.push(await callTool(cfg, 'submit_result', { updates: { word: 'x' } }));
+      replies.push(await callTool(cfg, 'submit_result', { updates: { word: 'cat' }, verdict }));
+      emit('session.idle');
+    });
+    const events: ProviderEvent[] = [];
+    const p = new CopilotProvider({ clientFactory: () => client });
+    const res = await p.runAgent({
+      pause,
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: (e) => events.push(e),
+    });
+    expect(sessions).toHaveLength(1);
+    expect(replies[0]).toMatch(/^REJECTED[\s\S]*updates arrived as text/);
+    expect(replies[1]).toMatch(/verdict is missing/);
+    expect(replies[2]).toMatch(/Result recorded/);
+    expect(res.result).toEqual({ updates: { word: 'cat' }, verdict });
+    expect(
+      events.filter((e) => e.type === 'info' && /submit_result rejected/.test(e.text)),
+    ).toHaveLength(2);
+  });
+
+  it('stops correcting after two tries and lets the engine judge', async () => {
+    const replies: unknown[] = [];
+    const { client } = fakeClient(async (cfg, emit) => {
+      for (let i = 0; i < 3; i++)
+        replies.push(await callTool(cfg, 'submit_result', { updates: { word: 'x' } }));
+      emit('session.idle');
+    });
+    const res = await new CopilotProvider({ clientFactory: () => client }).runAgent({
+      pause,
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    expect(replies.map((r) => String(r).slice(0, 8))).toEqual(['REJECTED', 'REJECTED', 'Result r']);
+    expect(res.result).toEqual({ updates: { word: 'x' } });
   });
 
   it('re-resolves the model after falling back from a rejected token', async () => {
