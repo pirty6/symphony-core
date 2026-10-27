@@ -1,0 +1,199 @@
+/**
+ * AI-drafted patterns: prompt, strict parsing, and TypeScript codegen.
+ *
+ * The AI only proposes JSON. `parseDraft` normalizes and validates it;
+ * nothing runs until a human approves it, and an approved draft is
+ * persisted as a TypeScript module via `patternToTypeScript`.
+ */
+import { isFieldType } from './schema.js';
+import type { Checked } from './schema.js';
+import type { Pattern, ScoreEdge, ScoreNode, StateField } from './types.js';
+import { validatePattern } from './validate.js';
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v);
+const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+const strList = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+const posInt = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : undefined;
+
+function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undefined {
+  if (!isObj(raw)) {
+    errors.push(`nodes[${i}] must be an object`);
+    return undefined;
+  }
+  const id = str(raw.id);
+  const label = str(raw.label) ?? id;
+  if (!id) {
+    errors.push(`nodes[${i}].id is required`);
+    return undefined;
+  }
+  const base = {
+    id,
+    label: label ?? id,
+    ...(posInt(raw.maxVisits) ? { maxVisits: posInt(raw.maxVisits)! } : {}),
+  };
+  switch (raw.kind) {
+    case 'start':
+      return { ...base, kind: 'start' };
+    case 'end': {
+      const outcome = ['success', 'failed', 'partial'].includes(raw.outcome as string)
+        ? (raw.outcome as 'success' | 'failed' | 'partial')
+        : undefined;
+      return { ...base, kind: 'end', ...(outcome ? { outcome } : {}) };
+    }
+    case 'agent': {
+      const role =
+        raw.role === 'executor' ? 'executor' : raw.role === 'assessor' ? 'assessor' : undefined;
+      if (!role) errors.push(`nodes[${i}] (${id}) role must be assessor or executor`);
+      return {
+        ...base,
+        kind: 'agent',
+        role: role ?? 'assessor',
+        directive: str(raw.directive) ?? '',
+        reads: strList(raw.reads),
+        writes: strList(raw.writes),
+        ...(typeof raw.retries === 'number' ? { retries: raw.retries } : {}),
+      };
+    }
+    case 'compute': {
+      const assign = Array.isArray(raw.assign)
+        ? raw.assign
+            .filter(isObj)
+            .map((a) => ({ field: str(a.field) ?? '', expr: str(a.expr) ?? '' }))
+        : [];
+      return { ...base, kind: 'compute', assign };
+    }
+    case 'condition':
+      return { ...base, kind: 'condition', expression: str(raw.expression) ?? '' };
+    case 'approval':
+      return {
+        ...base,
+        kind: 'approval',
+        message: str(raw.message) ?? label ?? id,
+        writes: strList(raw.writes),
+      };
+    default:
+      errors.push(`nodes[${i}] (${id}) has unknown kind '${String(raw.kind)}'`);
+      return undefined;
+  }
+}
+
+function parseEdge(raw: unknown, i: number, errors: string[]): ScoreEdge | undefined {
+  if (!isObj(raw) || !str(raw.from) || !str(raw.to)) {
+    errors.push(`edges[${i}] needs from and to`);
+    return undefined;
+  }
+  const branch = ['then', 'else', 'approved', 'rejected'].includes(raw.branch as string)
+    ? (raw.branch as ScoreEdge['branch'])
+    : undefined;
+  return {
+    id: str(raw.id) ?? `${str(raw.from)}-${str(raw.to)}-${i}`,
+    from: str(raw.from)!,
+    to: str(raw.to)!,
+    ...(str(raw.guard)?.trim() ? { guard: str(raw.guard)!.trim() } : {}),
+    ...(branch ? { branch } : {}),
+    ...(str(raw.label) ? { label: str(raw.label)! } : {}),
+  };
+}
+
+export function parseDraft(raw: unknown): Checked<Pattern> {
+  const errors: string[] = [];
+  if (!isObj(raw)) return { ok: false, errors: ['draft must be a JSON object'] };
+  const state: StateField[] = [];
+  (Array.isArray(raw.state) ? raw.state : []).forEach((f, i) => {
+    if (!isObj(f) || !str(f.name) || !isFieldType(f.type)) {
+      errors.push(
+        `state[${i}] needs name and a type of string|number|boolean|string[]|number[]|object`,
+      );
+      return;
+    }
+    state.push({
+      name: str(f.name)!,
+      type: f.type,
+      ...(str(f.description) ? { description: str(f.description)! } : {}),
+      ...(f.initial !== undefined ? { initial: f.initial } : {}),
+    });
+  });
+  const nodes = (Array.isArray(raw.nodes) ? raw.nodes : [])
+    .map((n, i) => parseNode(n, i, errors))
+    .filter((n): n is ScoreNode => n !== undefined);
+  const edges = (Array.isArray(raw.edges) ? raw.edges : [])
+    .map((e, i) => parseEdge(e, i, errors))
+    .filter((e): e is ScoreEdge => e !== undefined);
+  const pattern: Pattern = {
+    name: str(raw.name) ?? 'draft',
+    description: str(raw.description) ?? '',
+    verbTriggers: strList(raw.verbTriggers),
+    requiredContext: strList(raw.requiredContext),
+    state,
+    nodes,
+    edges,
+    start: str(raw.start) ?? nodes.find((n) => n.kind === 'start')?.id ?? '',
+    ...(posInt(raw.maxSteps) ? { maxSteps: posInt(raw.maxSteps)! } : {}),
+  };
+  errors.push(...validatePattern(pattern).errors.map((e) => e.message));
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, value: pattern };
+}
+
+export function draftInstructions(): string {
+  return `You design deterministic workflows ("patterns") for a state machine. Return ONE JSON object:
+{ name: kebab-case, description, verbTriggers: string[], requiredContext: string[] (state keys the user must supply),
+  state: [{ name, type: string|number|boolean|string[]|number[]|object, description?, initial? }],
+  nodes: [...], edges: [{ id, from, to, guard?, branch?, label? }], start: id of the start node, maxSteps? }
+
+Node kinds:
+- start {id,kind:"start",label}: exactly one.
+- agent {id,kind:"agent",role:"assessor"|"executor",label,directive,reads:[state keys],writes:[state keys],maxVisits?}
+  assessor = read-only research/analysis; executor = may edit files and run commands. AI runs ONLY in agent nodes.
+- compute {id,kind:"compute",label,assign:[{field,expr}]}: deterministic state update (counters, flags, appends).
+- condition {id,kind:"condition",label,expression}: exactly two out edges with branch "then" and "else".
+- approval {id,kind:"approval",label,message,writes:[keys a human provides]}: out edges branch "approved" (and optional "rejected").
+- end {id,kind:"end",label,outcome?:"success"|"failed"|"partial"}.
+
+Expressions (guards, conditions, compute): state keys by name, literals, == != < <= > >= && || ! + -,
+functions len(x) empty(x) includes(list,v) lower(s) append(list,v) if(c,a,b) chars(s) subset(a,b),
+and verdict.outcome / verdict.confidence of the last agent. Must be boolean for guards/conditions.
+
+Rules: every node reachable from start; an end reachable from every node; edges are tried in order and
+the unguarded default edge must be last; every loop needs a bound (maxVisits on a node in the loop or a
+counter checked by a condition). Prefer compute/condition nodes over agents for anything mechanical.
+Keep it small: 4-10 nodes.`;
+}
+
+// ── TypeScript codegen ─────────────────────────────────────────────
+
+const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+function tsLiteral(value: unknown, indent: string): string {
+  const next = `${indent}  `;
+  if (typeof value === 'string')
+    return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n')}'`;
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[]';
+    return `[\n${value.map((v) => `${next}${tsLiteral(v, next)},`).join('\n')}\n${indent}]`;
+  }
+  const entries = Object.entries(value).filter(([, v]) => v !== undefined);
+  if (entries.length === 0) return '{}';
+  return `{\n${entries
+    .map(([k, v]) => `${next}${IDENT.test(k) ? k : `'${k}'`}: ${tsLiteral(v, next)},`)
+    .join('\n')}\n${indent}}`;
+}
+
+export function camelName(kebab: string): string {
+  const c = kebab
+    .replace(/-([a-z0-9])/g, (_, ch: string) => ch.toUpperCase())
+    .replace(/[^A-Za-z0-9_]/g, '');
+  return /^[A-Za-z_]/.test(c) ? c : `p${c}`;
+}
+
+export function patternToTypeScript(pattern: Pattern): string {
+  const { demo: _demo, ...data } = pattern;
+  return `import type { Pattern } from '../core/types.js';
+
+/** ${pattern.description.replace(/\*\//g, '*\\/')} */
+export const ${camelName(pattern.name)}: Pattern = ${tsLiteral(data, '')};
+`;
+}
