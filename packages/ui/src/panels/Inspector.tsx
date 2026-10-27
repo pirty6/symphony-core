@@ -54,13 +54,19 @@ export function ApprovalCard({
 }) {
   const pause = view.pause
   const [values, setValues] = useState<Record<string, string>>({})
+  const [sentFor, setSentFor] = useState<string | undefined>()
   const pauseId = pause?.pauseId
   useEffect(() => setValues({}), [pauseId])
   if (view.status !== 'awaiting-approval' || pause?.kind !== 'approval') return null
+  const sent = sentFor === pause.pauseId
+  const answer = (a: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) => {
+    setSentFor(pause.pauseId)
+    onAnswer(a)
+  }
   const submit = (approved: boolean) => {
     try {
       const updates = Object.fromEntries(pause.outputSchema.map((f) => [f.name, parseFieldInput(f.type, values[f.name] ?? '')]))
-      onAnswer({ approved, updates })
+      answer({ approved, updates })
     } catch (e) {
       alert((e as Error).message)
     }
@@ -69,6 +75,7 @@ export function ApprovalCard({
     <form
       className="card approval"
       data-testid="approval-card"
+      data-pause-id={pause.pauseId}
       onSubmit={(e) => {
         e.preventDefault()
         submit(true)
@@ -76,6 +83,7 @@ export function ApprovalCard({
     >
       <h3>✋ {pause.label}</h3>
       <p>{pause.message}</p>
+      <fieldset className="editor" disabled={sent}>
       {pause.feedback?.map((f, i) => (
         <div key={i} className="issue">
           {f}
@@ -99,10 +107,11 @@ export function ApprovalCard({
         <button type="button" onClick={() => submit(false)}>
           Reject
         </button>
-        <button type="button" onClick={() => onAnswer({ approved: true, scripted: true })} title="Use the pattern's demo answer">
+        <button type="button" onClick={() => answer({ approved: true, scripted: true })} title="Use the pattern's demo answer">
           Scripted answer
         </button>
       </div>
+      </fieldset>
     </form>
   )
 }
