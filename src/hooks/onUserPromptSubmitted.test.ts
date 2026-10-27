@@ -1,3 +1,4 @@
+import { describe, it, expect, vi } from 'vitest';
 import { onUserPromptSubmitted } from './onUserPromptSubmitted';
 
 const baseInput = {
@@ -22,7 +23,7 @@ describe('onUserPromptSubmitted', () => {
   });
 
   it('logs the prompt with session ID and char count', async () => {
-    const spy = jest.spyOn(console, 'log').mockImplementation();
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const prompt = 'x'.repeat(100);
 
     await onUserPromptSubmitted({ ...baseInput, prompt });

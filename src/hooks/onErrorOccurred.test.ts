@@ -1,3 +1,4 @@
+import { describe, it, expect, vi } from 'vitest';
 import { onErrorOccurred } from './onErrorOccurred';
 
 const baseInput = {
@@ -19,7 +20,7 @@ describe('onErrorOccurred', () => {
   });
 
   it('logs the error to stderr', async () => {
-    const spy = jest.spyOn(console, 'error').mockImplementation();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await onErrorOccurred({
       ...baseInput,

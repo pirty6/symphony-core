@@ -1,8 +1,11 @@
-import type { ErrorOccurredHookInput, ErrorOccurredHookOutput } from '@github/copilot-sdk/types';
+import type { SessionConfig } from '@github/copilot-sdk';
 
-export async function onErrorOccurred(input: ErrorOccurredHookInput): Promise<ErrorOccurredHookOutput> {
- console.error(`Error in ${input.errorContext}: ${input.error}`);
-    return {
-      errorHandling: 'abort'
-    };
-}
+type Hooks = NonNullable<SessionConfig['hooks']>;
+type Handler = NonNullable<Hooks['onErrorOccurred']>;
+
+export const onErrorOccurred = async (
+  input: Parameters<Handler>[0],
+): Promise<{ errorHandling: 'abort' }> => {
+  console.error(`Error in ${input.errorContext}: ${input.error}`);
+  return { errorHandling: 'abort' };
+};

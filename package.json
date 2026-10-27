@@ -2,7 +2,7 @@
   "name": "@perezgarciam/symphony-core",
   "version": "0.2.0",
   "packageManager": "pnpm@10.33.0",
-  "description": "Deterministic, auditable AI agent orchestration framework. Pattern-driven state machine for structured multi-agent workflows.",
+  "description": "Deterministic, auditable AI orchestration: a pure state machine owns order, gates and validation; AI runs only inside nodes. Includes a visual studio to watch data flow live.",
   "keywords": [
     "ai",
     "orchestration",
@@ -28,42 +28,47 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./orchestrator": {
-      "types": "./dist/orchestrator/index.d.ts",
-      "default": "./dist/orchestrator/index.js"
     }
   },
   "files": [
     "dist",
-    "hooks",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "start": "node dist/cli.js",
-    "start:ui": "pnpm --filter ui dev",
+    "start": "npm run dev --prefix packages/ui",
+    "studio": "npm run dev --prefix packages/ui",
+    "cli": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "jest",
-    "test:ui": "pnpm --filter ui test",
-    "prepublishOnly": "pnpm build",
-    "lint": "oxlint src/",
-    "lint:fix": "oxlint --fix src/",
+    "test": "vitest run",
+    "test:ui": "npm test --prefix packages/ui",
+    "test:all": "npm test && npm run test:ui",
+    "prepublishOnly": "npm run build",
+    "lint": "oxlint src/ packages/ui/src packages/ui/server",
+    "lint:fix": "oxlint --fix src/ packages/ui/src packages/ui/server",
     "format": "oxfmt src/",
     "format:check": "oxfmt --check src/"
   },
   "devDependencies": {
-    "@types/jest": "^30.0.0",
     "@types/node": "^22.0.0",
-    "jest": "^30.4.2",
     "oxfmt": "^0.56.0",
     "oxlint": "^1.71.0",
-    "ts-jest": "^29.4.9",
-    "typescript": "^5.7.0"
+    "tsx": "^4.23.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
   },
   "dependencies": {
-    "@github/copilot-sdk": "^1.0.4",
+    "@github/copilot-sdk": "^1.0.6",
     "dotenv": "^17.4.2"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "bin": {
+    "symphony": "dist/cli.js"
   }
 }
