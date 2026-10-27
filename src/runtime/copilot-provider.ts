@@ -8,7 +8,8 @@
  *   - AbortSignal aborts the live session (stop mid-node)
  */
 import { CopilotClient, defineTool, ToolSet } from '@github/copilot-sdk';
-import type { SessionConfig } from '@github/copilot-sdk';
+import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
+import { webSearch, type SearchResult } from './web-search.js';
 import { resultJsonSchema } from '../core/schema.js';
 import type { Role, ToolCallRecord } from '../core/types.js';
 import type {
@@ -21,6 +22,7 @@ import type {
 import { buildAgentPrompt, decidePermission, extractJson, SUBMIT_TOOL } from './provider.js';
 
 export const DRAFT_TOOL = 'submit_draft';
+export const WEB_SEARCH_TOOL = 'web_search';
 
 export interface SessionLike {
   on(handler: (event: { type: string; data?: unknown }) => void): () => void;
@@ -38,6 +40,10 @@ export interface ClientLike {
 export interface CopilotProviderOptions {
   readonly model?: string;
   readonly workingDirectory?: string;
+  /** MCP servers connected to nodes with the 'mcp' capability. */
+  readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
+  /** Backend for the web_search tool (nodes with the 'web' capability). */
+  readonly webSearch?: (query: string, signal: AbortSignal) => Promise<readonly SearchResult[]>;
   readonly gitHubToken?: string;
   /** Per-node timeout. Default 10 minutes. */
   readonly timeoutMs?: number;
@@ -49,8 +55,9 @@ export interface CopilotProviderOptions {
 interface SessionRun {
   readonly prompt: string;
   readonly role: Role;
-  readonly tool: ReturnType<typeof defineTool>;
+  readonly tools: readonly ReturnType<typeof defineTool>[];
   readonly onlyCustomTools: boolean;
+  readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
   readonly signal: AbortSignal;
   readonly onEvent: (e: ProviderEvent) => void;
 }
@@ -94,10 +101,13 @@ export class CopilotProvider implements Provider {
     const config: SessionConfig = {
       ...(this.opts.model ? { model: this.opts.model } : {}),
       ...(this.opts.workingDirectory ? { workingDirectory: this.opts.workingDirectory } : {}),
-      tools: [run.tool],
+      tools: [...run.tools],
       ...(run.onlyCustomTools
-        ? { availableTools: new ToolSet().addCustom(run.tool.name) }
+        ? { availableTools: run.tools.reduce((set, t) => set.addCustom(t.name), new ToolSet()) }
         : { excludedTools: ['task'] }),
+      ...(run.mcpServers && Object.keys(run.mcpServers).length > 0
+        ? { mcpServers: { ...run.mcpServers } }
+        : {}),
       skipCustomInstructions: true,
       onPermissionRequest: (request) => {
         const decision = decidePermission(
@@ -227,7 +237,9 @@ export class CopilotProvider implements Provider {
 
   async runAgent(req: AgentRequest): Promise<AgentResponse> {
     const { pause } = req;
-    const prompt = buildAgentPrompt(pause);
+    const useMcp = pause.capabilities.includes('mcp');
+    const mcpServers = useMcp ? (this.opts.mcpServers ?? {}) : {};
+    const prompt = buildAgentPrompt(pause, { mcpServers: Object.keys(mcpServers) });
     const startedAt = this.opts.clock?.();
     let submitted: unknown;
     const tool = defineTool(SUBMIT_TOOL, {
@@ -239,10 +251,15 @@ export class CopilotProvider implements Provider {
         return 'Result recorded. Your step is complete: stop now.';
       },
     });
+    const tools = [
+      tool,
+      ...(pause.capabilities.includes('web') ? [this.webSearchTool(req.signal)] : []),
+    ];
     const out = await this.runSession({
       prompt,
       role: pause.role,
-      tool,
+      tools,
+      mcpServers,
       onlyCustomTools: false,
       signal: req.signal,
       onEvent: req.onEvent,
@@ -292,7 +309,7 @@ export class CopilotProvider implements Provider {
     const out = await this.runSession({
       prompt,
       role: 'assessor',
-      tool,
+      tools: [tool],
       onlyCustomTools: true,
       signal: req.signal,
       onEvent: req.onEvent,
@@ -301,6 +318,33 @@ export class CopilotProvider implements Provider {
       result: submitted ?? extractJson(out.output),
       transcript: { provider: this.name, prompt, output: out.output, toolCalls: out.toolCalls },
     };
+  }
+
+  private webSearchTool(signal: AbortSignal): ReturnType<typeof defineTool> {
+    const search =
+      this.opts.webSearch ?? ((q: string, s: AbortSignal) => webSearch(q, { signal: s }));
+    return defineTool(WEB_SEARCH_TOOL, {
+      description:
+        'Search the public web. Returns titles, URLs and snippets; read pages with web_fetch.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: 'Search terms' } },
+        required: ['query'],
+      },
+      skipPermission: true,
+      handler: async (args: unknown) => {
+        const query = String((args as { query?: unknown } | undefined)?.query ?? '').trim();
+        if (!query) return 'query is required';
+        try {
+          const results = await search(query, signal);
+          return results.length
+            ? results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n')
+            : 'No results.';
+        } catch (e) {
+          return `web_search failed: ${(e as Error).message}`;
+        }
+      },
+    });
   }
 
   private async dropClient(): Promise<void> {

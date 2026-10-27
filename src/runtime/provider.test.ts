@@ -91,6 +91,11 @@ describe('isReadOnlyCommand', () => {
     'git status --porcelain 2>&1',
     'git branch -a',
     'ls -la && cat package.json | jq .scripts',
+    'gh issue list --state all --limit 50',
+    'gh pr view 12 --comments',
+    'gh search issues "flaky test" --repo o/r',
+    'gh api repos/o/r/issues/1/comments',
+    'gh api -X GET repos/o/r/pulls',
   ])('allows %s', (cmd) => {
     expect(isReadOnlyCommand(cmd)).toBe(true);
   });
@@ -114,6 +119,11 @@ describe('isReadOnlyCommand', () => {
     'npm test',
     'git diff | xargs rm',
     'diff <(ls) >(cat)',
+    'gh issue create -t x',
+    'gh pr merge 3',
+    'gh api -X POST repos/o/r/issues',
+    'gh api repos/o/r/issues -f title=x',
+    'gh auth token',
   ])('refuses %s', (cmd) => {
     expect(isReadOnlyCommand(cmd)).toBe(false);
   });
@@ -136,5 +146,42 @@ describe('isReadOnlyCommand', () => {
         fullCommandText: 'rm x',
       }).allowed,
     ).toBe(false);
+  });
+});
+
+describe('MCP permissions and prompt sources', () => {
+  it('allows read-only MCP tools for assessors only when flagged read-only', () => {
+    expect(
+      decidePermission('assessor', {
+        kind: 'mcp',
+        readOnly: true,
+        serverName: 'teams',
+        toolName: 'ListChats',
+      }).allowed,
+    ).toBe(true);
+    expect(
+      decidePermission('assessor', {
+        kind: 'mcp',
+        readOnly: false,
+        serverName: 'teams',
+        toolName: 'SendMessageToChat',
+      }),
+    ).toEqual({
+      allowed: false,
+      reason: 'assessor is read-only; MCP tool teams/SendMessageToChat may have side effects',
+    });
+  });
+
+  it('lists the sources a node may use', () => {
+    const p = buildAgentPrompt(
+      { ...pause, capabilities: ['web', 'mcp'] },
+      { mcpServers: ['teams'] },
+    );
+    expect(p).toContain('web_search(query)');
+    expect(p).toContain('MCP servers: teams (read-only tools only)');
+    expect(buildAgentPrompt({ ...pause, capabilities: ['mcp'] })).toContain(
+      'no MCP servers are configured',
+    );
+    expect(buildAgentPrompt(pause)).not.toContain('web_search');
   });
 });

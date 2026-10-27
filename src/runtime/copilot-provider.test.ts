@@ -253,4 +253,42 @@ describe('CopilotProvider', () => {
     await expect(run).rejects.toThrow(/aborted/);
     expect(sent).toBe(false);
   });
+
+  it('adds web_search and MCP servers only for nodes with those capabilities', async () => {
+    const queries: string[] = [];
+    const { client, sessions } = fakeClient(async (cfg, emit) => {
+      if (cfg.tools!.some((t) => t.name === 'web_search')) {
+        const out = await callTool(cfg, 'web_search', { query: 'vitest timers' });
+        emit('assistant.message', { content: String(out) });
+      }
+      await callTool(cfg, 'submit_result', { updates: { word: 'x' } });
+      emit('session.idle');
+    });
+    const p = new CopilotProvider({
+      clientFactory: () => client,
+      mcpServers: {
+        teams: { type: 'stdio', command: 'agency', args: ['mcp', 'teams'], tools: ['*'] },
+      },
+      webSearch: async (q) => {
+        queries.push(q);
+        return [{ title: 'Timers', url: 'https://vitest.dev/timers', snippet: 'fake timers' }];
+      },
+    });
+    const go = (capabilities: ('web' | 'mcp')[]) =>
+      p.runAgent({
+        pause: { ...pause, capabilities },
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      });
+    const withBoth = await go(['web', 'mcp']);
+    expect(queries).toEqual(['vitest timers']);
+    expect(withBoth.transcript.output).toContain('https://vitest.dev/timers');
+    expect(withBoth.transcript.prompt).toContain('MCP servers: teams');
+    expect(sessions[0]!.cfg.mcpServers).toHaveProperty('teams');
+    await go([]);
+    expect(sessions[1]!.cfg.tools!.map((t) => t.name)).toEqual(['submit_result']);
+    expect(sessions[1]!.cfg.mcpServers).toBeUndefined();
+  });
 });

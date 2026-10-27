@@ -57,7 +57,12 @@ export interface Provider {
 
 export const SUBMIT_TOOL = 'submit_result';
 
-export function buildAgentPrompt(pause: AgentPause): string {
+export interface PromptSources {
+  /** MCP servers connected for this node. */
+  readonly mcpServers?: readonly string[];
+}
+
+export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {}): string {
   const lines: string[] = [
     `You are the ${pause.role.toUpperCase()} for ONE step of a deterministic workflow.`,
     'A state machine (not you) decides what runs next. Do only this step.',
@@ -77,6 +82,23 @@ export function buildAgentPrompt(pause: AgentPause): string {
     lines.push('', '## Context', '```json', JSON.stringify(pause.context, null, 2), '```');
   }
   lines.push(
+    '',
+    '## Sources you can use',
+    pause.role === 'assessor'
+      ? '- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff, gh issue/pr/run/search view|list, gh api GETs, ls, cat, find).'
+      : '- Workspace: read, edit and run commands as this step needs.',
+    ...(pause.capabilities.includes('web')
+      ? [
+          '- Web: web_search(query) to find pages, then web_fetch(url) to read them. Cite every URL you rely on.',
+        ]
+      : []),
+    ...(pause.capabilities.includes('mcp')
+      ? [
+          sources.mcpServers?.length
+            ? `- MCP servers: ${sources.mcpServers.join(', ')}${pause.role === 'assessor' ? ' (read-only tools only)' : ''}.`
+            : '- MCP: no MCP servers are configured; say so instead of guessing.',
+        ]
+      : []),
     '',
     '## Rules',
     pause.role === 'assessor'
@@ -129,6 +151,8 @@ export interface PermissionLike {
   readonly fullCommandText?: string;
   readonly fileName?: string;
   readonly toolName?: string;
+  readonly serverName?: string;
+  readonly readOnly?: boolean;
 }
 
 export interface PolicyDecision {
@@ -138,6 +162,7 @@ export interface PolicyDecision {
 
 // Commands with no side effects. Anything not listed is treated as a write.
 const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
+  'gh',
   'cd',
   'pwd',
   'ls',
@@ -226,6 +251,35 @@ function splitCommands(text: string): string[] {
   return out;
 }
 
+const GH_READ: Readonly<Record<string, ReadonlySet<string>>> = {
+  issue: new Set(['view', 'list', 'status']),
+  pr: new Set(['view', 'list', 'status', 'diff', 'checks']),
+  run: new Set(['view', 'list']),
+  release: new Set(['view', 'list']),
+  repo: new Set(['view']),
+  search: new Set(['issues', 'prs', 'code', 'commits', 'repos']),
+  workflow: new Set(['view', 'list']),
+};
+const GH_API_WRITES = /^(-X|--method|-f|-F|--field|--raw-field|--input)(=|$)/;
+
+/** gh: allowlisted view/list subcommands, and `gh api` only as a GET without a body. */
+function ghIsReadOnly(args: readonly string[]): boolean {
+  const [group, action] = args;
+  if (group === 'api') {
+    for (let i = 1; i < args.length; i += 1) {
+      const a = args[i]!;
+      if (GH_API_WRITES.test(a)) {
+        const method = a.includes('=') ? a.split('=')[1] : args[i + 1];
+        if ((a.startsWith('-X') || a.startsWith('--method')) && method?.toUpperCase() === 'GET')
+          continue;
+        return false;
+      }
+    }
+    return true;
+  }
+  return Boolean(group && action && GH_READ[group]?.has(action));
+}
+
 function segmentIsReadOnly(segment: string): boolean {
   const t = tokens(segment);
   const cmd = t[0];
@@ -235,6 +289,7 @@ function segmentIsReadOnly(segment: string): boolean {
   if (args.some((a) => a.startsWith('--output'))) return false;
   if (cmd === 'sort') return !args.some((a) => a === '-o' || a.startsWith('-o'));
   if (cmd === 'find') return !args.some((a) => FIND_WRITES.test(a));
+  if (cmd === 'gh') return ghIsReadOnly(args);
   if (cmd !== 'git') return true;
   let i = 0;
   while (i < args.length && args[i]!.startsWith('-')) {
@@ -276,6 +331,16 @@ export function decidePermission(role: Role, req: PermissionLike): PolicyDecisio
     case 'url':
     case 'custom-tool':
       return { allowed: true, reason: `${req.kind} is read-only` };
+    case 'mcp':
+      return req.readOnly === true
+        ? {
+            allowed: true,
+            reason: `read-only MCP tool ${req.serverName ?? ''}/${req.toolName ?? ''}`,
+          }
+        : {
+            allowed: false,
+            reason: `assessor is read-only; MCP tool ${req.serverName ?? ''}/${req.toolName ?? ''} may have side effects`,
+          };
     case 'shell': {
       const cmds = req.commands ?? [];
       const writes = cmds.filter((c) => !c.readOnly).map((c) => c.identifier);
