@@ -41,7 +41,8 @@ export interface CopilotProviderOptions {
   readonly gitHubToken?: string;
   /** Per-node timeout. Default 10 minutes. */
   readonly timeoutMs?: number;
-  readonly clientFactory?: () => ClientLike;
+  /** Builds the SDK client; `gitHubToken` is undefined when using the signed-in GitHub user. */
+  readonly clientFactory?: (auth: { readonly gitHubToken?: string }) => ClientLike;
   readonly clock?: () => string;
 }
 
@@ -61,6 +62,8 @@ export class CopilotProvider implements Provider {
   private readonly opts: CopilotProviderOptions;
   private client: ClientLike | undefined;
   private starting: Promise<ClientLike> | undefined;
+  /** Set once the configured token is rejected; from then on the signed-in user is used. */
+  private tokenRejected = false;
 
   constructor(opts: CopilotProviderOptions = {}) {
     this.opts = opts;
@@ -69,11 +72,11 @@ export class CopilotProvider implements Provider {
   private ensureClient(): Promise<ClientLike> {
     if (this.client) return Promise.resolve(this.client);
     this.starting ??= (async () => {
+      const token = this.tokenRejected ? undefined : this.opts.gitHubToken;
+      const auth = token ? { gitHubToken: token } : {};
       const client =
-        this.opts.clientFactory?.() ??
-        (new CopilotClient(
-          this.opts.gitHubToken ? { gitHubToken: this.opts.gitHubToken } : {},
-        ) as unknown as ClientLike);
+        this.opts.clientFactory?.(auth) ??
+        (new CopilotClient(token ? auth : { useLoggedInUser: true }) as unknown as ClientLike);
       await client.start();
       this.client = client;
       return client;
@@ -119,11 +122,21 @@ export class CopilotProvider implements Provider {
     } catch (e) {
       const msg = (e as Error).message;
       if (!/auth/i.test(msg)) throw e;
+      if (this.opts.gitHubToken && !this.tokenRejected) {
+        // The configured token is bad: fall back to the signed-in GitHub user (VS Code / Copilot CLI / gh login).
+        this.tokenRejected = true;
+        run.onEvent({
+          type: 'info',
+          text: 'Configured token was rejected; falling back to your signed-in GitHub user.',
+        });
+        await this.dropClient();
+        return this.runSession(run);
+      }
       throw new Error(
         `${msg}. ${
-          this.opts.gitHubToken
-            ? 'The configured token was rejected: fix or remove GITHUB_TOKEN / TOKEN in .env to use your signed-in GitHub user.'
-            : 'Sign in with the Copilot CLI or `gh auth login`, or set GITHUB_TOKEN in .env.'
+          this.tokenRejected
+            ? 'Both the configured token and your signed-in GitHub user were rejected: sign in with VS Code, the Copilot CLI or `gh auth login`, or fix GITHUB_TOKEN / TOKEN in .env.'
+            : 'Sign in with VS Code, the Copilot CLI or `gh auth login`, or set GITHUB_TOKEN in .env.'
         }`,
         { cause: e },
       );
@@ -288,6 +301,18 @@ export class CopilotProvider implements Provider {
       result: submitted ?? extractJson(out.output),
       transcript: { provider: this.name, prompt, output: out.output, toolCalls: out.toolCalls },
     };
+  }
+
+  private async dropClient(): Promise<void> {
+    const client = this.client;
+    this.client = undefined;
+    this.starting = undefined;
+    await client?.stop().catch(() => {});
+  }
+
+  /** True once the configured token was rejected and the signed-in user is in use. */
+  get usingSignedInUser(): boolean {
+    return this.tokenRejected || !this.opts.gitHubToken;
   }
 
   async dispose(): Promise<void> {

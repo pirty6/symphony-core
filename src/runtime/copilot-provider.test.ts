@@ -165,7 +165,52 @@ describe('CopilotProvider', () => {
     expect(sessions[0]!.cfg.availableTools).toBeDefined();
   });
 
-  it('explains authentication failures', async () => {
+  it('falls back to the signed-in user when the configured token is rejected', async () => {
+    const auths: { gitHubToken?: string }[] = [];
+    const factory = (auth: { gitHubToken?: string }) => {
+      auths.push(auth);
+      const { client } = fakeClient(async (cfg, emit) => {
+        await callTool(cfg, 'submit_result', { updates: { word: 'cat' } });
+        emit('session.idle');
+      });
+      if (!auth.gitHubToken) return client;
+      return {
+        ...client,
+        createSession: async () => {
+          throw new Error(
+            'Authentication failed: Failed to validate SDK token (401): Bad credentials',
+          );
+        },
+      };
+    };
+    const events: ProviderEvent[] = [];
+    const p = new CopilotProvider({ clientFactory: factory, gitHubToken: 'bad' });
+    const res = await p.runAgent({
+      pause,
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: (e) => events.push(e),
+    });
+    expect(res.result).toEqual({ updates: { word: 'cat' } });
+    expect(auths).toEqual([{ gitHubToken: 'bad' }, {}]);
+    expect(events[0]).toMatchObject({
+      type: 'info',
+      text: expect.stringMatching(/falling back to your signed-in GitHub user/),
+    });
+    expect(p.usingSignedInUser).toBe(true);
+    // later nodes go straight to the signed-in user
+    await p.runAgent({
+      pause,
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    expect(auths).toHaveLength(2);
+  });
+
+  it('explains when both the token and the signed-in user fail', async () => {
     const client: ClientLike = {
       start: async () => {},
       stop: async () => {},
@@ -182,7 +227,7 @@ describe('CopilotProvider', () => {
         signal: new AbortController().signal,
         onEvent: () => {},
       }),
-    ).rejects.toThrow(/remove GITHUB_TOKEN \/ TOKEN in \.env/);
+    ).rejects.toThrow(/Both the configured token and your signed-in GitHub user were rejected/);
   });
 
   it('honours stop while the session is still being created', async () => {
