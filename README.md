@@ -55,7 +55,7 @@ commands only).
 
 | Area | What it shows |
 |------|---------------|
-| Canvas | The pattern graph. Nodes light up as they run (active, waiting, done, failed) with a visit counter. Edges show their guard, the state keys they carry, a moving **data packet** on the edge just taken, and the actual values that travelled on it. Loops route around the side. |
+| Canvas | The pattern graph. Patterns with **phases** open collapsed, one node per phase showing the step running inside it; click ⊕ to open a phase or **Open all phases**. Nodes light up as they run (active, waiting, done, failed) with a visit counter. Edges show their guard, the state keys they carry, a moving **data packet** on the edge just taken, and the actual values that travelled on it. Loops route around the side. |
 | Toolbar | AI provider, **complexity** (auto or 1-4; hover for the model per tier), the **improvisation knob** (🎻 Classical … 🥁 Free), auto-approve, **step mode**, Run / Pause / Step / Resume / Stop. |
 | Inspector | **Gate card** when paused: before a node runs, or *after the AI answered but before the engine applies it* (shows the proposed JSON). **Approval card** for human nodes; at the maestro's go-gate it shows the composed score, the debate notes and the inputs. **AI output** streams the agent's text, model and tier, tool calls, permission denials and submitted result; in jazz, each take and the bandleader's merge. **State** shows every key with what just changed. |
 | Timeline | Every engine event. Scrub back and forth; the canvas and inspector follow. |
@@ -112,6 +112,12 @@ how a pattern forces full coverage instead of trusting the AI:
 ```ts
 checks: [{ expr: 'subset(batch, triaged)', message: 'You skipped files. List EVERY file of batch.' }]
 ```
+
+**Phases** (`groups` on a pattern) name a run of consecutive steps, e.g.
+`{ id: 'listPhase', label: 'List evidence', nodes: ['needFiles', 'inventory', …] }`. The engine
+ignores them; the studio draws each phase as one node (lit by its busiest step) that you can open
+into its steps. A step belongs to at most one phase and the start node to none. Approval nodes can
+list state keys in `shows` so the human sees exactly what they approve.
 
 **Capabilities** give an agent node extra sources: `web` adds `web_search` (keyless, DuckDuckGo)
 next to Copilot's `web_fetch`; `mcp` connects the MCP servers from your VS Code user `mcp.json` and
@@ -204,24 +210,30 @@ when it has enough evidence.
 
 ## The investigate pattern
 
-`investigate` answers a question without skipping information. The engine owns every work queue:
+`investigate` answers a question without skipping information. It is built from **phases**, and
+the listing adapts to the question: "is this on the internet?", "does this work in this repo?" and
+"why is oxlint slower than eslint?" each list different evidence. The engine owns every work queue:
 
-1. **List sources** (tool): git history, GitHub issues/PRs/CI (if `gh` is signed in), installed
-   dependencies, the web, each MCP server, and earlier Symphony runs.
-2. **List every file** (tool): the whole workspace, git-aware; binaries, lockfiles and files over
-   512 KB are excluded and listed with the reason.
-3. **Plan** (AI): split the question into sub-questions and pick the best sources. Every source must
-   be used or skipped with a reason, or the plan is rejected.
-4. **Triage** (AI, loop): every file, in batches of `batchSize` (25). An answer that leaves out a
-   file is rejected.
-5. **Deep read** (AI, loop): every relevant file read completely, following imports, callers, tests
-   and `git blame`, `deepBatchSize` (4) at a time.
-6. **Search sources** (AI, loop): each chosen source searched with web search, `gh`, MCP or git, as
+1. **Plan research**: a tool lists the sources available here (the workspace with its file count,
+   git history, GitHub if `gh` is signed in, installed dependencies, the web, experiments, each MCP
+   server, earlier Symphony runs). The AI splits the question into sub-questions and decides which
+   sources apply. Every source must be used or skipped with a reason, or the plan is rejected.
+2. **List evidence**: only what the plan chose. *Workspace* lists every file (git-aware; binaries,
+   lockfiles and files over 512 KB are excluded with the reason). *Web* has the AI search and list
+   the pages worth reading. *Experiment* has the AI design the commands to run (benchmarks, timing,
+   profiling).
+3. **Triage files** (loop): every listed file, in batches of `batchSize` (25). An answer that leaves
+   out a file is rejected.
+4. **Deep read** (loop): every relevant file *and* every listed page, read completely,
+   `deepBatchSize` (4) at a time.
+5. **Run experiments**: you approve the commands (the approval card shows them), then each one runs
+   with scratch files only and its measurements become findings. Rejecting skips the phase.
+6. **Search sources** (loop): each remaining source (git, GitHub, dependencies, MCP…) searched as
    fits; every query is recorded.
-7. **Gaps** (AI, loop): unanswered sub-questions get targeted research (up to `maxGapRounds`), then
-   a human hint if confidence stays low.
-8. **Answer** (AI): cites evidence and ends with a coverage report: files triaged and excluded,
-   sources searched and skipped, what is still unknown.
+7. **Close gaps** (loop): unanswered sub-questions get targeted research (up to `maxGapRounds`),
+   then a human hint if confidence stays low.
+8. **Answer**: cites evidence and ends with a coverage report: files triaged and excluded, pages
+   read, experiments run, sources searched and skipped, what is still unknown.
 
 ```bash
 npm run cli -- run investigate -c question="Why do runs replay exactly?" --provider copilot
