@@ -61,12 +61,28 @@ describe('evalExpr values', () => {
     ['chars("abc")', ['a', 'b', 'c']],
     ['subset(chars("aea"), guessed)', true],
     ['subset(chars(word), guessed)', false],
+    ['[]', []],
+    ['[1, word, [true]]', [1, 'apple', [true]]],
+    ['take(guessed, 1)', ['a']],
+    ['take(guessed, 5)', ['a', 'e']],
+    ['drop(guessed, 1)', ['e']],
+    ['drop(guessed, 9)', []],
+    ['first(guessed)', 'a'],
+    ['unique(guessed + ["a", "z", "z"])', ['a', 'e', 'z']],
+    ['without(guessed, ["a", "q"])', ['e']],
   ])('%s', (src, expected) => {
     expect(ev(src)).toEqual(expected);
   });
 
   it('only evaluates the taken if() branch', () => {
     expect(ev('if(true, 1, append(word, 1))')).toBe(1);
+  });
+
+  it('rejects bad list function arguments', () => {
+    expect(() => ev('first(drop(guessed, 2))')).toThrow(/empty list/);
+    expect(() => ev('take(guessed, -1)')).toThrow(ExprError);
+    expect(() => ev('take(word, 1)')).toThrow(ExprError);
+    expect(() => ev('without(guessed, word)')).toThrow(ExprError);
   });
 
   it('rejects mixed-type arithmetic', () => {

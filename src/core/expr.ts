@@ -8,9 +8,10 @@
  *
  * Identifiers resolve against the run state (`state.` prefix optional).
  * Logical operators require booleans; a guard must evaluate to a boolean.
- * Arithmetic: + (numbers, strings, lists) and - (numbers).
+ * Arithmetic: + (numbers, strings, lists) and - (numbers). List literals: [a, b].
  * Functions: len(x), empty(x), includes(listOrString, value), lower(s),
- *   append(list, v), if(cond, a, b), chars(s), subset(listA, listB).
+ *   append(list, v), if(cond, a, b), chars(s), subset(listA, listB),
+ *   take(list, n), drop(list, n), first(list), unique(list), without(listA, listB).
  */
 
 export type Expr =
@@ -18,10 +19,24 @@ export type Expr =
   | { readonly t: 'path'; readonly parts: readonly (string | number)[] }
   | { readonly t: 'not'; readonly e: Expr }
   | { readonly t: 'bin'; readonly op: BinOp; readonly l: Expr; readonly r: Expr }
-  | { readonly t: 'call'; readonly fn: FnName; readonly args: readonly Expr[] };
+  | { readonly t: 'call'; readonly fn: FnName; readonly args: readonly Expr[] }
+  | { readonly t: 'list'; readonly items: readonly Expr[] };
 
 type BinOp = '&&' | '||' | '==' | '!=' | '<' | '<=' | '>' | '>=' | '+' | '-';
-type FnName = 'len' | 'empty' | 'includes' | 'lower' | 'append' | 'if' | 'chars' | 'subset';
+type FnName =
+  | 'len'
+  | 'empty'
+  | 'includes'
+  | 'lower'
+  | 'append'
+  | 'if'
+  | 'chars'
+  | 'subset'
+  | 'take'
+  | 'drop'
+  | 'first'
+  | 'unique'
+  | 'without';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -32,6 +47,11 @@ const FNS: Record<FnName, number> = {
   if: 3,
   chars: 1,
   subset: 2,
+  take: 2,
+  drop: 2,
+  first: 1,
+  unique: 1,
+  without: 2,
 };
 
 export class ExprError extends Error {
@@ -151,6 +171,18 @@ export function parseExpr(src: string): Expr {
       expectOp(')');
       return e;
     }
+    if (t.k === 'op' && t.v === '[') {
+      const items: Expr[] = [];
+      if (!isOp(']')) {
+        items.push(orExpr());
+        while (isOp(',')) {
+          pos += 1;
+          items.push(orExpr());
+        }
+      }
+      expectOp(']');
+      return { t: 'list', items };
+    }
     if (t.k === 'id') {
       if (t.v === 'true' || t.v === 'false') return { t: 'lit', v: t.v === 'true' };
       if (t.v === 'null') return { t: 'lit', v: null };
@@ -226,6 +258,8 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
   switch (e.t) {
     case 'lit':
       return e.v;
+    case 'list':
+      return e.items.map((i) => evalExpr(i, state));
     case 'path': {
       let cur: unknown = state;
       for (const p of e.parts) {
@@ -270,6 +304,28 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           if (!Array.isArray(x) || !Array.isArray(y))
             throw new ExprError('subset() needs two lists');
           return x.every((v) => y.some((w) => deepEqual(v, w)));
+        }
+        case 'take':
+        case 'drop': {
+          const n = args[1];
+          if (!Array.isArray(x)) throw new ExprError(`${e.fn}() needs a list`);
+          if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+            throw new ExprError(`${e.fn}() needs a non-negative integer count`);
+          }
+          return e.fn === 'take' ? x.slice(0, n) : x.slice(n);
+        }
+        case 'first':
+          if (!Array.isArray(x)) throw new ExprError('first() needs a list');
+          if (x.length === 0) throw new ExprError('first() of an empty list');
+          return x[0];
+        case 'unique':
+          if (!Array.isArray(x)) throw new ExprError('unique() needs a list');
+          return x.filter((v, i) => x.findIndex((w) => deepEqual(v, w)) === i);
+        case 'without': {
+          const y = args[1];
+          if (!Array.isArray(x) || !Array.isArray(y))
+            throw new ExprError('without() needs two lists');
+          return x.filter((v) => !y.some((w) => deepEqual(v, w)));
         }
       }
       break;
@@ -336,6 +392,7 @@ export function exprFields(e: Expr): string[] {
       walk(x.r);
     }
     if (x.t === 'call') x.args.forEach(walk);
+    if (x.t === 'list') x.items.forEach(walk);
   };
   walk(e);
   return [...out];
