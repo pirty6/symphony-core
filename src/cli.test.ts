@@ -9,6 +9,8 @@ const cwd = mkdtempSync(join(tmpdir(), 'symphony-cli-'));
 afterAll(() => rmSync(cwd, { recursive: true, force: true }));
 
 let out = '';
+// oxlint-disable-next-line no-control-regex
+const plain = () => out.replace(/\x1b\[[0-9;]*m/g, '');
 beforeEach(() => {
   out = '';
   vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
@@ -71,5 +73,28 @@ describe('main', () => {
     out = '';
     await main(['list'], cwd);
     expect(out).toMatch(/rename-the-config-loader/);
+  });
+
+  it('maestro composes a score and performs it', async () => {
+    expect(
+      await main(['maestro', 'Fix the flaky login test', '--auto-approve', '--no-save'], cwd),
+    ).toBe(0);
+    expect(plain()).toMatch(/maestro score .* 🎻 Classical/);
+    expect(out).toMatch(/composed 'fix'/);
+    expect(plain()).toMatch(/fix score .* complexity 3/);
+    expect(out).toMatch(/reached end 'fixed'/);
+  });
+
+  it('accepts complexity and improvisation by name', async () => {
+    expect(
+      await main(
+        ['run', 'analyze', '-i', 'bebop', '--complexity', '4', '--auto-approve', '--no-save'],
+        cwd,
+      ),
+    ).toBe(0);
+    expect(plain()).toMatch(/complexity 4 · 🎺 Bebop/);
+    await expect(main(['run', 'analyze', '-i', 'polka', '--no-save'], cwd)).rejects.toThrow(
+      /--improvisation/,
+    );
   });
 });

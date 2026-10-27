@@ -24,6 +24,7 @@ import type {
   DemoScript,
   EngineEvent,
   ExecutableScore,
+  Pattern,
   Performance,
   Resolution,
   SavedRun,
@@ -69,7 +70,18 @@ export type RunMessage =
       readonly type: 'performance';
       readonly performance: Performance;
       readonly savedTo?: string;
-    };
+    }
+  | ({ readonly seq: number; readonly type: 'next' } & NextPerformance);
+
+/** What a run hands on when it finishes (the maestro hands on the score it composed). */
+export interface NextPerformance {
+  readonly pattern: Pattern;
+  readonly context: Readonly<Record<string, unknown>>;
+  /** Present when the follow-up run was started. */
+  readonly runId?: string;
+  /** Why the follow-up could not start (e.g. a required input is missing). */
+  readonly error?: string;
+}
 
 type Unsequenced<T> = T extends { seq: number } ? Omit<T, 'seq'> : never;
 
@@ -86,6 +98,8 @@ export interface RunOptions {
   readonly envHash?: () => Promise<string>;
   readonly clock?: () => string;
   readonly onSave?: (run: SavedRun) => Promise<string | undefined>;
+  /** Called after a successful run; may start a follow-up run (the maestro's composed score). */
+  readonly next?: (performance: Performance) => Promise<NextPerformance | undefined>;
   /** Classical (improvisation 0): recorded answers to replay for identical moves. */
   readonly repertoire?: Repertoire;
   /** Tools for `tool` nodes. Without a registry, tool nodes use the pattern's demo outputs. */
@@ -430,6 +444,10 @@ export class Run {
         .catch(() => undefined);
     }
     this.push({ type: 'performance', performance, ...(savedTo ? { savedTo } : {}) });
+    if (this.opts.next && performance.outcome === 'success') {
+      const next = await this.opts.next(performance).catch(() => undefined);
+      if (next) this.push({ type: 'next', ...next });
+    }
     const status: RunStatus =
       this.engine.kind === 'failed'
         ? 'failed'
