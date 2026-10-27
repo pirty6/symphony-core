@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { EMPTY_FRAME, reduceFrame } from '@core/replay'
 import type { ApprovalPause } from '@core/types'
 import { startLive, type RunView } from '../lib/model'
-import { ApprovalCard, GateCard, StateView } from './Inspector'
+import { ApprovalCard, GateCard, NodeEditor, StateView } from './Inspector'
+import { newNode } from '../lib/model'
 import { PatternPanel } from './PatternPanel'
 import { describeEvent } from '../lib/events'
 import { Timeline } from './Timeline'
@@ -143,3 +144,26 @@ describe('PatternPanel', () => {
     expect(screen.getByText('View TypeScript')).toBeDisabled()
   })
 })
+
+describe('NodeEditor', () => {
+  it('edits capabilities and acceptance checks of agents', () => {
+    const onChange = vi.fn()
+    render(<NodeEditor node={newNode('assessor', 'a', { x: 0, y: 0 })} state={[]} editable onChange={onChange} onDelete={() => {}} />)
+    fireEvent.click(screen.getByLabelText('capability web'))
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ capabilities: ['web'] }))
+    fireEvent.change(screen.getByLabelText('checks'), { target: { value: 'subset(batch, triaged) | list every file\nlen(x) > 0' } })
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ checks: [{ expr: 'subset(batch, triaged)', message: 'list every file' }, { expr: 'len(x) > 0', message: '' }] }),
+    )
+  })
+
+  it('edits tool and output mapping of tool nodes', () => {
+    const onChange = vi.fn()
+    render(<NodeEditor node={newNode('tool', 't', { x: 0, y: 0 })} state={[]} editable onChange={onChange} onDelete={() => {}} />)
+    fireEvent.change(screen.getByLabelText('tool'), { target: { value: 'sources.catalog' } })
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ tool: 'sources.catalog' }))
+    fireEvent.change(screen.getByLabelText('tool output'), { target: { value: 'files = repoFiles\nexcluded = skipped' } })
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ output: { files: 'repoFiles', excluded: 'skipped' } }))
+  })
+})
+

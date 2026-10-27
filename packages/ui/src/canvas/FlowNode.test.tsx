@@ -54,4 +54,18 @@ describe('FlowNode', () => {
     expect(end.container.querySelectorAll('.react-flow__handle-bottom')).toHaveLength(0)
     expect(screen.queryByLabelText('breakpoint e')).toBeNull()
   })
+
+  it('shows tool nodes and agent capabilities and checks', () => {
+    const tool = newNode('tool', 'inventory', { x: 0, y: 0 })
+    renderNode(tool, { writes: ['repoFiles'] })
+    expect(screen.getByText('repo.files')).toBeInTheDocument()
+    expect(screen.getByText('repoFiles')).toHaveClass('chip-out')
+    const agent = newNode('assessor', 'sweep', { x: 0, y: 0 })
+    const node = { ...agent.data.node, capabilities: ['web', 'mcp'], checks: [{ expr: 'len(queries) > 0', message: 'm' }] } as typeof agent.data.node
+    renderNode({ ...agent, data: { ...agent.data, node } })
+    expect(screen.getByText('🌐 web')).toBeInTheDocument()
+    expect(screen.getByText('🔌 mcp')).toBeInTheDocument()
+    expect(screen.getByText('✓ 1 check')).toHaveAttribute('title', 'len(queries) > 0 — m')
+  })
 })
+

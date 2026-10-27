@@ -38,6 +38,8 @@ export interface ApiOptions {
   /** Streaming delay for the scripted provider, so runs are watchable. */
   readonly scriptedDelayMs?: number
   readonly env?: NodeJS.ProcessEnv
+  /** Shared run table, so live runs survive an API reload in dev. */
+  readonly runs?: Map<string, Run>
 }
 
 export const RUNS_DIR = '.symphony/runs'
@@ -98,7 +100,7 @@ function asPattern(raw: unknown): Pattern {
 }
 
 export function createApi(opts: ApiOptions) {
-  const runs = new Map<string, Run>()
+  const runs = opts.runs ?? new Map<string, Run>()
   const env = opts.env ?? process.env
   const workspace = opts.workspace ?? opts.repoRoot
   const runsDir = join(opts.repoRoot, RUNS_DIR)

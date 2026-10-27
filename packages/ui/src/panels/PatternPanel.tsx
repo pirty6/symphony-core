@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FIELD_TYPES, type FieldType } from '@core/types'
+import { FIELD_TYPES, type FieldType, type StateField } from '@core/types'
 import type { Issue } from '@core/validate'
 import type { PatternMeta } from '../lib/model'
 
@@ -23,6 +23,21 @@ export function PatternPanel(p: Props) {
   const [newField, setNewField] = useState<{ name: string; type: FieldType }>({ name: '', type: 'string' })
   const m = p.meta
   const set = (patch: Partial<PatternMeta>) => p.onMeta({ ...m, ...patch })
+  // Required inputs and tunable settings (fields with an initial value) first; working state folded away.
+  const isPrimary = (f: StateField) => m.requiredContext.includes(f.name) || f.initial !== undefined || (p.context[f.name] ?? '') !== ''
+  const primary = m.state.filter(isPrimary)
+  const secondary = m.state.filter((f) => !isPrimary(f))
+  const field = (f: StateField) => (
+    <label key={f.name} className="field">
+      {f.name} <small>({f.type}){m.requiredContext.includes(f.name) ? ' · required' : ''}</small>
+      <input
+        value={p.context[f.name] ?? ''}
+        placeholder={f.description ?? (f.initial !== undefined ? `initial ${JSON.stringify(f.initial)}` : '')}
+        onChange={(e) => p.onContext({ ...p.context, [f.name]: e.target.value })}
+        aria-label={`context ${f.name}`}
+      />
+    </label>
+  )
 
   return (
     <div className="pattern-panel">
@@ -32,17 +47,13 @@ export function PatternPanel(p: Props) {
           Goal
           <textarea rows={2} value={p.goal} onChange={(e) => p.onGoal(e.target.value)} aria-label="goal" />
         </label>
-        {m.state.map((f) => (
-          <label key={f.name} className="field">
-            {f.name} <small>({f.type}){m.requiredContext.includes(f.name) ? ' · required' : ''}</small>
-            <input
-              value={p.context[f.name] ?? ''}
-              placeholder={f.description ?? (f.initial !== undefined ? `initial ${JSON.stringify(f.initial)}` : '')}
-              onChange={(e) => p.onContext({ ...p.context, [f.name]: e.target.value })}
-              aria-label={`context ${f.name}`}
-            />
-          </label>
-        ))}
+        {primary.map(field)}
+        {secondary.length > 0 && (
+          <details>
+            <summary className="muted">Other initial state ({secondary.length})</summary>
+            {secondary.map(field)}
+          </details>
+        )}
       </section>
 
       <section>

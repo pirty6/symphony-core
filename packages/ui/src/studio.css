@@ -342,13 +342,34 @@ pre {
 .kind-end {
   --kind: var(--end);
 }
+.kind-tool {
+  --kind: #94a3b8;
+}
+.fn-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 5px;
+}
+.badge {
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #1f2747;
+  border: 1px solid var(--border);
+}
+.badge-check {
+  color: var(--ok);
+  border-color: #2f6b45;
+}
 .palette-item.kind-assessor,
 .palette-item.kind-executor,
 .palette-item.kind-compute,
 .palette-item.kind-condition,
 .palette-item.kind-approval,
 .palette-item.kind-end,
-.palette-item.kind-start {
+.palette-item.kind-start,
+.palette-item.kind-tool {
   border-left-color: var(--kind);
 }
 

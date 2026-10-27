@@ -118,7 +118,7 @@ export function uniqueId(prefix: string, taken: Iterable<string>): string {
   }
 }
 
-export type PaletteKind = 'start' | 'assessor' | 'executor' | 'compute' | 'condition' | 'approval' | 'end'
+export type PaletteKind = 'start' | 'assessor' | 'executor' | 'compute' | 'tool' | 'condition' | 'approval' | 'end'
 
 export function newNode(kind: PaletteKind, id: string, position: { x: number; y: number }): FlowNode {
   const node: ScoreNode = (() => {
@@ -136,6 +136,8 @@ export function newNode(kind: PaletteKind, id: string, position: { x: number; y:
         }
       case 'compute':
         return { id, kind: 'compute', label: 'Compute', assign: [] }
+      case 'tool':
+        return { id, kind: 'tool', label: 'List files', tool: 'repo.files', output: {} }
       case 'condition':
         return { id, kind: 'condition', label: 'If', expression: 'true' }
       case 'approval':

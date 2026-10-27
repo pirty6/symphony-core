@@ -46,11 +46,12 @@ import { PatternPanel } from './panels/PatternPanel'
 import { Timeline } from './panels/Timeline'
 import { Toolbar, type RunSettings } from './panels/Toolbar'
 
-const nodeTypes = { start: FlowNode, agent: FlowNode, compute: FlowNode, condition: FlowNode, approval: FlowNode, end: FlowNode }
+const nodeTypes = { start: FlowNode, agent: FlowNode, compute: FlowNode, condition: FlowNode, approval: FlowNode, tool: FlowNode, end: FlowNode }
 const edgeTypes = { data: DataEdge }
 const defaultEdgeOptions: DefaultEdgeOptions = { type: 'data', markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 } }
 const BLANK: PatternMeta = { name: 'my-flow', description: 'A new flow', requiredContext: [], verbTriggers: [], state: [] }
 const ACTIVE = new Set(['running', 'paused', 'awaiting-approval'])
+const READABLE_ZOOM = 0.55
 type Tab = 'node' | 'ai' | 'state'
 
 function contextStrings(ctx: Record<string, unknown> | undefined): Record<string, string> {
@@ -58,7 +59,8 @@ function contextStrings(ctx: Record<string, unknown> | undefined): Record<string
 }
 
 export default function Studio() {
-  const { screenToFlowPosition, fitView } = useReactFlow()
+  const { screenToFlowPosition, fitView, getZoom, setCenter, getNode } = useReactFlow()
+  const [follow, setFollow] = useState(true)
   const [library, setLibrary] = useState<LibraryItem[]>([])
   const [saved, setSaved] = useState<SavedSummary[]>([])
   const [meta, setMeta] = useState<PatternMeta>(BLANK)
@@ -87,9 +89,17 @@ export default function Studio() {
       setNodes(flow.nodes)
       setEdges(flow.edges)
       setSelected(null)
-      setTimeout(() => void fitView({ padding: 0.15, duration: 300 }), 50)
+      setTimeout(() => {
+        void fitView({ padding: 0.15 }).then(() => {
+          // Big flows become unreadable when fitted: start at the top, readable size.
+          const start = flow.nodes.find((n) => n.type === 'start')
+          if (getZoom() < READABLE_ZOOM && start) {
+            void setCenter(start.position.x + 115, start.position.y + 320, { zoom: 0.8, duration: 300 })
+          }
+        })
+      }, 50)
     },
-    [fitView, setEdges, setNodes],
+    [fitView, getZoom, setCenter, setEdges, setNodes],
   )
 
   const loadPattern = useCallback(
@@ -109,19 +119,27 @@ export default function Studio() {
 
   const refreshSaved = useCallback(() => void api.saved().then(setSaved, () => setSaved([])), [])
 
+  // Load the library and the pattern named in the URL once; later loads are user actions.
+  const loadPatternRef = useRef(loadPattern)
+  loadPatternRef.current = loadPattern
   useEffect(() => {
+    let cancelled = false
     api.patterns().then(
       (items) => {
+        if (cancelled) return
         setLibrary(items)
         const wanted = decodeURIComponent(location.hash.slice(1)) || 'hangman'
         const first = items.find((i) => i.name === wanted) ?? items[0]
-        if (first) loadPattern(first)
+        if (first) loadPatternRef.current(first)
       },
-      (e: Error) => setError(`Could not load patterns: ${e.message}`),
+      (e: Error) => !cancelled && setError(`Could not load patterns: ${e.message}`),
     )
     refreshSaved()
-    return () => unsubscribe.current?.()
-  }, [loadPattern, refreshSaved])
+    return () => {
+      cancelled = true
+      unsubscribe.current?.()
+    }
+  }, [refreshSaved])
 
   useEffect(() => {
     if (view.mode === 'live' && !ACTIVE.has(view.status)) refreshSaved()
@@ -171,6 +189,14 @@ export default function Studio() {
   const selectedEdge = edges.find((e) => e.id === selected)
   const focusNode = nodes.find((n) => n.id === focusId)
   const stream = focusId ? streamFor(view, focusId, frame) : undefined
+
+  const followId = view.mode !== 'idle' ? (frame.pausedNodeId ?? frame.activeNodeId) : undefined
+  useEffect(() => {
+    if (!follow || !followId) return
+    const node = getNode(followId)
+    if (!node) return
+    void setCenter(node.position.x + 115, node.position.y + 60, { zoom: Math.max(getZoom(), 0.75), duration: 300 })
+  }, [follow, followId, getNode, getZoom, setCenter])
 
   // ── editing ────────────────────────────────────────────────────────
 
@@ -458,7 +484,13 @@ export default function Studio() {
           {tab === 'state' && <StateView frame={frame} />}
         </div>
       </aside>
-      <Timeline frames={view.frames} cursor={view.cursor} onSeek={(cursor) => setView((v) => ({ ...v, cursor }))} />
+      <Timeline
+        frames={view.frames}
+        cursor={view.cursor}
+        onSeek={(cursor) => setView((v) => ({ ...v, cursor }))}
+        follow={follow}
+        onFollow={setFollow}
+      />
     </div>
   )
 }

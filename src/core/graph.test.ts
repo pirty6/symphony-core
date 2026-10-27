@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fix, hangman, investigate } from '../patterns/index.js';
-import { graphToPattern, layout, patternToGraph } from './graph.js';
+import { graphToPattern, layout, loopBodies, patternToGraph } from './graph.js';
 import { validateGraph } from './validate.js';
 
 describe('patternToGraph', () => {
@@ -60,5 +60,25 @@ describe('graphToPattern', () => {
       to: 'clarify',
       branch: 'else',
     });
+  });
+});
+
+describe('loop layout', () => {
+  it('draws loop bodies as a row beside their condition', () => {
+    const bodies = loopBodies(investigate);
+    expect(bodies.get('filesLeft')).toEqual(['takeBatch', 'triage', 'mergeTriage']);
+    expect(bodies.get('deepLeft')).toEqual(['takeDeep', 'deepRead', 'mergeDeep']);
+    expect(bodies.get('sourcesLeft')).toEqual(['takeSource', 'sweep', 'mergeSource']);
+    expect(bodies.get('moreGaps')).toEqual(['chase', 'mergeChase']);
+    const pos = layout(investigate);
+    expect(pos.get('triage')!.y).toBe(pos.get('filesLeft')!.y);
+    expect(pos.get('triage')!.x).toBeGreaterThan(pos.get('filesLeft')!.x);
+    expect(pos.get('deepQueue')!.y).toBeGreaterThan(pos.get('filesLeft')!.y);
+  });
+
+  it('keeps nodes reachable from start on the main path (hangman)', () => {
+    expect(loopBodies(hangman).size).toBe(0);
+    const g = patternToGraph(investigate);
+    expect(g.edges.find((e) => e.id === 'mergeTriage-filesLeft')!.data.back).toBe(true);
   });
 });

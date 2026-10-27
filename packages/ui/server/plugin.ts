@@ -18,9 +18,18 @@ export function symphonyPlugin(): Plugin {
     name: 'symphony-api',
     configureServer(server) {
       loadEnv({ path: resolve(REPO_ROOT, '.env'), quiet: true })
-      // src/ lives outside the Vite root: watch it so pattern/core edits reload the API.
-      server.watcher.add(resolve(REPO_ROOT, 'src'))
+      // src/ lives outside the Vite root: watch it, and rebuild the API when the core,
+      // runtime or patterns change. Live runs are kept in a shared table.
+      const src = resolve(REPO_ROOT, 'src')
+      server.watcher.add(src)
+      const runs = new Map()
       let api: Promise<Api> | undefined
+      const reload = (file: string) => {
+        if (file.startsWith(src) || file.startsWith(here)) api = undefined
+      }
+      server.watcher.on('change', reload)
+      server.watcher.on('add', reload)
+      server.watcher.on('unlink', reload)
       const load = () =>
         (api ??= server.ssrLoadModule(resolve(here, 'api.ts')).then((mod) =>
           (mod as typeof import('./api.ts')).createApi({
@@ -28,6 +37,7 @@ export function symphonyPlugin(): Plugin {
             workspace: process.env.SYMPHONY_WORKSPACE ?? REPO_ROOT,
             importer: (file) => server.ssrLoadModule(file),
             scriptedDelayMs: Number(process.env.SYMPHONY_DEMO_DELAY_MS ?? 25),
+            runs,
           }),
         ))
       server.middlewares.use((req, res, next) => {

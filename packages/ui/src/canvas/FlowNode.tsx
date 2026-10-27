@@ -9,6 +9,7 @@ const ICON: Record<string, string> = {
   condition: '◆',
   approval: '✋',
   end: '⏹',
+  tool: '⚙',
 }
 
 function Chips({ label, keys }: { label: string; keys: readonly string[] }) {
@@ -71,6 +72,23 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
         <>
           <p className="fn-text">{n.directive}</p>
           <Chips label="in" keys={data.reads} />
+          <Chips label="out" keys={data.writes} />
+          {(n.capabilities?.length || n.checks?.length) ? (
+            <div className="fn-badges">
+              {n.capabilities?.includes('web') && <span className="badge" title="May search and read the web">🌐 web</span>}
+              {n.capabilities?.includes('mcp') && <span className="badge" title="May use MCP servers">🔌 mcp</span>}
+              {n.checks?.length ? (
+                <span className="badge badge-check" title={n.checks.map((c) => `${c.expr} — ${c.message}`).join('\n')}>
+                  ✓ {n.checks.length} check{n.checks.length > 1 ? 's' : ''}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      )}
+      {n.kind === 'tool' && (
+        <>
+          <code className="fn-expr">{n.tool}</code>
           <Chips label="out" keys={data.writes} />
         </>
       )}

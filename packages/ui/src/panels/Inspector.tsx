@@ -12,6 +12,12 @@ const list = (s: string) =>
 
 const json = (v: unknown) => JSON.stringify(v, null, 2)
 
+/** Built-in tools and their outputs (mirrors src/runtime/builtin-tools.ts). */
+const TOOL_OUTPUTS: Record<string, string[]> = {
+  'repo.files': ['files', 'excluded'],
+  'sources.catalog': ['names', 'descriptions'],
+}
+
 // ── cards shown while a run waits for the user ─────────────────────
 
 export function GateCard({ view, onResume, onStep, onStop }: { view: RunView; onResume: () => void; onStep: () => void; onStop: () => void }) {
@@ -19,7 +25,9 @@ export function GateCard({ view, onResume, onStep, onStop }: { view: RunView; on
   const { gate } = view
   return (
     <div className="card gate" data-testid="gate-card">
-      <h3>⏸ Paused {gate.phase === 'before' ? 'before' : 'after AI answered at'} “{gate.nodeId}”</h3>
+      <h3>
+        ⏸ Paused {gate.phase === 'before' ? 'before' : view.pause?.kind === 'tool' ? 'after the tool ran at' : 'after AI answered at'} “{gate.nodeId}”
+      </h3>
       {gate.phase === 'before' ? (
         <p className="muted">Nothing has run yet for this node. Inspect its input below, then continue.</p>
       ) : (
@@ -151,7 +159,7 @@ export function AiOutput({ stream, live }: { stream: AiStream | undefined; live:
         </details>
       )}
       <pre className="stream" ref={ref} data-testid="ai-text">
-        {stream.text || stream.messages.join('\n') || '…'}
+        {stream.text || stream.messages.join('\n') || stream.info.join('\n') || '…'}
       </pre>
       {stream.rejected && (
         <div className="issue">
@@ -251,6 +259,85 @@ export function NodeEditor({
           <label className="field">
             Writes
             <input value={n.writes.join(', ')} onChange={(e) => set({ writes: list(e.target.value) })} aria-label="writes" />
+          </label>
+        </>
+      )}
+      {n.kind === 'agent' && (
+        <>
+          <div className="field">
+            Extra sources
+            <div className="row">
+              {(['web', 'mcp'] as const).map((cap) => (
+                <label key={cap}>
+                  <input
+                    type="checkbox"
+                    checked={n.capabilities?.includes(cap) ?? false}
+                    onChange={(e) => {
+                      const caps = new Set(n.capabilities ?? [])
+                      if (e.target.checked) caps.add(cap)
+                      else caps.delete(cap)
+                      const { capabilities: _c, ...rest } = n
+                      onChange((caps.size ? { ...rest, capabilities: [...caps] } : rest) as ScoreNode)
+                    }}
+                    aria-label={`capability ${cap}`}
+                  />
+                  {cap === 'web' ? 'web search + fetch' : 'MCP servers'}
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="field">
+            Acceptance checks <small>(one per line: expression | message shown to the AI when it fails)</small>
+            <textarea
+              rows={3}
+              value={(n.checks ?? []).map((c) => `${c.expr} | ${c.message}`).join('\n')}
+              onChange={(e) => {
+                const checks = e.target.value
+                  .split('\n')
+                  .filter((l) => l.trim())
+                  .map((l) => {
+                    const i = l.indexOf('|')
+                    return i === -1 ? { expr: l.trim(), message: '' } : { expr: l.slice(0, i).trim(), message: l.slice(i + 1).trim() }
+                  })
+                const { checks: _c, ...rest } = n
+                onChange((checks.length ? { ...rest, checks } : rest) as ScoreNode)
+              }}
+              aria-label="checks"
+            />
+          </label>
+        </>
+      )}
+      {n.kind === 'tool' && (
+        <>
+          <label className="field">
+            Tool
+            <select value={n.tool} onChange={(e) => set({ tool: e.target.value })} aria-label="tool">
+              {Object.keys(TOOL_OUTPUTS).map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Output <small>(one per line: tool output = state field; outputs: {(TOOL_OUTPUTS[n.tool] ?? []).join(', ')})</small>
+            <textarea
+              rows={3}
+              value={Object.entries(n.output)
+                .map(([k, f]) => `${k} = ${f}`)
+                .join('\n')}
+              onChange={(e) =>
+                set({
+                  output: Object.fromEntries(
+                    e.target.value
+                      .split('\n')
+                      .filter((l) => l.includes('='))
+                      .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]),
+                  ),
+                })
+              }
+              aria-label="tool output"
+            />
           </label>
         </>
       )}

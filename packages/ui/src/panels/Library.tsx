@@ -9,6 +9,7 @@ const PALETTE: { kind: PaletteKind; icon: string; label: string; hint: string }[
   { kind: 'condition', icon: '◆', label: 'If', hint: 'branch on state' },
   { kind: 'approval', icon: '✋', label: 'Approval', hint: 'human gate' },
   { kind: 'end', icon: '⏹', label: 'End', hint: 'finish' },
+  { kind: 'tool', icon: '⚙', label: 'Tool', hint: 'deterministic I/O' },
   { kind: 'start', icon: '▶', label: 'Start', hint: 'entry (one)' },
 ]
 

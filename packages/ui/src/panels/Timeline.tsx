@@ -7,6 +7,8 @@ interface Props {
   frames: readonly Frame[]
   cursor: number | null
   onSeek: (index: number | null) => void
+  follow?: boolean
+  onFollow?: (on: boolean) => void
 }
 
 const ICON: Record<EngineEvent['type'], string> = {
@@ -21,7 +23,7 @@ const ICON: Record<EngineEvent['type'], string> = {
   'run-failed': '✘',
 }
 
-export function Timeline({ frames, cursor, onSeek }: Props) {
+export function Timeline({ frames, cursor, onSeek, follow, onFollow }: Props) {
   const index = cursor ?? frames.length - 1
   const current = useRef<HTMLLIElement>(null)
   useEffect(() => {
@@ -48,6 +50,12 @@ export function Timeline({ frames, cursor, onSeek }: Props) {
         <button type="button" className={cursor === null ? 'on' : ''} onClick={() => onSeek(null)} title="Follow the latest event">
           ● live
         </button>
+        {onFollow && (
+          <label title="Keep the active node centered on the canvas">
+            <input type="checkbox" checked={follow ?? false} onChange={(e) => onFollow(e.target.checked)} aria-label="follow active node" />
+            follow
+          </label>
+        )}
         <span className="muted">
           {frames.length ? `${index + 1} / ${frames.length}` : 'no events yet'}
         </span>

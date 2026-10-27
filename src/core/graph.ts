@@ -76,18 +76,77 @@ export function writesOf(node: ScoreNode, graph?: PatternGraph): string[] {
 }
 
 /** Depth of each node by BFS from start; edges into a shallower-or-equal node are back edges. */
+function reachable(
+  graph: PatternGraph,
+  from: string,
+  blocked: string,
+  reverse = false,
+): Set<string> {
+  const seen = new Set<string>();
+  const stack = from === blocked ? [] : [from];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const e of graph.edges) {
+      const [a, b] = reverse ? [e.to, e.from] : [e.from, e.to];
+      if (a === id && b !== blocked && !seen.has(b)) stack.push(b);
+    }
+  }
+  return seen;
+}
+
+/**
+ * Loop bodies: for a condition C, the nodes entered through one of its branches
+ * that only C leads into and that flow back to C. They are drawn as a row beside C.
+ */
+export function loopBodies(graph: PatternGraph): Map<string, string[]> {
+  const bodies = new Map<string, string[]>();
+  const claimed = new Set<string>();
+  const ends = new Set(graph.nodes.filter((n) => n.kind === 'end').map((n) => n.id));
+  for (const c of graph.nodes) {
+    if (c.kind !== 'condition') continue;
+    const viaStart = reachable(graph, graph.start, c.id);
+    const backToC = reachable(graph, c.id, '', true);
+    for (const e of graph.edges.filter((x) => x.from === c.id)) {
+      const forward = reachable(graph, e.to, c.id);
+      // A branch that can finish the run without coming back is the loop's exit, not its body.
+      if ([...forward].some((n) => ends.has(n))) continue;
+      const inside = [...forward].filter(
+        (n) => !viaStart.has(n) && backToC.has(n) && !claimed.has(n),
+      );
+      if (inside.length === 0 || !inside.includes(e.to)) continue;
+      const order: string[] = [];
+      const queue = [e.to];
+      while (queue.length > 0) {
+        const id = queue.shift()!;
+        if (order.includes(id) || !inside.includes(id)) continue;
+        order.push(id);
+        for (const x of graph.edges) if (x.from === id) queue.push(x.to);
+      }
+      order.forEach((n) => claimed.add(n));
+      bodies.set(c.id, [...(bodies.get(c.id) ?? []), ...order]);
+    }
+  }
+  return bodies;
+}
+
 export function depths(graph: PatternGraph): Map<string, number> {
+  const bodies = loopBodies(graph);
+  const owner = new Map<string, string>();
+  for (const [c, ids] of bodies) for (const id of ids) owner.set(id, c);
   const depth = new Map<string, number>([[graph.start, 0]]);
   const queue = [graph.start];
   while (queue.length > 0) {
     const id = queue.shift()!;
     for (const e of graph.edges.filter((x) => x.from === id)) {
-      if (!depth.has(e.to)) {
+      if (!depth.has(e.to) && !owner.has(e.to)) {
         depth.set(e.to, depth.get(id)! + 1);
         queue.push(e.to);
       }
     }
   }
+  for (const [id, c] of owner) if (depth.has(c)) depth.set(id, depth.get(c)!);
   let maxDepth = Math.max(0, ...depth.values());
   for (const n of graph.nodes) if (!depth.has(n.id)) depth.set(n.id, ++maxDepth);
   return depth;
@@ -95,8 +154,11 @@ export function depths(graph: PatternGraph): Map<string, number> {
 
 export function layout(graph: PatternGraph): Map<string, { x: number; y: number }> {
   const depth = depths(graph);
+  const bodies = loopBodies(graph);
+  const inBody = new Set([...bodies.values()].flat());
   const rows = new Map<number, string[]>();
   for (const n of graph.nodes) {
+    if (inBody.has(n.id)) continue;
     const d = depth.get(n.id)!;
     rows.set(d, [...(rows.get(d) ?? []), n.id]);
   }
@@ -105,10 +167,16 @@ export function layout(graph: PatternGraph): Map<string, { x: number; y: number 
   let y = 0;
   for (const d of [...rows.keys()].toSorted((a, b) => a - b)) {
     const ids = rows.get(d)!;
+    const rowIds = [...ids];
     ids.forEach((id, i) => {
-      pos.set(id, { x: (i - (ids.length - 1) / 2) * LAYOUT.colGap, y });
+      const x = (i - (ids.length - 1) / 2) * LAYOUT.colGap;
+      pos.set(id, { x, y });
+      (bodies.get(id) ?? []).forEach((b, k) => {
+        pos.set(b, { x: x + (k + 1) * LAYOUT.colGap, y });
+        rowIds.push(b);
+      });
     });
-    y += Math.max(...ids.map((id) => estimateHeight(byId.get(id)!))) + LAYOUT.gap;
+    y += Math.max(...rowIds.map((id) => estimateHeight(byId.get(id)!))) + LAYOUT.gap;
   }
   return pos;
 }
