@@ -329,6 +329,9 @@ export interface PerformedStep {
   readonly stateHashAfter: string;
   readonly input?: Readonly<Record<string, unknown>>;
   readonly changes: readonly StateChange[];
+  /** Accepted updates exactly as returned (agent) or provided (approval); used for replay. */
+  readonly updates?: Readonly<Record<string, unknown>>;
+  readonly envHash?: string;
   readonly verdict?: MoveVerdict;
   readonly attempts?: readonly {
     readonly errors: readonly string[];

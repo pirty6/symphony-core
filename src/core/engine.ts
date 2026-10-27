@@ -475,6 +475,8 @@ function resolveAgent(
     {
       input: pause.input,
       changes,
+      updates,
+      ...(res.envHash !== undefined ? { envHash: res.envHash } : {}),
       verdict,
       ...(ctx.attempts.length > 0 ? { attempts: ctx.attempts } : {}),
       ...(res.transcript ? { transcript: res.transcript } : {}),
@@ -547,6 +549,7 @@ function resolveApproval(
     node,
     {
       changes,
+      updates,
       approval: { approved: res.approved, ...(res.by ? { by: res.by } : {}) },
       ...(res.at ? { at: res.at } : {}),
     },
