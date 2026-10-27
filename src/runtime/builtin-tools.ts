@@ -8,6 +8,9 @@ import { execFile } from 'node:child_process';
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
+import { parseDraft } from '../core/draft.js';
+import type { Pattern } from '../core/types.js';
+import { PATTERNS, routeMatches } from '../patterns/index.js';
 import { discoverMcpServers, type McpOptions } from './mcp.js';
 import { listRuns } from './store.js';
 import { registry, type ToolContext, type ToolRegistry, type ToolSpec } from './tools.js';
@@ -164,6 +167,8 @@ async function exists(path: string): Promise<boolean> {
 }
 
 export interface CatalogOptions {
+  /** Pattern library for maestro tools; defaults to the built-in patterns. */
+  readonly library?: () => Promise<readonly Pattern[]>;
   readonly mcp?: Omit<McpOptions, 'workspace'>;
   /** Skip probing GitHub (`gh`), e.g. in tests. */
   readonly probeGitHub?: boolean;
@@ -255,9 +260,56 @@ export function builtinTools(opts: CatalogOptions = {}): ToolSpec[] {
       outputs: ['names', 'descriptions'],
       run: (_args, ctx) => sourceCatalog(ctx, opts),
     },
+    ...maestroTools(opts.library ?? (async () => PATTERNS)),
   ];
 }
 
 export function defaultTools(opts: CatalogOptions = {}): ToolRegistry {
   return registry(builtinTools(opts));
+}
+
+const stripDemo = ({ demo: _demo, ...data }: Pattern) => data;
+
+/** Tools the maestro uses: list the library, route by verb triggers, validate a drafted score. */
+export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSpec[] {
+  const lib = async () => (await library()).filter((p) => p.name !== 'maestro');
+  return [
+    {
+      name: 'patterns.list',
+      description: 'Every pattern in the library: names, one-line summaries and full definitions.',
+      outputs: ['names', 'summaries', 'catalog'],
+      run: async () => {
+        const all = await lib();
+        return {
+          names: all.map((p) => p.name),
+          summaries: all.map(
+            (p) =>
+              `${p.name}: ${p.description}${p.requiredContext.length ? ` (needs: ${p.requiredContext.join(', ')})` : ''}${p.verbTriggers?.length ? ` [triggers: ${p.verbTriggers.join(', ')}]` : ''}`,
+          ),
+          catalog: Object.fromEntries(all.map((p) => [p.name, stripDemo(p)])),
+        };
+      },
+    },
+    {
+      name: 'patterns.route',
+      description:
+        "Deterministic routing: the pattern whose verb triggers best match the request, or 'new'.",
+      outputs: ['suggested', 'matches'],
+      run: async (args) => {
+        const matches = routeMatches(String(args.request ?? ''), await lib()).map((p) => p.name);
+        return { suggested: matches[0] ?? 'new', matches };
+      },
+    },
+    {
+      name: 'pattern.validate',
+      description: 'Validate a drafted pattern; returns the normalized pattern or the problems.',
+      outputs: ['errors', 'valid', 'pattern'],
+      run: async (args) => {
+        const parsed = parseDraft(args.pattern);
+        return parsed.ok
+          ? { errors: [], valid: true, pattern: stripDemo(parsed.value) }
+          : { errors: parsed.errors, valid: false, pattern: {} };
+      },
+    },
+  ];
 }

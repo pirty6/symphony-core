@@ -80,7 +80,13 @@ describe('sources.catalog', () => {
 
   it('is exposed through the default registry', async () => {
     const tools = defaultTools({ probeGitHub: false, mcp: { includeUser: false } });
-    expect([...tools.keys()]).toEqual(['repo.files', 'sources.catalog']);
+    expect([...tools.keys()]).toEqual([
+      'repo.files',
+      'sources.catalog',
+      'patterns.list',
+      'patterns.route',
+      'pattern.validate',
+    ]);
     const out = await tools.get('repo.files')!.run({}, ctx(repo('r3')));
     expect(out.files).toContain('src/a.ts');
   });
@@ -148,5 +154,36 @@ describe('MCP discovery', () => {
     });
     expect(Object.keys(noUser.servers)).toEqual(['remote']);
     expect(noUser.skipped[0]).toMatch(/environment variable MY_KEY is not set/);
+  });
+});
+
+describe('maestro tools', () => {
+  const tools = defaultTools({ probeGitHub: false, mcp: { includeUser: false } });
+  const c = ctx('.');
+
+  it('lists the library without demo scripts and routes by verb triggers', async () => {
+    const list = await tools.get('patterns.list')!.run({}, c);
+    expect(list.names).toEqual(expect.arrayContaining(['investigate', 'fix', 'review', 'hangman']));
+    expect(list.names).not.toContain('maestro');
+    expect(JSON.stringify(list.catalog)).not.toContain('demo');
+    expect((list.summaries as string[]).find((x) => x.startsWith('fix:'))).toMatch(/needs: issue/);
+    expect(
+      await tools.get('patterns.route')!.run({ request: 'please fix the broken login' }, c),
+    ).toMatchObject({ suggested: 'fix' });
+    expect(await tools.get('patterns.route')!.run({ request: 'compose a haiku' }, c)).toEqual({
+      suggested: 'new',
+      matches: [],
+    });
+  });
+
+  it('validates drafted scores', async () => {
+    const bad = await tools.get('pattern.validate')!.run({ pattern: { name: 'x' } }, c);
+    expect(bad).toMatchObject({ valid: false, pattern: {} });
+    expect((bad.errors as string[]).length).toBeGreaterThan(0);
+    const list = await tools.get('patterns.list')!.run({}, c);
+    const good = await tools
+      .get('pattern.validate')!
+      .run({ pattern: (list.catalog as Record<string, unknown>).fix }, c);
+    expect(good).toMatchObject({ valid: true, errors: [] });
   });
 });

@@ -12,14 +12,25 @@ export function findPattern(name: string): Pattern | undefined {
 }
 
 /** Pick the pattern whose verb triggers best match a prompt (simple, deterministic). */
-export function routePrompt(prompt: string): Pattern | undefined {
+export function routePrompt(
+  prompt: string,
+  library: readonly Pattern[] = PATTERNS,
+): Pattern | undefined {
+  return routeMatches(prompt, library)[0];
+}
+
+/** Patterns with at least one verb trigger in the prompt, best first (ties keep library order). */
+export function routeMatches(prompt: string, library: readonly Pattern[]): Pattern[] {
   const text = prompt.toLowerCase();
-  let best: { pattern: Pattern; score: number } | undefined;
-  for (const pattern of PATTERNS) {
-    const score = (pattern.verbTriggers ?? []).filter((t) => text.includes(t)).length;
-    if (score > 0 && (!best || score > best.score)) best = { pattern, score };
-  }
-  return best?.pattern;
+  return library
+    .map((pattern, i) => ({
+      pattern,
+      i,
+      score: (pattern.verbTriggers ?? []).filter((t) => text.includes(t)).length,
+    }))
+    .filter((m) => m.score > 0)
+    .toSorted((a, b) => b.score - a.score || a.i - b.i)
+    .map((m) => m.pattern);
 }
 
 export { fix, hangman, investigate, review };

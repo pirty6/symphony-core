@@ -5,7 +5,8 @@ import { parseDraft } from '../core/draft.js';
 import type { AgentPause } from '../core/types.js';
 import { hangman, review } from '../patterns/index.js';
 import type { ProviderEvent } from './provider.js';
-import { genericDraft, ScriptedProvider } from './scripted-provider.js';
+import { genericDraft } from '../core/draft.js';
+import { ScriptedProvider } from './scripted-provider.js';
 
 function firstPause(p = hangman, context = {}) {
   const score = compileScore(p, { goal: 'g', context });

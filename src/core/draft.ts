@@ -253,3 +253,78 @@ export function patternToTypeScript(pattern: Pattern): string {
 export const ${camelName(pattern.name)}: Pattern = ${tsLiteral(data, '')};
 `;
 }
+
+/** A small, valid analyze -> approve -> execute -> verify draft (offline drafting and demos). */
+export function genericDraft(request: string): Record<string, unknown> {
+  const words = request.toLowerCase().match(/[a-z0-9]+/g) ?? ['task'];
+  const name = words.slice(0, 4).join('-') || 'task';
+  return {
+    name,
+    description: `Drafted flow: ${request.trim().slice(0, 120)}`,
+    verbTriggers: words.slice(0, 2),
+    requiredContext: ['request'],
+    state: [
+      { name: 'request', type: 'string', description: 'What the user asked for' },
+      { name: 'analysis', type: 'string' },
+      { name: 'plan', type: 'string' },
+      { name: 'result', type: 'string' },
+      { name: 'ok', type: 'boolean' },
+      { name: 'attempts', type: 'number' },
+    ],
+    start: 'start',
+    nodes: [
+      { id: 'start', kind: 'start', label: 'Start' },
+      {
+        id: 'analyze',
+        kind: 'agent',
+        role: 'assessor',
+        label: 'Analyze',
+        directive:
+          'Understand `request` by reading the workspace. Write an analysis and a numbered plan.',
+        reads: ['request'],
+        writes: ['analysis', 'plan'],
+      },
+      {
+        id: 'approve',
+        kind: 'approval',
+        label: 'Approve plan',
+        message: 'Approve the plan?',
+        writes: [],
+      },
+      {
+        id: 'execute',
+        kind: 'agent',
+        role: 'executor',
+        label: 'Execute',
+        directive:
+          'Carry out `plan`. Report what you did in `result` and whether it worked in `ok`.',
+        reads: ['request', 'plan', 'result'],
+        writes: ['result', 'ok'],
+        maxVisits: 3,
+      },
+      {
+        id: 'count',
+        kind: 'compute',
+        label: 'Count attempt',
+        assign: [{ field: 'attempts', expr: 'attempts + 1' }],
+      },
+      { id: 'worked', kind: 'condition', label: 'Worked?', expression: 'ok' },
+      { id: 'retry', kind: 'condition', label: 'Retry?', expression: 'attempts < 3' },
+      { id: 'done', kind: 'end', label: 'Done', outcome: 'success' },
+      { id: 'failed', kind: 'end', label: 'Failed', outcome: 'failed' },
+      { id: 'stopped', kind: 'end', label: 'Plan rejected', outcome: 'partial' },
+    ],
+    edges: [
+      { id: 'start-analyze', from: 'start', to: 'analyze' },
+      { id: 'analyze-approve', from: 'analyze', to: 'approve' },
+      { id: 'approve-execute', from: 'approve', to: 'execute', branch: 'approved' },
+      { id: 'approve-stopped', from: 'approve', to: 'stopped', branch: 'rejected' },
+      { id: 'execute-count', from: 'execute', to: 'count' },
+      { id: 'count-worked', from: 'count', to: 'worked' },
+      { id: 'worked-done', from: 'worked', to: 'done', branch: 'then' },
+      { id: 'worked-retry', from: 'worked', to: 'retry', branch: 'else' },
+      { id: 'retry-execute', from: 'retry', to: 'execute', branch: 'then' },
+      { id: 'retry-failed', from: 'retry', to: 'failed', branch: 'else' },
+    ],
+  };
+}

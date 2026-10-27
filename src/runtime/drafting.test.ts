@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentResponse, DraftRequest, Provider } from './provider.js';
 import { draftPattern } from './drafting.js';
-import { genericDraft, ScriptedProvider } from './scripted-provider.js';
+import { genericDraft } from '../core/draft.js';
+import { ScriptedProvider } from './scripted-provider.js';
 
 describe('draftPattern', () => {
   it('returns a valid pattern in one round with the scripted provider', async () => {
