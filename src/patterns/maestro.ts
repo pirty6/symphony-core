@@ -36,6 +36,7 @@ export const maestro: Pattern = {
     'Compose the right score for a request: route to a pattern, classify complexity, debate the algorithm (proposer, skeptic, pragmatist, template-critic by tier), validate it, and get your go.',
   verbTriggers: [],
   requiredContext: ['request'],
+  goalFrom: 'request',
   maxSteps: 400,
   state: [
     { name: 'request', type: 'string', description: "The user's problem, verbatim" },
@@ -414,7 +415,6 @@ ${SCORE_FORMAT}`,
     { id: 'finalize-done', from: 'finalize', to: 'done' },
   ],
   demo: {
-    goal: 'Compose a score',
     context: { request: 'Fix the flaky login test that fails on CI about once in ten runs' },
     tools: {
       library: () => ({

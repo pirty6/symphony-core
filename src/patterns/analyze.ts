@@ -36,6 +36,7 @@ export const analyze: Pattern = {
     'metrics',
   ],
   requiredContext: ['question', 'data'],
+  goalFrom: 'question',
   improvisation: 2,
   maxSteps: 200,
   state: [
@@ -140,7 +141,6 @@ export const analyze: Pattern = {
     { id: 'conclude-done', from: 'conclude', to: 'done' },
   ],
   demo: {
-    goal: 'Understand what drives revenue',
     context: { question: 'What drives revenue changes this quarter?', data: 'sales.csv (demo)' },
     agents: {
       profile: () => ({

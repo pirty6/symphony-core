@@ -42,6 +42,8 @@ export interface PatternMeta {
   verbTriggers: string[]
   state: StateField[]
   maxSteps?: number
+  /** Required input whose value is the run's goal. */
+  goalFrom?: string
   /** Phases: named groups of steps the canvas can collapse. */
   groups?: ScoreGroup[]
 }
@@ -54,6 +56,7 @@ export function metaOf(p: PatternData): PatternMeta {
     verbTriggers: [...(p.verbTriggers ?? [])],
     state: [...p.state],
     ...(p.maxSteps ? { maxSteps: p.maxSteps } : {}),
+    ...(p.goalFrom ? { goalFrom: p.goalFrom } : {}),
     ...(p.groups?.length ? { groups: p.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) } : {}),
   }
 }
@@ -99,6 +102,7 @@ export function fromFlow(meta: PatternMeta, nodes: readonly FlowNode[], edges: r
     description: meta.description,
     requiredContext: meta.requiredContext,
     verbTriggers: meta.verbTriggers,
+    ...(meta.goalFrom ? { goalFrom: meta.goalFrom } : {}),
     ...g,
     ...(groups.length > 0 ? { groups } : {}),
   }

@@ -65,6 +65,17 @@ describe('compileScore', () => {
     expect(run({ topic: 5 })).toThrow(CompileError);
   });
 
+  it('takes the goal from the goalFrom input, ignoring any other goal', () => {
+    const asks = { ...pattern, goalFrom: 'topic' };
+    expect(compileScore(asks, { context: { topic: ' tides ' } }).goal).toBe('tides');
+    expect(compileScore(asks, { goal: 'other', context: { topic: 'tides' } }).goal).toBe('tides');
+    expect(() => compileScore(asks, { context: {} })).toThrow(/missing required context 'topic'/);
+    expect(() => compileScore(pattern, { context: { topic: 't' } })).toThrow(/goal is required/);
+    expect(() =>
+      compileScore({ ...pattern, goalFrom: 'nope' }, { context: { topic: 't' } }),
+    ).toThrow(/goalFrom 'nope' must be a required string input/);
+  });
+
   it('verifyScore detects tampering', () => {
     const s = compileScore(pattern, args);
     expect(verifyScore(s)).toEqual([]);

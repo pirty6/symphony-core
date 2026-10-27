@@ -118,6 +118,31 @@ describe('Toolbar', () => {
 })
 
 describe('PatternPanel', () => {
+  it('asks for a goal only when no input states it', () => {
+    const onMeta = vi.fn()
+    const props = {
+      editable: true,
+      goal: '',
+      context: {},
+      errors: [],
+      warnings: [],
+      onMeta,
+      onGoal: () => {},
+      onContext: () => {},
+      onSelect: () => {},
+      onExport: async () => '',
+      onSave: async () => '',
+    }
+    const meta = { name: 'x', description: 'd', requiredContext: ['question'], verbTriggers: [], state: [{ name: 'question', type: 'string' as const }] }
+    const { rerender } = render(<PatternPanel {...props} meta={meta} />)
+    expect(screen.getByLabelText('goal')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('goal input'), { target: { value: 'question' } })
+    expect(onMeta).toHaveBeenCalledWith(expect.objectContaining({ goalFrom: 'question' }))
+    rerender(<PatternPanel {...props} meta={{ ...meta, goalFrom: 'question' }} />)
+    expect(screen.queryByLabelText('goal')).toBeNull()
+    expect(screen.getByLabelText('context question').closest('label')).toHaveTextContent('the goal')
+  })
+
   it('adds state fields and lists problems', () => {
     const onMeta = vi.fn()
     const onSelect = vi.fn()

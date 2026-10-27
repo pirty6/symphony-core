@@ -326,5 +326,11 @@ export function validatePattern(p: Pattern): ValidationReport {
   for (const k of p.requiredContext) {
     if (!fields.has(k)) errors.push({ message: `requiredContext '${k}' is not a state field` });
   }
+  if (p.goalFrom !== undefined) {
+    const field = p.state.find((f) => f.name === p.goalFrom);
+    if (!p.requiredContext.includes(p.goalFrom) || field?.type !== 'string') {
+      errors.push({ message: `goalFrom '${p.goalFrom}' must be a required string input` });
+    }
+  }
   return { errors, warnings: report.warnings };
 }

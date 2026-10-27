@@ -72,6 +72,7 @@ describe('phases on the canvas', () => {
       flow.edges,
     )
     expect(back.groups?.map((g) => g.id)).toEqual(investigate.groups!.map((g) => g.id))
+    expect(back.goalFrom).toBe('question')
     expect(back.groups!.find((g) => g.id === 'listPhase')!.nodes).not.toContain('listPages')
   })
 

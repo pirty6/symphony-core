@@ -31,7 +31,11 @@ describe('run store', () => {
     const file = await saveRun(dir, { schemaVersion: 2, score, performance });
     const list = await listRuns(dir);
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ pattern: 'fix', outcome: 'success', goal: 'g' });
+    expect(list[0]).toMatchObject({
+      pattern: 'fix',
+      outcome: 'success',
+      goal: fix.demo!.context!.issue,
+    });
     const loaded = await loadRun(file);
     expect(loaded.issues).toEqual([]);
     writeFileSync(

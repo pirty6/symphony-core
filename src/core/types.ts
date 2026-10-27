@@ -210,6 +210,11 @@ export interface Pattern extends PatternGraph {
   readonly verbTriggers?: readonly string[];
   /** State keys the caller must provide through `context` at compile time. */
   readonly requiredContext: readonly string[];
+  /**
+   * The required input that states the run's goal (e.g. investigate's `question`).
+   * When set, the goal is that input's value and no separate goal is asked for.
+   */
+  readonly goalFrom?: string;
   readonly demo?: DemoScript;
 }
 

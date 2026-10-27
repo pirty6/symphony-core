@@ -113,6 +113,11 @@ how a pattern forces full coverage instead of trusting the AI:
 checks: [{ expr: 'subset(batch, triaged)', message: 'You skipped files. List EVERY file of batch.' }]
 ```
 
+**Goal**: every run has one; each AI step sees it as the overall goal, and it names saved runs.
+When a required text input already states it (investigate's `question`, fix's `issue`, analyze's
+`question`, the maestro's `request`), the pattern sets `goalFrom` to that input and nobody types the
+goal twice. Patterns whose inputs are just data (review's `target` branch) ask for a goal.
+
 **Phases** (`groups` on a pattern) name a run of consecutive steps, e.g.
 `{ id: 'listPhase', label: 'List evidence', nodes: ['needFiles', 'inventory', …] }`. The engine
 ignores them; the studio draws each phase as one node (lit by its busiest step) that you can open
@@ -245,7 +250,8 @@ npm run cli -- run investigate -c question="Why do runs replay exactly?" --provi
 import { compileScore, createEngine, advance, toPerformance, fix, Run, ScriptedProvider } from '@perezgarciam/symphony-core';
 
 // Low level: drive the pure engine yourself.
-const score = compileScore(fix, { goal: 'Fix pagination', context: { issue: 'Page 2 repeats an item' } });
+// fix has goalFrom: 'issue', so the issue is the goal; other patterns take { goal: '...' }.
+const score = compileScore(fix, { context: { issue: 'Page 2 repeats an item' } });
 let { state } = createEngine(score);
 while (state.kind === 'running' && state.pause) {
   const res = await answer(state.pause);               // your AI / human / test double

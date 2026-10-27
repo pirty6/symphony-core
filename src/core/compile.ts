@@ -24,7 +24,8 @@ export class CompileError extends Error {
 }
 
 export interface CompileArgs {
-  readonly goal: string;
+  /** Ignored when the pattern has `goalFrom`: the goal is then that input's value. */
+  readonly goal?: string;
   readonly complexity?: Complexity;
   readonly improvisation?: Improvisation;
   readonly context?: Readonly<Record<string, unknown>>;
@@ -81,7 +82,12 @@ export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableSco
     const err = checkValue(field.type, value);
     if (err) issues.push({ message: `context '${key}': ${err}` });
   }
-  if (!args.goal?.trim()) issues.push({ message: 'goal is required' });
+  const fromInput = pattern.goalFrom ? context[pattern.goalFrom] : undefined;
+  const goal = (
+    pattern.goalFrom ? (typeof fromInput === 'string' ? fromInput : '') : (args.goal ?? '')
+  ).trim();
+  // A missing goal input is already reported as missing required context.
+  if (!goal && !pattern.goalFrom) issues.push({ message: 'goal is required' });
   if (args.complexity !== undefined && ![1, 2, 3, 4].includes(args.complexity)) {
     issues.push({ message: 'complexity must be 1, 2, 3 or 4' });
   }
@@ -99,7 +105,7 @@ export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableSco
     schemaVersion: 2 as const,
     pattern: pattern.name,
     description: pattern.description,
-    goal: args.goal.trim(),
+    goal,
     context,
     state: pattern.state,
     nodes: pattern.nodes,

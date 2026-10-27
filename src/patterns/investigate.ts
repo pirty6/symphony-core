@@ -31,6 +31,7 @@ export const investigate: Pattern = {
     'Answer a question exhaustively with the evidence it needs: repo files, web pages, experiments, history, GitHub, dependencies, MCP. Nothing listed is skipped; every claim is cited.',
   verbTriggers: ['investigate', 'explain', 'why', 'how does', 'find out', 'research'],
   requiredContext: ['question'],
+  goalFrom: 'question',
   maxSteps: 5000,
   state: [
     { name: 'question', type: 'string', description: 'What to find out' },
@@ -638,7 +639,6 @@ export const investigate: Pattern = {
     { id: 'answer-done', from: 'answer', to: 'done' },
   ],
   demo: {
-    goal: 'Find where AI answers are validated',
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
       catalog: () => ({

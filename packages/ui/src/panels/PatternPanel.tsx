@@ -25,11 +25,15 @@ export function PatternPanel(p: Props) {
   const set = (patch: Partial<PatternMeta>) => p.onMeta({ ...m, ...patch })
   // Required inputs and tunable settings (fields with an initial value) first; working state folded away.
   const isPrimary = (f: StateField) => m.requiredContext.includes(f.name) || f.initial !== undefined || (p.context[f.name] ?? '') !== ''
-  const primary = m.state.filter(isPrimary)
+  const primary = m.state.filter(isPrimary).sort((a, b) => Number(b.name === m.goalFrom) - Number(a.name === m.goalFrom))
   const secondary = m.state.filter((f) => !isPrimary(f))
   const field = (f: StateField) => (
     <label key={f.name} className="field">
-      {f.name} <small>({f.type}){m.requiredContext.includes(f.name) ? ' · required' : ''}</small>
+      {f.name}{' '}
+      <small>
+        ({f.type}){m.requiredContext.includes(f.name) ? ' · required' : ''}
+        {f.name === m.goalFrom ? ' · the goal' : ''}
+      </small>
       <input
         value={p.context[f.name] ?? ''}
         placeholder={f.description ?? (f.initial !== undefined ? `initial ${JSON.stringify(f.initial)}` : '')}
@@ -43,10 +47,12 @@ export function PatternPanel(p: Props) {
     <div className="pattern-panel">
       <section>
         <h3>Run inputs</h3>
-        <label className="field">
-          Goal
-          <textarea rows={2} value={p.goal} onChange={(e) => p.onGoal(e.target.value)} aria-label="goal" />
-        </label>
+        {!m.goalFrom && (
+          <label className="field">
+            Goal
+            <textarea rows={2} value={p.goal} onChange={(e) => p.onGoal(e.target.value)} aria-label="goal" />
+          </label>
+        )}
         {primary.map(field)}
         {secondary.length > 0 && (
           <details>
@@ -83,6 +89,19 @@ export function PatternPanel(p: Props) {
             Description
             <input value={m.description} onChange={(e) => set({ description: e.target.value })} aria-label="pattern description" />
           </label>
+          <label className="field" title="A required text input that states what the run is for. Without one, runs ask for a separate goal.">
+            Goal input
+            <select value={m.goalFrom ?? ''} onChange={(e) => set({ goalFrom: e.target.value || undefined })} aria-label="goal input">
+              <option value="">none: ask for a separate goal</option>
+              {m.state
+                .filter((f) => f.type === 'string' && m.requiredContext.includes(f.name))
+                .map((f) => (
+                  <option key={f.name} value={f.name}>
+                    {f.name}
+                  </option>
+                ))}
+            </select>
+          </label>
           <label className="field">
             Max steps
             <input type="number" min={1} value={m.maxSteps ?? 100} onChange={(e) => set({ maxSteps: Number(e.target.value) || undefined })} aria-label="max steps" />
@@ -106,6 +125,7 @@ export function PatternPanel(p: Props) {
                             requiredContext: e.target.checked
                               ? [...m.requiredContext, f.name]
                               : m.requiredContext.filter((k) => k !== f.name),
+                            ...(!e.target.checked && f.name === m.goalFrom ? { goalFrom: undefined } : {}),
                           })
                         }
                       />

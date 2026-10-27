@@ -13,6 +13,7 @@ export const fix: Pattern = {
   description: 'Fix a bug: diagnose, get the plan approved, apply, run tests, retry up to 3 times.',
   verbTriggers: ['fix', 'bug', 'broken', 'repair'],
   requiredContext: ['issue'],
+  goalFrom: 'issue',
   state: [
     { name: 'issue', type: 'string', description: 'Bug description' },
     { name: 'rootCause', type: 'string' },
@@ -92,7 +93,6 @@ export const fix: Pattern = {
     { id: 'budget-gaveUp', from: 'budget', to: 'gaveUp', branch: 'else' },
   ],
   demo: {
-    goal: 'Fix the off-by-one in pagination',
     context: { issue: 'Page 2 repeats the last item of page 1' },
     agents: {
       diagnose: () => ({
