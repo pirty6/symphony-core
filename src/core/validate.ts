@@ -183,6 +183,14 @@ export function validateGraph(g: PatternGraph): ValidationReport {
       case 'approval':
         unknownField(n.writes, 'writes');
         break;
+      case 'tool':
+        if (!n.tool?.trim()) errors.push({ ...at, message: 'tool node needs a tool name' });
+        if (!n.output || Object.keys(n.output).length === 0) {
+          errors.push({ ...at, message: 'tool node needs an output mapping' });
+        } else {
+          unknownField(Object.values(n.output), 'output writes');
+        }
+        break;
       case 'start':
       case 'end':
         break;

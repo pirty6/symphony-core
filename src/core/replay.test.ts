@@ -150,4 +150,40 @@ describe('divergence', () => {
     expect(failed.divergence.reproduced).toBe(true);
     expect(failed.result.state.events).toEqual(f.state.events);
   });
+
+  it('replays tool results and tool failures', () => {
+    const p: Pattern = {
+      name: 't',
+      description: 'd',
+      requiredContext: [],
+      state: [{ name: 'files', type: 'string[]' }],
+      start: 's',
+      nodes: [
+        { id: 's', kind: 'start', label: 'S' },
+        { id: 'list', kind: 'tool', label: 'L', tool: 'repo.files', output: { files: 'files' } },
+        { id: 'e', kind: 'end', label: 'E' },
+      ],
+      edges: [
+        { id: '1', from: 's', to: 'list' },
+        { id: '2', from: 'list', to: 'e' },
+      ],
+    };
+    const score = compileScore(p, { goal: 'g', generatedAt: 't' });
+    for (const res of [
+      { updates: { files: ['x'] } },
+      { error: 'boom' },
+      { updates: { files: 3 } },
+    ]) {
+      const r0 = createEngine(score, { startedAt: 't' });
+      const r = advance(score, r0.state, {
+        kind: 'tool',
+        pauseId: r0.state.pause!.pauseId,
+        ...res,
+        at: 't',
+      });
+      const replay = replayPerformance(score, toPerformance(r.state));
+      expect(replay.divergence.reproduced).toBe(true);
+      expect(replay.result.state.events).toEqual(r.state.events);
+    }
+  });
 });

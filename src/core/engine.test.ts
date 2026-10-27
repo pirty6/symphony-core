@@ -4,6 +4,7 @@ import { compileScore } from './compile.js';
 import {
   advance,
   createEngine,
+  mapToolOutput,
   toPerformance,
   type AdvanceResult,
   type EngineState,
@@ -305,5 +306,72 @@ describe('engine: acceptance checks', () => {
     r = answerAgent(s, r, ok({}, { outcome: 'failed' }));
     expect(r.state.kind).toBe('failed');
     expect(r.state.reason).toMatch(/Report on every file/);
+  });
+});
+
+describe('engine: tool nodes', () => {
+  const tooling: Pattern = {
+    name: 'tooling',
+    description: 'list then count',
+    requiredContext: [],
+    state: [
+      { name: 'files', type: 'string[]' },
+      { name: 'count', type: 'number' },
+    ],
+    start: 's',
+    nodes: [
+      { id: 's', kind: 'start', label: 'S' },
+      { id: 'list', kind: 'tool', label: 'List', tool: 'repo.files', output: { files: 'files' } },
+      {
+        id: 'count',
+        kind: 'compute',
+        label: 'Count',
+        assign: [{ field: 'count', expr: 'len(files)' }],
+      },
+      { id: 'e', kind: 'end', label: 'E' },
+    ],
+    edges: [
+      { id: '1', from: 's', to: 'list' },
+      { id: '2', from: 'list', to: 'count' },
+      { id: '3', from: 'count', to: 'e' },
+    ],
+  };
+  const s = compileScore(tooling, { goal: 'g' });
+
+  it('pauses for the runtime and applies validated output', () => {
+    const r0 = createEngine(s);
+    expect(r0.state.pause).toMatchObject({
+      kind: 'tool',
+      tool: 'repo.files',
+      output: { files: 'files' },
+    });
+    const r = advance(s, r0.state, {
+      kind: 'tool',
+      pauseId: r0.state.pause!.pauseId,
+      updates: mapToolOutput({ files: 'files' }, { files: ['a', 'b'] }),
+    });
+    expect(r.state).toMatchObject({ kind: 'done', state: { files: ['a', 'b'], count: 2 } });
+    expect(r.state.steps.find((st) => st.nodeId === 'list')?.updates).toEqual({
+      files: ['a', 'b'],
+    });
+  });
+
+  it('fails the run on tool errors or bad output (no retries: tools are code)', () => {
+    const r0 = createEngine(s);
+    const err = advance(s, r0.state, {
+      kind: 'tool',
+      pauseId: r0.state.pause!.pauseId,
+      error: 'git missing',
+    });
+    expect(err.state).toMatchObject({
+      kind: 'failed',
+      reason: "tool 'repo.files' at 'list' failed: git missing",
+    });
+    const bad = advance(s, r0.state, {
+      kind: 'tool',
+      pauseId: r0.state.pause!.pauseId,
+      updates: { files: 'nope' },
+    });
+    expect(bad.state.reason).toMatch(/updates.files: expected string\[\]/);
   });
 });

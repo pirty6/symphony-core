@@ -6,6 +6,7 @@ import { fix, hangman } from '../patterns/index.js';
 import { performScore, Run, type RunMessage, type RunStatus } from './driver.js';
 import type { AgentRequest, AgentResponse, Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
+import { registry } from './tools.js';
 
 const clock = () => 't';
 const hangmanScore = compileScore(hangman, { goal: 'play', generatedAt: 't' });
@@ -210,5 +211,79 @@ describe('Run', () => {
     });
     const perf = await run.start();
     expect(perf.outcome).toBe('success');
+  });
+
+  it('runs tool nodes through the registry, gated and recorded', async () => {
+    const p = {
+      name: 't',
+      description: 'd',
+      requiredContext: [],
+      state: [{ name: 'files', type: 'string[]' as const }],
+      start: 's',
+      nodes: [
+        { id: 's', kind: 'start' as const, label: 'S' },
+        {
+          id: 'list',
+          kind: 'tool' as const,
+          label: 'L',
+          tool: 'repo.files',
+          output: { files: 'files' },
+        },
+        { id: 'e', kind: 'end' as const, label: 'E' },
+      ],
+      edges: [
+        { id: '1', from: 's', to: 'list' },
+        { id: '2', from: 'list', to: 'e' },
+      ],
+    };
+    const score = compileScore(p, { goal: 'g', generatedAt: 't' });
+    const tools = registry([
+      {
+        name: 'repo.files',
+        description: 'd',
+        outputs: ['files', 'excluded'],
+        run: async () => ({ files: ['a.ts'], excluded: [] }),
+      },
+    ]);
+    const run = new Run({
+      score,
+      provider: new ScriptedProvider(),
+      tools,
+      breakpoints: ['list'],
+      clock,
+    });
+    const done = run.start();
+    await waitFor(run, statusIs('paused', { nodeId: 'list', phase: 'before' }));
+    run.resume();
+    await waitFor(run, statusIs('paused', { nodeId: 'list', phase: 'after' }));
+    const after = run.messages.find((m) => m.type === 'status' && m.phase === 'after');
+    expect(after?.type === 'status' && after.proposed).toEqual({ files: ['a.ts'] });
+    run.setBreakpoints([]);
+    run.resume();
+    const perf = await done;
+    expect(perf).toMatchObject({ outcome: 'success', finalState: { files: ['a.ts'] } });
+    expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
+
+    const unknown = await new Run({
+      score,
+      provider: new ScriptedProvider(),
+      tools: registry([]),
+      clock,
+    }).start();
+    expect(unknown.reason).toMatch(/unknown tool 'repo.files'/);
+    const broken = registry([
+      {
+        name: 'repo.files',
+        description: 'd',
+        outputs: ['files'],
+        run: async () => {
+          throw new Error('git not found');
+        },
+      },
+    ]);
+    expect(
+      (await new Run({ score, provider: new ScriptedProvider(), tools: broken, clock }).start())
+        .reason,
+    ).toMatch(/git not found/);
   });
 });

@@ -180,6 +180,16 @@ function resolutionFrom(step: PerformedStep, pauseId: string, n: number): Resolu
   const attempts = step.attempts ?? [];
   if (n < attempts.length) {
     const a = attempts[n]!;
+    if (step.kind === 'tool') {
+      return a.result !== undefined
+        ? {
+            kind: 'tool',
+            pauseId,
+            updates: a.result as Record<string, unknown>,
+            ...(a.at ? { at: a.at } : {}),
+          }
+        : { kind: 'tool', pauseId, error: a.errors.join('; '), ...(a.at ? { at: a.at } : {}) };
+    }
     if (step.kind === 'agent') {
       return {
         kind: 'agent',
@@ -195,6 +205,14 @@ function resolutionFrom(step: PerformedStep, pauseId: string, n: number): Resolu
       approved: true,
       ...(a.result !== undefined ? { updates: a.result as Record<string, unknown> } : {}),
       ...(a.at ? { at: a.at } : {}),
+    };
+  }
+  if (step.kind === 'tool') {
+    return {
+      kind: 'tool',
+      pauseId,
+      updates: step.updates ?? {},
+      ...(step.at ? { at: step.at } : {}),
     };
   }
   if (step.kind === 'agent' && step.verdict) {

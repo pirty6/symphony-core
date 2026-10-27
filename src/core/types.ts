@@ -90,6 +90,19 @@ export interface ApprovalNode extends NodeBase {
   readonly writes: readonly string[];
 }
 
+/**
+ * Deterministic I/O performed by the runtime, not by AI (e.g. list every file in the repo).
+ * The result is recorded, so replay never re-runs the tool.
+ */
+export interface ToolNode extends NodeBase {
+  readonly kind: 'tool';
+  /** Registered tool name, e.g. 'repo.files'. */
+  readonly tool: string;
+  readonly args?: Readonly<Record<string, unknown>>;
+  /** Tool output key -> state field it is written to. */
+  readonly output: Readonly<Record<string, string>>;
+}
+
 export interface EndNode extends NodeBase {
   readonly kind: 'end';
   readonly outcome?: 'success' | 'failed' | 'partial';
@@ -101,6 +114,7 @@ export type ScoreNode =
   | ComputeNode
   | ConditionNode
   | ApprovalNode
+  | ToolNode
   | EndNode;
 export type NodeKind = ScoreNode['kind'];
 
@@ -129,6 +143,10 @@ export type DemoResponder = (state: Readonly<Record<string, unknown>>, visit: nu
 export interface DemoScript {
   readonly agents?: Readonly<Record<string, DemoResponder>>;
   /** Values the scripted human gives at approval nodes, per visit. */
+  /** Raw tool output per tool node (keyed by tool output keys), for offline runs. */
+  readonly tools?: Readonly<
+    Record<string, (state: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>>
+  >;
   readonly approvals?: Readonly<
     Record<string, (state: Readonly<Record<string, unknown>>, visit: number) => ApprovalAnswer>
   >;
@@ -239,7 +257,21 @@ export interface ApprovalPause {
   readonly moveKey: string;
 }
 
-export type Pause = AgentPause | ApprovalPause;
+export interface ToolPause {
+  readonly kind: 'tool';
+  readonly pauseId: string;
+  readonly step: number;
+  readonly nodeId: string;
+  readonly label: string;
+  readonly tool: string;
+  readonly args: Readonly<Record<string, unknown>>;
+  readonly output: Readonly<Record<string, string>>;
+  readonly outputSchema: readonly StateField[];
+  readonly feedback?: readonly string[];
+  readonly moveKey: string;
+}
+
+export type Pause = AgentPause | ApprovalPause | ToolPause;
 
 export interface AgentResolution {
   readonly kind: 'agent';
@@ -268,7 +300,16 @@ export interface CancelResolution {
   readonly at?: string;
 }
 
-export type Resolution = AgentResolution | ApprovalResolution | CancelResolution;
+export interface ToolResolution {
+  readonly kind: 'tool';
+  readonly pauseId: string;
+  /** State updates (already mapped through the node's `output`). Ignored when `error` is set. */
+  readonly updates?: Readonly<Record<string, unknown>>;
+  readonly error?: string;
+  readonly at?: string;
+}
+
+export type Resolution = AgentResolution | ApprovalResolution | ToolResolution | CancelResolution;
 
 // ── Events (returned by the engine, never side effects) ────────────
 

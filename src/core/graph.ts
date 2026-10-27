@@ -50,6 +50,8 @@ export function estimateHeight(node: ScoreNode): number {
       return 100;
     case 'approval':
       return 120;
+    case 'tool':
+      return 90;
   }
 }
 
@@ -64,6 +66,8 @@ export function writesOf(node: ScoreNode, graph?: PatternGraph): string[] {
       return [...node.writes];
     case 'compute':
       return [...new Set(node.assign.map((a) => a.field))];
+    case 'tool':
+      return [...new Set(Object.values(node.output))];
     case 'start':
       return graph ? graph.state.map((f) => f.name) : [];
     default:

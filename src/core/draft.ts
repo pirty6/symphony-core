@@ -7,7 +7,7 @@
  */
 import { isFieldType } from './schema.js';
 import type { Checked } from './schema.js';
-import type { Pattern, ScoreEdge, ScoreNode, StateField } from './types.js';
+import type { Capability, Pattern, ScoreEdge, ScoreNode, StateField } from './types.js';
 import { validatePattern } from './validate.js';
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -47,6 +47,12 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
       const role =
         raw.role === 'executor' ? 'executor' : raw.role === 'assessor' ? 'assessor' : undefined;
       if (!role) errors.push(`nodes[${i}] (${id}) role must be assessor or executor`);
+      const checks = Array.isArray(raw.checks)
+        ? raw.checks
+            .filter(isObj)
+            .map((c) => ({ expr: str(c.expr) ?? '', message: str(c.message) ?? '' }))
+        : [];
+      const capabilities = strList(raw.capabilities) as Capability[];
       return {
         ...base,
         kind: 'agent',
@@ -55,6 +61,8 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         reads: strList(raw.reads),
         writes: strList(raw.writes),
         ...(typeof raw.retries === 'number' ? { retries: raw.retries } : {}),
+        ...(checks.length > 0 ? { checks } : {}),
+        ...(capabilities.length > 0 ? { capabilities } : {}),
       };
     }
     case 'compute': {
@@ -67,6 +75,22 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
     }
     case 'condition':
       return { ...base, kind: 'condition', expression: str(raw.expression) ?? '' };
+    case 'tool': {
+      const output = isObj(raw.output)
+        ? Object.fromEntries(
+            Object.entries(raw.output).filter(
+              (e): e is [string, string] => typeof e[1] === 'string',
+            ),
+          )
+        : {};
+      return {
+        ...base,
+        kind: 'tool',
+        tool: str(raw.tool) ?? '',
+        ...(isObj(raw.args) ? { args: raw.args } : {}),
+        output,
+      };
+    }
     case 'approval':
       return {
         ...base,
@@ -145,11 +169,16 @@ export function draftInstructions(): string {
 
 Node kinds:
 - start {id,kind:"start",label}: exactly one.
-- agent {id,kind:"agent",role:"assessor"|"executor",label,directive,reads:[state keys],writes:[state keys],maxVisits?}
+- agent {id,kind:"agent",role:"assessor"|"executor",label,directive,reads:[state keys],writes:[state keys],maxVisits?,
+  capabilities?:["web","mcp"], checks?:[{expr,message}]} - checks are expressions over state+answer that must be true
+  or the answer is rejected and re-asked (use them to force full coverage, e.g. subset(batch, examined)).
   assessor = read-only research/analysis; executor = may edit files and run commands. AI runs ONLY in agent nodes.
 - compute {id,kind:"compute",label,assign:[{field,expr}]}: deterministic state update (counters, flags, appends).
 - condition {id,kind:"condition",label,expression}: exactly two out edges with branch "then" and "else".
 - approval {id,kind:"approval",label,message,writes:[keys a human provides]}: out edges branch "approved" (and optional "rejected").
+- tool {id,kind:"tool",label,tool,args?,output:{toolKey: stateKey}}: deterministic I/O run by the system, not AI.
+  Tools: "repo.files" -> {files, excluded} (every file in the workspace); "sources.catalog" -> {names, descriptions}
+  (every evidence source available: git history, GitHub, dependencies, web, MCP servers, prior runs).
 - end {id,kind:"end",label,outcome?:"success"|"failed"|"partial"}.
 
 Expressions (guards, conditions, compute): state keys by name, literals, == != < <= > >= && || ! + -,

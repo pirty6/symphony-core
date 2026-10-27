@@ -375,5 +375,6 @@ export const KIND_LABEL: Record<NodeKind, string> = {
   compute: 'Compute',
   condition: 'If',
   approval: 'Approval',
+  tool: 'Tool',
   end: 'End',
 }

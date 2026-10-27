@@ -146,4 +146,21 @@ describe('validatePattern', () => {
     expect(m).toMatch(/needs a message/);
     expect(m).toMatch(/unknown capability 'fax'/);
   });
+
+  it('validates tool nodes', () => {
+    const tool = {
+      id: 'list',
+      kind: 'tool',
+      label: 'L',
+      tool: '',
+      output: { files: 'nope' },
+    } as ScoreNode;
+    const nodes = [...base.nodes, tool];
+    const edges = [...base.edges, { id: 't1', from: 'list', to: 'done' }] as ScoreEdge[];
+    const m = validateGraph({ ...base, nodes, edges })
+      .errors.map((e) => e.message)
+      .join('\n');
+    expect(m).toMatch(/tool node needs a tool name/);
+    expect(m).toMatch(/output writes unknown state field 'nope'/);
+  });
 });

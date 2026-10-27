@@ -22,6 +22,8 @@ import type {
   AcceptanceCheck,
   AgentResolution,
   NodeResult,
+  ToolPause,
+  ToolResolution,
   AiTranscript,
   ApprovalResolution,
   EngineEvent,
@@ -264,6 +266,20 @@ function makePause(
       moveKey,
     };
   }
+  if (node.kind === 'tool') {
+    return {
+      kind: 'tool',
+      pauseId,
+      step: ctx.step,
+      nodeId: node.id,
+      label: node.label,
+      tool: node.tool,
+      args: node.args ?? {},
+      output: node.output,
+      outputSchema: fieldsOf(score, Object.values(node.output)),
+      moveKey,
+    };
+  }
   if (node.kind !== 'approval') throw new Error(`cannot pause at ${node.kind}`);
   return {
     kind: 'approval',
@@ -359,7 +375,8 @@ function drive(score: ExecutableScore, ctx: Ctx): void {
         finish(ctx, node.outcome ?? 'success', `reached end '${node.id}'`);
         return;
       case 'agent':
-      case 'approval': {
+      case 'approval':
+      case 'tool': {
         ctx.attempts = [];
         const pause = makePause(score, ctx, node, 1);
         ctx.pause = pause;
@@ -428,8 +445,58 @@ export function advance(score: ExecutableScore, st: EngineState, res: Resolution
   const node = nodeOf(score, st.pause.nodeId);
   if (res.kind === 'agent')
     resolveAgent(score, ctx, node, st.pause as Extract<Pause, { kind: 'agent' }>, res);
+  else if (res.kind === 'tool')
+    resolveTool(score, ctx, node, st.pause as Extract<Pause, { kind: 'tool' }>, res);
   else resolveApproval(score, ctx, node, res);
   return fromCtx(ctx);
+}
+
+/** Map a tool's raw output (tool keys) to state updates (state fields) through `output`. */
+export function mapToolOutput(
+  output: Readonly<Record<string, string>>,
+  raw: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(output).map(([key, field]) => [field, raw[key]]));
+}
+
+function resolveTool(
+  score: ExecutableScore,
+  ctx: Ctx,
+  node: ScoreNode,
+  pause: ToolPause,
+  res: ToolResolution,
+): void {
+  const hashBefore = stateHashOf(ctx.state, ctx.env);
+  const updates = res.updates ?? {};
+  const errors = res.error ? [res.error] : validateUpdates(updates, pause.outputSchema, true);
+  if (errors.length > 0) {
+    recordStep(
+      ctx,
+      node,
+      {
+        attempts: [{ errors, result: res.updates, ...(res.at ? { at: res.at } : {}) }],
+        ...(res.at ? { at: res.at } : {}),
+      },
+      hashBefore,
+    );
+    fail(ctx, `tool '${pause.tool}' at '${node.id}' failed: ${errors.join('; ')}`, node.id, res.at);
+    return;
+  }
+  const before = ctx.state;
+  ctx.state = { ...before, ...structuredClone(updates) };
+  const changes = diff(before, ctx.state);
+  ctx.lastWrites = Object.keys(updates);
+  ctx.pause = undefined;
+  recordStep(ctx, node, { changes, updates, ...(res.at ? { at: res.at } : {}) }, hashBefore);
+  emit(ctx, {
+    type: 'node-completed',
+    step: ctx.step,
+    nodeId: node.id,
+    changes,
+    stateHash: stateHashOf(ctx.state, ctx.env),
+  });
+  ctx.completedAt = res.at ?? ctx.completedAt;
+  if (follow(score, ctx, node)) drive(score, ctx);
 }
 
 /** Evaluate acceptance checks against state as it would be after applying the answer. */

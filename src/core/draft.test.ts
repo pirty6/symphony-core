@@ -87,4 +87,58 @@ describe('patternToTypeScript', () => {
     expect(mod.evilKeys?.state.at(-1)?.initial).toEqual({ [evil]: 1, "a'b\n": 'c' });
     expect(mod.evilKeys?.description).toBe('line\rsep\u2028end');
   });
+
+  it('parses tool nodes, checks and capabilities', () => {
+    const r = parseDraft({
+      name: 'scan',
+      description: 'scan',
+      requiredContext: [],
+      state: [
+        { name: 'files', type: 'string[]' },
+        { name: 'seen', type: 'string[]' },
+      ],
+      start: 's',
+      nodes: [
+        { id: 's', kind: 'start', label: 'S' },
+        {
+          id: 'list',
+          kind: 'tool',
+          label: 'L',
+          tool: 'repo.files',
+          output: { files: 'files', junk: 3 },
+        },
+        {
+          id: 'a',
+          kind: 'agent',
+          role: 'assessor',
+          label: 'A',
+          directive: 'd',
+          reads: ['files'],
+          writes: ['seen'],
+          capabilities: ['web'],
+          checks: [{ expr: 'subset(files, seen)', message: 'all' }],
+        },
+        { id: 'e', kind: 'end', label: 'E' },
+      ],
+      edges: [
+        { from: 's', to: 'list' },
+        { from: 'list', to: 'a' },
+        { from: 'a', to: 'e' },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.nodes[1]).toEqual({
+        id: 'list',
+        kind: 'tool',
+        label: 'L',
+        tool: 'repo.files',
+        output: { files: 'files' },
+      });
+      expect(r.value.nodes[2]).toMatchObject({
+        capabilities: ['web'],
+        checks: [{ expr: 'subset(files, seen)', message: 'all' }],
+      });
+    }
+  });
 });

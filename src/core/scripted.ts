@@ -4,7 +4,13 @@
  * run every flow without AI credentials. Nodes without a script get a
  * placeholder that satisfies the output schema.
  */
-import { advance, createEngine, type AdvanceResult, type EngineState } from './engine.js';
+import {
+  advance,
+  createEngine,
+  mapToolOutput,
+  type AdvanceResult,
+  type EngineState,
+} from './engine.js';
 import { zeroValue } from './schema.js';
 import type { DemoScript, ExecutableScore, NodeResult, Pause, Resolution } from './types.js';
 
@@ -27,6 +33,17 @@ export function scriptedResolution(
   at?: string,
 ): Resolution {
   const visit = (engine.visits[pause.nodeId] ?? 1) - 1;
+  if (pause.kind === 'tool') {
+    const raw = demo?.tools?.[pause.nodeId]?.(engine.state);
+    return {
+      kind: 'tool',
+      pauseId: pause.pauseId,
+      updates: raw
+        ? mapToolOutput(pause.output, raw)
+        : Object.fromEntries(pause.outputSchema.map((f) => [f.name, zeroValue(f.type)])),
+      ...(at ? { at } : {}),
+    };
+  }
   if (pause.kind === 'agent') {
     const responder = demo?.agents?.[pause.nodeId];
     const result = responder ? responder(engine.state, visit) : placeholderResult(pause);

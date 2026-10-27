@@ -20,6 +20,7 @@ import type {
   AgentPause,
   AiTranscript,
   ApprovalPause,
+  ToolPause,
   DemoScript,
   EngineEvent,
   ExecutableScore,
@@ -28,6 +29,8 @@ import type {
   SavedRun,
 } from '../core/types.js';
 import type { Provider, ProviderEvent } from './provider.js';
+import { checkToolPause, type ToolContext, type ToolRegistry } from './tools.js';
+import { mapToolOutput } from '../core/engine.js';
 
 export type RunStatus =
   | 'running'
@@ -79,6 +82,9 @@ export interface RunOptions {
   readonly envHash?: () => Promise<string>;
   readonly clock?: () => string;
   readonly onSave?: (run: SavedRun) => Promise<string | undefined>;
+  /** Tools for `tool` nodes. Without a registry, tool nodes use the pattern's demo outputs. */
+  readonly tools?: ToolRegistry;
+  readonly toolContext?: Omit<ToolContext, 'signal'>;
 }
 
 export interface HumanAnswer {
@@ -249,6 +255,50 @@ export class Run {
     };
   }
 
+  private async runTool(pause: ToolPause): Promise<Resolution | undefined> {
+    await this.gate(pause.nodeId, 'before');
+    if (this.stopRequested) return undefined;
+    const tools = this.opts.tools;
+    if (!tools) return scriptedResolution(this.opts.demo, pause, this.engine, this.now());
+    const emit = (text: string) =>
+      this.push({
+        type: 'provider',
+        nodeId: pause.nodeId,
+        attempt: 1,
+        event: { type: 'info', text },
+      });
+    const invalid = checkToolPause(pause, tools);
+    if (invalid) return { kind: 'tool', pauseId: pause.pauseId, error: invalid, at: this.now() };
+    this.abort = new AbortController();
+    emit(`running tool ${pause.tool}`);
+    let res: Resolution;
+    try {
+      const raw = await tools.get(pause.tool)!.run(pause.args, {
+        workspace: this.opts.toolContext?.workspace ?? '.',
+        repoRoot: this.opts.toolContext?.repoRoot ?? '.',
+        signal: this.abort.signal,
+      });
+      const updates = mapToolOutput(pause.output, raw);
+      emit(
+        Object.entries(updates)
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? `${v.length} item(s)` : JSON.stringify(v)}`)
+          .join(', '),
+      );
+      res = { kind: 'tool', pauseId: pause.pauseId, updates, at: this.now() };
+    } catch (e) {
+      if (this.stopRequested) return undefined;
+      res = { kind: 'tool', pauseId: pause.pauseId, error: (e as Error).message, at: this.now() };
+    } finally {
+      this.abort = undefined;
+    }
+    await this.gate(
+      pause.nodeId,
+      'after',
+      res.kind === 'tool' ? (res.updates ?? { error: res.error }) : undefined,
+    );
+    return this.stopRequested ? undefined : res;
+  }
+
   private async runApproval(pause: ApprovalPause): Promise<Resolution | undefined> {
     await this.gate(pause.nodeId, 'before');
     if (this.stopRequested) return undefined;
@@ -284,7 +334,11 @@ export class Run {
     while (this.engine.kind === 'running' && this.engine.pause) {
       const pause = this.engine.pause;
       const res =
-        pause.kind === 'agent' ? await this.runAgent(pause) : await this.runApproval(pause);
+        pause.kind === 'agent'
+          ? await this.runAgent(pause)
+          : pause.kind === 'tool'
+            ? await this.runTool(pause)
+            : await this.runApproval(pause);
       if (!res) {
         const current = this.engine.pause ?? pause;
         this.apply(
