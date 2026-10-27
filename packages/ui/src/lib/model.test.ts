@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { compileScore } from '@core/compile'
 import { patternToGraph } from '@core/graph'
+import { EMPTY_FRAME } from '@core/replay'
 import { validateGraph } from '@core/validate'
-import { fix, hangman } from '../../../../src/patterns/index'
+import { fix, hangman, investigate } from '../../../../src/patterns/index'
 import { Run } from '../../../../src/runtime/driver'
 import { ScriptedProvider } from '../../../../src/runtime/scripted-provider'
 import type { RunMessage } from './api'
@@ -14,6 +15,7 @@ import {
   IDLE_VIEW,
   metaOf,
   newNode,
+  phaseDisplay,
   replayView,
   startLive,
   streamFor,
@@ -50,6 +52,59 @@ describe('canvas mapping', () => {
     const n = newNode('assessor', 'a', { x: 0, y: 0 })
     const edited = withNode(n, { ...(n.data.node as Extract<typeof n.data.node, { kind: 'agent' }>), reads: ['x'], writes: ['y'] }, [])
     expect(edited.data).toMatchObject({ reads: ['x'], writes: ['y'] })
+  })
+})
+
+describe('phases on the canvas', () => {
+  const { demo: _d, ...data } = investigate
+  const flow = toFlow(patternToGraph(investigate))
+  const frame = {
+    ...EMPTY_FRAME,
+    nodeStatus: { catalog: 'done', plan: 'done', queue: 'done', needFiles: 'done', inventory: 'active' },
+    nodeVisits: { catalog: 1, plan: 1, queue: 1, needFiles: 1, inventory: 1 },
+  } as const
+  const steps = decorate(flow.nodes, flow.edges, frame, { breakpoints: new Set(), issues: new Map() })
+
+  it('keeps phases through the canvas round-trip, dropping deleted steps', () => {
+    const back = fromFlow(
+      metaOf(data),
+      flow.nodes.filter((n) => n.id !== 'listPages'),
+      flow.edges,
+    )
+    expect(back.groups?.map((g) => g.id)).toEqual(investigate.groups!.map((g) => g.id))
+    expect(back.groups!.find((g) => g.id === 'listPhase')!.nodes).not.toContain('listPages')
+  })
+
+  it('draws each closed phase as one node with the status of its busiest step', () => {
+    const d = phaseDisplay(data, steps, new Set(), frame)
+    expect(d.collapsed).toBe(true)
+    const ids = d.nodes.map((n) => n.id)
+    expect(ids).toContain('listPhase')
+    expect(ids).not.toContain('inventory')
+    const plan = d.nodes.find((n) => n.id === 'planPhase')!
+    const list = d.nodes.find((n) => n.id === 'listPhase')!
+    expect(plan.data).toMatchObject({ status: 'done', ran: 3 })
+    expect(list.data).toMatchObject({ status: 'active', current: 'List every file', ran: 2 })
+    expect(d.phaseOf.get('inventory')).toBe('listPhase')
+    for (const e of d.edges) {
+      expect(ids).toContain(e.source)
+      expect(ids).toContain(e.target)
+    }
+    expect(d.edges.some((e) => e.source === 'planPhase' && e.target === 'listPhase')).toBe(true)
+  })
+
+  it('frames opened phases behind their steps', () => {
+    const d = phaseDisplay(data, steps, new Set(['listPhase']), frame)
+    expect(d.nodes.map((n) => n.id)).toEqual(expect.arrayContaining(['frame:listPhase', 'inventory', 'planPhase']))
+    const all = phaseDisplay(data, steps, new Set(investigate.groups!.map((g) => g.id)), frame)
+    expect(all.collapsed).toBe(false)
+    expect(all.nodes.filter((n) => n.type === 'frame')).toHaveLength(investigate.groups!.length)
+  })
+
+  it('passes flows without phases straight through', () => {
+    const { demo: _h, ...plain } = hangman
+    const f = toFlow(patternToGraph(hangman))
+    expect(phaseDisplay(plain, f, new Set(), EMPTY_FRAME).nodes).toHaveLength(f.nodes.length)
   })
 })
 

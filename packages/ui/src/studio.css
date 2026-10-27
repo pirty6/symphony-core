@@ -902,3 +902,65 @@ pre {
   padding-left: 18px;
   font-size: 12px;
 }
+
+/* ── phases ─────────────────────────────────────────────────────── */
+
+.phase-node {
+  border-style: double;
+  border-width: 3px;
+  cursor: zoom-in;
+}
+.phase-node .fn-header {
+  align-items: center;
+}
+.phase-toggle {
+  margin-left: auto;
+  padding: 0 6px;
+  line-height: 18px;
+  font-size: 13px;
+}
+.phase-current {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.phase-frame {
+  border: 1px dashed var(--accent);
+  border-radius: 12px;
+  background: rgba(124, 140, 255, 0.05);
+  pointer-events: none;
+}
+.phase-frame-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.phase-frame-title .phase-toggle {
+  margin-left: 0;
+  pointer-events: all;
+}
+.react-flow__node-frame {
+  pointer-events: none;
+}
+.phase-switch {
+  background: var(--panel);
+  font-size: 12px;
+}
+.shown {
+  margin: 8px 0;
+  font-size: 12px;
+}
+.shown ol {
+  margin: 4px 0 8px 18px;
+  padding: 0;
+}
+.shown code {
+  word-break: break-all;
+}

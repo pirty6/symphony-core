@@ -92,6 +92,7 @@ export function ApprovalCard({
       <h3>✋ {pause.label}</h3>
       <p>{pause.message}</p>
       <ComposedScore state={pause.state} />
+      <Shown keys={pause.shows ?? []} state={pause.state} />
       <fieldset className="editor" disabled={sent}>
       {pause.feedback?.map((f, i) => (
         <div key={i} className="issue">
@@ -198,6 +199,34 @@ export function AiTakes({ streams, live }: { streams: readonly AiStream[]; live:
 }
 
 /** Summary of the score the maestro composed, shown at its go-gate. */
+/** The state an approval asks the human to look at before deciding. */
+function Shown({ keys, state }: { keys: readonly string[]; state: Readonly<Record<string, unknown>> }) {
+  if (keys.length === 0) return null
+  return (
+    <div className="shown" data-testid="approval-shows">
+      {keys.map((k) => {
+        const v = state[k]
+        return (
+          <div key={k}>
+            <b>{k}</b>
+            {Array.isArray(v) && v.every((x) => typeof x === 'string') ? (
+              <ol>
+                {v.map((x, i) => (
+                  <li key={i}>
+                    <code>{x}</code>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <pre className="json">{json(v)}</pre>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function ComposedScore({ state }: { state: Readonly<Record<string, unknown>> }) {
   const p = state.normalized as { name?: string; description?: string; nodes?: { id: string; label: string; kind: string; role?: string }[] } | undefined
   if (!p?.nodes) return null

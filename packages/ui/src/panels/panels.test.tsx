@@ -17,7 +17,8 @@ const approvalPause: ApprovalPause = {
   nodeId: 'ask',
   label: 'Guess a letter',
   message: 'Guess one letter.',
-  state: {},
+  state: { experiments: ['hyperfine oxlint', 'hyperfine eslint'] },
+  shows: ['experiments'],
   outputSchema: [
     { name: 'letter', type: 'string' },
     { name: 'tries', type: 'number' },
@@ -31,6 +32,7 @@ describe('ApprovalCard', () => {
     const onAnswer = vi.fn()
     const view: RunView = { ...startLive('r'), status: 'awaiting-approval', pause: approvalPause }
     render(<ApprovalCard view={view} onAnswer={onAnswer} />)
+    expect(screen.getByTestId('approval-shows')).toHaveTextContent('hyperfine oxlint')
     expect(screen.getByText('updates.letter is required')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('letter'), { target: { value: 'e' } })
     fireEvent.change(screen.getByLabelText('tries'), { target: { value: '3' } })

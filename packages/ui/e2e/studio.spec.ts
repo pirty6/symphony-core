@@ -80,3 +80,18 @@ test('bebop plays takes that a bandleader merges', async ({ page }) => {
   await page.getByRole('button', { name: 'AI output' }).click()
   await expect(page.getByTestId('ai-takes').locator('summary')).toHaveText(['Take 1', 'Take 2', '🎺 Bandleader: merged answer'])
 })
+
+test('phases collapse into one node, light up while running and open into their steps', async ({ page }) => {
+  await open(page, 'investigate')
+  await expect(page.getByTestId('node-inventory')).toHaveCount(0)
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await expect(page.getByTestId('phase-deepPhase')).toHaveAttribute('data-status', 'done')
+  await page.getByRole('button', { name: 'open phase listPhase' }).dispatchEvent('click')
+  await expect(page.getByTestId('frame-listPhase')).toBeVisible()
+  await expect(page.getByTestId('node-inventory')).toHaveAttribute('data-status', 'done')
+  await page.getByRole('button', { name: 'close phase listPhase' }).dispatchEvent('click')
+  await expect(page.getByTestId('node-inventory')).toHaveCount(0)
+  await page.getByTestId('toggle-phases').click()
+  await expect(page.locator('.phase-frame')).toHaveCount(7)
+})

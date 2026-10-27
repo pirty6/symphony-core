@@ -4,9 +4,9 @@
  * the canvas, inspector and timeline render.
  */
 import type { Edge, Node } from '@xyflow/react'
-import { graphToPattern, readsOf, writesOf, type VisualGraph } from '@core/graph'
+import { graphToPattern, groupFrames, phaseView, readsOf, writesOf, type VisualGraph } from '@core/graph'
 import { EMPTY_FRAME, framesOf, reduceFrame, type Frame, type NodeStatus } from '@core/replay'
-import type { NodeKind, Pause, Performance, Role, SavedRun, ScoreEdge, ScoreNode, StateField } from '@core/types'
+import type { NodeKind, Pause, Performance, Role, SavedRun, ScoreEdge, ScoreGroup, ScoreNode, StateField } from '@core/types'
 import type { NextPerformance, PatternData, RunMessage } from './api'
 
 // ── canvas ──────────────────────────────────────────────────────────
@@ -42,6 +42,8 @@ export interface PatternMeta {
   verbTriggers: string[]
   state: StateField[]
   maxSteps?: number
+  /** Phases: named groups of steps the canvas can collapse. */
+  groups?: ScoreGroup[]
 }
 
 export function metaOf(p: PatternData): PatternMeta {
@@ -52,6 +54,7 @@ export function metaOf(p: PatternData): PatternMeta {
     verbTriggers: [...(p.verbTriggers ?? [])],
     state: [...p.state],
     ...(p.maxSteps ? { maxSteps: p.maxSteps } : {}),
+    ...(p.groups?.length ? { groups: p.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) } : {}),
   }
 }
 
@@ -88,12 +91,16 @@ export function fromFlow(meta: PatternMeta, nodes: readonly FlowNode[], edges: r
     },
     { state: meta.state, ...(meta.maxSteps ? { maxSteps: meta.maxSteps } : {}) },
   )
+  // Keep phases in step with the canvas: deleted steps leave their phase, empty phases go.
+  const ids = new Set(nodes.map((n) => n.id))
+  const groups = (meta.groups ?? []).map((gr) => ({ ...gr, nodes: gr.nodes.filter((id) => ids.has(id)) })).filter((gr) => gr.nodes.length > 0)
   return {
     name: meta.name,
     description: meta.description,
     requiredContext: meta.requiredContext,
     verbTriggers: meta.verbTriggers,
     ...g,
+    ...(groups.length > 0 ? { groups } : {}),
   }
 }
 
@@ -414,6 +421,117 @@ export function decorate(
       }
     }),
   }
+}
+
+// ── phases ──────────────────────────────────────────────────────────
+
+export type PhaseNodeData = {
+  group: ScoreGroup
+  steps: string[]
+  writes: string[]
+  status?: NodeStatus
+  current?: string
+  ran: number
+  onExpand?: (id: string) => void
+}
+export type FrameNodeData = { label: string; width: number; height: number; onCollapse?: (id: string) => void }
+export type CanvasNode = FlowNode | Node<PhaseNodeData, 'phase'> | Node<FrameNodeData, 'frame'>
+
+const STATUS_RANK: Record<NodeStatus, number> = { paused: 4, active: 3, failed: 2, done: 1 }
+
+/**
+ * What the canvas draws when the pattern has phases: collapsed phases become
+ * one node each (status = the most urgent of its steps), opened phases are
+ * boxed by a frame behind their steps. Without phases the input passes through.
+ */
+export function phaseDisplay(
+  pattern: PatternData,
+  decorated: { nodes: readonly FlowNode[]; edges: readonly FlowEdge[] },
+  expanded: ReadonlySet<string>,
+  frame: Frame,
+  handlers: { onExpand?: (id: string) => void; onCollapse?: (id: string) => void } = {},
+): { nodes: CanvasNode[]; edges: FlowEdge[]; phaseOf: Map<string, string>; collapsed: boolean } {
+  const groups = pattern.groups ?? []
+  const phaseOf = new Map<string, string>()
+  if (groups.length === 0) return { nodes: [...decorated.nodes], edges: [...decorated.edges], phaseOf, collapsed: false }
+
+  const anyCollapsed = groups.some((g) => !expanded.has(g.id))
+  const byId = new Map(decorated.nodes.map((n) => [n.id, n]))
+  const edgeById = new Map(decorated.edges.map((e) => [e.id, e]))
+  const view = anyCollapsed ? phaseView(pattern, expanded) : undefined
+  const positions = new Map(view ? view.nodes.map((n) => [n.id, n.position]) : decorated.nodes.map((n) => [n.id, n.position]))
+
+  const frames: CanvasNode[] = groupFrames(
+    pattern,
+    positions,
+    groups.filter((g) => expanded.has(g.id)),
+  ).map((f) => ({
+    id: `frame:${f.id}`,
+    type: 'frame',
+    position: { x: f.x, y: f.y },
+    data: { label: f.label, width: f.width, height: f.height, ...(handlers.onCollapse ? { onCollapse: handlers.onCollapse } : {}) },
+    draggable: false,
+    selectable: false,
+    connectable: false,
+    zIndex: -1,
+    style: { width: f.width, height: f.height },
+  }))
+  if (!view) return { nodes: [...frames, ...decorated.nodes], edges: [...decorated.edges], phaseOf, collapsed: false }
+
+  const nodes: CanvasNode[] = view.nodes.flatMap((v): CanvasNode[] => {
+    if (v.kind === 'node') {
+      const n = byId.get(v.id)
+      return n ? [{ ...n, position: { ...v.position }, draggable: false }] : []
+    }
+    const g = v.group!
+    for (const id of g.nodes) phaseOf.set(id, g.id)
+    const members = g.nodes.flatMap((id) => {
+      const n = byId.get(id)
+      return n ? [n] : []
+    })
+    let status: NodeStatus | undefined
+    let current: string | undefined
+    for (const m of members) {
+      const s = frame.nodeStatus[m.id]
+      if (s && (!status || STATUS_RANK[s] > STATUS_RANK[status])) status = s
+      if (s === 'active' || s === 'paused') current = m.data.node.label
+    }
+    const writes = [...new Set(members.flatMap((m) => m.data.writes))]
+    const data: PhaseNodeData = {
+      group: g,
+      steps: members.map((m) => m.data.node.label),
+      writes,
+      ran: members.reduce((sum, m) => sum + (frame.nodeVisits[m.id] ?? 0), 0),
+      ...(status ? { status } : {}),
+      ...(current ? { current } : {}),
+      ...(handlers.onExpand ? { onExpand: handlers.onExpand } : {}),
+    }
+    return [{ id: g.id, type: 'phase', position: { ...v.position }, data, draggable: false }]
+  })
+
+  const edges: FlowEdge[] = view.edges.map((v) => {
+    const original = v.members.map((id) => edgeById.get(id)).filter((e): e is FlowEdge => e !== undefined)
+    const first = original[0]
+    if (original.length === 1 && first && first.source === v.source && first.target === v.target) return first
+    const active = original.find((e) => e.data?.active)
+    const edge: ScoreEdge = { id: v.id, from: v.source, to: v.target, ...(v.label ? { label: v.label } : {}) }
+    return {
+      id: v.id,
+      source: v.source,
+      target: v.target,
+      sourceHandle: v.sourceHandle ?? null,
+      type: 'data',
+      data: {
+        edge,
+        carries: [...new Set(original.flatMap((e) => e.data?.carries ?? []))],
+        back: v.back,
+        count: original.reduce((sum, e) => sum + (e.data?.count ?? 0), 0),
+        active: active !== undefined,
+        ...(active?.data?.values ? { values: active.data.values } : {}),
+      },
+    }
+  })
+  return { nodes: [...frames, ...nodes], edges, phaseOf, collapsed: true }
 }
 
 export const KIND_LABEL: Record<NodeKind, string> = {

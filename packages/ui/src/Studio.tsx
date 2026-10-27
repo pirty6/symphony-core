@@ -5,6 +5,7 @@ import {
   Controls,
   MarkerType,
   MiniMap,
+  Panel,
   ReactFlow,
   addEdge,
   useEdgesState,
@@ -12,6 +13,7 @@ import {
   useReactFlow,
   type Connection,
   type DefaultEdgeOptions,
+  type NodeChange,
 } from '@xyflow/react'
 import { patternToGraph, writesOf } from '@core/graph'
 import { formatFieldInput, parseFieldInput } from '@core/schema'
@@ -19,6 +21,7 @@ import type { Branch, ScoreEdge, ScoreNode } from '@core/types'
 import { validatePattern } from '@core/validate'
 import { DataEdge } from './canvas/DataEdge'
 import { FlowNode } from './canvas/FlowNode'
+import { FrameNode, PhaseNode } from './canvas/PhaseNode'
 import { ApiError, api, subscribeRun, type LibraryItem, type SavedSummary, type StartRunRequest } from './lib/api'
 import {
   IDLE_VIEW,
@@ -28,6 +31,7 @@ import {
   fromFlow,
   metaOf,
   newNode,
+  phaseDisplay,
   replayView,
   startLive,
   streamsFor,
@@ -46,7 +50,7 @@ import { PatternPanel } from './panels/PatternPanel'
 import { Timeline } from './panels/Timeline'
 import { Toolbar, type RunSettings, type Tiers } from './panels/Toolbar'
 
-const nodeTypes = { start: FlowNode, agent: FlowNode, compute: FlowNode, condition: FlowNode, approval: FlowNode, tool: FlowNode, end: FlowNode }
+const nodeTypes = { start: FlowNode, agent: FlowNode, compute: FlowNode, condition: FlowNode, approval: FlowNode, tool: FlowNode, end: FlowNode, phase: PhaseNode, frame: FrameNode }
 const edgeTypes = { data: DataEdge }
 const defaultEdgeOptions: DefaultEdgeOptions = { type: 'data', markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 } }
 const BLANK: PatternMeta = { name: 'my-flow', description: 'A new flow', requiredContext: [], verbTriggers: [], state: [] }
@@ -61,6 +65,10 @@ function contextStrings(ctx: Record<string, unknown> | undefined): Record<string
 export default function Studio() {
   const { screenToFlowPosition, fitView, getZoom, setCenter, getNode } = useReactFlow()
   const [follow, setFollow] = useState(true)
+  /** Phases opened on the canvas; the rest are drawn as one node each. */
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  /** Measured sizes of phase and frame nodes (they are not in the editable node list). */
+  const [phaseSizes, setPhaseSizes] = useState<ReadonlyMap<string, { width: number; height: number }>>(new Map())
   const [library, setLibrary] = useState<LibraryItem[]>([])
   const [saved, setSaved] = useState<SavedSummary[]>([])
   const [meta, setMeta] = useState<PatternMeta>(BLANK)
@@ -96,6 +104,7 @@ export default function Studio() {
       setMeta(m)
       setNodes(flow.nodes)
       setEdges(flow.edges)
+      setExpanded(new Set())
       setSelected(null)
       setTimeout(() => {
         void fitView({ padding: 0.15 }).then(() => {
@@ -185,6 +194,23 @@ export default function Studio() {
     [view.runId, view.mode],
   )
 
+  const openPhase = useCallback((id: string) => setExpanded((prev) => new Set(prev).add(id)), [])
+  const closePhase = useCallback(
+    (id: string) =>
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      }),
+    [],
+  )
+  const phaseIds = useMemo(() => (meta.groups ?? []).map((g) => g.id), [meta.groups])
+  const allOpen = phaseIds.length > 0 && phaseIds.every((id) => expanded.has(id))
+  const togglePhases = useCallback(() => {
+    setExpanded(allOpen ? new Set() : new Set(phaseIds))
+    setTimeout(() => void fitView({ padding: 0.15, duration: 300 }), 50)
+  }, [allOpen, phaseIds, fitView])
+
   const display = useMemo(() => {
     const d = decorate(nodes, edges, frame, {
       breakpoints,
@@ -193,8 +219,24 @@ export default function Studio() {
       onToggleBreakpoint: toggleBreakpoint,
     })
     const writes = new Map(nodes.map((n) => [n.id, writesOf(n.data.node, { state: meta.state, nodes: [], edges: [], start: '' })]))
-    return { nodes: d.nodes, edges: d.edges.map((e) => ({ ...e, data: { ...e.data!, carries: writes.get(e.source) ?? [] } })) }
-  }, [nodes, edges, frame, breakpoints, editable, issues, view.gate, toggleBreakpoint, meta.state])
+    const steps = { nodes: d.nodes, edges: d.edges.map((e) => ({ ...e, data: { ...e.data!, carries: writes.get(e.source) ?? [] } })) }
+    const shown = phaseDisplay(pattern, steps, expanded, frame, { onExpand: openPhase, onCollapse: closePhase })
+    const sized = shown.nodes.map((n) => {
+      const size = n.type === 'phase' || n.type === 'frame' ? phaseSizes.get(n.id) : undefined
+      return size ? { ...n, measured: size } : n
+    })
+    return { ...shown, nodes: sized }
+  }, [nodes, edges, frame, breakpoints, editable, issues, view.gate, toggleBreakpoint, meta.state, pattern, expanded, openPhase, closePhase, phaseSizes])
+
+  const onCanvasNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      const steps = new Set(nodes.map((n) => n.id))
+      const sizes = changes.flatMap((c) => (c.type === 'dimensions' && c.dimensions && !steps.has(c.id) ? [[c.id, c.dimensions] as const] : []))
+      if (sizes.length > 0) setPhaseSizes((prev) => new Map([...prev, ...sizes]))
+      onNodesChange(changes.filter((c) => !('id' in c) || steps.has(c.id)) as NodeChange<FlowNodeType>[])
+    },
+    [nodes, onNodesChange],
+  )
 
   const focusId = selected ?? frame.pausedNodeId ?? frame.activeNodeId ?? null
   const selectedNode = nodes.find((n) => n.id === selected)
@@ -202,7 +244,8 @@ export default function Studio() {
   const focusNode = nodes.find((n) => n.id === focusId)
   const streams = focusId ? streamsFor(view, focusId, frame) : []
 
-  const followId = view.mode !== 'idle' ? (frame.pausedNodeId ?? frame.activeNodeId) : undefined
+  const activeStep = view.mode !== 'idle' ? (frame.pausedNodeId ?? frame.activeNodeId) : undefined
+  const followId = activeStep ? (display.phaseOf.get(activeStep) ?? activeStep) : undefined
   useEffect(() => {
     if (!follow || !followId) return
     const node = getNode(followId)
@@ -428,10 +471,12 @@ export default function Studio() {
         <ReactFlow
           nodes={display.nodes}
           edges={display.edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={editable ? onEdgesChange : undefined}
+          onNodesChange={onCanvasNodesChange}
+          onEdgesChange={editable && !display.collapsed ? onEdgesChange : undefined}
           onConnect={onConnect}
           onNodeClick={(_, n) => {
+            if (n.type === 'frame') return
+            if (n.type === 'phase') return openPhase(n.id)
             setSelected(n.id)
             setTab(editable ? 'node' : 'ai')
           }}
@@ -443,11 +488,18 @@ export default function Studio() {
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           defaultEdgeOptions={defaultEdgeOptions}
-          nodesConnectable={editable}
+          nodesConnectable={editable && !display.collapsed}
           deleteKeyCode={editable ? ['Backspace', 'Delete'] : null}
           fitView
           minZoom={0.2}
         >
+          {phaseIds.length > 0 && (
+            <Panel position="top-left">
+              <button type="button" className="phase-switch" onClick={togglePhases} data-testid="toggle-phases">
+                {allOpen ? '▣ Close all phases' : '⊕ Open all phases'}
+              </button>
+            </Panel>
+          )}
           <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#2c3354" />
           <Controls />
           <MiniMap pannable zoomable style={{ width: 150, height: 100 }} maskColor="rgba(15, 18, 34, 0.75)" nodeColor="#2a3156" nodeStrokeWidth={2} />
