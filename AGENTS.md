@@ -18,3 +18,14 @@ createEngine+advance -> Performance (JSON audit record).
 - Small steps: at most 3 files per change. Run tests and lint after each step. Commit per step.
 - Context is limited (~40k tokens): read files in parts, don't dump whole files.
 - Check package.json for the real scripts before running anything.
+
+## Commands (Node 20.19+; npm or pnpm)
+- `npm install` then `npm start` (studio) or `npm run cli -- list`.
+- `npm test` (core/runtime/CLI), `npm run test:ui` (studio + API), `npm run typecheck`, `npm run lint`.
+- Format with `npm run format`; config is `.oxfmtrc.json`.
+
+## Layout
+- `src/core/` is pure and browser-safe. Never import node:* or do I/O there.
+- `src/runtime/` holds all I/O (providers, driver, store).
+- `src/patterns/` is the TypeScript pattern library; `src/patterns/drafts/` holds studio-saved patterns.
+- `packages/ui/` is the studio; it imports the core through the `@core` alias.

@@ -1,248 +1,167 @@
 # symphony-core
 
-Deterministic, auditable AI agent orchestration framework.
+Deterministic, auditable AI orchestration, plus a visual studio where you can watch the data move.
 
-Symphony decomposes a problem into a static frequency spectrum and plans a path through it using an orchestra of instrument-typed sub-agents. The result is a **Score** (the plan) and a **Performance** (the recording of what happened).
+A **state machine owns order, gates and validation**. AI runs **only inside agent nodes**
+(assessor = read-only, executor = read-write). Algorithms are **Patterns written in TypeScript**.
+Every run produces a **Performance**: a JSON audit record you can replay and verify byte for byte.
 
-## Core Concepts
-
-### Stage (Pattern)
-
-A reusable algorithm template. Each Pattern defines:
-
-- **Beats** — ordered steps with a directive, abstraction level (1-8), and instrument
-- **Required context** — repo-specific keys the compiler validates
-- **Domain** — categorization key
-
-```ts
-import { type Pattern } from "symphony-core";
-
-const investigatePattern: Pattern = {
-  score: {
-    pattern: "investigate",
-    domain: "general/investigation",
-    beats: [
-      { step: "clarify", level: 6, instrument: "question", directive: "Restate the problem..." },
-      { step: "scope",   level: 4, instrument: "analyze",  directive: "Identify boundaries..." },
-      { step: "search",  level: 2, instrument: "analyze",  directive: "Read the relevant code..." },
-      { step: "synthesize", level: 5, instrument: "integrate", directive: "Combine findings..." },
-    ],
-  },
-  description: "Open-ended investigation of a codebase question",
-  requiredContext: ["target"],
-};
+```text
+Pattern (TypeScript) ─ compileScore ─▶ ExecutableScore (read-only plan, content-hashed id)
+                                         │
+                       createEngine + advance (pure reducer, no I/O)
+                                         │  pauses only at agent (AI) and approval (human) nodes
+                                         ▼
+                       Performance (steps, state diffs, AI transcripts, full event log)
 ```
 
-### Instruments
+## Quick start (only Node.js needed)
 
-Five epistemic modes (not tools) that constrain the kind of cognitive work at each beat:
+Requires **Node.js 20.19+ or 22.12+** (npm ships with Node). No pnpm, no build step.
 
-| Instrument | Mode |
-|------------|------|
-| `analyze`  | Structural / relational |
-| `decide`   | Assertive / definitive |
-| `question` | Exploratory / questioning |
-| `order`    | Sequencing / timing |
-| `integrate`| Harmonic / integrative |
+```bash
+git clone https://github.com/pirty6/symphony-core.git
+cd symphony-core
+npm install
+npm start            # opens the studio at http://localhost:5173
+```
 
-### Exits (MoveVerdict)
+Pick **hangman** in the library and press **▶ Run**. Everything works offline: the default
+**Scripted (offline demo)** provider answers agent nodes from each pattern's demo script, so you
+can explore every feature without credentials.
 
-After each beat, execution produces a verdict:
+> pnpm users: `pnpm install && pnpm start` works the same (pnpm stays the primary lockfile).
+
+### Use real AI (GitHub Copilot)
+
+1. Have a GitHub account with Copilot. Sign in once with the Copilot CLI or `gh auth login`,
+   **or** put a token in `.env` (see `.env.example`).
+2. In the studio choose **AI → GitHub Copilot** (optionally a model) and run.
+
+Agents work in the repository folder by default; set `SYMPHONY_WORKSPACE=/path/to/project` in `.env`
+to point them at another project. **Executor nodes can edit files and run commands there**;
+assessor nodes are held read-only by the permission policy (reads, URLs and read-only shell
+commands only).
+
+## The studio
+
+| Area | What it shows |
+|------|---------------|
+| Canvas | The pattern graph. Nodes light up as they run (active, waiting, done, failed) with a visit counter. Edges show their guard, the state keys they carry, a moving **data packet** on the edge just taken, and the actual values that travelled on it. Loops route around the side. |
+| Toolbar | AI provider, auto-approve, **step mode**, Run / Pause / Step / Resume / Stop. |
+| Inspector | **Gate card** when paused: before a node runs, or *after the AI answered but before the engine applies it* (shows the proposed JSON). **Approval card** for human nodes. **AI output** streams the agent's text, tool calls, permission denials and submitted result. **State** shows every key with what just changed. |
+| Timeline | Every engine event. Scrub back and forth; the canvas and inspector follow. |
+| Library | Patterns, **Draft with AI** (describe a flow, the AI drafts a validated pattern onto the canvas), a drag-and-drop palette, and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). |
+
+Stop mid-process: **Pause** halts at the next gate, **breakpoints** (the dot on a node) halt
+before and after that node, **step mode** halts at every gate, and **Stop** aborts the live AI call
+while keeping its partial output visible.
+
+Edit flows visually: drag nodes from the palette, connect handles (conditions have `then`/`else`,
+approvals `approved`/`rejected`), edit nodes and edges in the inspector, define state fields in the
+Pattern tab. Validation runs on every change and **Run** stays disabled until the graph is valid.
+**View TypeScript** / **Save to library** turn the canvas into a TypeScript pattern in
+`src/patterns/drafts/`.
+
+## CLI
+
+```bash
+npm run cli -- list                                  # pattern library
+npm run cli -- show fix                              # nodes and edges
+npm run cli -- run hangman                           # play in the terminal
+npm run cli -- run fix --auto-approve                # scripted run, saved to .symphony/runs
+npm run cli -- run investigate -c question="Where is auth handled?" --provider copilot
+npm run cli -- run fix --step --break apply          # pause at gates
+npm run cli -- draft "triage a flaky test" --provider copilot --save
+npm run cli -- verify .symphony/runs/fix/<file>.json # integrity + deterministic replay check
+npm run cli -- runs                                  # saved runs
+```
+
+## Concepts
+
+### Node kinds
+
+| Kind | Who acts | Purpose |
+|------|----------|---------|
+| `start` | engine | Entry point (exactly one). |
+| `agent` | **AI** | `role: 'assessor'` (read-only) or `'executor'` (read-write). Sees only its `reads`; must return its `writes`. |
+| `compute` | engine | Deterministic state update: `field = expression`. |
+| `condition` | engine | Branch on an expression: `then` / `else`. |
+| `approval` | human | Gate; the human may provide values (`writes`). `approved` / `rejected` edges. |
+| `end` | engine | Finish with `success`, `partial` or `failed`. |
+
+Edges are tried in declared order; the first guard that is `true` wins; one unguarded default edge
+may come last.
+
+### Expressions
+
+Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
+state keys by name, literals, `== != < <= > >= && || ! + -`, `len empty includes lower append if
+chars subset`, and `verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
-interface MoveVerdict {
-  outcome: "applied" | "failed" | "skipped";
-  confidence: number;      // [0, 1]
-  shouldTerminate: boolean; // halt remaining beats?
-  reason: string;
+'confidence >= 0.7 && len(findings) > 0'
+'if(includes(word, letter), wrongCount, wrongCount + 1)'
+```
+
+### Guarantees (and where they are enforced)
+
+| Rule | Enforcement |
+|------|-------------|
+| The state machine owns order | `src/core/engine.ts`: pure `advance()`; AI cannot choose the next node. |
+| Score is read-only | `compileScore` deep-freezes it; its id is a content hash (`verifyScore` detects edits). |
+| Every AI response is validated | `validateNodeResult`: verdict shape, typed `writes`, no undeclared keys. Invalid answers are re-asked with the errors (bounded `retries`), then the run fails. |
+| Never repeat `(moveType, targetSite, stateHash)` | The engine refuses a repeated move; `stateHash` covers run state plus a git workspace fingerprint. |
+| Every loop terminates | Per-node `maxVisits` and per-score `maxSteps`. |
+| Assessors are read-only | Permission policy in `src/runtime/provider.ts`. |
+| Stale or duplicate input is ignored | Every resolution must echo the open `pauseId`. |
+| Runs are reproducible | `replayPerformance` re-runs the engine on recorded answers and diffs it. |
+
+## Library API
+
+```ts
+import { compileScore, createEngine, advance, toPerformance, fix, Run, ScriptedProvider } from '@perezgarciam/symphony-core';
+
+// Low level: drive the pure engine yourself.
+const score = compileScore(fix, { goal: 'Fix pagination', context: { issue: 'Page 2 repeats an item' } });
+let { state } = createEngine(score);
+while (state.kind === 'running' && state.pause) {
+  const res = await answer(state.pause);               // your AI / human / test double
+  ({ state } = advance(score, state, res));
 }
+const performance = toPerformance(state);
+
+// High level: the driver with providers, gates and persistence.
+const run = new Run({ score, provider: ScriptedProvider.forPattern(fix), demo: fix.demo, autoApprove: true });
+run.subscribe((m) => console.log(m));
+await run.start();
 ```
 
-### Orchestrator
+Write a pattern as a TypeScript module (see `src/patterns/*.ts`) and add it to
+`src/patterns/index.ts`, or save it from the studio into `src/patterns/drafts/` (loaded automatically).
 
-A pure state machine that drives the workflow through six pause kinds:
+## Project layout
 
-1. **confirm-fit** — Is this the right pattern?
-2. **classify-complexity** — How complex is this problem? (1-4)
-3. **draft-pattern-round** — Design a new pattern (up to 6 rounds)
-4. **elicit-context** — Collect required context values
-5. **go-gate** — Final approval before execution
-6. **perform-beat** — Execute each beat
-
-## Usage
-
-### 1. Define a Pattern (Stage)
-
-```ts
-import { type Pattern } from "symphony-core";
-
-const myPattern: Pattern = {
-  score: {
-    pattern: "my-workflow",
-    domain: "my-domain",
-    beats: [
-      { step: "analyze", level: 3, instrument: "analyze", directive: "Examine the target..." },
-      { step: "decide",  level: 5, instrument: "decide",  directive: "Choose the approach..." },
-      { step: "apply",   level: 2, instrument: "order",   directive: "Execute the changes..." },
-    ],
-  },
-  description: "My custom workflow",
-  requiredContext: ["target"],
-};
+```text
+src/core/        pure, browser-safe: types, expr, schema, validate, compile, engine, graph, replay, draft, hash
+src/runtime/     I/O: providers (scripted, Copilot), run driver, drafting loop, store, factory
+src/patterns/    the pattern library (TypeScript); drafts/ for patterns saved from the studio
+src/cli.ts       command line
+packages/ui/     the studio: Vite + React Flow; server/api.ts mounts REST + SSE on the dev server
 ```
 
-### 2. Compile to an ExecutableScore
+## Development
 
-```ts
-import { compileScore } from "symphony-core";
-
-const score = compileScore(myPattern, {
-  problem: "Refactor the auth module",
-  context: { target: "src/auth" },
-});
+```bash
+npm test             # core + runtime + CLI (vitest)
+npm run test:ui      # studio unit + integration + API tests
+npm run typecheck && npm run lint
+npm run build        # library to dist/
+cd packages/ui && npx playwright install chromium && npx playwright test   # browser e2e
 ```
 
-### 3. Execute with the Orchestrator
-
-```ts
-import { createEngine, advance, type Resolution } from "symphony-core";
-
-// Start the engine
-let state = createEngine({
-  prompt: "Refactor the auth module",
-  pattern: "my-workflow",
-  patterns: [myPattern],
-});
-
-// Drive the state machine by resolving each pause
-while (state.kind === "running") {
-  const pause = state.pause;
-  // Build a resolution based on pause.kind
-  const resolution: Resolution = /* ... */;
-  state = advance(state, resolution);
-}
-
-if (state.kind === "done") {
-  console.log("Score:", state.result.executableScore);
-  console.log("Performance:", state.result.performance);
-}
-```
-
-### 4. Or execute directly with performScore
-
-```ts
-import { performScore, type BeatExecutorContext } from "symphony-core";
-
-const performance = await performScore(score, async (ctx: BeatExecutorContext) => {
-  // Your agent logic here — read ctx.beat.directive, produce output
-  return {
-    voices: [{ instrument: ctx.beat.voices[0].instrument, output: "result...", confidence: 0.9 }],
-    verdict: { outcome: "applied", confidence: 0.9, shouldTerminate: false, reason: "Done" },
-  };
-});
-```
-
-## Architecture
-
-```
-Pattern (Stage)           →  compileScore()  →  ExecutableScore (Score)
-                                                        ↓
-                                                 performScore() or
-                                                 createEngine() + advance()
-                                                        ↓
-                                                 Performance (Recording)
-```
-
-**Score ≠ Performance** — The Score is the read-only plan. The Performance is what actually happened. This separation enables deterministic replay and auditing.
-
-## API Reference
-
-### Types
-- `Level` — 1-8 abstraction scale
-- `InstrumentType` — `"analyze" | "decide" | "question" | "order" | "integrate"`
-- `Pattern` / `PatternBeat` / `PatternScore` — Stage definitions
-- `ExecutableScore` / `Beat` / `Voice` — Compiled plan
-- `Performance` / `PerformedBeat` / `PerformedVoice` — Execution recording
-- `MoveVerdict` — Beat outcome (exits)
-
-### Functions
-- `compileScore(pattern, args)` — Pattern → ExecutableScore
-- `parseAlgorithm(input)` — Low-level Score creation
-- `performScore(score, executor)` — Async callback-based execution
-- `scaffoldPerformance(score)` — Empty Performance scaffold
-- `createEngine(config)` — Start the orchestrator state machine
-- `advance(state, resolution)` — Advance the state machine
-- `validateScoreShape(score)` — Validate a Score
-- `fingerprintProblem(statement)` — Hash a problem statement
-- `detectDivergence(saved, fresh)` — Compare two Performances
-
-### Legality
-- `pairLegality(level, instrument)` — Check if a (level, instrument) pair is legal
-- `beatLegality(level, voices)` — Check if a beat configuration is legal
-- `isLegalBeat(level, voices)` — Boolean convenience check
+See [AGENTS.md](AGENTS.md) for the rules contributors (human or AI) follow.
 
 ## License
 
 ISC
-
-## TODO
-
-### Global Settings Panel
-A configuration panel separate from the canvas for orchestrator-level settings:
-- **Confidence threshold** — minimum confidence percentage (0–100) before the orchestrator auto-proceeds vs. falls back to human clarification
-- **Max assessor spawns** — upper limit on how many assessors the orchestrator can spawn per step based on complexity
-- **Retry policy** — max retries per node, backoff strategy when a step fails or returns low confidence
-- **Model selection** — which LLM model to use for orchestration (e.g. claude-opus-4.6, gpt-4o, etc.)
-
-### State/Context Model
-A typed object that flows through edges and persists across the workflow execution:
-- Each node reads from and writes to a shared context bag
-- Context is scoped per session (survives across loop iterations)
-- Schema is user-definable per workflow (e.g. `{ word: string, guessedLetters: string[], wrongGuesses: string[], maxTries: number }`)
-- Enables the orchestrator to maintain memory across multiple LLM calls within the same session
-
-### Node Configuration Panel
-Clicking a node opens a side panel to configure that step:
-- **Instruction/prompt** — what this step should accomplish (the directive for the LLM)
-- **Expected output schema** — what data this step produces so downstream nodes know what they receive
-- **Node-specific settings** — e.g. condition expressions for If nodes, approval message for Approval nodes
-
-### Edge Data
-Edges carry context from one node's output to the next node's input:
-- Define which fields from the source node's output map to the target node's input
-- Support data transformation/filtering between nodes
-- Visual indication of what data flows through each connection
-
-### Runtime Engine
-The backend that actually executes the workflow graph:
-- Walks the graph node by node, calling the LLM at each step with accumulated context
-- Orchestrator logic at every transition: spawn assessors, check confidence, handle clarification
-- Manages the If node branching (evaluate conditions against current context)
-- Handles Approval nodes (pause execution, wait for human input, resume)
-- Supports loops (detect cycles, carry state across iterations)
-- Produces a Performance recording for auditing and replay
-
-### Hook Wiring
-`onUserPromptSubmitted` currently returns the prompt unchanged ([src/hooks/onUserPromptSubmitted.ts](src/hooks/onUserPromptSubmitted.ts)). It should:
-- Match the incoming prompt against available patterns
-- Compile the matched pattern into an ExecutableScore
-- Start the engine state machine (`createEngine` → `advance` loop)
-- Route pause resolutions back through the copilot-sdk conversation
-
-### Instrument Ontology Reconciliation
-The two instrument models (role-based and epistemic) are not competing — they operate at different layers:
-
-```
-Canvas layer (UI):      assessor / executor / condition / approval / end
-                        ↓ what the user draws
-Beat layer (runtime):   analyze / decide / question / order / integrate
-                        ↓ what the orchestrator decomposes each node into
-Tool layer (agent):     read-only / read-write
-                        ↓ what the agent is allowed to do
-```
-
-- The **user draws** an assessor or executor node on the canvas and writes a prompt (e.g. "investigate the auth module for vulnerabilities")
-- The **orchestrator decomposes** that node into beats, each with an epistemic instrument: `analyze` (structural scan) → `question` (explore edge cases) → `integrate` (synthesize findings). Each beat gets legality constraints based on its abstraction level
-- Each beat runs with **tool permissions** inherited from the parent node type: assessor nodes → read-only tools, executor nodes → read-write tools
-
-This keeps the UI simple (2 agent types users understand), gives the runtime fine-grained deterministic control (5 instruments with legality rules), and makes tool permissions enforceable. Users never see the epistemic layer unless they inspect a Performance recording at the beat level.
