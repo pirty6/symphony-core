@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Frame } from '@core/replay'
-import { formatFieldInput, parseFieldInput } from '@core/schema'
+import { parseFieldInput } from '@core/schema'
 import type { ScoreEdge, ScoreNode, StateField } from '@core/types'
 import type { AiStream, FlowEdge, FlowNode, RunView } from '../lib/model'
 
@@ -378,4 +378,3 @@ export function NodeInput({ node, frame }: { node: FlowNode; frame: Frame }) {
   )
 }
 
-export { formatFieldInput }

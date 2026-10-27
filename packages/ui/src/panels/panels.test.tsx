@@ -1,0 +1,145 @@
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { EMPTY_FRAME, reduceFrame } from '@core/replay'
+import type { ApprovalPause } from '@core/types'
+import { startLive, type RunView } from '../lib/model'
+import { ApprovalCard, GateCard, StateView } from './Inspector'
+import { PatternPanel } from './PatternPanel'
+import { describeEvent } from '../lib/events'
+import { Timeline } from './Timeline'
+import { Toolbar } from './Toolbar'
+
+const approvalPause: ApprovalPause = {
+  kind: 'approval',
+  pauseId: 'p1',
+  step: 3,
+  nodeId: 'ask',
+  label: 'Guess a letter',
+  message: 'Guess one letter.',
+  state: {},
+  outputSchema: [
+    { name: 'letter', type: 'string' },
+    { name: 'tries', type: 'number' },
+  ],
+  feedback: ['updates.letter is required'],
+  moveKey: 'm',
+}
+
+describe('ApprovalCard', () => {
+  it('collects typed values and approves', () => {
+    const onAnswer = vi.fn()
+    const view: RunView = { ...startLive('r'), status: 'awaiting-approval', pause: approvalPause }
+    render(<ApprovalCard view={view} onAnswer={onAnswer} />)
+    expect(screen.getByText('updates.letter is required')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('letter'), { target: { value: 'e' } })
+    fireEvent.change(screen.getByLabelText('tries'), { target: { value: '3' } })
+    fireEvent.click(screen.getByText('Approve'))
+    expect(onAnswer).toHaveBeenCalledWith({ approved: true, updates: { letter: 'e', tries: 3 } })
+    fireEvent.click(screen.getByText('Scripted answer'))
+    expect(onAnswer).toHaveBeenLastCalledWith({ approved: true, scripted: true })
+  })
+
+  it('is hidden unless a human is needed', () => {
+    const { container } = render(<ApprovalCard view={startLive('r')} onAnswer={() => {}} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+})
+
+describe('GateCard', () => {
+  it('shows the AI result held before the engine applies it', () => {
+    const onResume = vi.fn()
+    const view: RunView = { ...startLive('r'), status: 'paused', gate: { nodeId: 'pick', phase: 'after', proposed: { updates: { word: 'cat' } } } }
+    render(<GateCard view={view} onResume={onResume} onStep={() => {}} onStop={() => {}} />)
+    expect(screen.getByText(/after AI answered at “pick”/)).toBeInTheDocument()
+    expect(screen.getByTestId('proposed-result')).toHaveTextContent('"word": "cat"')
+    fireEvent.click(screen.getByText('▶ Resume'))
+    expect(onResume).toHaveBeenCalled()
+  })
+})
+
+describe('StateView', () => {
+  it('highlights changed keys with before values', () => {
+    let f = reduceFrame(EMPTY_FRAME, { type: 'run-started', scoreId: 's', state: { word: '', n: 1 } })
+    f = reduceFrame(f, { type: 'node-completed', step: 1, nodeId: 'a', changes: [{ key: 'word', before: '', after: 'cat' }], stateHash: 'h' })
+    render(<StateView frame={f} />)
+    expect(screen.getByTestId('state-word')).toHaveClass('changed')
+    expect(screen.getByTestId('state-word')).toHaveTextContent('"cat"')
+    expect(screen.getByTestId('state-n')).not.toHaveClass('changed')
+  })
+})
+
+describe('Timeline', () => {
+  it('lists events and seeks', () => {
+    const frames = [
+      reduceFrame(EMPTY_FRAME, { type: 'run-started', scoreId: 's', state: {} }),
+    ]
+    frames.push(reduceFrame(frames[0]!, { type: 'node-entered', step: 1, nodeId: 'start', kind: 'start', stateHash: 'h', moveKey: 'm' }))
+    const onSeek = vi.fn()
+    render(<Timeline frames={frames} cursor={null} onSeek={onSeek} />)
+    expect(screen.getByText(/#1 enter start/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText(/run started/))
+    expect(onSeek).toHaveBeenCalledWith(0)
+    fireEvent.click(screen.getByText('● live'))
+    expect(onSeek).toHaveBeenLastCalledWith(null)
+  })
+
+  it('describes every event kind', () => {
+    expect(describeEvent({ type: 'guard-evaluated', nodeId: 'c', expression: 'x > 1', result: true })).toBe('x > 1 → true')
+    expect(describeEvent({ type: 'run-failed', error: 'boom' })).toBe('failed: boom')
+  })
+})
+
+describe('Toolbar', () => {
+  const settings = { provider: 'scripted' as const, model: '', autoApprove: false, stepMode: false }
+  const handlers = { onSettings: vi.fn(), onRun: vi.fn(), onPause: vi.fn(), onResume: vi.fn(), onStep: vi.fn(), onStop: vi.fn(), onEdit: vi.fn() }
+
+  it('runs when valid and shows pause/stop while running', () => {
+    const { rerender } = render(<Toolbar title="t" mode="idle" status="idle" settings={settings} canRun {...handlers} />)
+    fireEvent.click(screen.getByText('▶ Run'))
+    expect(handlers.onRun).toHaveBeenCalled()
+    rerender(<Toolbar title="t" mode="live" status="running" settings={settings} canRun {...handlers} />)
+    fireEvent.click(screen.getByText('⏸ Pause'))
+    fireEvent.click(screen.getByText('⏹ Stop'))
+    expect(handlers.onPause).toHaveBeenCalled()
+    expect(handlers.onStop).toHaveBeenCalled()
+    rerender(<Toolbar title="t" mode="live" status="paused" settings={settings} canRun {...handlers} />)
+    fireEvent.click(screen.getByText('⏭ Step'))
+    expect(handlers.onStep).toHaveBeenCalled()
+  })
+
+  it('disables run with problems and shows the model box for copilot', () => {
+    render(<Toolbar title="t" mode="idle" status="idle" settings={{ ...settings, provider: 'copilot' }} canRun={false} {...handlers} />)
+    expect(screen.getByText('▶ Run')).toBeDisabled()
+    expect(screen.getByLabelText('model')).toBeInTheDocument()
+  })
+})
+
+describe('PatternPanel', () => {
+  it('adds state fields and lists problems', () => {
+    const onMeta = vi.fn()
+    const onSelect = vi.fn()
+    render(
+      <PatternPanel
+        meta={{ name: 'x', description: 'd', requiredContext: [], verbTriggers: [], state: [] }}
+        editable
+        goal=""
+        context={{}}
+        errors={[{ message: 'node broken', nodeId: 'n1' }]}
+        warnings={[]}
+        onMeta={onMeta}
+        onGoal={() => {}}
+        onContext={() => {}}
+        onSelect={onSelect}
+        onExport={async () => ''}
+        onSave={async () => ''}
+      />,
+    )
+    fireEvent.click(screen.getByTestId('issue-error'))
+    expect(onSelect).toHaveBeenCalledWith('n1')
+    fireEvent.change(screen.getByLabelText('new field name'), { target: { value: 'score' } })
+    fireEvent.change(screen.getByLabelText('new field type'), { target: { value: 'number' } })
+    fireEvent.click(screen.getByText('Add'))
+    expect(onMeta).toHaveBeenCalledWith(expect.objectContaining({ state: [{ name: 'score', type: 'number' }] }))
+    expect(screen.getByText('View TypeScript')).toBeDisabled()
+  })
+})

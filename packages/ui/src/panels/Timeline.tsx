@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Frame } from '@core/replay'
+import { describeEvent } from '../lib/events'
 import type { EngineEvent } from '@core/types'
 
 interface Props {
@@ -18,29 +19,6 @@ const ICON: Record<EngineEvent['type'], string> = {
   'node-completed': 'Δ',
   'run-completed': '✔',
   'run-failed': '✘',
-}
-
-export function describe(e: EngineEvent): string {
-  switch (e.type) {
-    case 'run-started':
-      return 'run started'
-    case 'node-entered':
-      return `#${e.step} enter ${e.nodeId}`
-    case 'guard-evaluated':
-      return `${e.expression} → ${e.result}`
-    case 'edge-taken':
-      return `${e.from} → ${e.to}${e.carried.length ? ` (${e.carried.join(', ')})` : ''}`
-    case 'paused':
-      return `${e.pause.kind === 'agent' ? 'AI' : 'human'} needed at ${e.pause.nodeId}${e.pause.kind === 'agent' && e.pause.attempt > 1 ? ` (attempt ${e.pause.attempt})` : ''}`
-    case 'response-rejected':
-      return `rejected ${e.nodeId}: ${e.errors[0] ?? ''}`
-    case 'node-completed':
-      return `${e.nodeId} ${e.changes.length ? `changed ${e.changes.map((c) => c.key).join(', ')}` : 'done'}`
-    case 'run-completed':
-      return `${e.outcome}: ${e.reason}`
-    case 'run-failed':
-      return `failed: ${e.error}`
-  }
 }
 
 export function Timeline({ frames, cursor, onSeek }: Props) {
@@ -79,7 +57,7 @@ export function Timeline({ frames, cursor, onSeek }: Props) {
           f.event ? (
             <li key={i} ref={i === index ? current : undefined} className={`tl-${f.event.type}${i === index ? ' current' : ''}`}>
               <button type="button" onClick={() => onSeek(i)}>
-                <span className="tl-icon">{ICON[f.event.type]}</span> {describe(f.event)}
+                <span className="tl-icon">{ICON[f.event.type]}</span> {describeEvent(f.event)}
               </button>
             </li>
           ) : null,
