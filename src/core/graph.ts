@@ -34,7 +34,24 @@ export interface VisualGraph {
   readonly edges: VisualEdge[];
 }
 
-export const LAYOUT = { rowGap: 150, colGap: 260 } as const;
+export const LAYOUT = { gap: 90, colGap: 290 } as const;
+
+/** Rough rendered height per node kind, so rows never overlap. */
+export function estimateHeight(node: ScoreNode): number {
+  switch (node.kind) {
+    case 'start':
+    case 'end':
+      return 64;
+    case 'agent':
+      return 150;
+    case 'compute':
+      return 64 + 17 * node.assign.length;
+    case 'condition':
+      return 100;
+    case 'approval':
+      return 120;
+  }
+}
 
 export function readsOf(node: ScoreNode): string[] {
   return node.kind === 'agent' ? [...node.reads] : [];
@@ -79,11 +96,15 @@ export function layout(graph: PatternGraph): Map<string, { x: number; y: number 
     const d = depth.get(n.id)!;
     rows.set(d, [...(rows.get(d) ?? []), n.id]);
   }
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const pos = new Map<string, { x: number; y: number }>();
-  for (const [d, ids] of rows) {
+  let y = 0;
+  for (const d of [...rows.keys()].toSorted((a, b) => a - b)) {
+    const ids = rows.get(d)!;
     ids.forEach((id, i) => {
-      pos.set(id, { x: (i - (ids.length - 1) / 2) * LAYOUT.colGap, y: d * LAYOUT.rowGap });
+      pos.set(id, { x: (i - (ids.length - 1) / 2) * LAYOUT.colGap, y });
     });
+    y += Math.max(...ids.map((id) => estimateHeight(byId.get(id)!))) + LAYOUT.gap;
   }
   return pos;
 }

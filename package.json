@@ -36,8 +36,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "start": "npm run dev --prefix packages/ui",
-    "studio": "npm run dev --prefix packages/ui",
+    "start": "npm run dev --prefix packages/ui --",
+    "studio": "npm run dev --prefix packages/ui --",
     "cli": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
