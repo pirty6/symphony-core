@@ -329,7 +329,11 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
-    options: RUN_OPTIONS,
+    options: {
+      ...RUN_OPTIONS,
+      'compose-only': { type: 'boolean', default: false },
+      save: { type: 'boolean', default: false },
+    },
   });
   const request = positionals.join(' ').trim();
   if (!request || !isProviderName(values.provider)) {
@@ -370,6 +374,21 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
     });
     if (perf.outcome !== 'success') return 2;
     if (!child) return 1;
+    if (values.save) {
+      console.log(
+        c.dim(
+          `saved ${await savePatternFile(join(cwd, DRAFTS_DIR), child.pattern, '../../core/types.js')}`,
+        ),
+      );
+    }
+    if (values['compose-only']) {
+      console.log(
+        `\n${c.bold(`♪ composed '${child.pattern.name}'`)} ${c.dim(`complexity ${child.score.complexity}`)}`,
+      );
+      for (const n of child.pattern.nodes)
+        console.log(`  ${n.id.padEnd(14)} ${n.kind.padEnd(10)} ${n.label}`);
+      return 0;
+    }
     console.log(`\n${c.bold('♪ performing the composed score')}`);
     const childPerf = await play(child.score, child.pattern, cwd, o);
     return childPerf.outcome === 'failed' ? 2 : 0;
@@ -481,6 +500,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   list                         pattern library
   show <pattern>               nodes and edges
   maestro "<request>"          compose the right score (debate by complexity), then perform it
+      --compose-only  --save (write the composed score to src/patterns/drafts)
   run <pattern>                run in the terminal
       --goal "..."  -c key=value  --provider scripted|copilot  --model <id>
       --complexity 1-4  -i classical|cool|swing|bebop|free (or 0-4)

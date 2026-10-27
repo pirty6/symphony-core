@@ -85,6 +85,17 @@ describe('main', () => {
     expect(out).toMatch(/reached end 'fixed'/);
   });
 
+  it('maestro --compose-only stops after composing', async () => {
+    expect(
+      await main(
+        ['maestro', 'Fix the flaky login test', '--auto-approve', '--no-save', '--compose-only'],
+        cwd,
+      ),
+    ).toBe(0);
+    expect(plain()).toMatch(/♪ composed 'fix' complexity 3/);
+    expect(plain()).not.toMatch(/performing the composed score/);
+  });
+
   it('accepts complexity and improvisation by name', async () => {
     expect(
       await main(
