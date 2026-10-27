@@ -81,7 +81,7 @@ export interface RunOptions {
   readonly onSave?: (run: SavedRun) => Promise<string | undefined>;
 }
 
-export interface ApprovalAnswer {
+export interface HumanAnswer {
   readonly approved: boolean;
   readonly updates?: Readonly<Record<string, unknown>>;
   readonly by?: string;
@@ -105,7 +105,7 @@ export class Run {
   private pauseRequested = false;
   private stopRequested: string | undefined;
   private release: (() => void) | undefined;
-  private approvalWaiter: ((a: ApprovalAnswer | undefined) => void) | undefined;
+  private approvalWaiter: ((a: HumanAnswer | undefined) => void) | undefined;
   private abort: AbortController | undefined;
   private finished: Promise<Performance> | undefined;
 
@@ -179,7 +179,7 @@ export class Run {
     this.approvalWaiter?.(undefined);
   }
 
-  answerApproval(answer: ApprovalAnswer): string | undefined {
+  answerApproval(answer: HumanAnswer): string | undefined {
     if (!this.approvalWaiter) return 'no approval is pending';
     this.approvalWaiter(answer);
     return undefined;
@@ -253,7 +253,7 @@ export class Run {
     if (this.opts.autoApprove)
       return scriptedResolution(this.opts.demo, pause, this.engine, this.now());
     this.setStatus('awaiting-approval', { nodeId: pause.nodeId });
-    const answer = await new Promise<ApprovalAnswer | undefined>((resolve) => {
+    const answer = await new Promise<HumanAnswer | undefined>((resolve) => {
       this.approvalWaiter = resolve;
     });
     this.approvalWaiter = undefined;
