@@ -18,6 +18,8 @@ export function symphonyPlugin(): Plugin {
     name: 'symphony-api',
     configureServer(server) {
       loadEnv({ path: resolve(REPO_ROOT, '.env'), quiet: true })
+      // src/ lives outside the Vite root: watch it so pattern/core edits reload the API.
+      server.watcher.add(resolve(REPO_ROOT, 'src'))
       let api: Promise<Api> | undefined
       const load = () =>
         (api ??= server.ssrLoadModule(resolve(here, 'api.ts')).then((mod) =>

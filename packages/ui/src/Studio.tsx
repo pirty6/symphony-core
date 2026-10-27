@@ -1,0 +1,464 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  MarkerType,
+  MiniMap,
+  ReactFlow,
+  addEdge,
+  useEdgesState,
+  useNodesState,
+  useReactFlow,
+  type Connection,
+  type DefaultEdgeOptions,
+} from '@xyflow/react'
+import { writesOf } from '@core/graph'
+import { formatFieldInput, parseFieldInput } from '@core/schema'
+import type { Branch, ScoreEdge, ScoreNode } from '@core/types'
+import { validatePattern } from '@core/validate'
+import { DataEdge } from './canvas/DataEdge'
+import { FlowNode } from './canvas/FlowNode'
+import { ApiError, api, streamDraft, subscribeRun, type LibraryItem, type SavedSummary } from './lib/api'
+import {
+  IDLE_VIEW,
+  applyMessage,
+  currentFrame,
+  decorate,
+  fromFlow,
+  metaOf,
+  newNode,
+  replayView,
+  startLive,
+  streamFor,
+  toFlow,
+  uniqueId,
+  withNode,
+  type FlowEdge,
+  type FlowNode as FlowNodeType,
+  type PaletteKind,
+  type PatternMeta,
+  type RunView,
+} from './lib/model'
+import { AiOutput, ApprovalCard, EdgeEditor, GateCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
+import { Library } from './panels/Library'
+import { PatternPanel } from './panels/PatternPanel'
+import { Timeline } from './panels/Timeline'
+import { Toolbar, type RunSettings } from './panels/Toolbar'
+
+const nodeTypes = { start: FlowNode, agent: FlowNode, compute: FlowNode, condition: FlowNode, approval: FlowNode, end: FlowNode }
+const edgeTypes = { data: DataEdge }
+const defaultEdgeOptions: DefaultEdgeOptions = { type: 'data', markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 } }
+const BLANK: PatternMeta = { name: 'my-flow', description: 'A new flow', requiredContext: [], verbTriggers: [], state: [] }
+const ACTIVE = new Set(['running', 'paused', 'awaiting-approval'])
+type Tab = 'node' | 'ai' | 'state'
+
+function contextStrings(ctx: Record<string, unknown> | undefined): Record<string, string> {
+  return Object.fromEntries(Object.entries(ctx ?? {}).map(([k, v]) => [k, formatFieldInput(v)]))
+}
+
+export default function Studio() {
+  const { screenToFlowPosition, fitView } = useReactFlow()
+  const [library, setLibrary] = useState<LibraryItem[]>([])
+  const [saved, setSaved] = useState<SavedSummary[]>([])
+  const [meta, setMeta] = useState<PatternMeta>(BLANK)
+  const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeType>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([])
+  const [goal, setGoal] = useState('')
+  const [context, setContext] = useState<Record<string, string>>({})
+  const [settings, setSettings] = useState<RunSettings>({ provider: 'scripted', model: '', autoApprove: false, stepMode: false })
+  const [breakpoints, setBreakpoints] = useState<Set<string>>(new Set())
+  const [view, setView] = useState<RunView>(IDLE_VIEW)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [tab, setTab] = useState<Tab>('node')
+  const [drafting, setDrafting] = useState({ busy: false, text: '', errors: [] as string[] })
+  const [error, setError] = useState<string | null>(null)
+  const unsubscribe = useRef<(() => void) | null>(null)
+
+  const editable = view.mode === 'idle'
+  const runActive = view.mode === 'live' && ACTIVE.has(view.status)
+
+  // ── loading ────────────────────────────────────────────────────────
+
+  const showGraph = useCallback(
+    (m: PatternMeta, graph: LibraryItem['graph']) => {
+      const flow = toFlow(graph)
+      setMeta(m)
+      setNodes(flow.nodes)
+      setEdges(flow.edges)
+      setSelected(null)
+      setTimeout(() => void fitView({ padding: 0.15, duration: 300 }), 50)
+    },
+    [fitView, setEdges, setNodes],
+  )
+
+  const loadPattern = useCallback(
+    (item: LibraryItem) => {
+      unsubscribe.current?.()
+      showGraph(metaOf(item), item.graph)
+      setGoal(item.demo?.goal ?? item.description)
+      setContext(contextStrings(item.demo?.context))
+      setBreakpoints(new Set())
+      setView(IDLE_VIEW)
+      setTab('node')
+      setError(null)
+      history.replaceState(null, '', `#${item.name}`)
+    },
+    [showGraph],
+  )
+
+  const refreshSaved = useCallback(() => void api.saved().then(setSaved, () => setSaved([])), [])
+
+  useEffect(() => {
+    api.patterns().then(
+      (items) => {
+        setLibrary(items)
+        const wanted = decodeURIComponent(location.hash.slice(1)) || 'hangman'
+        const first = items.find((i) => i.name === wanted) ?? items[0]
+        if (first) loadPattern(first)
+      },
+      (e: Error) => setError(`Could not load patterns: ${e.message}`),
+    )
+    refreshSaved()
+    return () => unsubscribe.current?.()
+  }, [loadPattern, refreshSaved])
+
+  useEffect(() => {
+    if (view.mode === 'live' && !ACTIVE.has(view.status)) refreshSaved()
+  }, [view.mode, view.status, refreshSaved])
+
+  // ── derived ────────────────────────────────────────────────────────
+
+  const pattern = useMemo(() => fromFlow(meta, nodes, edges), [meta, nodes, edges])
+  const report = useMemo(() => validatePattern(pattern), [pattern])
+  const issues = useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const i of [...report.errors, ...report.warnings]) {
+      const key = i.nodeId ?? i.edgeId
+      if (key) map.set(key, [...(map.get(key) ?? []), i.message])
+    }
+    return map
+  }, [report])
+
+  const frame = currentFrame(view)
+
+  const toggleBreakpoint = useCallback(
+    (id: string) => {
+      setBreakpoints((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        if (view.runId && view.mode === 'live') void api.control(view.runId, 'breakpoints', { breakpoints: [...next] })
+        return next
+      })
+    },
+    [view.runId, view.mode],
+  )
+
+  const display = useMemo(() => {
+    const d = decorate(nodes, edges, frame, {
+      breakpoints,
+      issues: editable ? issues : new Map(),
+      ...(view.gate ? { gate: view.gate } : {}),
+      onToggleBreakpoint: toggleBreakpoint,
+    })
+    const writes = new Map(nodes.map((n) => [n.id, writesOf(n.data.node, { state: meta.state, nodes: [], edges: [], start: '' })]))
+    return { nodes: d.nodes, edges: d.edges.map((e) => ({ ...e, data: { ...e.data!, carries: writes.get(e.source) ?? [] } })) }
+  }, [nodes, edges, frame, breakpoints, editable, issues, view.gate, toggleBreakpoint, meta.state])
+
+  const focusId = selected ?? frame.pausedNodeId ?? frame.activeNodeId ?? null
+  const selectedNode = nodes.find((n) => n.id === selected)
+  const selectedEdge = edges.find((e) => e.id === selected)
+  const focusNode = nodes.find((n) => n.id === focusId)
+  const stream = focusId ? streamFor(view, focusId, frame) : undefined
+
+  // ── editing ────────────────────────────────────────────────────────
+
+  const onConnect = useCallback(
+    (c: Connection) => {
+      if (!editable || !c.source || !c.target) return
+      setEdges((eds) => {
+        const id = uniqueId(`${c.source}-${c.target}-`, eds.map((e) => e.id))
+        const branch = (c.sourceHandle ?? undefined) as Branch | undefined
+        const edge: ScoreEdge = { id, from: c.source, to: c.target, ...(branch ? { branch } : {}) }
+        return addEdge({ ...c, id, type: 'data', data: { edge, carries: [], back: false } }, eds)
+      })
+    },
+    [editable, setEdges],
+  )
+
+  const onDrop = useCallback(
+    (e: DragEvent) => {
+      e.preventDefault()
+      const kind = e.dataTransfer.getData('application/symphony-node') as PaletteKind
+      if (!kind || !editable) return
+      const prefix = kind === 'assessor' || kind === 'executor' ? kind : kind
+      setNodes((ns) => [...ns, newNode(kind, uniqueId(prefix, ns.map((n) => n.id)), screenToFlowPosition({ x: e.clientX, y: e.clientY }))])
+    },
+    [editable, screenToFlowPosition, setNodes],
+  )
+
+  const updateNode = (node: ScoreNode) => setNodes((ns) => ns.map((n) => (n.id === node.id ? withNode(n, node, meta.state) : n)))
+  const updateEdge = (edge: ScoreEdge) =>
+    setEdges((es) => es.map((e) => (e.id === edge.id ? { ...e, data: { ...e.data!, edge } } : e)))
+  const deleteSelected = () => {
+    if (!selected) return
+    setNodes((ns) => ns.filter((n) => n.id !== selected))
+    setEdges((es) => es.filter((e) => e.id !== selected && e.source !== selected && e.target !== selected))
+    setSelected(null)
+  }
+
+  // ── runs ───────────────────────────────────────────────────────────
+
+  const run = async () => {
+    setError(null)
+    let ctx: Record<string, unknown>
+    try {
+      ctx = Object.fromEntries(
+        meta.state.filter((f) => (context[f.name] ?? '').trim() !== '').map((f) => [f.name, parseFieldInput(f.type, context[f.name]!)]),
+      )
+    } catch (e) {
+      setError(`Invalid run input: ${(e as Error).message}`)
+      return
+    }
+    try {
+      const { runId } = await api.startRun({
+        pattern,
+        goal,
+        context: ctx,
+        provider: settings.provider,
+        ...(settings.model ? { model: settings.model } : {}),
+        autoApprove: settings.autoApprove,
+        stepMode: settings.stepMode,
+        breakpoints: [...breakpoints],
+      })
+      unsubscribe.current?.()
+      setView(startLive(runId))
+      setSelected(null)
+      setTab('ai')
+      unsubscribe.current = subscribeRun(runId, (m) => setView((v) => (v.runId === runId ? applyMessage(v, m) : v)))
+    } catch (e) {
+      setError(e instanceof ApiError && e.issues.length ? `${e.message}` : (e as Error).message)
+    }
+  }
+
+  const control = (action: string, extra?: Record<string, unknown>) => {
+    if (view.runId) void api.control(view.runId, action, extra).catch((e: Error) => setError(e.message))
+  }
+
+  const changeSettings = (s: RunSettings) => {
+    if (s.stepMode !== settings.stepMode && runActive) control('stepMode', { on: s.stepMode })
+    setSettings(s)
+  }
+
+  const openSaved = async (file: string) => {
+    try {
+      const res = await api.savedFile(file)
+      unsubscribe.current?.()
+      showGraph(
+        {
+          name: res.run.score.pattern,
+          description: res.run.score.description,
+          requiredContext: [],
+          verbTriggers: [],
+          state: [...res.run.score.state],
+          maxSteps: res.run.score.maxSteps,
+        },
+        res.graph,
+      )
+      setGoal(res.run.score.goal)
+      setContext(contextStrings(res.run.score.context as Record<string, unknown>))
+      setView(replayView(res.run, { reproduced: res.reproduced, issues: res.issues, file }))
+      setTab('state')
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  const draft = async (request: string) => {
+    setDrafting({ busy: true, text: '', errors: [] })
+    try {
+      await streamDraft({ request, provider: settings.provider, ...(settings.model ? { model: settings.model } : {}) }, (m) => {
+        if (m.type === 'provider' && (m.event.type === 'delta' || m.event.type === 'reasoning')) {
+          const text = m.event.text
+          setDrafting((d) => ({ ...d, text: d.text + text }))
+        }
+        if (m.type === 'round' && m.errors.length) setDrafting((d) => ({ ...d, errors: [...d.errors, ...m.errors.map((x) => `round ${m.round}: ${x}`)] }))
+        if (m.type === 'error') setDrafting((d) => ({ ...d, errors: [...d.errors, m.error] }))
+        if (m.type === 'done' && m.pattern && m.graph) {
+          loadPattern({ ...m.pattern, source: 'draft', graph: m.graph, demo: { goal: request, context: {} } })
+        }
+      })
+    } catch (e) {
+      setDrafting((d) => ({ ...d, errors: [...d.errors, (e as Error).message] }))
+    } finally {
+      setDrafting((d) => ({ ...d, busy: false }))
+    }
+  }
+
+  // ── render ─────────────────────────────────────────────────────────
+
+  const resultBanner =
+    view.mode !== 'idle' && !ACTIVE.has(view.status) && view.status !== 'idle' ? (
+      <div className={`card result status-${view.status}`} data-testid="run-result">
+        <b>{view.performance?.outcome ?? view.status}</b> {view.reason}
+        {view.savedTo && <div className="muted">saved {view.savedTo.split('/.symphony/')[1] ?? view.savedTo}</div>}
+        {view.replay && (
+          <div className={view.replay.reproduced ? 'ok' : 'issue'} data-testid="replay-check">
+            {view.replay.reproduced ? '✓ verified: replaying recorded answers reproduces this run exactly' : `✘ not reproducible ${view.replay.issues.join('; ')}`}
+          </div>
+        )}
+      </div>
+    ) : null
+
+  return (
+    <div className="studio">
+      <Toolbar
+        title={meta.name}
+        mode={view.mode}
+        status={view.status}
+        settings={settings}
+        canRun={report.errors.length === 0}
+        onSettings={changeSettings}
+        onRun={() => void run()}
+        onPause={() => control('pause')}
+        onResume={() => control('resume')}
+        onStep={() => control('step')}
+        onStop={() => control('stop')}
+        onEdit={() => {
+          unsubscribe.current?.()
+          setView(IDLE_VIEW)
+          setTab('node')
+        }}
+      />
+      <Library
+        library={library}
+        activeName={meta.name}
+        saved={saved}
+        editable={editable}
+        drafting={drafting}
+        onLoad={loadPattern}
+        onNew={() => {
+          const start = newNode('start', 'start', { x: 0, y: 0 })
+          const end = newNode('end', 'end', { x: 0, y: 200 })
+          setMeta(BLANK)
+          setNodes([start, end])
+          setEdges([{ id: 'start-end', source: 'start', target: 'end', type: 'data', data: { edge: { id: 'start-end', from: 'start', to: 'end' }, carries: [], back: false } }])
+          setGoal('')
+          setContext({})
+          setView(IDLE_VIEW)
+        }}
+        onOpenSaved={(f) => void openSaved(f)}
+        onRefreshSaved={refreshSaved}
+        onDraft={(r) => void draft(r)}
+      />
+      <main className="canvas" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
+        <ReactFlow
+          nodes={display.nodes}
+          edges={display.edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={editable ? onEdgesChange : undefined}
+          onConnect={onConnect}
+          onNodeClick={(_, n) => {
+            setSelected(n.id)
+            setTab(editable ? 'node' : 'ai')
+          }}
+          onEdgeClick={(_, e) => {
+            setSelected(e.id)
+            setTab('node')
+          }}
+          onPaneClick={() => setSelected(null)}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          defaultEdgeOptions={defaultEdgeOptions}
+          nodesConnectable={editable}
+          deleteKeyCode={editable ? ['Backspace', 'Delete'] : null}
+          fitView
+          minZoom={0.2}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#2c3354" />
+          <Controls />
+          <MiniMap pannable zoomable style={{ width: 150, height: 100 }} maskColor="rgba(15, 18, 34, 0.75)" nodeColor="#2a3156" nodeStrokeWidth={2} />
+        </ReactFlow>
+      </main>
+      <aside className="inspector">
+        {error && (
+          <div className="card issue" role="alert">
+            {error}
+            <button type="button" className="link" onClick={() => setError(null)} aria-label="dismiss">
+              ✕
+            </button>
+          </div>
+        )}
+        <GateCard view={view} onResume={() => control('resume')} onStep={() => control('step')} onStop={() => control('stop')} />
+        <ApprovalCard view={view} onAnswer={(a) => view.runId && void api.approve(view.runId, a).catch((e: Error) => setError(e.message))} />
+        {resultBanner}
+        <nav className="tabs">
+          {(['node', 'ai', 'state'] as const).map((t) => (
+            <button type="button" key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
+              {t === 'node' ? (selectedNode || selectedEdge ? 'Selection' : 'Pattern') : t === 'ai' ? 'AI output' : 'State'}
+            </button>
+          ))}
+        </nav>
+        <div className="tab-body">
+          {tab === 'node' &&
+            (selectedNode ? (
+              <>
+                {editable &&
+                  issues.get(selectedNode.id)?.map((m, i) => (
+                    <div key={i} className="issue" data-testid="node-issue">
+                      {m}
+                    </div>
+                  ))}
+                <NodeEditor node={selectedNode} state={meta.state} editable={editable} onChange={updateNode} onDelete={deleteSelected} />
+                {!editable && <NodeInput node={selectedNode} frame={frame} />}
+              </>
+            ) : selectedEdge ? (
+              <>
+                {editable &&
+                  issues.get(selectedEdge.id)?.map((m, i) => (
+                    <div key={i} className="issue">
+                      {m}
+                    </div>
+                  ))}
+                <EdgeEditor edge={selectedEdge} editable={editable} onChange={updateEdge} onDelete={deleteSelected} />
+              </>
+            ) : (
+              <PatternPanel
+                meta={meta}
+                editable={editable}
+                goal={goal}
+                context={context}
+                errors={report.errors}
+                warnings={report.warnings}
+                onMeta={setMeta}
+                onGoal={setGoal}
+                onContext={setContext}
+                onSelect={setSelected}
+                onExport={() => api.typescript(pattern).then((r) => r.source)}
+                onSave={() =>
+                  api.savePattern(pattern).then((r) => {
+                    void api.patterns().then(setLibrary)
+                    return r.file
+                  })
+                }
+              />
+            ))}
+          {tab === 'ai' && (
+            <>
+              {focusNode && (
+                <h3 className="focus-title">
+                  {focusNode.data.node.label} <code>{focusNode.id}</code>
+                </h3>
+              )}
+              {focusNode && <NodeInput node={focusNode} frame={frame} />}
+              <AiOutput stream={stream} live={view.cursor === null} />
+            </>
+          )}
+          {tab === 'state' && <StateView frame={frame} />}
+        </div>
+      </aside>
+      <Timeline frames={view.frames} cursor={view.cursor} onSeek={(cursor) => setView((v) => ({ ...v, cursor }))} />
+    </div>
+  )
+}
