@@ -20,13 +20,31 @@ import { CompileError, compileScore } from '../../../src/core/compile.js'
 import { parseDraft, patternToTypeScript } from '../../../src/core/draft.js'
 import { patternToGraph } from '../../../src/core/graph.js'
 import { replayPerformance } from '../../../src/core/replay.js'
-import type { Pattern } from '../../../src/core/types.js'
+import { isImprovisation, playsFromRepertoire } from '../../../src/core/jazz.js'
+import type { Complexity, ExecutableScore, Pattern } from '../../../src/core/types.js'
+import { concertNext } from '../../../src/runtime/concert.js'
 import { validatePattern } from '../../../src/core/validate.js'
 import { PATTERNS } from '../../../src/patterns/index.js'
 import { draftPattern } from '../../../src/runtime/drafting.js'
 import { Run } from '../../../src/runtime/driver.js'
-import { envConfig, isProviderName, makeProvider, runtimeExtras, type RuntimeExtras } from '../../../src/runtime/factory.js'
-import { gitFingerprint, listRuns, loadPatternFiles, loadRun, runPath, savePatternFile, saveRun } from '../../../src/runtime/store.js'
+import {
+  effectiveTiers,
+  envConfig,
+  isProviderName,
+  makeProvider,
+  runtimeExtras,
+  type RuntimeExtras,
+} from '../../../src/runtime/factory.js'
+import {
+  gitFingerprint,
+  listRuns,
+  loadPatternFiles,
+  loadRepertoire,
+  loadRun,
+  runPath,
+  savePatternFile,
+  saveRun,
+} from '../../../src/runtime/store.js'
 
 export interface ApiOptions {
   /** Repository root (where src/patterns lives). */
@@ -43,6 +61,7 @@ export interface ApiOptions {
 }
 
 export const RUNS_DIR = '.symphony/runs'
+let counter = 0
 export const DRAFTS_DIR = 'src/patterns/drafts'
 const TERMINAL = new Set(['done', 'failed', 'cancelled'])
 
@@ -136,31 +155,62 @@ export function createApi(opts: ApiOptions) {
     })
   }
 
-  async function startRun(body: Record<string, unknown>): Promise<Run> {
-    const pattern = asPattern(body.pattern)
-    const demo = await demoFor(pattern.name)
+  interface Settings {
+    readonly provider: unknown
+    readonly model: unknown
+    readonly autoApprove: boolean
+    readonly stepMode: boolean
+    readonly breakpoints: string[]
+  }
+
+  async function launch(score: ExecutableScore, pattern: Pattern, settings: Settings): Promise<Run> {
+    const demo = pattern.demo ?? (await demoFor(pattern.name))
     const withDemo: Pattern = demo ? { ...pattern, demo } : pattern
-    const score = compileScore(withDemo, {
-      goal: typeof body.goal === 'string' && body.goal.trim() ? body.goal : pattern.description || pattern.name,
-      context: (body.context as Record<string, unknown> | undefined) ?? {},
-    })
     const { tools, toolContext, mcpServers } = await runtime()
-    const provider = providerFor(body.provider ?? 'scripted', body.model, withDemo, mcpServers)
+    const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers)
+    const id = `run-${Date.now().toString(36)}-${(counter++).toString(36)}`
+    const next = concertNext({
+      maestroScore: score,
+      // The composed score plays with the same settings, starting fresh (no breakpoints).
+      start: async (s, p) => (await launch(s, p, { ...settings, breakpoints: [] })).id,
+    })
     const run = new Run({
+      id,
       score,
       provider,
       tools,
       toolContext,
       ...(demo ? { demo } : {}),
-      autoApprove: body.autoApprove === true,
-      stepMode: body.stepMode === true,
-      breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
+      ...(playsFromRepertoire(score.improvisation) ? { repertoire: await loadRepertoire(runsDir) } : {}),
+      autoApprove: settings.autoApprove,
+      stepMode: settings.stepMode,
+      breakpoints: settings.breakpoints,
       ...(provider.name === 'copilot' ? { envHash: () => gitFingerprint(workspace) } : {}),
       onSave: (r) => saveRun(runsDir, r),
+      ...(next ? { next } : {}),
     })
     runs.set(run.id, run)
     void run.start().finally(() => provider.dispose?.())
     return run
+  }
+
+  async function startRun(body: Record<string, unknown>): Promise<Run> {
+    const pattern = asPattern(body.pattern)
+    const complexity = [1, 2, 3, 4].includes(body.complexity as number) ? (body.complexity as Complexity) : undefined
+    const improvisation = isImprovisation(body.improvisation) ? body.improvisation : undefined
+    const score = compileScore(pattern, {
+      goal: typeof body.goal === 'string' && body.goal.trim() ? body.goal : pattern.description || pattern.name,
+      context: (body.context as Record<string, unknown> | undefined) ?? {},
+      ...(complexity ? { complexity } : {}),
+      ...(improvisation !== undefined ? { improvisation } : {}),
+    })
+    return launch(score, pattern, {
+      provider: body.provider,
+      model: body.model,
+      autoApprove: body.autoApprove === true,
+      stepMode: body.stepMode === true,
+      breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
+    })
   }
 
   function streamRun(req: IncomingMessage, res: ServerResponse, run: Run): void {
@@ -268,6 +318,17 @@ export function createApi(opts: ApiOptions) {
       }
       if (method === 'GET' && path === '/api/runs') {
         send(res, 200, [...runs.values()].map((r) => ({ id: r.id, pattern: r.score.pattern, status: r.status })))
+        return true
+      }
+      if (method === 'GET' && path === '/api/tiers') {
+        send(res, 200, effectiveTiers(env))
+        return true
+      }
+      const one = /^\/api\/runs\/([^/]+)$/.exec(path)
+      if (one && method === 'GET') {
+        const run = runs.get(one[1]!)
+        if (!run) send(res, 404, { error: 'run not found' })
+        else send(res, 200, { id: run.id, status: run.status, score: run.score, graph: patternToGraph(run.score) })
         return true
       }
       const m = /^\/api\/runs\/([^/]+)\/(events|control|approval)$/.exec(path)

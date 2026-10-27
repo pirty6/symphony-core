@@ -91,7 +91,7 @@ describe('Timeline', () => {
 })
 
 describe('Toolbar', () => {
-  const settings = { provider: 'scripted' as const, model: '', autoApprove: false, stepMode: false }
+  const settings = { provider: 'scripted' as const, model: '', autoApprove: false, stepMode: false, complexity: 0 as const, improvisation: 0 as const }
   const handlers = { onSettings: vi.fn(), onRun: vi.fn(), onPause: vi.fn(), onResume: vi.fn(), onStep: vi.fn(), onStop: vi.fn(), onEdit: vi.fn() }
 
   it('runs when valid and shows pause/stop while running', () => {

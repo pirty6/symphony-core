@@ -91,6 +91,7 @@ export function ApprovalCard({
     >
       <h3>✋ {pause.label}</h3>
       <p>{pause.message}</p>
+      <ComposedScore state={pause.state} />
       <fieldset className="editor" disabled={sent}>
       {pause.feedback?.map((f, i) => (
         <div key={i} className="issue">
@@ -102,6 +103,7 @@ export function ApprovalCard({
           {f.name} <small>({f.type})</small>
           <input
             autoFocus
+            placeholder={f.description ?? ''}
             value={values[f.name] ?? ''}
             onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
             aria-label={f.name}
@@ -136,7 +138,7 @@ export function AiOutput({ stream, live }: { stream: AiStream | undefined; live:
     <div className="ai-output" data-testid="ai-output">
       <div className="muted">
         step {stream.step} · attempt {stream.attempt}
-        {stream.info.length > 0 && ` · ${stream.info.at(-1)}`}
+        {stream.info.length > 0 && ` · ${stream.info.filter((i) => !i.startsWith('running')).join(' · ')}`}
       </div>
       {stream.permissions.filter((p) => !p.allowed).map((p, i) => (
         <div key={i} className="issue">
@@ -177,6 +179,59 @@ export function AiOutput({ stream, live }: { stream: AiStream | undefined; live:
           <pre className="json">{json(stream.result)}</pre>
         </>
       )}
+    </div>
+  )
+}
+
+export function AiTakes({ streams, live }: { streams: readonly AiStream[]; live: boolean }) {
+  if (streams.length <= 1) return <AiOutput stream={streams[0]} live={live} />
+  return (
+    <div className="takes" data-testid="ai-takes">
+      {streams.map((s) => (
+        <details key={s.key} open={s.take === 0} className={s.take === 0 ? 'take merge' : 'take'}>
+          <summary>{s.take === 0 ? '🎺 Bandleader: merged answer' : `Take ${s.take}`}</summary>
+          <AiOutput stream={s} live={live} />
+        </details>
+      ))}
+    </div>
+  )
+}
+
+/** Summary of the score the maestro composed, shown at its go-gate. */
+function ComposedScore({ state }: { state: Readonly<Record<string, unknown>> }) {
+  const p = state.normalized as { name?: string; description?: string; nodes?: { id: string; label: string; kind: string; role?: string }[] } | undefined
+  if (!p?.nodes) return null
+  const notes = (state.debateNotes as string[] | undefined) ?? []
+  const missing = (state.contextNotes as string[] | undefined) ?? []
+  return (
+    <div className="composed" data-testid="composed-score">
+      <div>
+        <b>{p.name}</b> · complexity {String(state.complexity)} · round {String(state.round)}
+        {state.chosen === 'new' ? ' · new pattern' : ''}
+      </div>
+      <p className="muted">{p.description}</p>
+      <ol className="composed-steps">
+        {p.nodes
+          .filter((n) => n.kind !== 'start')
+          .map((n) => (
+            <li key={n.id}>
+              {n.label} <small className="muted">{n.kind === 'agent' ? n.role : n.kind}</small>
+            </li>
+          ))}
+      </ol>
+      {notes.length > 0 && (
+        <ul className="debate-notes">
+          {notes.map((n, i) => (
+            <li key={i}>{n}</li>
+          ))}
+        </ul>
+      )}
+      <div className="muted">inputs {JSON.stringify(state.childContext ?? {})}</div>
+      {missing.map((m, i) => (
+        <div key={i} className="issue warning">
+          {m}
+        </div>
+      ))}
     </div>
   )
 }

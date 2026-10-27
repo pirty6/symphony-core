@@ -1,7 +1,7 @@
 import type { Issue, ValidationReport } from '@core/validate'
-import type { ExecutableScore, Pattern, SavedRun, StateField } from '@core/types'
+import type { Complexity, ExecutableScore, Improvisation, Pattern, SavedRun, StateField } from '@core/types'
 import type { VisualGraph } from '@core/graph'
-import type { RunMessage } from '../../../../src/runtime/driver'
+import type { NextPerformance, RunMessage } from '../../../../src/runtime/driver'
 import type { ProviderEvent } from '../../../../src/runtime/provider'
 
 export type PatternData = Omit<Pattern, 'demo'>
@@ -31,6 +31,8 @@ export interface StartRunRequest {
   readonly autoApprove: boolean
   readonly stepMode: boolean
   readonly breakpoints: string[]
+  readonly complexity?: Complexity
+  readonly improvisation: Improvisation
 }
 
 export type DraftMessage =
@@ -67,6 +69,9 @@ export const api = {
   approve: (runId: string, body: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) =>
     post(`/api/runs/${runId}/approval`, body).then((r) => json<{ ok: boolean }>(r)),
   saved: () => fetch('/api/saved').then((r) => json<SavedSummary[]>(r)),
+  run: (runId: string) =>
+    fetch(`/api/runs/${runId}`).then((r) => json<{ id: string; status: string; score: ExecutableScore; graph: VisualGraph }>(r)),
+  tiers: () => fetch('/api/tiers').then((r) => json<Record<Complexity, { model: string; effort?: string }>>(r)),
   savedFile: (file: string) =>
     fetch(`/api/saved/file?path=${encodeURIComponent(file)}`).then((r) =>
       json<{ run: SavedRun; issues: string[]; reproduced: boolean; graph: VisualGraph }>(r),
@@ -118,4 +123,4 @@ export async function streamDraft(
   }
 }
 
-export type { RunMessage, ProviderEvent, StateField }
+export type { NextPerformance, RunMessage, ProviderEvent, StateField }

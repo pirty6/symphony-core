@@ -73,8 +73,11 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
           <p className="fn-text">{n.directive}</p>
           <Chips label="in" keys={data.reads} />
           <Chips label="out" keys={data.writes} />
-          {(n.capabilities?.length || n.checks?.length) ? (
+          {n.capabilities?.length || n.checks?.length || n.solo || n.isolated || n.complexity ? (
             <div className="fn-badges">
+              {n.solo && <span className="badge badge-solo" title="Solo point: from Swing up the AI chooses the route">🎷 solo</span>}
+              {n.isolated && <span className="badge" title="No workspace tools: works only from its input">🔒 isolated</span>}
+              {n.complexity && <span className="badge" title="Fixed model tier">tier {n.complexity}</span>}
               {n.capabilities?.includes('web') && <span className="badge" title="May search and read the web">🌐 web</span>}
               {n.capabilities?.includes('mcp') && <span className="badge" title="May use MCP servers">🔌 mcp</span>}
               {n.checks?.length ? (

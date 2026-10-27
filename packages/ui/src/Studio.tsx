@@ -13,13 +13,13 @@ import {
   type Connection,
   type DefaultEdgeOptions,
 } from '@xyflow/react'
-import { writesOf } from '@core/graph'
+import { patternToGraph, writesOf } from '@core/graph'
 import { formatFieldInput, parseFieldInput } from '@core/schema'
 import type { Branch, ScoreEdge, ScoreNode } from '@core/types'
 import { validatePattern } from '@core/validate'
 import { DataEdge } from './canvas/DataEdge'
 import { FlowNode } from './canvas/FlowNode'
-import { ApiError, api, streamDraft, subscribeRun, type LibraryItem, type SavedSummary } from './lib/api'
+import { ApiError, api, subscribeRun, type LibraryItem, type SavedSummary, type StartRunRequest } from './lib/api'
 import {
   IDLE_VIEW,
   applyMessage,
@@ -30,7 +30,7 @@ import {
   newNode,
   replayView,
   startLive,
-  streamFor,
+  streamsFor,
   toFlow,
   uniqueId,
   withNode,
@@ -40,11 +40,11 @@ import {
   type PatternMeta,
   type RunView,
 } from './lib/model'
-import { AiOutput, ApprovalCard, EdgeEditor, GateCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
+import { AiTakes, ApprovalCard, EdgeEditor, GateCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
 import { Library } from './panels/Library'
 import { PatternPanel } from './panels/PatternPanel'
 import { Timeline } from './panels/Timeline'
-import { Toolbar, type RunSettings } from './panels/Toolbar'
+import { Toolbar, type RunSettings, type Tiers } from './panels/Toolbar'
 
 const nodeTypes = { start: FlowNode, agent: FlowNode, compute: FlowNode, condition: FlowNode, approval: FlowNode, tool: FlowNode, end: FlowNode }
 const edgeTypes = { data: DataEdge }
@@ -68,12 +68,20 @@ export default function Studio() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([])
   const [goal, setGoal] = useState('')
   const [context, setContext] = useState<Record<string, string>>({})
-  const [settings, setSettings] = useState<RunSettings>({ provider: 'scripted', model: '', autoApprove: false, stepMode: false })
+  const [settings, setSettings] = useState<RunSettings>({
+    provider: 'scripted',
+    model: '',
+    autoApprove: false,
+    stepMode: false,
+    complexity: 0,
+    improvisation: 0,
+  })
+  const [tiers, setTiers] = useState<Tiers | undefined>()
+  const [notice, setNotice] = useState<string | null>(null)
   const [breakpoints, setBreakpoints] = useState<Set<string>>(new Set())
   const [view, setView] = useState<RunView>(IDLE_VIEW)
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('node')
-  const [drafting, setDrafting] = useState({ busy: false, text: '', errors: [] as string[] })
   const [error, setError] = useState<string | null>(null)
   const unsubscribe = useRef<(() => void) | null>(null)
 
@@ -135,6 +143,10 @@ export default function Studio() {
       (e: Error) => !cancelled && setError(`Could not load patterns: ${e.message}`),
     )
     refreshSaved()
+    api.tiers().then(
+      (t) => !cancelled && setTiers(t),
+      () => undefined,
+    )
     return () => {
       cancelled = true
       unsubscribe.current?.()
@@ -188,7 +200,7 @@ export default function Studio() {
   const selectedNode = nodes.find((n) => n.id === selected)
   const selectedEdge = edges.find((e) => e.id === selected)
   const focusNode = nodes.find((n) => n.id === focusId)
-  const stream = focusId ? streamFor(view, focusId, frame) : undefined
+  const streams = focusId ? streamsFor(view, focusId, frame) : []
 
   const followId = view.mode !== 'idle' ? (frame.pausedNodeId ?? frame.activeNodeId) : undefined
   useEffect(() => {
@@ -247,26 +259,80 @@ export default function Studio() {
       setError(`Invalid run input: ${(e as Error).message}`)
       return
     }
+    await start({ pattern, goal, context: ctx }, breakpoints)
+  }
+
+  const followRun = (runId: string) => {
+    unsubscribe.current?.()
+    setView(startLive(runId))
+    setSelected(null)
+    setTab('ai')
+    unsubscribe.current = subscribeRun(runId, (m) => setView((v) => (v.runId === runId ? applyMessage(v, m) : v)))
+  }
+
+  const start = async (
+    what: { pattern: StartRunRequest['pattern']; goal: string; context: Record<string, unknown> },
+    bps: ReadonlySet<string>,
+  ) => {
     try {
       const { runId } = await api.startRun({
-        pattern,
-        goal,
-        context: ctx,
+        ...what,
         provider: settings.provider,
         ...(settings.model ? { model: settings.model } : {}),
         autoApprove: settings.autoApprove,
         stepMode: settings.stepMode,
-        breakpoints: [...breakpoints],
+        breakpoints: [...bps],
+        ...(settings.complexity ? { complexity: settings.complexity } : {}),
+        improvisation: settings.improvisation,
       })
-      unsubscribe.current?.()
-      setView(startLive(runId))
-      setSelected(null)
-      setTab('ai')
-      unsubscribe.current = subscribeRun(runId, (m) => setView((v) => (v.runId === runId ? applyMessage(v, m) : v)))
+      followRun(runId)
     } catch (e) {
       setError(e instanceof ApiError && e.issues.length ? `${e.message}` : (e as Error).message)
     }
   }
+
+  const ask = async (request: string) => {
+    const item = library.find((l) => l.name === 'maestro')
+    if (!item) {
+      setError('The maestro pattern is not in the library.')
+      return
+    }
+    setError(null)
+    setNotice(null)
+    loadPattern(item)
+    setGoal('Compose the score for the request')
+    setContext({ request })
+    const { demo: _demo, source: _source, graph: _graph, ...data } = item
+    await start({ pattern: data, goal: 'Compose the score for the request', context: { request } }, new Set())
+  }
+
+  // The maestro handed on its composed score: show it and follow its performance.
+  const handedOn = view.next
+  useEffect(() => {
+    if (!handedOn) return
+    const meta = metaOf(handedOn.pattern)
+    if (handedOn.runId) {
+      const childId = handedOn.runId
+      void api.run(childId).then(
+        (r) => {
+          showGraph(meta, r.graph)
+          setGoal(r.score.goal)
+          setContext(contextStrings(r.score.context as Record<string, unknown>))
+          setNotice(`♪ The maestro composed '${handedOn.pattern.name}' (complexity ${r.score.complexity}). Now performing it.`)
+          followRun(childId)
+        },
+        (e: Error) => setError(e.message),
+      )
+    } else {
+      unsubscribe.current?.()
+      showGraph(meta, patternToGraph(handedOn.pattern))
+      setContext(contextStrings(handedOn.context as Record<string, unknown>))
+      setView(IDLE_VIEW)
+      setTab('node')
+      setNotice(handedOn.error ?? `The maestro composed '${handedOn.pattern.name}'. Fill in its inputs and press Run.`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react once per hand-off
+  }, [handedOn])
 
   const control = (action: string, extra?: Record<string, unknown>) => {
     if (view.runId) void api.control(view.runId, action, extra).catch((e: Error) => setError(e.message))
@@ -301,27 +367,6 @@ export default function Studio() {
     }
   }
 
-  const draft = async (request: string) => {
-    setDrafting({ busy: true, text: '', errors: [] })
-    try {
-      await streamDraft({ request, provider: settings.provider, ...(settings.model ? { model: settings.model } : {}) }, (m) => {
-        if (m.type === 'provider' && (m.event.type === 'delta' || m.event.type === 'reasoning')) {
-          const text = m.event.text
-          setDrafting((d) => ({ ...d, text: d.text + text }))
-        }
-        if (m.type === 'round' && m.errors.length) setDrafting((d) => ({ ...d, errors: [...d.errors, ...m.errors.map((x) => `round ${m.round}: ${x}`)] }))
-        if (m.type === 'error') setDrafting((d) => ({ ...d, errors: [...d.errors, m.error] }))
-        if (m.type === 'done' && m.pattern && m.graph) {
-          loadPattern({ ...m.pattern, source: 'draft', graph: m.graph, demo: { goal: request, context: {} } })
-        }
-      })
-    } catch (e) {
-      setDrafting((d) => ({ ...d, errors: [...d.errors, (e as Error).message] }))
-    } finally {
-      setDrafting((d) => ({ ...d, busy: false }))
-    }
-  }
-
   // ── render ─────────────────────────────────────────────────────────
 
   const resultBanner =
@@ -346,6 +391,7 @@ export default function Studio() {
         settings={settings}
         canRun={report.errors.length === 0}
         onSettings={changeSettings}
+        {...(tiers ? { tiers } : {})}
         onRun={() => void run()}
         onPause={() => control('pause')}
         onResume={() => control('resume')}
@@ -362,7 +408,7 @@ export default function Studio() {
         activeName={meta.name}
         saved={saved}
         editable={editable}
-        drafting={drafting}
+        asking={view.mode === 'live' && ACTIVE.has(view.status) && meta.name === 'maestro'}
         onLoad={loadPattern}
         onNew={() => {
           const start = newNode('start', 'start', { x: 0, y: 0 })
@@ -376,7 +422,7 @@ export default function Studio() {
         }}
         onOpenSaved={(f) => void openSaved(f)}
         onRefreshSaved={refreshSaved}
-        onDraft={(r) => void draft(r)}
+        onAsk={(r) => void ask(r)}
       />
       <main className="canvas" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
         <ReactFlow
@@ -412,6 +458,14 @@ export default function Studio() {
           <div className="card issue" role="alert">
             {error}
             <button type="button" className="link" onClick={() => setError(null)} aria-label="dismiss">
+              ✕
+            </button>
+          </div>
+        )}
+        {notice && (
+          <div className="card notice" data-testid="notice">
+            {notice}
+            <button type="button" className="link" onClick={() => setNotice(null)} aria-label="dismiss notice">
               ✕
             </button>
           </div>
@@ -478,7 +532,7 @@ export default function Studio() {
                 </h3>
               )}
               {focusNode && <NodeInput node={focusNode} frame={frame} />}
-              <AiOutput stream={stream} live={view.cursor === null} />
+              <AiTakes streams={streams} live={view.cursor === null} />
             </>
           )}
           {tab === 'state' && <StateView frame={frame} />}

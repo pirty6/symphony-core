@@ -7,7 +7,7 @@ import type { Edge, Node } from '@xyflow/react'
 import { graphToPattern, readsOf, writesOf, type VisualGraph } from '@core/graph'
 import { EMPTY_FRAME, framesOf, reduceFrame, type Frame, type NodeStatus } from '@core/replay'
 import type { NodeKind, Pause, Performance, Role, SavedRun, ScoreEdge, ScoreNode, StateField } from '@core/types'
-import type { PatternData, RunMessage } from './api'
+import type { NextPerformance, PatternData, RunMessage } from './api'
 
 // ── canvas ──────────────────────────────────────────────────────────
 
@@ -160,6 +160,8 @@ export interface AiStream {
   readonly nodeId: string
   readonly step: number
   readonly attempt: number
+  /** Jazz: 1..N for a take, 0 for the bandleader's merge. */
+  readonly take?: number
   text: string
   reasoning: string
   messages: string[]
@@ -184,6 +186,8 @@ export interface RunView {
   readonly savedTo?: string
   readonly reason?: string
   readonly replay?: { readonly reproduced: boolean; readonly issues: readonly string[]; readonly file?: string }
+  /** The maestro handed on a composed score. */
+  readonly next?: NextPerformance
 }
 
 export const IDLE_VIEW: RunView = { mode: 'idle', status: 'idle', frames: [], cursor: null, streams: [] }
@@ -197,13 +201,19 @@ export function currentFrame(v: RunView): Frame {
   return v.cursor === null ? v.frames.at(-1)! : (v.frames[Math.min(v.cursor, v.frames.length - 1)] ?? EMPTY_FRAME)
 }
 
-function updateStream(v: RunView, nodeId: string, attempt: number, fn: (s: AiStream) => void): AiStream[] {
+function updateStream(
+  v: RunView,
+  nodeId: string,
+  attempt: number,
+  fn: (s: AiStream) => void,
+  take?: number,
+): AiStream[] {
   const step = v.pause?.nodeId === nodeId ? v.pause.step : (v.frames.at(-1)?.step ?? 0)
-  const key = `${step}:${nodeId}:${attempt}`
+  const key = `${step}:${nodeId}:${attempt}${take !== undefined ? `:${take}` : ''}`
   const streams = [...v.streams]
   let i = streams.findIndex((s) => s.key === key)
   if (i === -1) {
-    streams.push({ key, nodeId, step, attempt, text: '', reasoning: '', messages: [], tools: [], permissions: [], info: [] })
+    streams.push({ key, nodeId, step, attempt, ...(take !== undefined ? { take } : {}), text: '', reasoning: '', messages: [], tools: [], permissions: [], info: [] })
     i = streams.length - 1
   }
   const copy: AiStream = { ...streams[i]!, messages: [...streams[i]!.messages], tools: [...streams[i]!.tools], permissions: [...streams[i]!.permissions], info: [...streams[i]!.info] }
@@ -232,7 +242,11 @@ export function applyMessage(v: RunView, m: RunMessage): RunView {
     }
     case 'provider': {
       const e = m.event
-      const streams = updateStream(v, m.nodeId, m.attempt, (s) => {
+      const streams = updateStream(
+        v,
+        m.nodeId,
+        m.attempt,
+        (s) => {
         switch (e.type) {
           case 'delta':
             s.text += e.text
@@ -258,7 +272,9 @@ export function applyMessage(v: RunView, m: RunMessage): RunView {
             s.info.push(e.text)
             break
         }
-      })
+      },
+        m.take,
+      )
       return { ...v, streams }
     }
     case 'status': {
@@ -277,6 +293,8 @@ export function applyMessage(v: RunView, m: RunMessage): RunView {
     }
     case 'performance':
       return { ...v, performance: m.performance, ...(m.savedTo ? { savedTo: m.savedTo } : {}) }
+    case 'next':
+      return { ...v, next: m }
   }
 }
 
@@ -289,6 +307,21 @@ export function replayView(run: SavedRun, check: { reproduced: boolean; issues: 
     const attempts = [...(s.attempts ?? []).map((a) => ({ t: a.transcript, rejected: a.errors, result: undefined as unknown })), { t: s.transcript, rejected: undefined, result: s.verdict ? { updates: s.updates, verdict: s.verdict } : undefined }]
     attempts.forEach((a, i) => {
       if (!a.t && !a.result) return
+      ;(a.t?.takes ?? []).forEach((t, k) =>
+        streams.push({
+          key: `${s.step}:${s.nodeId}:${i + 1}:${k + 1}`,
+          nodeId: s.nodeId,
+          step: s.step,
+          attempt: i + 1,
+          take: k + 1,
+          text: t.output,
+          reasoning: '',
+          messages: [],
+          tools: t.toolCalls.map((c, j) => ({ id: String(j), name: c.name, ...(c.ok !== undefined ? { ok: c.ok } : {}), args: c.args })),
+          permissions: [],
+          info: [`take ${k + 1} · ${t.provider}${t.model ? ` · ${t.model}` : ''}`],
+        }),
+      )
       streams.push({
         key: `${s.step}:${s.nodeId}:${i + 1}`,
         nodeId: s.nodeId,
@@ -299,7 +332,10 @@ export function replayView(run: SavedRun, check: { reproduced: boolean; issues: 
         messages: [],
         tools: (a.t?.toolCalls ?? []).map((c, j) => ({ id: String(j), name: c.name, ...(c.ok !== undefined ? { ok: c.ok } : {}), args: c.args, ...(c.denied ? { denied: c.denied } : {}) })),
         permissions: [],
-        info: a.t ? [`${a.t.provider}${a.t.model ? ` · ${a.t.model}` : ''}`] : [],
+        ...(a.t?.takes?.length ? { take: 0 } : {}),
+        info: a.t
+          ? [`${a.t.fromRepertoire ? `🎼 replayed from ${a.t.fromRepertoire} · ` : ''}${a.t.provider}${a.t.model ? ` · ${a.t.model}` : ''}`]
+          : [],
         ...(a.result ? { result: a.result } : {}),
         ...(a.rejected ? { rejected: a.rejected } : {}),
       })
@@ -320,8 +356,17 @@ export function replayView(run: SavedRun, check: { reproduced: boolean; issues: 
 
 /** Latest AI stream for a node at or before the frame's step. */
 export function streamFor(v: RunView, nodeId: string, frame: Frame): AiStream | undefined {
+  return streamsFor(v, nodeId, frame).at(-1)
+}
+
+/** Every stream of the node's latest attempt at or before the frame: the takes, then the merge. */
+export function streamsFor(v: RunView, nodeId: string, frame: Frame): AiStream[] {
   const atOrBefore = v.streams.filter((s) => s.nodeId === nodeId && s.step <= Math.max(frame.step, 1))
-  return atOrBefore.at(-1)
+  const last = atOrBefore.at(-1)
+  if (!last) return []
+  return atOrBefore
+    .filter((s) => s.step === last.step && s.attempt === last.attempt)
+    .toSorted((a, b) => (a.take === 0 ? 99 : (a.take ?? 0)) - (b.take === 0 ? 99 : (b.take ?? 0)))
 }
 
 export function decorate(

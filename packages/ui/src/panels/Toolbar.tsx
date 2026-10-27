@@ -1,11 +1,27 @@
+import { IMPROVISATION_LEVELS } from '@core/jazz'
+import type { Complexity, Improvisation } from '@core/types'
 import type { RunStatus } from '../lib/model'
+
+const TIER_NAMES: Record<Complexity, string> = { 1: 'routine', 2: 'some judgement', 3: 'risky', 4: 'novel' }
+
+function tierHint(tiers?: Tiers): string {
+  const lines = ([1, 2, 3, 4] as const).map(
+    (c) => `${c} ${TIER_NAMES[c]}: ${tiers?.[c] ? `${tiers[c]!.model}${tiers[c]!.effort ? ` (${tiers[c]!.effort})` : ''}` : 'default model'}`,
+  )
+  return `Model tier per complexity (Copilot):\n${lines.join('\n')}\nauto = the pattern's default; the maestro decides for scores it composes.`
+}
 
 export interface RunSettings {
   provider: 'scripted' | 'copilot'
   model: string
   autoApprove: boolean
   stepMode: boolean
+  /** 0 = the pattern's default (the maestro decides for composed scores). */
+  complexity: 0 | Complexity
+  improvisation: Improvisation
 }
+
+export type Tiers = Partial<Record<Complexity, { model: string; effort?: string }>>
 
 interface Props {
   title: string
@@ -20,6 +36,7 @@ interface Props {
   onStep: () => void
   onStop: () => void
   onEdit: () => void
+  tiers?: Tiers
 }
 
 const ACTIVE = new Set<RunStatus>(['running', 'paused', 'awaiting-approval'])
@@ -27,6 +44,7 @@ const ACTIVE = new Set<RunStatus>(['running', 'paused', 'awaiting-approval'])
 export function Toolbar(p: Props) {
   const active = p.mode === 'live' && ACTIVE.has(p.status)
   const set = (patch: Partial<RunSettings>) => p.onSettings({ ...p.settings, ...patch })
+  const level = IMPROVISATION_LEVELS[p.settings.improvisation]!
   return (
     <header className="toolbar">
       <div className="tb-title">
@@ -51,13 +69,43 @@ export function Toolbar(p: Props) {
         {p.settings.provider === 'copilot' && (
           <input
             className="tb-model"
-            placeholder="model (optional)"
+            placeholder="model (overrides tiers)"
             value={p.settings.model}
             disabled={active}
             onChange={(e) => set({ model: e.target.value })}
             aria-label="model"
           />
         )}
+        <label title={tierHint(p.tiers)}>
+          Complexity
+          <select
+            value={p.settings.complexity}
+            disabled={active}
+            onChange={(e) => set({ complexity: Number(e.target.value) as RunSettings['complexity'] })}
+            aria-label="complexity"
+          >
+            <option value={0}>auto</option>
+            {([1, 2, 3, 4] as const).map((c) => (
+              <option key={c} value={c}>
+                {c} · {TIER_NAMES[c]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="knob" title={level.summary}>
+          <span className="knob-icon">{level.icon}</span>
+          <input
+            type="range"
+            min={0}
+            max={4}
+            step={1}
+            value={p.settings.improvisation}
+            disabled={active}
+            onChange={(e) => set({ improvisation: Number(e.target.value) as Improvisation })}
+            aria-label="improvisation"
+          />
+          <span className="knob-name">{level.name}</span>
+        </label>
         <label title="Answer approval nodes with the pattern's scripted answers">
           <input type="checkbox" checked={p.settings.autoApprove} disabled={active} onChange={(e) => set({ autoApprove: e.target.checked })} />
           auto-approve

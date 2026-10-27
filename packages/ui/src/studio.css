@@ -839,3 +839,66 @@ pre {
   border-color: var(--border);
   fill: var(--text);
 }
+
+.knob {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.knob input[type='range'] {
+  width: 90px;
+  accent-color: var(--active);
+}
+.knob-icon {
+  font-size: 16px;
+}
+.knob-name {
+  min-width: 56px;
+  color: var(--text);
+  font-weight: 600;
+}
+.card.notice {
+  border-color: var(--accent);
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.maestro-box {
+  border: 1px solid #3a4280;
+  border-radius: 8px;
+  padding: 8px;
+  background: #1a2046;
+}
+.badge-solo {
+  color: var(--active);
+  border-color: #6b5a12;
+}
+.takes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.take summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.take.merge summary {
+  color: var(--active);
+}
+.composed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+.composed-steps,
+.debate-notes {
+  padding-left: 18px;
+  font-size: 12px;
+}

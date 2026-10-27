@@ -14,6 +14,7 @@ import Studio from './Studio'
  * fetch + EventSource are routed to Run instances, like the dev server does.
  */
 const runs = new Map<string, Run>()
+let lastBody: Record<string, unknown> = {}
 const sources: FakeEventSource[] = []
 
 class FakeEventSource {
@@ -45,6 +46,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     return json(PATTERNS.map(({ demo, ...p }) => ({ ...p, source: 'builtin', graph: patternToGraph(p), demo: demo ? { goal: demo.goal ?? '', context: demo.context ?? {} } : undefined })))
   }
   if (url === '/api/saved') return json([])
+  if (url === '/api/tiers') return json({ 1: { model: 'claude-haiku-5.5', effort: 'low' } })
   if (url === '/api/runs' && init?.method === 'POST') {
     const parsed = parseDraft(body.pattern)
     if (!parsed.ok) return json({ error: 'invalid', issues: [] }, 400)
@@ -58,6 +60,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       stepMode: body.stepMode === true,
       breakpoints: (body.breakpoints as string[]) ?? [],
     })
+    lastBody = body
     runs.set(run.id, run)
     void run.start()
     return json({ runId: run.id, score })
@@ -150,4 +153,15 @@ describe('Studio (integration)', () => {
     expect(screen.getByTestId('node-over')).toHaveClass('has-issues')
     expect(screen.getByTestId('node-issue')).toHaveTextContent(/condition 'won \|\|' is invalid/)
   })
+
+  it('sends complexity and the improvisation knob with the run', async () => {
+    renderStudio()
+    await screen.findByText('Play a round of hangman', {}, { timeout: 5000 })
+    fireEvent.change(screen.getByLabelText('complexity'), { target: { value: '4' } })
+    fireEvent.change(screen.getByLabelText('improvisation'), { target: { value: '2' } })
+    expect(screen.getByText('Swing')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('▶ Run'))
+    await waitFor(() => expect(lastBody).toMatchObject({ complexity: 4, improvisation: 2 }))
+  })
 })
+

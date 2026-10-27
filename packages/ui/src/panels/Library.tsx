@@ -18,12 +18,12 @@ interface Props {
   activeName: string
   saved: readonly SavedSummary[]
   editable: boolean
-  drafting: { busy: boolean; text: string; errors: string[] }
+  asking: boolean
   onLoad: (item: LibraryItem) => void
   onNew: () => void
   onOpenSaved: (file: string) => void
   onRefreshSaved: () => void
-  onDraft: (request: string) => void
+  onAsk: (request: string) => void
 }
 
 export function Library(p: Props) {
@@ -36,7 +36,7 @@ export function Library(p: Props) {
     <aside className="library">
       <section>
         <h2>Patterns</h2>
-        {p.library.map((item) => (
+        {p.library.filter((item) => item.name !== 'maestro').map((item) => (
           <button
             type="button"
             key={item.name}
@@ -54,28 +54,18 @@ export function Library(p: Props) {
         </button>
       </section>
 
-      <section>
-        <h2>Draft with AI</h2>
+      <section className="maestro-box">
+        <h2>🎼 Ask the maestro</h2>
         <textarea
           className="draft-input"
-          placeholder="Describe the flow, e.g. “triage a failing CI job and propose a fix”"
+          placeholder="Describe what you want done, e.g. “find out why checkout got slower this week”. The maestro picks or drafts the score, debates it by complexity, then you approve and it plays."
           value={request}
           onChange={(e) => setRequest(e.target.value)}
-          aria-label="draft request"
+          aria-label="maestro request"
         />
-        <button type="button" className="primary" disabled={p.drafting.busy || !request.trim()} onClick={() => p.onDraft(request)}>
-          {p.drafting.busy ? 'Drafting…' : '✨ Draft flow'}
+        <button type="button" className="primary" disabled={p.asking || !request.trim()} onClick={() => p.onAsk(request.trim())}>
+          {p.asking ? 'Composing…' : '🎼 Compose & perform'}
         </button>
-        {(p.drafting.text || p.drafting.errors.length > 0) && (
-          <div className="draft-stream" data-testid="draft-stream">
-            <pre>{p.drafting.text}</pre>
-            {p.drafting.errors.map((e, i) => (
-              <div key={i} className="issue">
-                {e}
-              </div>
-            ))}
-          </div>
-        )}
       </section>
 
       {p.editable && (
