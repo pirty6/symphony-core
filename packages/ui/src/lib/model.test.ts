@@ -70,7 +70,7 @@ describe('live run view', () => {
 
   it('tracks gates and the proposed result', () => {
     let v = startLive('r')
-    v = applyMessage(v, { seq: 0, type: 'engine', event: { type: 'paused', pause: { kind: 'agent', pauseId: 'p', step: 2, nodeId: 'a', role: 'assessor', label: 'A', directive: 'd', goal: 'g', context: {}, input: {}, outputSchema: [], capabilities: [], attempt: 1, maxAttempts: 2, moveKey: 'm' } } })
+    v = applyMessage(v, { seq: 0, type: 'engine', event: { type: 'paused', pause: { kind: 'agent', pauseId: 'p', step: 2, nodeId: 'a', role: 'assessor', label: 'A', directive: 'd', goal: 'g', context: {}, input: {}, outputSchema: [], capabilities: [], complexity: 2, improvisation: 0, isolated: false, takes: 1, attempt: 1, maxAttempts: 2, moveKey: 'm' } } })
     v = applyMessage(v, { seq: 1, type: 'status', status: 'paused', nodeId: 'a', phase: 'after', proposed: { updates: {} } })
     expect(v.gate).toEqual({ nodeId: 'a', phase: 'after', proposed: { updates: {} } })
     expect(v.streams[0]).toMatchObject({ key: '2:a:1', result: { updates: {} } })

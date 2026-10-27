@@ -17,9 +17,11 @@
  */
 import { evalExpr, evaluateGuard, parseExpr } from './expr.js';
 import { hashOf } from './hash.js';
+import { solosActive, takesFor } from './jazz.js';
 import { checkValue, validateNodeResult, validateUpdates, type Checked } from './schema.js';
 import type {
   AcceptanceCheck,
+  Complexity,
   AgentResolution,
   NodeResult,
   ToolPause,
@@ -210,8 +212,16 @@ function chooseEdge(
   return undefined;
 }
 
-function follow(score: ExecutableScore, ctx: Ctx, node: ScoreNode, approved = true): boolean {
-  const edge = chooseEdge(score, ctx, node, approved);
+function follow(
+  score: ExecutableScore,
+  ctx: Ctx,
+  node: ScoreNode,
+  approved = true,
+  chosen?: string,
+): boolean {
+  const edge = chosen
+    ? score.edges.find((e) => e.id === chosen && e.from === node.id)
+    : chooseEdge(score, ctx, node, approved);
   if (ctx.kind !== 'running') return false;
   if (!edge) {
     if (node.kind === 'approval' && !approved) {
@@ -231,6 +241,25 @@ function follow(score: ExecutableScore, ctx: Ctx, node: ScoreNode, approved = tr
   });
   ctx.cursor = edge.to;
   return true;
+}
+
+/** node.complexity, else a state field `complexity` (1-4), else the score's. */
+export function complexityFor(
+  score: ExecutableScore,
+  state: Readonly<Record<string, unknown>>,
+  node: { readonly complexity?: Complexity },
+): Complexity {
+  const fromState = state.complexity;
+  if (node.complexity) return node.complexity;
+  if (fromState === 1 || fromState === 2 || fromState === 3 || fromState === 4) return fromState;
+  return score.complexity ?? 2;
+}
+
+function choicesOf(score: ExecutableScore, node: ScoreNode) {
+  const label = (id: string) => score.nodes.find((n) => n.id === id)?.label ?? id;
+  return score.edges
+    .filter((e) => e.from === node.id)
+    .map((e) => ({ edgeId: e.id, label: e.label ?? label(e.to), to: e.to }));
 }
 
 function makePause(
@@ -260,6 +289,11 @@ function makePause(
       input: pick(ctx.state, node.reads),
       outputSchema: fieldsOf(score, node.writes),
       capabilities: node.capabilities ?? [],
+      complexity: complexityFor(score, ctx.state, node),
+      improvisation: score.improvisation,
+      isolated: node.isolated === true,
+      takes: takesFor(score.improvisation, node.role),
+      ...(node.solo && solosActive(score.improvisation) ? { choices: choicesOf(score, node) } : {}),
       attempt,
       maxAttempts: 1 + (node.retries ?? DEFAULT_RETRIES),
       ...(feedback ? { feedback } : {}),
@@ -274,7 +308,12 @@ function makePause(
       nodeId: node.id,
       label: node.label,
       tool: node.tool,
-      args: node.args ?? {},
+      args: {
+        ...node.args,
+        ...Object.fromEntries(
+          Object.entries(node.inputs ?? {}).map(([arg, f]) => [arg, ctx.state[f]]),
+        ),
+      },
       output: node.output,
       outputSchema: fieldsOf(score, Object.values(node.output)),
       moveKey,
@@ -525,10 +564,19 @@ function resolveAgent(
   res: AgentResolution,
 ): void {
   const shape = validateNodeResult(res.result, pause.outputSchema);
-  const checked =
-    shape.ok && node.kind === 'agent' && node.checks?.length
-      ? acceptance(node.checks, ctx.state, shape.value)
+  const routed: Checked<NodeResult> =
+    shape.ok && pause.choices && !pause.choices.some((c) => c.edgeId === shape.value.next)
+      ? {
+          ok: false,
+          errors: [
+            `This is a solo: 'next' must be one of ${pause.choices.map((c) => `'${c.edgeId}'`).join(', ')}`,
+          ],
+        }
       : shape;
+  const checked =
+    routed.ok && node.kind === 'agent' && node.checks?.length
+      ? acceptance(node.checks, ctx.state, routed.value)
+      : routed;
   const hashBefore = stateHashOf(ctx.state, ctx.env);
   if (!checked.ok) {
     ctx.attempts = [
@@ -562,6 +610,7 @@ function resolveAgent(
     return;
   }
   const { updates, verdict } = checked.value;
+  const next = pause.choices ? checked.value.next : undefined;
   const before = ctx.state;
   ctx.state = { ...before, ...structuredClone(updates) };
   if (res.envHash !== undefined) ctx.env = res.envHash;
@@ -577,6 +626,7 @@ function resolveAgent(
       changes,
       updates,
       ...(res.envHash !== undefined ? { envHash: res.envHash } : {}),
+      ...(next ? { next } : {}),
       verdict,
       ...(ctx.attempts.length > 0 ? { attempts: ctx.attempts } : {}),
       ...(res.transcript ? { transcript: res.transcript } : {}),
@@ -604,7 +654,7 @@ function resolveAgent(
     return;
   }
   ctx.completedAt = res.at ?? ctx.completedAt;
-  if (follow(score, ctx, node)) drive(score, ctx);
+  if (follow(score, ctx, node, true, next)) drive(score, ctx);
 }
 
 function resolveApproval(

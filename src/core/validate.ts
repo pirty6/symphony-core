@@ -63,6 +63,17 @@ function checkOutEdges(
     errors.push({ ...at, message: `${node.kind} node '${node.id}' has no outgoing edge` });
     return;
   }
+  if (node.kind === 'agent' && node.solo) {
+    if (out.length < 2)
+      errors.push({ ...at, message: 'a solo node needs at least two outgoing routes' });
+    for (const e of out) {
+      if (e.guard || e.branch)
+        errors.push({ edgeId: e.id, message: 'solo routes cannot have guards or branches' });
+      if (!e.label?.trim())
+        errors.push({ edgeId: e.id, message: 'solo routes need a label the AI can choose by' });
+    }
+    return;
+  }
   if (node.kind === 'condition') {
     const branches = out.map((e) => e.branch).toSorted();
     if (out.length !== 2 || branches[0] !== 'else' || branches[1] !== 'then') {
@@ -165,6 +176,15 @@ export function validateGraph(g: PatternGraph): ValidationReport {
             errors.push({ ...at, message: `check '${c.expr}' needs a message` });
           checkExpr(c.expr, guardFields, at, 'check', errors);
         }
+        if (n.complexity !== undefined && ![1, 2, 3, 4].includes(n.complexity)) {
+          errors.push({ ...at, message: 'complexity must be 1, 2, 3 or 4' });
+        }
+        if (n.solo && n.role !== 'assessor') {
+          errors.push({
+            ...at,
+            message: 'solo points must be assessors (they choose; executors act)',
+          });
+        }
         for (const cap of n.capabilities ?? []) {
           if (!CAPS.has(cap)) errors.push({ ...at, message: `unknown capability '${cap}'` });
         }
@@ -190,6 +210,7 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         } else {
           unknownField(Object.values(n.output), 'output writes');
         }
+        unknownField(Object.values(n.inputs ?? {}), 'inputs');
         break;
       case 'start':
       case 'end':
@@ -207,6 +228,12 @@ export function validateGraph(g: PatternGraph): ValidationReport {
   }
   if (g.maxSteps !== undefined && (!Number.isInteger(g.maxSteps) || g.maxSteps < 1)) {
     errors.push({ message: 'maxSteps must be a positive integer' });
+  }
+  if (g.complexity !== undefined && ![1, 2, 3, 4].includes(g.complexity)) {
+    errors.push({ message: 'complexity must be 1, 2, 3 or 4' });
+  }
+  if (g.improvisation !== undefined && ![0, 1, 2, 3, 4].includes(g.improvisation)) {
+    errors.push({ message: 'improvisation must be 0..4' });
   }
 
   const edgeIds = new Set<string>();

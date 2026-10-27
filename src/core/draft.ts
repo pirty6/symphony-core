@@ -7,9 +7,11 @@
  */
 import { isFieldType } from './schema.js';
 import type { Checked } from './schema.js';
-import type { Capability, Pattern, ScoreEdge, ScoreNode, StateField } from './types.js';
+import { isImprovisation } from './jazz.js';
+import type { Capability, Complexity, Pattern, ScoreEdge, ScoreNode, StateField } from './types.js';
 import { validatePattern } from './validate.js';
 
+const isComplexity = (v: unknown): v is Complexity => v === 1 || v === 2 || v === 3 || v === 4;
 const isObj = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v);
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
@@ -63,6 +65,9 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(typeof raw.retries === 'number' ? { retries: raw.retries } : {}),
         ...(checks.length > 0 ? { checks } : {}),
         ...(capabilities.length > 0 ? { capabilities } : {}),
+        ...(isComplexity(raw.complexity) ? { complexity: raw.complexity } : {}),
+        ...(raw.isolated === true ? { isolated: true } : {}),
+        ...(raw.solo === true ? { solo: true } : {}),
       };
     }
     case 'compute': {
@@ -88,6 +93,15 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         kind: 'tool',
         tool: str(raw.tool) ?? '',
         ...(isObj(raw.args) ? { args: raw.args } : {}),
+        ...(isObj(raw.inputs)
+          ? {
+              inputs: Object.fromEntries(
+                Object.entries(raw.inputs).filter(
+                  (e): e is [string, string] => typeof e[1] === 'string',
+                ),
+              ),
+            }
+          : {}),
         output,
       };
     }
@@ -156,6 +170,8 @@ export function parseDraft(raw: unknown): Checked<Pattern> {
     edges,
     start: str(raw.start) ?? nodes.find((n) => n.kind === 'start')?.id ?? '',
     ...(posInt(raw.maxSteps) ? { maxSteps: posInt(raw.maxSteps)! } : {}),
+    ...(isComplexity(raw.complexity) ? { complexity: raw.complexity } : {}),
+    ...(isImprovisation(raw.improvisation) ? { improvisation: raw.improvisation } : {}),
   };
   errors.push(...validatePattern(pattern).errors.map((e) => e.message));
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: pattern };
@@ -170,13 +186,14 @@ export function draftInstructions(): string {
 Node kinds:
 - start {id,kind:"start",label}: exactly one.
 - agent {id,kind:"agent",role:"assessor"|"executor",label,directive,reads:[state keys],writes:[state keys],maxVisits?,
-  capabilities?:["web","mcp"], checks?:[{expr,message}]} - checks are expressions over state+answer that must be true
+  capabilities?:["web","mcp"], checks?:[{expr,message}], complexity?:1-4, isolated?:true (no workspace tools),
+  solo?:true (assessor only: from Swing up the AI picks one of its labelled, unguarded out edges)} - checks are expressions over state+answer that must be true
   or the answer is rejected and re-asked (use them to force full coverage, e.g. subset(batch, examined)).
   assessor = read-only research/analysis; executor = may edit files and run commands. AI runs ONLY in agent nodes.
 - compute {id,kind:"compute",label,assign:[{field,expr}]}: deterministic state update (counters, flags, appends).
 - condition {id,kind:"condition",label,expression}: exactly two out edges with branch "then" and "else".
 - approval {id,kind:"approval",label,message,writes:[keys a human provides]}: out edges branch "approved" (and optional "rejected").
-- tool {id,kind:"tool",label,tool,args?,output:{toolKey: stateKey}}: deterministic I/O run by the system, not AI.
+- tool {id,kind:"tool",label,tool,args?,inputs?:{argName: stateKey},output:{toolKey: stateKey}}: deterministic I/O run by the system, not AI.
   Tools: "repo.files" -> {files, excluded} (every file in the workspace); "sources.catalog" -> {names, descriptions}
   (every evidence source available: git history, GitHub, dependencies, web, MCP servers, prior runs).
 - end {id,kind:"end",label,outcome?:"success"|"failed"|"partial"}.

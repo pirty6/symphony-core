@@ -11,6 +11,10 @@
  */
 
 export type Role = 'assessor' | 'executor';
+/** Task difficulty; picks the model tier (1 fast/cheap .. 4 strongest) and the debate depth. */
+export type Complexity = 1 | 2 | 3 | 4;
+/** 0 classical .. 4 free jazz. See core/jazz.ts. */
+export type Improvisation = 0 | 1 | 2 | 3 | 4;
 /** Extra sources an agent node may use beyond the workspace: web search/fetch and MCP servers. */
 export type Capability = 'web' | 'mcp';
 export const CAPABILITIES: readonly Capability[] = ['web', 'mcp'];
@@ -68,6 +72,15 @@ export interface AgentNode extends NodeBase {
   /** Deterministic acceptance rules; an answer failing any is rejected and re-asked. */
   readonly checks?: readonly AcceptanceCheck[];
   readonly capabilities?: readonly Capability[];
+  /** Fixed model tier for this node; otherwise state.complexity, then the score's. */
+  readonly complexity?: Complexity;
+  /** No workspace tools at all: the agent works only from its input. */
+  readonly isolated?: boolean;
+  /**
+   * Solo point: from Swing (improvisation >= 2) the AI chooses which labelled
+   * out edge to take. Below that the first edge (the written melody) is played.
+   */
+  readonly solo?: boolean;
 }
 
 /** Deterministic state update: field <- expression, evaluated in order. */
@@ -99,6 +112,8 @@ export interface ToolNode extends NodeBase {
   /** Registered tool name, e.g. 'repo.files'. */
   readonly tool: string;
   readonly args?: Readonly<Record<string, unknown>>;
+  /** Tool argument name -> state field whose current value is passed. */
+  readonly inputs?: Readonly<Record<string, string>>;
   /** Tool output key -> state field it is written to. */
   readonly output: Readonly<Record<string, string>>;
 }
@@ -135,6 +150,8 @@ export interface ScoreEdge {
 export interface NodeResult {
   readonly updates: Readonly<Record<string, unknown>>;
   readonly verdict: MoveVerdict;
+  /** Edge id chosen at a solo point. */
+  readonly next?: string;
 }
 
 /** Offline scripted response for an agent node: (state, visit index) -> result. */
@@ -166,6 +183,10 @@ export interface PatternGraph {
   readonly start: string;
   /** Global step budget. Default 100. */
   readonly maxSteps?: number;
+  /** Default model tier for agent nodes. */
+  readonly complexity?: Complexity;
+  /** Default improvisation level. */
+  readonly improvisation?: Improvisation;
 }
 
 export interface Pattern extends PatternGraph {
@@ -189,6 +210,8 @@ export interface ExecutableScore extends PatternGraph {
   readonly context: Readonly<Record<string, unknown>>;
   readonly initialState: Readonly<Record<string, unknown>>;
   readonly maxSteps: number;
+  readonly complexity: Complexity;
+  readonly improvisation: Improvisation;
   readonly generatedAt: string;
 }
 
@@ -219,6 +242,10 @@ export interface AiTranscript {
   readonly toolCalls: readonly ToolCallRecord[];
   readonly startedAt?: string;
   readonly completedAt?: string;
+  /** Independent takes that an integrator merged into this answer (jazz). */
+  readonly takes?: readonly AiTranscript[];
+  /** Set when the answer was replayed from a recorded performance (classical). */
+  readonly fromRepertoire?: string;
 }
 
 // ── Engine: pauses and resolutions ─────────────────────────────────
@@ -237,6 +264,17 @@ export interface AgentPause {
   readonly input: Readonly<Record<string, unknown>>;
   readonly outputSchema: readonly StateField[];
   readonly capabilities: readonly Capability[];
+  readonly complexity: Complexity;
+  readonly improvisation: Improvisation;
+  readonly isolated: boolean;
+  /** Independent takes to play before integrating (1 = a single take). */
+  readonly takes: number;
+  /** Present at an active solo point: the routes the AI may choose from. */
+  readonly choices?: readonly {
+    readonly edgeId: string;
+    readonly label: string;
+    readonly to: string;
+  }[];
   readonly attempt: number;
   readonly maxAttempts: number;
   /** Validation errors from the previous attempt, if any. */
@@ -387,6 +425,8 @@ export interface PerformedStep {
   /** Accepted updates exactly as returned (agent) or provided (approval); used for replay. */
   readonly updates?: Readonly<Record<string, unknown>>;
   readonly envHash?: string;
+  /** Edge chosen by the AI at a solo point. */
+  readonly next?: string;
   readonly verdict?: MoveVerdict;
   readonly attempts?: readonly {
     readonly errors: readonly string[];

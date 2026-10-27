@@ -219,7 +219,11 @@ function resolutionFrom(step: PerformedStep, pauseId: string, n: number): Resolu
     return {
       kind: 'agent',
       pauseId,
-      result: { updates: step.updates ?? {}, verdict: step.verdict },
+      result: {
+        updates: step.updates ?? {},
+        verdict: step.verdict,
+        ...(step.next ? { next: step.next } : {}),
+      },
       ...(step.envHash !== undefined ? { envHash: step.envHash } : {}),
       ...(step.transcript ? { transcript: step.transcript } : {}),
       ...(step.at ? { at: step.at } : {}),

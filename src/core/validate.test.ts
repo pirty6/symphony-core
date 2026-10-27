@@ -163,4 +163,22 @@ describe('validatePattern', () => {
     expect(m).toMatch(/tool node needs a tool name/);
     expect(m).toMatch(/output writes unknown state field 'nope'/);
   });
+
+  it('validates solo points and tiers', () => {
+    const solo = { ...base.nodes[1]!, solo: true, complexity: 7 } as unknown as ScoreNode;
+    const nodes = [base.nodes[0]!, solo, ...base.nodes.slice(2)];
+    const edges: ScoreEdge[] = [
+      base.edges[0]!,
+      { id: 'a', from: 'gather', to: 'enough', guard: 'confidence > 0' },
+      { id: 'b', from: 'gather', to: 'done' },
+      ...base.edges.slice(2),
+    ];
+    const m = validateGraph({ ...base, nodes, edges, improvisation: 9 as 0 })
+      .errors.map((e) => e.message)
+      .join('\n');
+    expect(m).toMatch(/solo routes cannot have guards/);
+    expect(m).toMatch(/solo routes need a label/);
+    expect(m).toMatch(/complexity must be 1, 2, 3 or 4/);
+    expect(m).toMatch(/improvisation must be 0..4/);
+  });
 });

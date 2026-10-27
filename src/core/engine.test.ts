@@ -10,6 +10,7 @@ import {
   type EngineState,
 } from './engine.js';
 import { hashOf } from './hash.js';
+import { replayPerformance } from './replay.js';
 import type { ExecutableScore, Pattern, Resolution } from './types.js';
 
 const ok = (updates: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
@@ -373,5 +374,125 @@ describe('engine: tool nodes', () => {
       updates: { files: 'nope' },
     });
     expect(bad.state.reason).toMatch(/updates.files: expected string\[\]/);
+  });
+});
+
+describe('engine: complexity, solos and takes', () => {
+  const jam: Pattern = {
+    name: 'jam',
+    description: 'explore then decide',
+    requiredContext: [],
+    state: [
+      { name: 'notes', type: 'string[]' },
+      { name: 'complexity', type: 'number' },
+    ],
+    start: 's',
+    nodes: [
+      { id: 's', kind: 'start', label: 'S' },
+      {
+        id: 'think',
+        kind: 'agent',
+        role: 'assessor',
+        label: 'Think',
+        directive: 'd',
+        reads: [],
+        writes: ['notes'],
+        solo: true,
+        maxVisits: 3,
+      },
+      {
+        id: 'act',
+        kind: 'agent',
+        role: 'executor',
+        label: 'Act',
+        directive: 'd',
+        reads: [],
+        writes: [],
+        complexity: 1,
+      },
+      { id: 'e', kind: 'end', label: 'E' },
+    ],
+    edges: [
+      { id: 'again', from: 'think', to: 'think', label: 'think more' },
+      { id: 'go', from: 'think', to: 'act', label: 'act now' },
+      { id: '1', from: 's', to: 'think' },
+      { id: '2', from: 'act', to: 'e' },
+    ],
+  };
+
+  it('plays the written route below Swing and lets the AI solo from Swing up', () => {
+    const classical = compileScore(jam, { goal: 'g', improvisation: 0 });
+    let r = createEngine(classical);
+    expect(r.state.pause).toMatchObject({
+      takes: 1,
+      improvisation: 0,
+      complexity: 2,
+    });
+    expect(r.state.pause).not.toHaveProperty('choices');
+    r = answerAgent(classical, r, ok({ notes: ['a'] }));
+    expect(r.state.pause?.nodeId).toBe('think');
+
+    const swing = compileScore(jam, { goal: 'g', improvisation: 2 });
+    expect(swing.id).not.toBe(classical.id);
+    let j = createEngine(swing);
+    expect(j.state.pause?.kind === 'agent' && j.state.pause.choices).toEqual([
+      { edgeId: 'again', label: 'think more', to: 'think' },
+      { edgeId: 'go', label: 'act now', to: 'act' },
+    ]);
+    j = answerAgent(swing, j, ok({ notes: ['a'] }));
+    expect(j.state.pause?.feedback?.[0]).toMatch(
+      /This is a solo: 'next' must be one of 'again', 'go'/,
+    );
+    j = answerAgent(swing, j, { ...ok({ notes: ['a'] }), next: 'go' });
+    expect(j.state.pause).toMatchObject({ nodeId: 'act', complexity: 1, takes: 1 });
+    expect(j.state.steps.find((s) => s.nodeId === 'think')?.next).toBe('go');
+    const perf = toPerformance(answerAgent(swing, j, ok({})).state);
+    expect(replayPerformance(swing, perf).divergence.reproduced).toBe(true);
+  });
+
+  it('takes more takes for assessors at Bebop and Free, never for executors', () => {
+    const bebop = compileScore(jam, { goal: 'g', improvisation: 3 });
+    const r = createEngine(bebop);
+    expect(r.state.pause).toMatchObject({ takes: 2 });
+    const free = compileScore(jam, { goal: 'g', improvisation: 4, complexity: 4 });
+    expect(createEngine(free).state.pause).toMatchObject({ takes: 3, complexity: 4 });
+  });
+
+  it('reads the tier from a complexity state field', () => {
+    const s = compileScore(jam, { goal: 'g', context: { complexity: 3 } });
+    expect(createEngine(s).state.pause).toMatchObject({ complexity: 3 });
+  });
+
+  it('passes state values to tools through inputs', () => {
+    const p: Pattern = {
+      name: 'inp',
+      description: 'd',
+      requiredContext: [],
+      state: [
+        { name: 'q', type: 'string', initial: 'hello' },
+        { name: 'out', type: 'string' },
+      ],
+      start: 's',
+      nodes: [
+        { id: 's', kind: 'start', label: 'S' },
+        {
+          id: 't',
+          kind: 'tool',
+          label: 'T',
+          tool: 'x',
+          args: { n: 1 },
+          inputs: { query: 'q' },
+          output: { r: 'out' },
+        },
+        { id: 'e', kind: 'end', label: 'E' },
+      ],
+      edges: [
+        { id: '1', from: 's', to: 't' },
+        { id: '2', from: 't', to: 'e' },
+      ],
+    };
+    expect(createEngine(compileScore(p, { goal: 'g' })).state.pause).toMatchObject({
+      args: { n: 1, query: 'hello' },
+    });
   });
 });

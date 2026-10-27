@@ -128,7 +128,11 @@ export function validateNodeResult(
   if (errors.length > 0) return { ok: false, errors };
   return {
     ok: true,
-    value: { updates: updates as Record<string, unknown>, verdict },
+    value: {
+      updates: updates as Record<string, unknown>,
+      verdict,
+      ...(typeof r.next === 'string' ? { next: r.next } : {}),
+    },
   };
 }
 
@@ -147,7 +151,10 @@ function jsonProp(f: StateField): Record<string, unknown> {
 }
 
 /** JSON Schema for an agent node's `submit_result` tool. */
-export function resultJsonSchema(writes: readonly StateField[]): Record<string, unknown> {
+export function resultJsonSchema(
+  writes: readonly StateField[],
+  choices?: readonly { readonly edgeId: string }[],
+): Record<string, unknown> {
   return {
     type: 'object',
     properties: {
@@ -157,6 +164,15 @@ export function resultJsonSchema(writes: readonly StateField[]): Record<string, 
         required: writes.map((f) => f.name),
         additionalProperties: false,
       },
+      ...(choices?.length
+        ? {
+            next: {
+              type: 'string',
+              enum: choices.map((c) => c.edgeId),
+              description: 'Route to take next',
+            },
+          }
+        : {}),
       verdict: {
         type: 'object',
         properties: {
@@ -169,7 +185,7 @@ export function resultJsonSchema(writes: readonly StateField[]): Record<string, 
         additionalProperties: false,
       },
     },
-    required: ['updates', 'verdict'],
+    required: choices?.length ? ['updates', 'verdict', 'next'] : ['updates', 'verdict'],
     additionalProperties: false,
   };
 }
