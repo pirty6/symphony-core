@@ -175,7 +175,28 @@ export function divergence(a: Performance, b: Performance): Divergence {
 
 // ── Replay ─────────────────────────────────────────────────────────
 
-function resolutionFrom(step: PerformedStep, pauseId: string): Resolution | undefined {
+/** The n-th answer (0-based) recorded for a step: rejected attempts first, then the accepted one. */
+function resolutionFrom(step: PerformedStep, pauseId: string, n: number): Resolution | undefined {
+  const attempts = step.attempts ?? [];
+  if (n < attempts.length) {
+    const a = attempts[n]!;
+    if (step.kind === 'agent') {
+      return {
+        kind: 'agent',
+        pauseId,
+        result: a.result,
+        ...(a.transcript ? { transcript: a.transcript } : {}),
+        ...(a.at ? { at: a.at } : {}),
+      };
+    }
+    return {
+      kind: 'approval',
+      pauseId,
+      approved: true,
+      ...(a.result !== undefined ? { updates: a.result as Record<string, unknown> } : {}),
+      ...(a.at ? { at: a.at } : {}),
+    };
+  }
   if (step.kind === 'agent' && step.verdict) {
     return {
       kind: 'agent',
@@ -205,10 +226,13 @@ export function replayPerformance(
   perf: Performance,
 ): { readonly result: AdvanceResult; readonly divergence: Divergence } {
   let r = createEngine(score, { startedAt: perf.startedAt });
+  const fed = new Map<number, number>();
   while (r.state.kind === 'running' && r.state.pause) {
     const pause = r.state.pause;
     const recorded = perf.steps.find((s) => s.step === pause.step && s.nodeId === pause.nodeId);
-    const res = recorded ? resolutionFrom(recorded, pause.pauseId) : undefined;
+    const n = fed.get(pause.step) ?? 0;
+    fed.set(pause.step, n + 1);
+    const res = recorded ? resolutionFrom(recorded, pause.pauseId, n) : undefined;
     if (!res) {
       r = advance(score, r.state, {
         kind: 'cancel',

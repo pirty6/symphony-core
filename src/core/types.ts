@@ -336,6 +336,9 @@ export interface PerformedStep {
   readonly attempts?: readonly {
     readonly errors: readonly string[];
     readonly transcript?: AiTranscript;
+    /** The raw rejected answer, so replay can feed it back verbatim. */
+    readonly result?: unknown;
+    readonly at?: string;
   }[];
   readonly transcript?: AiTranscript;
   readonly approval?: { readonly approved: boolean; readonly by?: string };

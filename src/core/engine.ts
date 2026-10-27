@@ -52,6 +52,9 @@ export interface EngineState {
   readonly attempts: readonly {
     readonly errors: readonly string[];
     readonly transcript?: AiTranscript;
+    /** The raw rejected answer, so replay can feed it back verbatim. */
+    readonly result?: unknown;
+    readonly at?: string;
   }[];
   readonly lastVerdict?: MoveVerdict;
   /** Keys written by the node just completed; they travel on the next edge. */
@@ -438,7 +441,12 @@ function resolveAgent(
   if (!checked.ok) {
     ctx.attempts = [
       ...ctx.attempts,
-      { errors: checked.errors, ...(res.transcript ? { transcript: res.transcript } : {}) },
+      {
+        errors: checked.errors,
+        result: res.result,
+        ...(res.transcript ? { transcript: res.transcript } : {}),
+        ...(res.at ? { at: res.at } : {}),
+      },
     ];
     emit(ctx, {
       type: 'response-rejected',
@@ -524,7 +532,10 @@ function resolveApproval(
         attempt: ctx.attempts.length + 1,
         errors,
       });
-      ctx.attempts = [...ctx.attempts, { errors }];
+      ctx.attempts = [
+        ...ctx.attempts,
+        { errors, result: updates, ...(res.at ? { at: res.at } : {}) },
+      ];
       const next = makePause(score, ctx, node, ctx.attempts.length + 1, errors);
       ctx.pause = next;
       emit(ctx, { type: 'paused', pause: next });
@@ -543,6 +554,7 @@ function resolveApproval(
     reason: res.approved ? 'approved by human' : 'rejected by human',
   };
   ctx.pause = undefined;
+  const attempts = ctx.attempts;
   ctx.attempts = [];
   recordStep(
     ctx,
@@ -550,6 +562,7 @@ function resolveApproval(
     {
       changes,
       updates,
+      ...(attempts.length > 0 ? { attempts } : {}),
       approval: { approved: res.approved, ...(res.by ? { by: res.by } : {}) },
       ...(res.at ? { at: res.at } : {}),
     },

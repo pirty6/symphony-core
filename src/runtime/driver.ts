@@ -191,10 +191,12 @@ export class Run {
     if (this.stopRequested) return;
     const hit = this.pauseRequested || this.stepMode || this.breakpoints.has(nodeId);
     if (!hit) return;
-    this.setStatus('paused', { nodeId, phase, ...(proposed !== undefined ? { proposed } : {}) });
-    await new Promise<void>((resolve) => {
+    const released = new Promise<void>((resolve) => {
       this.release = resolve;
     });
+    // Listeners may resume synchronously, so the waiter must exist before the pause is announced.
+    this.setStatus('paused', { nodeId, phase, ...(proposed !== undefined ? { proposed } : {}) });
+    await released;
     this.release = undefined;
     if (!this.stopRequested) this.setStatus('running', { nodeId });
   }
@@ -252,10 +254,11 @@ export class Run {
     if (this.stopRequested) return undefined;
     if (this.opts.autoApprove)
       return scriptedResolution(this.opts.demo, pause, this.engine, this.now());
-    this.setStatus('awaiting-approval', { nodeId: pause.nodeId });
-    const answer = await new Promise<HumanAnswer | undefined>((resolve) => {
+    const answered = new Promise<HumanAnswer | undefined>((resolve) => {
       this.approvalWaiter = resolve;
     });
+    this.setStatus('awaiting-approval', { nodeId: pause.nodeId });
+    const answer = await answered;
     this.approvalWaiter = undefined;
     if (!answer || this.stopRequested) return undefined;
     this.setStatus('running', { nodeId: pause.nodeId });

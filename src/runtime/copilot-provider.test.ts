@@ -184,4 +184,27 @@ describe('CopilotProvider', () => {
       }),
     ).rejects.toThrow(/remove GITHUB_TOKEN \/ TOKEN in \.env/);
   });
+
+  it('honours stop while the session is still being created', async () => {
+    const ctrl = new AbortController();
+    let sent = false;
+    const client: ClientLike = {
+      start: async () => {},
+      stop: async () => {},
+      createSession: async (cfg) => {
+        await new Promise((r) => setTimeout(r, 30));
+        const s = new FakeSession(cfg, async () => {});
+        s.send = async () => {
+          sent = true;
+          return 'm';
+        };
+        return s;
+      },
+    };
+    const p = new CopilotProvider({ clientFactory: () => client });
+    const run = p.runAgent({ pause, state: {}, visit: 0, signal: ctrl.signal, onEvent: () => {} });
+    setTimeout(() => ctrl.abort(), 5);
+    await expect(run).rejects.toThrow(/aborted/);
+    expect(sent).toBe(false);
+  });
 });

@@ -86,6 +86,7 @@ export class CopilotProvider implements Provider {
   ): Promise<{ output: string; toolCalls: ToolCallRecord[]; model?: string }> {
     if (run.signal.aborted) throw abortError();
     const client = await this.ensureClient();
+    if (run.signal.aborted) throw abortError();
     const toolCalls: ToolCallRecord[] = [];
     const config: SessionConfig = {
       ...(this.opts.model ? { model: this.opts.model } : {}),
@@ -184,6 +185,13 @@ export class CopilotProvider implements Provider {
       settle();
     };
     run.signal.addEventListener('abort', onAbort, { once: true });
+    if (run.signal.aborted) {
+      // Stop arrived while the session was being created: never send the prompt.
+      off();
+      run.signal.removeEventListener('abort', onAbort);
+      await session.disconnect().catch(() => {});
+      throw abortError();
+    }
     const timeoutMs = this.opts.timeoutMs ?? 10 * 60_000;
     const timer = setTimeout(() => {
       failure = `timed out after ${timeoutMs} ms`;

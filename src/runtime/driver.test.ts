@@ -194,4 +194,21 @@ describe('Run', () => {
     });
     expect(perf.outcome).toBe('success');
   });
+
+  it('accepts answers given synchronously from a status listener', async () => {
+    const run = new Run({
+      score: hangmanScore,
+      provider: ScriptedProvider.forPattern(hangman),
+      demo: hangman.demo,
+      breakpoints: ['pick'],
+      clock,
+    });
+    run.subscribe((m) => {
+      if (m.type === 'status' && m.status === 'paused') run.resume();
+      if (m.type === 'status' && m.status === 'awaiting-approval')
+        run.answerApproval({ approved: true, scripted: true });
+    });
+    const perf = await run.start();
+    expect(perf.outcome).toBe('success');
+  });
 });

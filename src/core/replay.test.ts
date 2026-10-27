@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fix, hangman, investigate } from '../patterns/index.js';
 import { compileScore } from './compile.js';
-import { toPerformance } from './engine.js';
+import { advance, createEngine, toPerformance } from './engine.js';
 import { runScripted } from './scripted.js';
 import { divergence, EMPTY_FRAME, framesOf, reduceFrame, replayPerformance } from './replay.js';
 import type { Pattern } from './types.js';
@@ -93,5 +93,61 @@ describe('divergence', () => {
     expect(d.semantic).toEqual([{ step: 2, a: 'applied', b: 'failed' }]);
     expect(d.environmental).toEqual([2]);
     expect(d.reproduced).toBe(false);
+  });
+
+  it('reproduces runs with rejected answers, both recovered and failed', () => {
+    const score = compileScore(hangman, { goal: 'g', generatedAt: 't' });
+    const ok = {
+      updates: { word: 'cat' },
+      verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+    };
+    // recovered: one bad answer, then a good one, then a bad approval, then cancel
+    let r = createEngine(score, { startedAt: 't' });
+    r = advance(score, r.state, {
+      kind: 'agent',
+      pauseId: r.state.pause!.pauseId,
+      result: { bogus: 1 },
+      at: 't',
+    });
+    r = advance(score, r.state, {
+      kind: 'agent',
+      pauseId: r.state.pause!.pauseId,
+      result: ok,
+      at: 't',
+    });
+    r = advance(score, r.state, {
+      kind: 'approval',
+      pauseId: r.state.pause!.pauseId,
+      approved: true,
+      updates: {},
+    });
+    r = advance(score, r.state, {
+      kind: 'approval',
+      pauseId: r.state.pause!.pauseId,
+      approved: true,
+      updates: { letter: 'c' },
+    });
+    r = advance(score, r.state, {
+      kind: 'cancel',
+      pauseId: r.state.pause!.pauseId,
+      reason: 'stop',
+      at: 't',
+    });
+    const recovered = replayPerformance(score, toPerformance(r.state));
+    expect(recovered.divergence.reproduced).toBe(true);
+    expect(recovered.result.state.events).toEqual(r.state.events);
+    // failed: every attempt invalid
+    let f = createEngine(score, { startedAt: 't' });
+    for (let i = 0; i < 3; i += 1)
+      f = advance(score, f.state, {
+        kind: 'agent',
+        pauseId: f.state.pause!.pauseId,
+        result: { bogus: i },
+        at: 't',
+      });
+    expect(f.state.kind).toBe('failed');
+    const failed = replayPerformance(score, toPerformance(f.state));
+    expect(failed.divergence.reproduced).toBe(true);
+    expect(failed.result.state.events).toEqual(f.state.events);
   });
 });
