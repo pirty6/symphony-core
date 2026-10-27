@@ -314,3 +314,12 @@ export class Run {
     return performance;
   }
 }
+
+/** Run a score to completion: `new Run({ score, provider, ...opts }).start()`. */
+export function performScore(
+  score: ExecutableScore,
+  provider: Provider,
+  opts: Omit<RunOptions, 'score' | 'provider'> = {},
+): Promise<Performance> {
+  return new Run({ ...opts, score, provider }).start();
+}

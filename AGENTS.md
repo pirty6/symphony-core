@@ -9,7 +9,7 @@ createEngine+advance -> Performance (JSON audit record).
 
 ## Rules
 - Score is the read-only plan; Performance is what happened. Never mutate a Score at runtime.
-- advance(state, resolution) is pure: no I/O inside the state machine.
+- advance(score, state, resolution) is pure: no I/O inside the state machine.
 - Validate every AI response shape (MoveVerdict) before it advances state.
 - Never repeat the same (moveType, targetSite, stateHash).
 - Patterns are TypeScript only, no markdown definitions.

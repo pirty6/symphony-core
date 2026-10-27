@@ -3,7 +3,7 @@ import { compileScore } from '../core/compile.js';
 import { hashOf } from '../core/hash.js';
 import { replayPerformance } from '../core/replay.js';
 import { fix, hangman } from '../patterns/index.js';
-import { Run, type RunMessage, type RunStatus } from './driver.js';
+import { performScore, Run, type RunMessage, type RunStatus } from './driver.js';
 import type { AgentRequest, AgentResponse, Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
 
@@ -184,5 +184,14 @@ describe('Run', () => {
     expect(run.messages.find((m) => m.type === 'performance')).toMatchObject({
       savedTo: '/tmp/x.json',
     });
+  });
+
+  it('performScore runs a score to completion', async () => {
+    const perf = await performScore(fixScore, ScriptedProvider.forPattern(fix), {
+      demo: fix.demo,
+      autoApprove: true,
+      clock,
+    });
+    expect(perf.outcome).toBe('success');
   });
 });
