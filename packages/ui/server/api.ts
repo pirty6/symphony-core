@@ -25,7 +25,7 @@ import { validatePattern } from '../../../src/core/validate.js'
 import { PATTERNS } from '../../../src/patterns/index.js'
 import { draftPattern } from '../../../src/runtime/drafting.js'
 import { Run } from '../../../src/runtime/driver.js'
-import { envConfig, isProviderName, makeProvider } from '../../../src/runtime/factory.js'
+import { envConfig, isProviderName, makeProvider, runtimeExtras, type RuntimeExtras } from '../../../src/runtime/factory.js'
 import { gitFingerprint, listRuns, loadPatternFiles, loadRun, runPath, savePatternFile, saveRun } from '../../../src/runtime/store.js'
 
 export interface ApiOptions {
@@ -118,13 +118,17 @@ export function createApi(opts: ApiOptions) {
     return (await library()).find((l) => l.pattern.name === name)?.pattern.demo
   }
 
-  function providerFor(name: unknown, model: unknown, pattern?: Pattern) {
+  let extras: Promise<RuntimeExtras> | undefined
+  const runtime = () => (extras ??= runtimeExtras(workspace, opts.repoRoot, env))
+
+  function providerFor(name: unknown, model: unknown, pattern?: Pattern, mcpServers?: RuntimeExtras['mcpServers']) {
     if (!isProviderName(name)) throw new CompileError([{ message: 'provider must be scripted or copilot' }])
     return makeProvider({
       provider: name,
       ...(pattern ? { pattern } : {}),
       workingDirectory: workspace,
       delayMs: opts.scriptedDelayMs ?? 0,
+      ...(mcpServers ? { mcpServers } : {}),
       ...envConfig(env),
       ...(typeof model === 'string' && model ? { model } : {}),
     })
@@ -138,10 +142,13 @@ export function createApi(opts: ApiOptions) {
       goal: typeof body.goal === 'string' && body.goal.trim() ? body.goal : pattern.description || pattern.name,
       context: (body.context as Record<string, unknown> | undefined) ?? {},
     })
-    const provider = providerFor(body.provider ?? 'scripted', body.model, withDemo)
+    const { tools, toolContext, mcpServers } = await runtime()
+    const provider = providerFor(body.provider ?? 'scripted', body.model, withDemo, mcpServers)
     const run = new Run({
       score,
       provider,
+      tools,
+      toolContext,
       ...(demo ? { demo } : {}),
       autoApprove: body.autoApprove === true,
       stepMode: body.stepMode === true,

@@ -1,5 +1,9 @@
 /** Shared provider construction for the CLI and the studio server. */
+import type { MCPServerConfig } from '@github/copilot-sdk';
 import type { Pattern } from '../core/types.js';
+import { defaultTools } from './builtin-tools.js';
+import { discoverMcpServers } from './mcp.js';
+import type { ToolContext, ToolRegistry } from './tools.js';
 import { CopilotProvider } from './copilot-provider.js';
 import type { Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
@@ -14,6 +18,7 @@ export interface ProviderConfig {
   readonly workingDirectory?: string;
   /** Streaming delay for the scripted provider (ms). */
   readonly delayMs?: number;
+  readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
 }
 
 export function isProviderName(v: unknown): v is ProviderName {
@@ -28,6 +33,7 @@ export function makeProvider(cfg: ProviderConfig): Provider {
       ...(cfg.model ? { model: cfg.model } : {}),
       ...(cfg.gitHubToken ? { gitHubToken: cfg.gitHubToken } : {}),
       ...(cfg.workingDirectory ? { workingDirectory: cfg.workingDirectory } : {}),
+      ...(cfg.mcpServers ? { mcpServers: cfg.mcpServers } : {}),
       clock,
     });
   }
@@ -45,5 +51,37 @@ export function envConfig(env: NodeJS.ProcessEnv): { model?: string; gitHubToken
   return {
     ...(model ? { model } : {}),
     ...(token && token !== 'token' ? { gitHubToken: token } : {}),
+  };
+}
+
+export interface RuntimeExtras {
+  readonly tools: ToolRegistry;
+  readonly toolContext: Omit<ToolContext, 'signal'>;
+  readonly mcpServers: Readonly<Record<string, MCPServerConfig>>;
+  /** MCP servers found but unusable, with the reason. */
+  readonly mcpSkipped: readonly string[];
+}
+
+/**
+ * Tools for `tool` nodes and MCP servers for agents.
+ * SYMPHONY_MCP=off disables MCP; SYMPHONY_MCP_USER=off ignores the VS Code user mcp.json.
+ */
+export async function runtimeExtras(
+  workspace: string,
+  repoRoot: string,
+  env: NodeJS.ProcessEnv,
+): Promise<RuntimeExtras> {
+  const includeUser = env.SYMPHONY_MCP_USER !== 'off';
+  const mcp =
+    env.SYMPHONY_MCP === 'off'
+      ? { servers: {}, skipped: [] }
+      : await discoverMcpServers({ workspace, includeUser, env });
+  return {
+    tools: defaultTools(
+      env.SYMPHONY_MCP === 'off' ? { mcp: { includeUser: false } } : { mcp: { includeUser } },
+    ),
+    toolContext: { workspace, repoRoot },
+    mcpServers: mcp.servers,
+    mcpSkipped: mcp.skipped,
   };
 }

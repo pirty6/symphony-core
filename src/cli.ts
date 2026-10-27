@@ -21,7 +21,13 @@ import type { FieldType, Pattern } from './core/types.js';
 import { PATTERNS } from './patterns/index.js';
 import { Run, type RunMessage } from './runtime/driver.js';
 import { draftPattern } from './runtime/drafting.js';
-import { envConfig, isProviderName, makeProvider, type ProviderName } from './runtime/factory.js';
+import {
+  envConfig,
+  isProviderName,
+  makeProvider,
+  runtimeExtras,
+  type ProviderName,
+} from './runtime/factory.js';
 import {
   gitFingerprint,
   listRuns,
@@ -161,12 +167,17 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
     throw e;
   }
   const env = envConfig(process.env);
+  const extras = await runtimeExtras(cwd, cwd, process.env);
+  for (const s of extras.mcpSkipped) console.log(c.dim(`MCP server skipped: ${s}`));
   const run = new Run({
     score,
+    tools: extras.tools,
+    toolContext: extras.toolContext,
     provider: makeProvider({
       provider: providerName,
       pattern,
       workingDirectory: cwd,
+      mcpServers: extras.mcpServers,
       ...env,
       ...(values.model ? { model: values.model } : {}),
     }),
