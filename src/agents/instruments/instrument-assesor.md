@@ -1,6 +1,6 @@
 ---
 name: instrument-assessor
-description: "Generic read-only assessor. Gathers evidence and returns structured KEY=VALUE output. Tool usage scoped by orchestrator instructions."
+description: 'Generic read-only assessor. Gathers evidence and returns structured KEY=VALUE output. Tool usage scoped by orchestrator instructions.'
 tools: [read, search, execute]
 agents: []
 user-invocable: false

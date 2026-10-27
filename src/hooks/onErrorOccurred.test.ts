@@ -1,34 +1,34 @@
-import { describe, it, expect, vi } from "vitest";
-import { onErrorOccurred } from "./onErrorOccurred";
+import { describe, it, expect, vi } from 'vitest';
+import { onErrorOccurred } from './onErrorOccurred';
 
 const baseInput = {
-  sessionId: "test-session",
+  sessionId: 'test-session',
   timestamp: new Date(),
-  workingDirectory: "/tmp",
+  workingDirectory: '/tmp',
   recoverable: false,
 };
 
-describe("onErrorOccurred", () => {
-  it("returns abort error handling", async () => {
+describe('onErrorOccurred', () => {
+  it('returns abort error handling', async () => {
     const result = await onErrorOccurred({
       ...baseInput,
-      error: "something broke",
-      errorContext: "tool_execution",
+      error: 'something broke',
+      errorContext: 'tool_execution',
     });
 
-    expect(result).toEqual({ errorHandling: "abort" });
+    expect(result).toEqual({ errorHandling: 'abort' });
   });
 
-  it("logs the error to stderr", async () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  it('logs the error to stderr', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await onErrorOccurred({
       ...baseInput,
-      error: "timeout",
-      errorContext: "system",
+      error: 'timeout',
+      errorContext: 'system',
     });
 
-    expect(spy).toHaveBeenCalledWith("Error in system: timeout");
+    expect(spy).toHaveBeenCalledWith('Error in system: timeout');
     spy.mockRestore();
   });
 });

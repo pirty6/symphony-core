@@ -1,16 +1,16 @@
-import "dotenv/config";
-import { CopilotClient } from "@github/copilot-sdk";
-import type { SessionConfig } from "@github/copilot-sdk";
-import { onErrorOccurred } from "./hooks/onErrorOccurred.js";
-import { onUserPromptSubmitted } from "./hooks/onUserPromptSubmitted.js";
+import 'dotenv/config';
+import { CopilotClient } from '@github/copilot-sdk';
+import type { SessionConfig } from '@github/copilot-sdk';
+import { onErrorOccurred } from './hooks/onErrorOccurred.js';
+import { onUserPromptSubmitted } from './hooks/onUserPromptSubmitted.js';
 
-type SessionHooks = NonNullable<SessionConfig["hooks"]>;
+type SessionHooks = NonNullable<SessionConfig['hooks']>;
 
 const hooks: SessionHooks = {
   onSessionStart: async (input: { source: string }) => {
     console.log(`Session started from: ${input.source}`);
     return {
-      additionalContext: "Symphony orchestrator session initialized.",
+      additionalContext: 'Symphony orchestrator session initialized.',
     };
   },
 
@@ -23,7 +23,7 @@ const hooks: SessionHooks = {
   onPreToolUse: async (input: { toolName: string; toolArgs: unknown }) => {
     console.log(`Tool about to run: ${input.toolName}`);
     return {
-      permissionDecision: "allow" as const,
+      permissionDecision: 'allow' as const,
       modifiedArgs: input.toolArgs,
     };
   },
@@ -37,15 +37,15 @@ const hooks: SessionHooks = {
     console.log(`Tool ${input.toolName} failed: ${input.error}`);
 
     // Replicate stop-on-error behavior for terminal failures
-    if (input.toolName === "run_in_terminal") {
+    if (input.toolName === 'run_in_terminal') {
       return {
         additionalContext:
-          "Terminal command failed with a non-zero exit code. Stop and report the error to the user.",
+          'Terminal command failed with a non-zero exit code. Stop and report the error to the user.',
       };
     }
 
     return {
-      additionalContext: "Suggest checking inputs and retrying.",
+      additionalContext: 'Suggest checking inputs and retrying.',
     };
   },
 
@@ -55,10 +55,10 @@ const hooks: SessionHooks = {
 async function main(): Promise<void> {
   const token = process.env.TOKEN;
   if (!token) {
-    throw new Error("TOKEN environment variable is required");
+    throw new Error('TOKEN environment variable is required');
   }
 
-  const model = process.env.MODEL ?? "claude-opus-4.6";
+  const model = process.env.MODEL ?? 'claude-opus-4.6';
 
   const client = new CopilotClient({ gitHubToken: token });
   await client.start();
@@ -69,15 +69,15 @@ async function main(): Promise<void> {
   });
 
   const done = new Promise<void>((resolve) => {
-    session.on("assistant.message", (event) => {
+    session.on('assistant.message', (event) => {
       console.log(event.data.content);
     });
-    session.on("session.idle", () => {
+    session.on('session.idle', () => {
       resolve();
     });
   });
 
-  await session.send({ prompt: "Hello from Symphony" });
+  await session.send({ prompt: 'Hello from Symphony' });
   await done;
 
   await session.disconnect();

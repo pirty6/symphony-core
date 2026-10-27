@@ -1,6 +1,6 @@
 ---
 name: instrument-executor
-description: "Generic executor. Applies changes as directed. Returns structured result."
+description: 'Generic executor. Applies changes as directed. Returns structured result.'
 tools: [edit, execute, read, search]
 agents: []
 user-invocable: false

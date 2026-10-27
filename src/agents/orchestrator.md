@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: "Generic step-based orchestrator. Receives step definitions (instrument prompt + routing rules) via hook-injected context. Spawns assessor/executor sub-agents and routes based on structured output."
+description: 'Generic step-based orchestrator. Receives step definitions (instrument prompt + routing rules) via hook-injected context. Spawns assessor/executor sub-agents and routes based on structured output.'
 tools: [execute, agent]
 agents: [instrument-assessor, instrument-executor]
 user-invocable: no
