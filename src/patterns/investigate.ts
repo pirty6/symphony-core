@@ -359,7 +359,7 @@ export const investigate: Pattern = {
       label: 'Record triage',
       assign: [
         { field: 'relevantFiles', expr: 'relevantFiles + batchRelevant' },
-        { field: 'findings', expr: 'findings + newFindings' },
+        { field: 'findings', expr: 'unique(findings + newFindings)' },
       ],
     },
     {
@@ -390,9 +390,9 @@ export const investigate: Pattern = {
       capabilities: ['web'],
       label: 'Deep read',
       directive:
-        'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`, without repeating `findings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
+        'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
         AGAINST,
-      reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch', 'findings'],
+      reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch'],
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
       retries: 2,
       checks: [
@@ -435,7 +435,7 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Record deep read',
       assign: [
-        { field: 'findings', expr: 'findings + newFindings' },
+        { field: 'findings', expr: 'unique(findings + newFindings)' },
         { field: 'notRead', expr: 'notRead + unreadable' },
         { field: 'notReadReasons', expr: 'notReadReasons + unreadableReasons' },
         { field: 'unreadable', expr: '[]' },
@@ -502,7 +502,7 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Record experiment',
       assign: [
-        { field: 'findings', expr: 'findings + newFindings' },
+        { field: 'findings', expr: 'unique(findings + newFindings)' },
         { field: 'ran', expr: 'append(ran, currentExperiment)' },
       ],
     },
@@ -537,7 +537,6 @@ export const investigate: Pattern = {
         'searchTerms',
         'currentSource',
         'sourceInfo',
-        'findings',
       ],
       writes: ['queries', 'newFindings'],
       retries: 2,
@@ -558,7 +557,7 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Record source',
       assign: [
-        { field: 'findings', expr: 'findings + newFindings' },
+        { field: 'findings', expr: 'unique(findings + newFindings)' },
         { field: 'consulted', expr: 'append(consulted, currentSource)' },
       ],
     },
@@ -614,7 +613,7 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Record gap research',
       assign: [
-        { field: 'findings', expr: 'findings + newFindings' },
+        { field: 'findings', expr: 'unique(findings + newFindings)' },
         { field: 'gapRounds', expr: 'gapRounds + 1' },
       ],
     },

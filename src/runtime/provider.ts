@@ -67,12 +67,17 @@ export interface PromptSources {
 }
 
 export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {}): string {
+  // Say each thing once: the goal is often a run input too (investigate's question).
+  const goalKey = Object.keys(pause.input).find((k) => pause.input[k] === pause.goal);
+  const context = Object.fromEntries(
+    Object.entries(pause.context).filter(([k, v]) => !(k in pause.input) && v !== pause.goal),
+  );
   const lines: string[] = [
     `You are the ${pause.role.toUpperCase()} for ONE step of a deterministic workflow.`,
     'A state machine (not you) decides what runs next. Do only this step.',
     '',
     '## Overall goal',
-    pause.goal,
+    goalKey ? `\`${goalKey}\` in the input below.` : pause.goal,
     '',
     `## Your step: ${pause.label}`,
     pause.directive,
@@ -82,8 +87,8 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
     JSON.stringify(pause.input, null, 2),
     '```',
   ];
-  if (Object.keys(pause.context).length > 0) {
-    lines.push('', '## Context', '```json', JSON.stringify(pause.context, null, 2), '```');
+  if (Object.keys(context).length > 0) {
+    lines.push('', '## Context', '```json', JSON.stringify(context, null, 2), '```');
   }
   lines.push(
     '',

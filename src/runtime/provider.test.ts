@@ -86,6 +86,21 @@ describe('decidePermission', () => {
   });
 });
 
+describe('buildAgentPrompt says each thing once', () => {
+  it('points at the input instead of repeating a goal that is also an input or context', () => {
+    const q = 'Why is the build slow on CI?';
+    const prompt = buildAgentPrompt({
+      ...pause,
+      goal: q,
+      input: { question: q, batch: ['a.ts'] },
+      context: { question: q, hint: 'look at webpack' },
+    });
+    expect(prompt.split(q)).toHaveLength(2);
+    expect(prompt).toContain('`question` in the input below.');
+    expect(prompt).toContain('"hint": "look at webpack"');
+  });
+});
+
 describe('isReadOnlyCommand', () => {
   it.each([
     'cd /repo && git --no-pager diff --stat HEAD~1..HEAD && echo "---" && git --no-pager diff HEAD~1..HEAD',
