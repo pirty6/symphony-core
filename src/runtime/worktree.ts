@@ -47,11 +47,14 @@ function git(
   input?: string,
 ): Promise<{ code: number; out: string; err: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', [...args], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('git', [...args], {
+      cwd,
+      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+    });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
-    child.stdout.on('data', (b: Buffer) => out.push(b));
-    child.stderr.on('data', (b: Buffer) => err.push(b));
+    child.stdout?.on('data', (b: Buffer) => out.push(b));
+    child.stderr?.on('data', (b: Buffer) => err.push(b));
     child.on('error', reject);
     child.on('close', (code) =>
       resolve({
@@ -60,7 +63,11 @@ function git(
         err: Buffer.concat(err).toString('utf8'),
       }),
     );
-    child.stdin.end(input ?? '');
+    if (child.stdin) {
+      // git may exit before reading all of it (e.g. a patch that does not apply): not an error here.
+      child.stdin.on('error', () => undefined);
+      child.stdin.end(input);
+    }
   });
 }
 
