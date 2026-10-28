@@ -245,7 +245,8 @@ export async function sourceCatalog(
   if (runs.length > 0) {
     entries.push([
       'prior-runs',
-      `${runs.length} earlier Symphony runs with recorded answers in ${join(ctx.repoRoot, '.symphony', 'runs')}`,
+      // No count: a run's own history must not change the next run's input.
+      `earlier Symphony runs with recorded answers in ${join(ctx.repoRoot, '.symphony', 'runs')}`,
     ]);
   }
   return { names: entries.map(([n]) => n), descriptions: entries.map(([n, d]) => `${n}: ${d}`) };

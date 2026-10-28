@@ -342,7 +342,13 @@ export class Run {
     await this.gate(pause.nodeId, 'before');
     if (this.stopRequested) return undefined;
     const tools = this.opts.tools;
-    if (!tools) return scriptedResolution(this.opts.demo, pause, this.engine, this.now());
+    // The offline demo is a function of (pattern, goal, context) only: it plays the
+    // demo's tool outputs rather than reading this machine's files, runs or servers.
+    const scripted =
+      this.opts.provider.name === 'scripted' && this.opts.demo?.tools?.[pause.nodeId];
+    if (!tools || scripted) {
+      return scriptedResolution(this.opts.demo, pause, this.engine, this.now());
+    }
     const emit = (text: string) =>
       this.push({
         type: 'provider',

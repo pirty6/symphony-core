@@ -62,6 +62,26 @@ describe('main', () => {
     expect(out).toMatch(/fix\s+success/);
   });
 
+  it('two offline runs are identical even though the first one changes the runs folder', async () => {
+    const saved: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      out = '';
+      expect(await main(['run', 'investigate', '--auto-approve'], cwd)).toBe(0);
+      saved.push(/saved (\S+\.json)/.exec(out)![1]!);
+    }
+    out = '';
+    expect(await main(['compare', ...saved], cwd)).toBe(0);
+    expect(plain()).toMatch(/identical performances/);
+    out = '';
+    expect(await main(['run', 'investigate', '-c', 'question=Other?', '--auto-approve'], cwd)).toBe(
+      0,
+    );
+    const other = /saved (\S+\.json)/.exec(out)![1]!;
+    out = '';
+    expect(await main(['compare', saved[0]!, other], cwd)).toBe(3);
+    expect(plain()).toMatch(/first divergence: the plan[\s\S]*goal, context differ/);
+  });
+
   it('reports compile errors for missing context', async () => {
     expect(await main(['run', 'review', '-c', 'target=', '--no-save'], cwd)).toBe(1);
     expect(out).toMatch(/missing required context 'target'/);

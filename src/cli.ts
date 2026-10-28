@@ -7,6 +7,7 @@
  *   run <pattern> [options]                run a pattern in the terminal
  *   draft "<request>" [--save]             let the AI draft a new pattern
  *   verify <run.json>                      integrity + deterministic replay check
+ *   compare <a.json> <b.json>              first divergence between two runs and its cause
  *   runs                                   saved runs
  */
 import 'dotenv/config';
@@ -15,6 +16,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
+import { compareRuns } from './core/compare.js';
 import { replayPerformance } from './core/replay.js';
 import { parseFieldInput } from './core/schema.js';
 import type {
@@ -458,6 +460,40 @@ async function cmdVerify(file: string | undefined): Promise<number> {
   return divergence.reproduced ? 0 : 2;
 }
 
+const CAUSE_TEXT = {
+  plan: 'the plan: the two scores differ',
+  environment: 'the environment: a tool, the workspace or a failure outside the score',
+  ai: 'the AI: an agent answered differently',
+  human: 'a human: an approval or a stop',
+  engine: 'the engine: the same input took a different path (engine code changed)',
+} as const;
+
+async function cmdCompare(files: string[]): Promise<number> {
+  if (files.length !== 2) {
+    console.error('usage: symphony compare <a.json> <b.json>');
+    return 1;
+  }
+  const loaded = await Promise.all(files.map((f) => loadRun(resolve(f))));
+  const issues = loaded.flatMap((l, i) => l.issues.map((x) => `${files[i]}: ${x}`));
+  if (issues.length) {
+    console.log(c.red(issues.join('\n')));
+    return 2;
+  }
+  const cmp = compareRuns(loaded[0]!.run, loaded[1]!.run);
+  if (cmp.identical) {
+    console.log(c.green('✔ identical performances'));
+    return 0;
+  }
+  if (cmp.first) {
+    const where = cmp.first.nodeId ? ` at step ${cmp.first.step} (${cmp.first.nodeId})` : '';
+    console.log(`first divergence${where}: ${CAUSE_TEXT[cmp.first.cause]}`);
+    console.log(c.dim(`  ${cmp.first.detail}`));
+  }
+  if (cmp.differentKeys.length)
+    console.log(`final state differs in: ${cmp.differentKeys.join(', ')}`);
+  return 3;
+}
+
 export async function main(argv: string[], cwd = process.cwd()): Promise<number> {
   const [cmd, ...rest] = argv;
   switch (cmd) {
@@ -488,6 +524,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       return cmdDraft(rest, cwd);
     case 'verify':
       return cmdVerify(rest[0]);
+    case 'compare':
+      return cmdCompare(rest);
     case 'runs':
       for (const r of await listRuns(join(cwd, RUNS_DIR)))
         console.log(
@@ -507,6 +545,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       --auto-approve  --step  --break <nodeId>  --no-save
   draft "<request>"            AI drafts a pattern (--provider copilot, --save)
   verify <run.json>            integrity + deterministic replay check
+  compare <a.json> <b.json>    where two runs diverge and why (plan, environment, AI, human, engine)
   runs                         saved runs
 
 Studio (visual): npm start`);

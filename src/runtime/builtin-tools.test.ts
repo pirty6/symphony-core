@@ -4,6 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { defaultTools, listRepoFiles, sourceCatalog } from './builtin-tools.js';
+import { compileScore } from '../core/compile.js';
+import { toPerformance } from '../core/engine.js';
+import { runScripted } from '../core/scripted.js';
+import { fix } from '../patterns/index.js';
+import { saveRun } from './store.js';
 import { discoverMcpServers, stripJsonc, userMcpFiles } from './mcp.js';
 
 const root = mkdtempSync(join(tmpdir(), 'symphony-tools-'));
@@ -84,6 +89,25 @@ describe('sources.catalog', () => {
     ]);
     expect(c.descriptions[0]).toMatch(/^workspace: 6 files/);
     expect(c.descriptions[1]).toMatch(/^git-history: 1 commits/);
+
+    // A run's own history must not change the next run's input.
+    const runs = join(dir, '.symphony', 'runs');
+    const score = compileScore(fix, { context: fix.demo!.context!, generatedAt: 't' });
+    const performance = toPerformance(runScripted(score, fix.demo, { at: 't' }).state);
+    await saveRun(runs, { schemaVersion: 2, score, performance });
+    const once = await sourceCatalog(ctx(dir), { probeGitHub: false, mcp: { includeUser: false } });
+    await saveRun(runs, {
+      schemaVersion: 2,
+      score,
+      performance: { ...performance, startedAt: 'u' },
+    });
+    const twice = await sourceCatalog(ctx(dir), {
+      probeGitHub: false,
+      mcp: { includeUser: false },
+    });
+    const prior = (x: typeof once) => x.descriptions.find((d) => d.startsWith('prior-runs:'));
+    expect(prior(once)).toMatch(/^prior-runs: earlier Symphony runs/);
+    expect(prior(twice)).toBe(prior(once));
   });
 
   it('is exposed through the default registry', async () => {

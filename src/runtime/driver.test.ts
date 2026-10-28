@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { hashOf } from '../core/hash.js';
 import { replayPerformance } from '../core/replay.js';
+import type { Pattern } from '../core/types.js';
 import { fix, hangman } from '../patterns/index.js';
 import { performScore, Run, type RunMessage, type RunStatus } from './driver.js';
 import type { AgentRequest, AgentResponse, Provider } from './provider.js';
@@ -212,6 +213,56 @@ describe('Run', () => {
     });
     const perf = await run.start();
     expect(perf.outcome).toBe('success');
+  });
+
+  it('the offline demo plays its recorded tool outputs; a live provider reads the real tool', async () => {
+    const p: Pattern = {
+      name: 't',
+      description: 'd',
+      requiredContext: [],
+      state: [{ name: 'files', type: 'string[]' }],
+      start: 's',
+      nodes: [
+        { id: 's', kind: 'start', label: 'S' },
+        { id: 'list', kind: 'tool', label: 'L', tool: 'repo.files', output: { files: 'files' } },
+        { id: 'e', kind: 'end', label: 'E' },
+      ],
+      edges: [
+        { id: '1', from: 's', to: 'list' },
+        { id: '2', from: 'list', to: 'e' },
+      ],
+      demo: { tools: { list: () => ({ files: ['demo.ts'] }) } },
+    };
+    const score = compileScore(p, { goal: 'g', generatedAt: 't' });
+    let calls = 0;
+    const tools = registry([
+      {
+        name: 'repo.files',
+        description: 'd',
+        outputs: ['files'],
+        run: async () => ({ files: [`real-${++calls}.ts`] }),
+      },
+    ]);
+    const offline = async () =>
+      (
+        await new Run({
+          score,
+          provider: new ScriptedProvider(),
+          demo: p.demo,
+          tools,
+          clock,
+        }).start()
+      ).finalState;
+    expect(await offline()).toEqual({ files: ['demo.ts'] });
+    expect(await offline()).toEqual({ files: ['demo.ts'] });
+    expect(calls).toBe(0);
+    const live: Provider = {
+      name: 'live',
+      runAgent: async () => Promise.reject(new Error('unused')),
+      draft: async () => Promise.reject(new Error('unused')),
+    };
+    const perf = await new Run({ score, provider: live, demo: p.demo, tools, clock }).start();
+    expect(perf.finalState).toEqual({ files: ['real-1.ts'] });
   });
 
   it('runs tool nodes through the registry, gated and recorded', async () => {
