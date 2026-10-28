@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { hashOf } from '../core/hash.js';
-import { replayPerformance } from '../core/replay.js';
-import type { Pattern } from '../core/types.js';
+import { replayPerformance, restoreEngine, RestoreError } from '../core/replay.js';
+import type { Pattern, SavedRun } from '../core/types.js';
 import { fix, hangman } from '../patterns/index.js';
 import { performScore, Run, type RunMessage, type RunStatus } from './driver.js';
 import type { AgentRequest, AgentResponse, Provider } from './provider.js';
@@ -436,5 +436,102 @@ describe('Run', () => {
       run.messages.filter((m) => m.type === 'provider').map((m) => m.type === 'provider' && m.take),
     ).toEqual([1, 2, 3, 0]);
     expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
+  });
+});
+
+describe('checkpoints, resume and fork', () => {
+  const offline = () => ScriptedProvider.forPattern(fix);
+  const strip = ({ basedOn: _b, ...p }: SavedRun['performance']) => p;
+
+  async function checkpoints(): Promise<SavedRun[]> {
+    const saved: SavedRun[] = [];
+    await new Run({
+      score: fixScore,
+      provider: offline(),
+      demo: fix.demo,
+      autoApprove: true,
+      clock,
+      checkpoint: true,
+      onSave: async (r) => {
+        saved.push(structuredClone(r));
+        return 'f.json';
+      },
+    }).start();
+    return saved;
+  }
+
+  it('saves the run after every answer, then once more at the end', async () => {
+    const saved = await checkpoints();
+    const done = saved.at(-1)!.performance;
+    expect(done.outcome).toBe('success');
+    const answered = done.steps.filter((s) => ['agent', 'tool', 'approval'].includes(s.kind));
+    expect(saved).toHaveLength(answered.length);
+    expect(saved.slice(0, -1).every((r) => r.performance.outcome === 'in-progress')).toBe(true);
+    const sizes = saved.map((r) => r.performance.steps.length);
+    expect(sizes).toEqual(sizes.toSorted((a, b) => a - b));
+  });
+
+  it('a run cut off at any step resumes to exactly the uninterrupted performance', async () => {
+    const saved = await checkpoints();
+    const whole = saved.at(-1)!.performance;
+    for (const cut of [0, 3, saved.length - 3]) {
+      const partial = saved[cut]!.performance;
+      const restored = restoreEngine(fixScore, partial);
+      expect(restored.state.kind).toBe('running');
+      const resumed = await new Run({
+        score: fixScore,
+        provider: offline(),
+        demo: fix.demo,
+        autoApprove: true,
+        clock,
+        restore: {
+          result: restored,
+          basedOn: {
+            kind: 'resumed',
+            from: 'f.json',
+            throughStep: partial.steps.at(-1)?.step ?? 0,
+          },
+        },
+      }).start();
+      expect(strip(resumed)).toEqual(strip(whole));
+      expect(resumed.basedOn).toMatchObject({ kind: 'resumed', from: 'f.json' });
+      expect(replayPerformance(fixScore, resumed).divergence.reproduced).toBe(true);
+    }
+  });
+
+  it('forks a finished run from a step: earlier steps are kept, later ones play again', async () => {
+    const original = (await checkpoints()).at(-1)!.performance;
+    const diagnose = original.steps.find((s) => s.kind === 'agent')!;
+    const restored = restoreEngine(fixScore, original, {
+      throughStep: diagnose.step - 1,
+      startedAt: 'u',
+    });
+    expect(restored.state.kind === 'running' && restored.state.pause?.nodeId).toBe(diagnose.nodeId);
+    const forked = await new Run({
+      score: fixScore,
+      provider: offline(),
+      demo: fix.demo,
+      autoApprove: true,
+      clock,
+      restore: {
+        result: restored,
+        basedOn: { kind: 'forked', from: 'f.json', throughStep: diagnose.step - 1 },
+      },
+    }).start();
+    expect(forked.startedAt).toBe('u');
+    expect(forked.steps.slice(0, diagnose.step - 1)).toEqual(
+      original.steps.slice(0, diagnose.step - 1),
+    );
+    expect(replayPerformance(fixScore, forked).divergence.reproduced).toBe(true);
+  });
+
+  it('refuses to restore answers that do not fit the score', async () => {
+    const original = (await checkpoints()).at(-1)!.performance;
+    const agent = original.steps.findIndex((s) => s.kind === 'agent');
+    const steps = original.steps.map((s, i) => (i === agent ? { ...s, updates: { bogus: 1 } } : s));
+    expect(() => restoreEngine(fixScore, { ...original, steps })).toThrow(
+      /no longer reproduce the run at step/,
+    );
+    expect(() => restoreEngine(fixScore, { ...original, steps })).toThrow(RestoreError);
   });
 });

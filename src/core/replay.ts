@@ -279,3 +279,48 @@ export function replayPerformance(
   };
   return { result: r, divergence: divergence(perf, replayed) };
 }
+
+/** Raised when recorded answers no longer fit the score (the run cannot be restored). */
+export class RestoreError extends Error {}
+
+/**
+ * Rebuild the engine from a (possibly unfinished) performance: feed its recorded
+ * answers back through the pure engine and stop at the first step that has none,
+ * or once `throughStep` is done, leaving the engine waiting there. This is what
+ * makes every saved run a checkpoint: resume continues live from that pause,
+ * fork does the same from an earlier step. `events` holds the whole history.
+ */
+export function restoreEngine(
+  score: ExecutableScore,
+  perf: Performance,
+  opts: { readonly throughStep?: number; readonly startedAt?: string } = {},
+): AdvanceResult {
+  let r = createEngine(score, { startedAt: opts.startedAt ?? perf.startedAt });
+  const events = [...r.events];
+  const fed = new Map<number, number>();
+  while (r.state.kind === 'running' && r.state.pause) {
+    const pause = r.state.pause;
+    if (opts.throughStep !== undefined && pause.step > opts.throughStep) break;
+    const recorded = perf.steps.find((s) => s.step === pause.step && s.nodeId === pause.nodeId);
+    const n = fed.get(pause.step) ?? 0;
+    fed.set(pause.step, n + 1);
+    const res = recorded ? resolutionFrom(recorded, pause.pauseId, n) : undefined;
+    if (!res) break;
+    r = advance(score, r.state, res);
+    if (r.rejected) {
+      throw new RestoreError(`step ${pause.step} (${pause.nodeId}): ${r.rejected}`);
+    }
+    events.push(...r.events);
+  }
+  // Only continue from a history that reproduces exactly.
+  const restored = r.state.steps;
+  restored.forEach((s, i) => {
+    const want = perf.steps[i];
+    if (!want || want.nodeId !== s.nodeId || want.stateHashAfter !== s.stateHashAfter) {
+      throw new RestoreError(
+        `recorded answers no longer reproduce the run at step ${s.step} (${s.nodeId}); fork from an earlier step`,
+      );
+    }
+  });
+  return { state: r.state, events };
+}

@@ -15,6 +15,7 @@ import {
   type AdvanceResult,
   type EngineState,
 } from '../core/engine.js';
+import { RUN_SCHEMA_VERSION } from '../core/migrate.js';
 import { scriptedResolution } from '../core/scripted.js';
 import type {
   AgentPause,
@@ -98,6 +99,13 @@ export interface RunOptions {
   readonly envHash?: () => Promise<string>;
   readonly clock?: () => string;
   readonly onSave?: (run: SavedRun) => Promise<string | undefined>;
+  /** Also save (through onSave) after every step, so an interrupted run can be resumed. */
+  readonly checkpoint?: boolean;
+  /** Continue from a restored engine (restoreEngine) instead of starting fresh. */
+  readonly restore?: {
+    readonly result: AdvanceResult;
+    readonly basedOn: NonNullable<Performance['basedOn']>;
+  };
   /** Called after a successful run; may start a follow-up run (the maestro's composed score). */
   readonly next?: (performance: Performance) => Promise<NextPerformance | undefined>;
   /** Classical (improvisation 0): recorded answers to replay for identical moves. */
@@ -412,6 +420,21 @@ export class Run {
     };
   }
 
+  private performance(): Performance {
+    const p = toPerformance(this.engine);
+    return this.opts.restore ? { ...p, basedOn: this.opts.restore.basedOn } : p;
+  }
+
+  /** Write the run as it stands; a failed write never stops the run. */
+  private save(): Promise<string | undefined> {
+    const run: SavedRun = {
+      schemaVersion: RUN_SCHEMA_VERSION,
+      score: this.score,
+      performance: this.performance(),
+    };
+    return this.opts.onSave!(run).catch(() => undefined);
+  }
+
   start(): Promise<Performance> {
     this.finished ??= this.loop();
     return this.finished;
@@ -419,7 +442,7 @@ export class Run {
 
   private async loop(): Promise<Performance> {
     this.setStatus('running');
-    this.apply(createEngine(this.score, { startedAt: this.now() }));
+    this.apply(this.opts.restore?.result ?? createEngine(this.score, { startedAt: this.now() }));
     while (this.engine.kind === 'running' && this.engine.pause) {
       const pause = this.engine.pause;
       const res =
@@ -441,14 +464,11 @@ export class Run {
         break;
       }
       this.apply(advance(this.score, this.engine, res));
+      if (this.opts.checkpoint && this.engine.kind === 'running') await this.save();
     }
-    const performance = toPerformance(this.engine);
+    const performance = this.performance();
     let savedTo: string | undefined;
-    if (this.opts.onSave) {
-      savedTo = await this.opts
-        .onSave({ schemaVersion: 3, score: this.score, performance })
-        .catch(() => undefined);
-    }
+    if (this.opts.onSave) savedTo = await this.save();
     this.push({ type: 'performance', performance, ...(savedTo ? { savedTo } : {}) });
     if (this.opts.next && performance.outcome === 'success') {
       const next = await this.opts.next(performance).catch(() => undefined);

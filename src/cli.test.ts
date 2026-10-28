@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -90,6 +90,48 @@ describe('main', () => {
     expect(plain()).toMatch(/rehearsal 2 performances of hangman/);
     expect(plain()).toMatch(/pick\s+agent\s+2\/2\s+1\s+100%/);
     expect(plain()).toMatch(/7\/7 nodes played the same notes every time/);
+  });
+
+  it('resumes an interrupted run and forks a finished one', async () => {
+    expect(await main(['run', 'fix', '--auto-approve'], cwd)).toBe(0);
+    const saved = /saved (\S+\.json)/.exec(out)![1]!;
+    const run = JSON.parse(readFileSync(saved, 'utf8'));
+    // What a crash leaves behind: the last checkpoint, still in progress.
+    const crashed = join(cwd, 'crashed.json');
+    const cut = {
+      ...run.performance,
+      outcome: 'in-progress',
+      steps: run.performance.steps.slice(0, 3),
+    };
+    delete cut.completedAt;
+    delete cut.reason;
+    writeFileSync(crashed, JSON.stringify({ ...run, performance: cut }));
+
+    out = '';
+    expect(await main(['resume', saved], cwd)).toBe(1);
+    expect(plain()).toMatch(/already ended \(success\); fork it/);
+    out = '';
+    expect(await main(['resume', crashed, '--auto-approve'], cwd)).toBe(0);
+    expect(plain()).toMatch(/resuming .*crashed\.json: steps 1\.\.3 replayed/);
+    const resumed = /saved (\S+\.json)/.exec(out)![1]!;
+    out = '';
+    expect(await main(['compare', saved, resumed], cwd)).toBe(0);
+    out = '';
+    expect(await main(['verify', resumed], cwd)).toBe(0);
+
+    out = '';
+    expect(await main(['fork', saved, '--at', '99'], cwd)).toBe(1);
+    out = '';
+    expect(await main(['fork', saved, '--at', '2', '--auto-approve'], cwd)).toBe(0);
+    const forked = /saved (\S+\.json)/.exec(out)![1]!;
+    expect(forked).not.toBe(saved);
+    expect(JSON.parse(readFileSync(forked, 'utf8')).performance.basedOn).toEqual({
+      kind: 'forked',
+      from: saved,
+      throughStep: 1,
+    });
+    out = '';
+    expect(await main(['verify', forked], cwd)).toBe(0);
   });
 
   it('reports compile errors for missing context', async () => {

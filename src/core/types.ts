@@ -481,6 +481,14 @@ export interface Performance {
   readonly schemaVersion: 3;
   /** Engine version that played it (ENGINE_VERSION). */
   readonly engine: string;
+  /** Set when this performance continued another one from a checkpoint. */
+  readonly basedOn?: {
+    readonly kind: 'resumed' | 'forked';
+    /** Saved run file it continued. */
+    readonly from: string;
+    /** Steps up to here were replayed from that run; later ones were played live. */
+    readonly throughStep: number;
+  };
   readonly scoreId: string;
   readonly startedAt: string;
   readonly completedAt?: string;

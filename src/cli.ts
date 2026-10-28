@@ -9,6 +9,7 @@
  *   verify <run.json>                      integrity + deterministic replay check
  *   compare <a.json> <b.json>              first divergence between two runs and its cause
  *   rehearse <pattern> -n N                play a score N times; which nodes agree
+ *   resume <run.json> | fork <run.json> --at N   continue from a checkpoint
  *   runs                                   saved runs
  */
 import 'dotenv/config';
@@ -19,7 +20,7 @@ import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
 import { agreement, compareRuns } from './core/compare.js';
 import { engineNote, RUN_SCHEMA_VERSION } from './core/migrate.js';
-import { replayPerformance } from './core/replay.js';
+import { replayPerformance, restoreEngine } from './core/replay.js';
 import { parseFieldInput } from './core/schema.js';
 import type {
   Complexity,
@@ -34,7 +35,7 @@ import { maestro, PATTERNS } from './patterns/index.js';
 import { concertNext } from './runtime/concert.js';
 import { loadRepertoire } from './runtime/store.js';
 import { IMPROVISATION_LEVELS, isImprovisation, playsFromRepertoire } from './core/jazz.js';
-import { Run, type NextPerformance, type RunMessage } from './runtime/driver.js';
+import { Run, type NextPerformance, type RunMessage, type RunOptions } from './runtime/driver.js';
 import { draftPattern } from './runtime/drafting.js';
 import {
   envConfig,
@@ -160,6 +161,8 @@ interface PlayOptions {
   readonly quiet?: boolean;
   /** Never replay recorded answers (rehearsals measure the musicians). */
   readonly fresh?: boolean;
+  /** Continue a restored run (resume / fork). */
+  readonly restore?: RunOptions['restore'];
 }
 
 function describeGate(state: Readonly<Record<string, unknown>>): string {
@@ -205,7 +208,8 @@ async function play(
     stepMode: o.step,
     breakpoints: o.breakpoints,
     ...(o.providerName === 'copilot' ? { envHash: () => gitFingerprint(cwd) } : {}),
-    ...(o.save ? { onSave: (r) => saveRun(runsDir, r) } : {}),
+    ...(o.save ? { onSave: (r) => saveRun(runsDir, r), checkpoint: true } : {}),
+    ...(o.restore ? { restore: o.restore } : {}),
     ...(o.next ? { next: o.next } : {}),
   });
   const level = IMPROVISATION_LEVELS[score.improvisation]!;
@@ -400,6 +404,105 @@ async function cmdRehearse(argv: string[], cwd: string): Promise<number> {
     }
   }
   return 0;
+}
+
+/** The provider a saved run was played with, from its AI transcripts. */
+function recordedProvider(run: SavedRun): ProviderName {
+  const live = run.performance.steps.some(
+    (s) => s.transcript && s.transcript.provider !== 'scripted' && !s.transcript.fromRepertoire,
+  );
+  return live ? 'copilot' : 'scripted';
+}
+
+async function cmdContinue(
+  kind: 'resumed' | 'forked',
+  argv: string[],
+  cwd: string,
+): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      provider: { type: 'string' },
+      model: { type: 'string' },
+      at: { type: 'string' },
+      'auto-approve': { type: 'boolean', default: false },
+    },
+  });
+  const file = positionals[0];
+  const usage = kind === 'resumed' ? 'resume <run.json>' : 'fork <run.json> --at <step>';
+  if (!file || (kind === 'forked' && values.at === undefined)) {
+    console.error(
+      `usage: symphony ${usage} [--provider scripted|copilot] [--model id] [--auto-approve]`,
+    );
+    return 1;
+  }
+  const { run, issues, migrated } = await loadRun(resolve(file));
+  for (const m of migrated) console.log(c.dim(`upgraded: ${m}`));
+  if (issues.length) {
+    console.log(c.red(issues.join('\n')));
+    return 2;
+  }
+  const perf = run.performance;
+  if (kind === 'resumed' && perf.outcome !== 'in-progress' && perf.outcome !== 'cancelled') {
+    console.error(
+      `this run already ended (${perf.outcome}); fork it from a step instead: symphony fork ${file} --at <step>`,
+    );
+    return 1;
+  }
+  const at = Number(values.at);
+  const last = perf.steps.at(-1)?.step ?? 0;
+  if (kind === 'forked' && (!Number.isInteger(at) || at < 1 || at > last + 1)) {
+    console.error(`--at must be a step from 1 to ${last + 1}`);
+    return 1;
+  }
+  const throughStep = kind === 'forked' ? at - 1 : last;
+  const provider = values.provider ?? recordedProvider(run);
+  if (!isProviderName(provider)) {
+    console.error('--provider must be scripted or copilot');
+    return 1;
+  }
+  let result;
+  try {
+    result = restoreEngine(run.score, perf, {
+      ...(kind === 'forked' ? { throughStep, startedAt: new Date().toISOString() } : {}),
+    });
+  } catch (e) {
+    console.error(c.red((e as Error).message));
+    return 2;
+  }
+  const pattern: Pattern = (await allPatterns(cwd)).find((p) => p.name === run.score.pattern) ?? {
+    name: run.score.pattern,
+    description: run.score.description,
+    requiredContext: [],
+    state: run.score.state,
+    nodes: run.score.nodes,
+    edges: run.score.edges,
+    start: run.score.start,
+  };
+  console.log(
+    c.dim(
+      `${kind === 'resumed' ? 'resuming' : 'forking'} ${file}: steps 1..${throughStep} replayed from the recording, the rest played live (${provider})`,
+    ),
+  );
+  const rl = process.stdin.isTTY
+    ? createInterface({ input: process.stdin, output: process.stdout })
+    : undefined;
+  try {
+    const done = await play(run.score, pattern, cwd, {
+      providerName: provider,
+      ...(values.model ? { model: values.model } : {}),
+      autoApprove: values['auto-approve'],
+      step: false,
+      breakpoints: [],
+      save: true,
+      ...(rl ? { rl } : {}),
+      restore: { result, basedOn: { kind, from: file, throughStep } },
+    });
+    return done.outcome === 'failed' ? 2 : 0;
+  } finally {
+    rl?.close();
+  }
 }
 
 async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
@@ -606,6 +709,10 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       return cmdCompare(rest);
     case 'rehearse':
       return cmdRehearse(rest, cwd);
+    case 'resume':
+      return cmdContinue('resumed', rest, cwd);
+    case 'fork':
+      return cmdContinue('forked', rest, cwd);
     case 'runs':
       for (const r of await listRuns(join(cwd, RUNS_DIR)))
         console.log(
@@ -628,7 +735,10 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   compare <a.json> <b.json>    where two runs diverge and why (plan, environment, AI, human, engine)
   rehearse <pattern> -n 3      play the same score N times with fresh answers; per-node agreement
       (takes the same options as run; approvals are auto-approved)
-  runs                         saved runs
+  resume <run.json>            continue an interrupted or stopped run from its last checkpoint
+  fork <run.json> --at <step>  keep steps before <step>, play the rest again as a new run
+      --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
+  runs                         saved runs (in-progress = interrupted, resumable)
 
 Studio (visual): npm start`);
       return cmd ? 1 : 0;
