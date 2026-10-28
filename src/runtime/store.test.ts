@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -12,6 +12,7 @@ import {
   gitFingerprint,
   isDemoRun,
   runsDirFor,
+  runScratch,
   listRuns,
   loadPatternFiles,
   loadRun,
@@ -117,5 +118,25 @@ describe('demo runs stay out of your lists', () => {
     expect((await listRuns(dir)).map((r) => r.demo).toSorted()).toEqual([false, true]);
     expect(runsDirFor('/repo', {})).toBe(join('/repo', '.symphony', 'runs'));
     expect(runsDirFor('/repo', { SYMPHONY_RUNS_DIR: '/tmp/x' })).toBe('/tmp/x');
+  });
+});
+
+describe('run scratch folders', () => {
+  it('each run gets its own folder under .symphony/scratch, removed at the end', async () => {
+    const a = await runScratch(root, {});
+    const b = await runScratch(root, {});
+    expect(a.dir).not.toBe(b.dir);
+    expect(a.dir.startsWith(join(root, '.symphony', 'scratch'))).toBe(true);
+    writeFileSync(join(a.dir, 'bench.sh'), 'echo hi');
+    await a.remove();
+    expect(existsSync(a.dir)).toBe(false);
+    expect(existsSync(b.dir)).toBe(true);
+    await b.remove();
+  });
+
+  it('SYMPHONY_KEEP_SCRATCH=1 keeps it for debugging', async () => {
+    const kept = await runScratch(root, { SYMPHONY_KEEP_SCRATCH: '1' });
+    await kept.remove();
+    expect(existsSync(kept.dir)).toBe(true);
   });
 });

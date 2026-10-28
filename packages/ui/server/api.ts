@@ -39,7 +39,7 @@ import {
   runtimeExtras,
   type RuntimeExtras,
 } from '../../../src/runtime/factory.js'
-import { gitFingerprint, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
+import { gitFingerprint, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
 
 export interface ApiOptions {
   /** Repository root (where src/patterns lives). */
@@ -189,7 +189,9 @@ export function createApi(opts: ApiOptions) {
       autoApprove: settings.autoApprove,
       stepMode: settings.stepMode,
       breakpoints: settings.breakpoints,
-      ...(provider.name === 'copilot' ? { envHash: () => gitFingerprint(workspace) } : {}),
+      ...(provider.name === 'copilot'
+        ? { envHash: () => gitFingerprint(workspace), scratch: await runScratch(workspace) }
+        : {}),
       onSave: (r) => saveRun(runsDir, r),
       checkpoint: true,
       ...(settings.restore ? { restore: settings.restore } : {}),

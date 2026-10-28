@@ -101,6 +101,11 @@ export interface RunOptions {
   readonly envHash?: () => Promise<string>;
   readonly clock?: () => string;
   readonly onSave?: (run: SavedRun) => Promise<string | undefined>;
+  /**
+   * The run's scratch folder: executors put temporary files there, and `remove`
+   * deletes it when the run ends (see store.ts runScratch).
+   */
+  readonly scratch?: { readonly dir: string; readonly remove: () => Promise<void> };
   /** Also save (through onSave) after every step, so an interrupted run can be resumed. */
   readonly checkpoint?: boolean;
   /** Continue from a restored engine (restoreEngine) instead of starting fresh. */
@@ -271,6 +276,7 @@ export class Run {
       visit: (this.engine.visits[pause.nodeId] ?? 1) - 1,
       signal,
       onEvent: this.emitFor(pause, extra.integrate ? 0 : extra.take),
+      ...(this.opts.scratch ? { scratchDir: this.opts.scratch.dir } : {}),
       ...extra,
     });
   }
@@ -514,6 +520,8 @@ export class Run {
       const next = await this.opts.next(performance).catch(() => undefined);
       if (next) this.push({ type: 'next', ...next });
     }
+    // Clean up what the run no longer needs; a failed removal never fails the run.
+    await this.opts.scratch?.remove().catch(() => undefined);
     const status: RunStatus =
       this.engine.kind === 'failed'
         ? 'failed'

@@ -3,7 +3,7 @@
  * user pattern files. Kept out of the pure core on purpose.
  */
 import { execFile } from 'node:child_process';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { verifyScore } from '../core/compile.js';
@@ -60,6 +60,25 @@ export function isDemoRun(perf: Pick<SavedRun['performance'], 'provider' | 'step
     ...(s.attempts ?? []).flatMap((a) => (a.transcript ? [a.transcript.provider] : [])),
   ]);
   return players.length > 0 && players.every((p) => p === 'scripted');
+}
+
+/**
+ * A run's scratch folder under <workspace>/.symphony/scratch: executors write
+ * temporary scripts and output there, and it is removed when the run ends
+ * unless SYMPHONY_KEEP_SCRATCH=1. Never part of the edit (git.diff ignores .symphony).
+ */
+export async function runScratch(
+  workspace: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ dir: string; remove: () => Promise<void> }> {
+  const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 8)}`;
+  const dir = join(workspace, '.symphony', 'scratch', id);
+  await mkdir(dir, { recursive: true });
+  const keep = env.SYMPHONY_KEEP_SCRATCH === '1';
+  return {
+    dir,
+    remove: async () => (keep ? undefined : rm(dir, { recursive: true, force: true })),
+  };
 }
 
 /**

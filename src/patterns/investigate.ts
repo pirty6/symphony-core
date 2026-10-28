@@ -486,7 +486,7 @@ export const investigate: Pattern = {
       maxVisits: 20,
       label: 'Run experiment',
       directive:
-        'Run `currentExperiment` in the workspace. Do not modify tracked files: put any scripts and output under .symphony/scratch/. For timings, warm up once and report the median of at least 3 runs with the raw numbers. Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings`. If it cannot run, say exactly why in `newFindings`.',
+        'Run `currentExperiment` in the workspace. Do not modify tracked files: put any scripts and output only in the scratch folder named in your instructions. For timings, warm up once and report the median of at least 3 runs with the raw numbers. Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings`. If it cannot run, say exactly why in `newFindings`.',
       reads: ['question', 'currentExperiment'],
       writes: ['queries', 'newFindings'],
       retries: 1,

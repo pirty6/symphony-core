@@ -41,6 +41,14 @@ describe('buildAgentPrompt', () => {
   it('is deterministic', () => {
     expect(buildAgentPrompt(pause)).toBe(buildAgentPrompt(pause));
   });
+
+  it("tells an executor to keep temporary files in the run's scratch folder", () => {
+    const executor = { ...pause, role: 'executor' as const };
+    expect(buildAgentPrompt(executor, { scratchDir: '/w/.symphony/scratch/r1' })).toContain(
+      '`/w/.symphony/scratch/r1` (deleted when the run ends)',
+    );
+    expect(buildAgentPrompt(executor)).toContain('`.symphony/scratch/`');
+  });
 });
 
 describe('extractJson', () => {

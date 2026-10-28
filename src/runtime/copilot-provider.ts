@@ -390,7 +390,10 @@ export class CopilotProvider implements Provider {
     const mcpServers = useMcp ? (this.opts.mcpServers ?? {}) : {};
     const prompt = integrating
       ? buildIntegrationPrompt(pause, req.integrate!)
-      : buildAgentPrompt(pause, { mcpServers: Object.keys(mcpServers) });
+      : buildAgentPrompt(pause, {
+          mcpServers: Object.keys(mcpServers),
+          ...(req.scratchDir ? { scratchDir: req.scratchDir } : {}),
+        });
     const startedAt = this.opts.clock?.();
     const tier = await this.modelFor(pause.complexity);
     if (tier.note) req.onEvent({ type: 'info', text: tier.note });

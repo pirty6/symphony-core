@@ -26,6 +26,7 @@ import type { Provider } from '../runtime/provider.js';
 import { envConfig, makeProvider, runtimeExtras, type ProviderName } from '../runtime/factory.js';
 import {
   gitFingerprint,
+  runScratch,
   loadPatternFiles,
   loadRepertoire,
   runsDirFor,
@@ -258,7 +259,9 @@ export class RunManager {
         ? { repertoire: await loadRepertoire(runsDir) }
         : {}),
       autoApprove: req.autoApprove === true,
-      ...(providerName === 'copilot' ? { envHash: () => gitFingerprint(workspace) } : {}),
+      ...(providerName === 'copilot'
+        ? { envHash: () => gitFingerprint(workspace), scratch: await runScratch(workspace) }
+        : {}),
       checkpoint: true,
       onSave: async (r) => {
         const file = await saveRun(runsDir, r);

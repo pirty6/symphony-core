@@ -35,6 +35,8 @@ export interface AgentRequest {
   readonly take?: number;
   /** Jazz: the takes' results to merge; the call is then an isolated integration. */
   readonly integrate?: readonly unknown[];
+  /** This run's scratch folder, deleted when the run ends. */
+  readonly scratchDir?: string;
 }
 
 export interface AgentResponse {
@@ -64,6 +66,8 @@ export const SUBMIT_TOOL = 'submit_result';
 export interface PromptSources {
   /** MCP servers connected for this node. */
   readonly mcpServers?: readonly string[];
+  /** This run's scratch folder (executors write temporary files only there). */
+  readonly scratchDir?: string;
 }
 
 export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {}): string {
@@ -97,7 +101,7 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
       ? '- Only the input above. You have no workspace or shell tools for this step: reason from what you were given.'
       : pause.role === 'assessor'
         ? '- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff, gh issue/pr/run/search view|list, gh api GETs, ls, cat, find).'
-        : '- Workspace: read, edit and run commands as this step needs.',
+        : `- Workspace: read, edit and run commands as this step needs. Put scripts, notes and other temporary files only in ${sources.scratchDir ? `the run's scratch folder \`${sources.scratchDir}\` (deleted when the run ends)` : '`.symphony/scratch/`'}, never in the project.`,
     ...(pause.capabilities.includes('web')
       ? [
           '- Web: web_search(query) to find pages, then web_fetch(url) to read them. Cite every URL you rely on.',

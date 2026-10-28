@@ -48,6 +48,7 @@ import {
 } from './runtime/factory.js';
 import {
   gitFingerprint,
+  runScratch,
   listRuns,
   loadPatternFiles,
   loadRun,
@@ -218,7 +219,9 @@ async function play(
     autoApprove: o.autoApprove,
     stepMode: o.step,
     breakpoints: o.breakpoints,
-    ...(o.providerName === 'copilot' ? { envHash: () => gitFingerprint(cwd) } : {}),
+    ...(o.providerName === 'copilot'
+      ? { envHash: () => gitFingerprint(cwd), scratch: await runScratch(cwd) }
+      : {}),
     ...(o.save ? { onSave: (r) => saveRun(runsDir, r), checkpoint: true } : {}),
     ...(o.restore ? { restore: o.restore } : {}),
     ...(o.next ? { next: o.next } : {}),

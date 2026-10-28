@@ -589,3 +589,59 @@ describe('checkpoints, resume and fork', () => {
     expect(() => restoreEngine(fixScore, { ...original, steps })).toThrow(RestoreError);
   });
 });
+
+describe('scratch cleanup', () => {
+  const scratchRun = (provider: Provider) => {
+    const removed: string[] = [];
+    const run = new Run({
+      score: fixScore,
+      provider,
+      demo: fix.demo,
+      autoApprove: true,
+      clock,
+      scratch: { dir: '/w/.symphony/scratch/r1', remove: async () => void removed.push('r1') },
+    });
+    return { run, removed };
+  };
+
+  it('agents get the folder and it is removed when the run ends', async () => {
+    const seen: (string | undefined)[] = [];
+    const scripted = ScriptedProvider.forPattern(fix);
+    const { run, removed } = scratchRun({
+      name: 'spy',
+      runAgent: (req) => {
+        seen.push(req.scratchDir);
+        return scripted.runAgent(req);
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    });
+    expect((await run.start()).outcome).toBe('success');
+    expect(new Set(seen)).toEqual(new Set(['/w/.symphony/scratch/r1']));
+    expect(removed).toEqual(['r1']);
+  });
+
+  it('is removed when the run fails or is stopped too, and a failing removal is ignored', async () => {
+    const failing = scratchRun({
+      name: 'broken',
+      runAgent: async () => ({
+        result: 'nope',
+        transcript: { provider: 'broken', prompt: '', output: 'nope', toolCalls: [] },
+      }),
+      draft: () => Promise.reject(new Error('n/a')),
+    });
+    expect((await failing.run.start()).outcome).not.toBe('success');
+    expect(failing.removed).toEqual(['r1']);
+
+    const run = new Run({
+      score: fixScore,
+      provider: ScriptedProvider.forPattern(fix),
+      demo: fix.demo,
+      clock,
+      scratch: { dir: '/x', remove: () => Promise.reject(new Error('busy')) },
+    });
+    const done = run.start();
+    await waitFor(run, statusIs('awaiting-approval'));
+    run.stop();
+    expect((await done).outcome).toBe('cancelled');
+  });
+});
