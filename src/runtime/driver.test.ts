@@ -161,10 +161,62 @@ describe('Run', () => {
       runAgent: () => Promise.reject(new Error('network down')),
       draft: () => Promise.reject(new Error('n/a')),
     };
-    const perf = await new Run({ score: hangmanScore, provider: broken, clock }).start();
+    // Unattended (auto-approve): nobody can retry a stuck step, so it fails as before.
+    const perf = await new Run({
+      score: hangmanScore,
+      provider: broken,
+      clock,
+      autoApprove: true,
+    }).start();
     expect(perf.outcome).toBe('failed');
     expect(perf.reason).toMatch(/no valid response after 3 attempt/);
     expect(perf.steps.at(-1)?.attempts?.[0]?.transcript?.output).toMatch(/network down/);
+    expect(perf.steps.at(-1)?.recoveries).toEqual([{ action: 'stop', by: 'scripted', at: 't' }]);
+  });
+
+  it('a stuck step waits for a human, who can retry it with a hint and a smarter tier', async () => {
+    const seen: AgentRequest[] = [];
+    let fail = true;
+    const flaky: Provider = {
+      name: 'flaky',
+      runAgent: async (req) => {
+        seen.push(req);
+        if (fail) throw new Error('HTTP 429');
+        return {
+          result: {
+            updates: { word: 'cat' },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+          },
+          transcript: { provider: 'flaky', prompt: '', output: 'cat', toolCalls: [] },
+        };
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const run = new Run({ score: hangmanScore, provider: flaky, clock });
+    const done = run.start();
+    await waitFor(run, (m) => m.type === 'status' && m.status === 'awaiting-approval');
+    expect(run.engine.pause).toMatchObject({ kind: 'stuck', nodeId: 'pick', attempts: 3 });
+    expect(run.answerApproval({ approved: true })).toBe('no approval is pending');
+    fail = false;
+    expect(
+      run.answerRecovery({ action: 'retry', hint: 'try again later', complexity: 4 }),
+    ).toBeUndefined();
+    await waitFor(
+      run,
+      (m) =>
+        m.type === 'status' &&
+        m.status === 'awaiting-approval' &&
+        run.engine.pause?.kind === 'approval',
+    );
+    expect(seen.at(-1)!.pause).toMatchObject({ attempt: 4, complexity: 4 });
+    expect(seen.at(-1)!.pause.feedback?.at(-1)).toMatch(/says: try again later/);
+    run.stop('enough');
+    const perf = await done;
+    const pick = perf.steps.find((s) => s.nodeId === 'pick')!;
+    expect(pick.recoveries).toEqual([
+      { action: 'retry', hint: 'try again later', complexity: 4, by: 'user', at: 't' },
+    ]);
+    expect(replayPerformance(hangmanScore, perf).divergence.reproduced).toBe(true);
   });
 
   it('records envHash and saves the run', async () => {

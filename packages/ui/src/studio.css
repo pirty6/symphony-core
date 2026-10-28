@@ -1107,3 +1107,12 @@ pre {
   margin-top: 8px;
   flex-wrap: wrap;
 }
+.card.stuck {
+  border-color: var(--warn);
+}
+.stuck-feedback {
+  margin: 6px 0 10px 18px;
+  padding: 0;
+  font-size: 12px;
+  color: var(--bad);
+}

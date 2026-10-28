@@ -1,9 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { EMPTY_FRAME, reduceFrame } from '@core/replay'
-import type { ApprovalPause } from '@core/types'
+import type { ApprovalPause, StuckPause } from '@core/types'
 import { startLive, type RunView } from '../lib/model'
-import { ApprovalCard, GateCard, NodeEditor, StateView } from './Inspector'
+import { ApprovalCard, GateCard, NodeEditor, RecoveryCard, StateView } from './Inspector'
 import { newNode } from '../lib/model'
 import { PatternPanel } from './PatternPanel'
 import { describeEvent } from '../lib/events'
@@ -44,6 +44,39 @@ describe('ApprovalCard', () => {
 
   it('is hidden unless a human is needed', () => {
     const { container } = render(<ApprovalCard view={startLive('r')} onAnswer={() => {}} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+})
+
+describe('RecoveryCard', () => {
+  const stuck: StuckPause = {
+    kind: 'stuck',
+    pauseId: 's1',
+    step: 4,
+    nodeId: 'deepRead',
+    label: 'Deep read',
+    feedback: ['Account for EVERY item of deepBatch'],
+    attempts: 3,
+    complexity: 2,
+    moveKey: 'm',
+  }
+  const view: RunView = { ...startLive('r'), status: 'awaiting-approval', pause: stuck }
+
+  it('retries with a hint and a smarter tier, or stops', () => {
+    const onAnswer = vi.fn()
+    const { rerender } = render(<RecoveryCard view={view} onAnswer={onAnswer} />)
+    expect(screen.getByTestId('recovery-card')).toHaveTextContent('Account for EVERY item of deepBatch')
+    fireEvent.change(screen.getByLabelText('recovery hint'), { target: { value: 'report 429 pages as unreadable' } })
+    fireEvent.change(screen.getByLabelText('recovery tier'), { target: { value: '4' } })
+    fireEvent.click(screen.getByText('↻ Retry step'))
+    expect(onAnswer).toHaveBeenCalledWith({ action: 'retry', hint: 'report 429 pages as unreadable', complexity: 4 })
+    rerender(<RecoveryCard view={{ ...view, pause: { ...stuck, pauseId: 's2' } }} onAnswer={onAnswer} />)
+    fireEvent.click(screen.getByText('✕ Stop run'))
+    expect(onAnswer).toHaveBeenLastCalledWith({ action: 'stop' })
+  })
+
+  it('is hidden unless a step is stuck', () => {
+    const { container } = render(<RecoveryCard view={startLive('r')} onAnswer={() => {}} />)
     expect(container).toBeEmptyDOMElement()
   })
 })

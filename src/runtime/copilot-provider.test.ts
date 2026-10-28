@@ -570,6 +570,7 @@ describe('CopilotProvider + engine: malformed submissions', () => {
       score,
       provider: new CopilotProvider({ clientFactory: () => client }),
       clock: () => 't',
+      autoApprove: true,
     });
     const perf = await run.start();
     expect(perf.outcome).toBe('failed');

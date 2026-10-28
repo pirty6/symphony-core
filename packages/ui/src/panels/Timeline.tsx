@@ -18,6 +18,7 @@ const ICON: Record<EngineEvent['type'], string> = {
   'edge-taken': '⇢',
   paused: '⏸',
   'response-rejected': '✗',
+  recovered: '↻',
   'node-completed': 'Δ',
   'run-completed': '✔',
   'run-failed': '✘',

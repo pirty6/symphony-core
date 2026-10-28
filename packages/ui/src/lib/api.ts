@@ -79,6 +79,9 @@ export const api = {
   continueRun: (req: ContinueRunRequest) => post('/api/runs/continue', req).then((r) => json<{ runId: string; score: ExecutableScore }>(r)),
   control: (runId: string, action: string, extra: Record<string, unknown> = {}) =>
     post(`/api/runs/${runId}/control`, { action, ...extra }).then((r) => json<{ status: string }>(r)),
+  /** Answer a stuck AI step: retry (with a hint or another tier) or stop the run. */
+  recover: (runId: string, body: { action: 'retry' | 'stop'; hint?: string; complexity?: number }) =>
+    post(`/api/runs/${runId}/recovery`, body).then((r) => json<{ ok: boolean }>(r)),
   approve: (runId: string, body: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) =>
     post(`/api/runs/${runId}/approval`, body).then((r) => json<{ ok: boolean }>(r)),
   saved: () => fetch('/api/saved').then((r) => json<SavedSummary[]>(r)),

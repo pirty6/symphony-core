@@ -66,6 +66,15 @@ Stop mid-process: **Pause** halts at the next gate, **breakpoints** (the dot on 
 before and after that node, **step mode** halts at every gate, and **Stop** aborts the live AI call
 while keeping its partial output visible.
 
+Recover instead of starting over:
+
+| Situation | What happens |
+|-----------|--------------|
+| An AI step gives no valid answer in all its attempts | The run pauses as **stuck** instead of failing. Read what it tried in **AI output**, then **↻ Retry step**, optionally with a hint for the AI and a smarter tier, for a fresh set of attempts, or **✕ Stop run**. The CLI asks the same in a terminal. Unattended runs (auto-approve, no terminal) stop, as before. Each decision is recorded on the step and replayed exactly. |
+| The run was interrupted or stopped | It was saved after every answer: **▶ Resume** (or `cli resume <file>`) continues from there. |
+| You want to redo a step that finished | Open the saved run, move the timeline to the step, **⑂ Fork from step N** (or `cli fork <file> --at N`). Earlier steps are kept, the rest plays again. |
+| A page or file could not be read (HTTP 429, timeout) | Investigate reports it with a reason instead of failing, tries it once more at the end of deep reading, and lists what still could not be read in the answer's coverage. |
+
 Edit flows visually: drag nodes from the palette, connect handles (conditions have `then`/`else`,
 approvals `approved`/`rejected`), edit nodes and edges in the inspector, define state fields in the
 Pattern tab. Validation runs on every change and **Run** stays disabled until the graph is valid.

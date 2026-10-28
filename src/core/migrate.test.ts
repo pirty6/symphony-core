@@ -38,7 +38,7 @@ describe('migrateRun', () => {
 
   it('notes when a run was recorded by another engine version', () => {
     expect(engineNote(ENGINE_VERSION)).toBeUndefined();
-    expect(engineNote('0')).toMatch(/recorded by engine 0, replayed with engine 1\.0\.0/);
+    expect(engineNote('0')).toMatch(`recorded by engine 0, replayed with engine ${ENGINE_VERSION}`);
     expect(engineNote(undefined)).toMatch(/recorded by engine 0/);
   });
 });

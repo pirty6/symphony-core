@@ -11,6 +11,7 @@ import { advance, createEngine, type AdvanceResult } from './engine.js';
 import type {
   EngineEvent,
   ExecutableScore,
+  Pause,
   Performance,
   PerformanceOutcome,
   PerformedStep,
@@ -87,6 +88,8 @@ export function reduceFrame(f: Frame, e: EngineEvent): Frame {
       };
     case 'response-rejected':
       return { ...base, rejected: { nodeId: e.nodeId, errors: e.errors } };
+    case 'recovered':
+      return base;
     case 'node-completed': {
       const state = { ...f.state };
       for (const c of e.changes) state[c.key] = c.after;
@@ -244,18 +247,40 @@ function resolutionFrom(step: PerformedStep, pauseId: string, n: number): Resolu
 }
 
 /** Re-run the engine feeding the recorded answers; proves a Performance is reproducible. */
+/**
+ * Feeds a performance's recorded answers back pause by pause: each attempt in
+ * order, then the accepted answer; at a stuck step, the human's recorded
+ * decision. Runs recorded before stuck steps existed failed there, so a
+ * recorded step without a decision means 'stop'. Undefined when nothing was
+ * recorded (an interrupted or cancelled run).
+ */
+function recordedAnswers(perf: Performance): (pause: Pause) => Resolution | undefined {
+  const fed = new Map<number, number>();
+  const decided = new Map<number, number>();
+  return (pause) => {
+    const recorded = perf.steps.find((s) => s.step === pause.step && s.nodeId === pause.nodeId);
+    if (!recorded) return undefined;
+    if (pause.kind === 'stuck') {
+      const k = decided.get(pause.step) ?? 0;
+      decided.set(pause.step, k + 1);
+      const decision = recorded.recoveries?.[k] ?? { action: 'stop' as const };
+      return { kind: 'recovery', pauseId: pause.pauseId, ...decision };
+    }
+    const n = fed.get(pause.step) ?? 0;
+    fed.set(pause.step, n + 1);
+    return resolutionFrom(recorded, pause.pauseId, n);
+  };
+}
+
 export function replayPerformance(
   score: ExecutableScore,
   perf: Performance,
 ): { readonly result: AdvanceResult; readonly divergence: Divergence } {
   let r = createEngine(score, { startedAt: perf.startedAt });
-  const fed = new Map<number, number>();
+  const next = recordedAnswers(perf);
   while (r.state.kind === 'running' && r.state.pause) {
     const pause = r.state.pause;
-    const recorded = perf.steps.find((s) => s.step === pause.step && s.nodeId === pause.nodeId);
-    const n = fed.get(pause.step) ?? 0;
-    fed.set(pause.step, n + 1);
-    const res = recorded ? resolutionFrom(recorded, pause.pauseId, n) : undefined;
+    const res = next(pause);
     // A checkpoint of an unfinished run replays up to where it stopped.
     if (!res && perf.outcome === 'in-progress') break;
     if (!res) {
@@ -299,14 +324,11 @@ export function restoreEngine(
 ): AdvanceResult {
   let r = createEngine(score, { startedAt: opts.startedAt ?? perf.startedAt });
   const events = [...r.events];
-  const fed = new Map<number, number>();
+  const next = recordedAnswers(perf);
   while (r.state.kind === 'running' && r.state.pause) {
     const pause = r.state.pause;
     if (opts.throughStep !== undefined && pause.step > opts.throughStep) break;
-    const recorded = perf.steps.find((s) => s.step === pause.step && s.nodeId === pause.nodeId);
-    const n = fed.get(pause.step) ?? 0;
-    fed.set(pause.step, n + 1);
-    const res = recorded ? resolutionFrom(recorded, pause.pauseId, n) : undefined;
+    const res = next(pause);
     if (!res) break;
     r = advance(score, r.state, res);
     if (r.rejected) {

@@ -25,6 +25,20 @@ function answerAgent(s: ExecutableScore, r: AdvanceResult, result: unknown): Adv
   return advance(s, r.state, { kind: 'agent', pauseId: pause.pauseId, result, at: 't' });
 }
 
+function recover(
+  s: ExecutableScore,
+  r: AdvanceResult,
+  action: 'retry' | 'stop',
+  extra: { hint?: string; complexity?: 1 | 2 | 3 | 4 } = {},
+): AdvanceResult {
+  return advance(s, r.state, {
+    kind: 'recovery',
+    pauseId: r.state.pause!.pauseId,
+    action,
+    ...extra,
+  });
+}
+
 function guess(s: ExecutableScore, r: AdvanceResult, letter: string): AdvanceResult {
   const pause = r.state.pause!;
   return advance(s, r.state, {
@@ -110,12 +124,54 @@ describe('engine: response validation', () => {
     expect(r.state.steps.find((s) => s.nodeId === 'pick')?.attempts).toHaveLength(1);
   });
 
-  it('fails after exhausting retries without touching state', () => {
+  it('gets stuck after exhausting retries; stopping fails without touching state', () => {
     let r = createEngine(score);
     for (let i = 0; i < 3; i += 1) r = answerAgent(score, r, 'not json');
+    expect(r.state.kind).toBe('running');
+    expect(r.state.pause).toMatchObject({ kind: 'stuck', nodeId: 'pick', attempts: 3 });
+    expect(r.state.pause?.feedback?.[0]).toMatch(/result must be an object/);
+    // The stuck pause takes only a recovery decision.
+    expect(answerAgent(score, r, ok({ word: 'cat' })).rejected).toMatch(
+      /does not match pause 'stuck'/,
+    );
+    r = recover(score, r, 'stop');
     expect(r.state.kind).toBe('failed');
     expect(r.state.reason).toMatch(/no valid response after 3 attempt/);
     expect(r.state.state.word).toBe('');
+    expect(r.state.steps.at(-1)).toMatchObject({
+      nodeId: 'pick',
+      recoveries: [{ action: 'stop' }],
+    });
+  });
+
+  it('a retry gets a fresh budget, the hint and the chosen tier, then completes', () => {
+    let r = createEngine(score);
+    for (let i = 0; i < 3; i += 1) r = answerAgent(score, r, 'not json');
+    const stuckId = r.state.pause!.pauseId;
+    r = recover(score, r, 'retry', { hint: 'answer with one lowercase word', complexity: 4 });
+    expect(r.state.pause).toMatchObject({
+      kind: 'agent',
+      attempt: 4,
+      maxAttempts: 6,
+      complexity: 4,
+    });
+    expect(r.state.pause?.feedback?.at(-1)).toMatch(
+      /A human .* says: answer with one lowercase word/,
+    );
+    expect(r.events.map((e) => e.type)).toEqual(['recovered', 'paused']);
+    // Attempts keep counting, so no pause id repeats.
+    const ids = r.state.events.flatMap((e) => (e.type === 'paused' ? [e.pause.pauseId] : []));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain(stuckId);
+    r = answerAgent(score, r, ok({ word: 'cat' }));
+    expect(r.state.pause).toMatchObject({ kind: 'approval', nodeId: 'ask' });
+    const pick = r.state.steps.find((s) => s.nodeId === 'pick')!;
+    expect(pick.attempts).toHaveLength(3);
+    expect(pick.recoveries).toEqual([
+      { action: 'retry', hint: 'answer with one lowercase word', complexity: 4 },
+    ]);
+    // A later step starts clean.
+    expect(r.state.recoveries).toEqual([]);
   });
 
   it('refuses writes outside the node contract', () => {
@@ -305,6 +361,8 @@ describe('engine: acceptance checks', () => {
     let r = createEngine(s);
     r = answerAgent(s, r, ok({}, { outcome: 'skipped' }));
     r = answerAgent(s, r, ok({}, { outcome: 'failed' }));
+    expect(r.state.pause?.kind).toBe('stuck');
+    r = recover(s, r, 'stop');
     expect(r.state.kind).toBe('failed');
     expect(r.state.reason).toMatch(/Report on every file/);
   });

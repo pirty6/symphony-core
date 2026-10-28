@@ -12,7 +12,14 @@ export function describeEvent(e: EngineEvent): string {
     case 'edge-taken':
       return `${e.from} → ${e.to}${e.carried.length ? ` (${e.carried.join(', ')})` : ''}`
     case 'paused':
+      if (e.pause.kind === 'stuck') return `stuck at ${e.pause.nodeId} after ${e.pause.attempts} attempts: retry or stop?`
       return `${e.pause.kind === 'agent' ? 'AI' : e.pause.kind === 'tool' ? `tool ${e.pause.tool}` : 'human'} needed at ${e.pause.nodeId}${e.pause.kind === 'agent' && e.pause.attempt > 1 ? ` (attempt ${e.pause.attempt})` : ''}`
+    case 'recovered': {
+      const r = e.recovery
+      return r.action === 'stop'
+        ? `${e.nodeId}: stopped by ${r.by ?? 'a human'}`
+        : `${e.nodeId}: retry${r.complexity ? ` at tier ${r.complexity}` : ''}${r.hint ? ` with hint "${r.hint}"` : ''}`
+    }
     case 'response-rejected':
       return `rejected ${e.nodeId}: ${e.errors[0] ?? ''}`
     case 'node-completed':

@@ -26,6 +26,9 @@ import type {
   AgentResolution,
   NodeResult,
   ToolPause,
+  Recovery,
+  RecoveryResolution,
+  StuckPause,
   ToolResolution,
   AiTranscript,
   ApprovalResolution,
@@ -63,6 +66,8 @@ export interface EngineState {
     readonly result?: unknown;
     readonly at?: string;
   }[];
+  /** Human decisions at the current step since it got stuck. */
+  readonly recoveries: readonly Recovery[];
   readonly lastVerdict?: MoveVerdict;
   /** Keys written by the node just completed; they travel on the next edge. */
   readonly lastWrites: readonly string[];
@@ -290,13 +295,18 @@ function makePause(
       input: pick(ctx.state, node.reads),
       outputSchema: fieldsOf(score, node.writes),
       capabilities: node.capabilities ?? [],
-      complexity: complexityFor(score, ctx.state, node),
+      complexity:
+        ctx.recoveries.findLast((r) => r.action === 'retry' && r.complexity)?.complexity ??
+        complexityFor(score, ctx.state, node),
       improvisation: score.improvisation,
       isolated: node.isolated === true,
       takes: takesFor(score.improvisation, node.role),
       ...(node.solo && solosActive(score.improvisation) ? { choices: choicesOf(score, node) } : {}),
       attempt,
-      maxAttempts: 1 + (node.retries ?? DEFAULT_RETRIES),
+      // Each human retry grants a fresh budget; attempts keep counting so pause ids never repeat.
+      maxAttempts:
+        (1 + (node.retries ?? DEFAULT_RETRIES)) *
+        (1 + ctx.recoveries.filter((r) => r.action === 'retry').length),
       ...(feedback ? { feedback } : {}),
       moveKey,
     };
@@ -453,6 +463,7 @@ export function createEngine(
     visits: {},
     seenMoves: [],
     attempts: [],
+    recoveries: [],
     lastWrites: [],
     steps: [],
     events: [],
@@ -480,11 +491,13 @@ export function advance(score: ExecutableScore, st: EngineState, res: Resolution
     finish(ctx, 'cancelled', res.reason || 'cancelled', res.at);
     return fromCtx(ctx);
   }
-  if (res.kind !== st.pause.kind) {
+  const expected = st.pause.kind === 'stuck' ? 'recovery' : st.pause.kind;
+  if (res.kind !== expected) {
     return fromCtx(ctx, `resolution kind '${res.kind}' does not match pause '${st.pause.kind}'`);
   }
   const node = nodeOf(score, st.pause.nodeId);
-  if (res.kind === 'agent')
+  if (res.kind === 'recovery') resolveRecovery(score, ctx, node, st.pause as StuckPause, res);
+  else if (res.kind === 'agent')
     resolveAgent(score, ctx, node, st.pause as Extract<Pause, { kind: 'agent' }>, res);
   else if (res.kind === 'tool')
     resolveTool(score, ctx, node, st.pause as Extract<Pause, { kind: 'tool' }>, res);
@@ -558,6 +571,44 @@ function acceptance(
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value };
 }
 
+function resolveRecovery(
+  score: ExecutableScore,
+  ctx: Ctx,
+  node: ScoreNode,
+  pause: StuckPause,
+  res: RecoveryResolution,
+): void {
+  const { kind: _k, pauseId: _p, ...decision } = res;
+  ctx.recoveries = [...ctx.recoveries, decision];
+  emit(ctx, { type: 'recovered', step: ctx.step, nodeId: node.id, recovery: decision });
+  if (res.action === 'stop') {
+    const hashBefore = stateHashOf(ctx.state, ctx.env);
+    const input = node.kind === 'agent' ? pick(ctx.state, node.reads) : {};
+    recordStep(
+      ctx,
+      node,
+      { input, attempts: ctx.attempts, recoveries: ctx.recoveries, at: res.at },
+      hashBefore,
+    );
+    fail(
+      ctx,
+      `'${node.id}' gave no valid response after ${ctx.attempts.length} attempt(s): ${pause.feedback.join('; ')}`,
+      node.id,
+      res.at,
+    );
+    return;
+  }
+  const feedback = [
+    ...pause.feedback,
+    ...(res.hint?.trim()
+      ? [`A human looked at your previous answers and says: ${res.hint.trim()}`]
+      : []),
+  ];
+  const next = makePause(score, ctx, node, ctx.attempts.length + 1, feedback);
+  ctx.pause = next;
+  emit(ctx, { type: 'paused', pause: next });
+}
+
 function resolveAgent(
   score: ExecutableScore,
   ctx: Ctx,
@@ -588,13 +639,25 @@ function resolveAgent(
       errors: checked.errors,
     });
     if (pause.attempt >= pause.maxAttempts) {
-      recordStep(ctx, node, { input: pause.input, attempts: ctx.attempts, at: res.at }, hashBefore);
-      fail(
-        ctx,
-        `'${node.id}' gave no valid response after ${pause.attempt} attempt(s): ${checked.errors.join('; ')}`,
-        node.id,
-        res.at,
-      );
+      // Out of attempts: ask a human instead of failing (a run without one answers 'stop').
+      const stuck: StuckPause = {
+        kind: 'stuck',
+        pauseId: hashOf({
+          scoreId: score.id,
+          step: ctx.step,
+          nodeId: node.id,
+          stuck: ctx.recoveries.length,
+        }).slice(0, 16),
+        step: ctx.step,
+        nodeId: node.id,
+        label: node.label,
+        feedback: checked.errors,
+        attempts: ctx.attempts.length,
+        complexity: pause.complexity,
+        moveKey: pause.moveKey,
+      };
+      ctx.pause = stuck;
+      emit(ctx, { type: 'paused', pause: stuck });
       return;
     }
     const next = makePause(score, ctx, node, pause.attempt + 1, checked.errors);
@@ -622,12 +685,14 @@ function resolveAgent(
       ...(next ? { next } : {}),
       verdict,
       ...(ctx.attempts.length > 0 ? { attempts: ctx.attempts } : {}),
+      ...(ctx.recoveries.length > 0 ? { recoveries: ctx.recoveries } : {}),
       ...(res.transcript ? { transcript: res.transcript } : {}),
       ...(res.at ? { at: res.at } : {}),
     },
     hashBefore,
   );
   ctx.attempts = [];
+  ctx.recoveries = [];
   emit(ctx, {
     type: 'node-completed',
     step: ctx.step,

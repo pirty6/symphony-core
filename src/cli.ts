@@ -226,6 +226,33 @@ async function play(
     }
     if (m.type === 'status' && m.status === 'awaiting-approval') {
       const pause = run.engine.pause;
+      if (pause?.kind === 'stuck') {
+        if (!rl) {
+          run.answerRecovery({ action: 'stop', by: 'cli' });
+          return;
+        }
+        console.log(
+          `\n  ${c.yellow('⚠')} '${pause.label}' gave no valid answer in ${pause.attempts} attempts (tier ${pause.complexity}):`,
+        );
+        for (const f of pause.feedback) console.log(c.red(`    ${f}`));
+        if (/^n/i.test(await rl.question('  retry this step? [Y/n] '))) {
+          run.answerRecovery({ action: 'stop', by: 'cli' });
+          return;
+        }
+        const hint = await rl.question('  hint for the AI (enter to skip): ');
+        const tier = (
+          await rl.question(`  complexity tier 1-4 (enter for ${pause.complexity}): `)
+        ).trim();
+        const n = Number(tier);
+        const complexity = n === 1 || n === 2 || n === 3 || n === 4 ? n : undefined;
+        run.answerRecovery({
+          action: 'retry',
+          ...(hint.trim() ? { hint } : {}),
+          ...(complexity && complexity !== pause.complexity ? { complexity } : {}),
+          by: 'cli',
+        });
+        return;
+      }
       if (!rl || pause?.kind !== 'approval') {
         run.answerApproval({ approved: true, scripted: true });
         return;

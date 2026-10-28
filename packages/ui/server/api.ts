@@ -11,6 +11,7 @@
  *   GET  /api/runs/:id/events              SSE: engine + provider + status messages
  *   POST /api/runs/:id/control {action}    pause | resume | step | stop | breakpoints | stepMode
  *   POST /api/runs/:id/approval {approved, updates, scripted}
+ *   POST /api/runs/:id/recovery {action: retry|stop, hint?, complexity?}  (a stuck AI step)
  *   GET  /api/saved                        saved runs
  *   GET  /api/saved/file?path=             saved run + integrity + replay check
  */
@@ -383,7 +384,7 @@ export function createApi(opts: ApiOptions) {
         else send(res, 200, { id: run.id, status: run.status, score: run.score, graph: patternToGraph(run.score) })
         return true
       }
-      const m = /^\/api\/runs\/([^/]+)\/(events|control|approval)$/.exec(path)
+      const m = /^\/api\/runs\/([^/]+)\/(events|control|approval|recovery)$/.exec(path)
       if (m) {
         const run = runs.get(m[1]!)
         if (!run) {
@@ -420,6 +421,21 @@ export function createApi(opts: ApiOptions) {
               return true
           }
           send(res, 200, { status: run.status })
+          return true
+        }
+        if (m[2] === 'recovery') {
+          if (body.action !== 'retry' && body.action !== 'stop') {
+            send(res, 400, { error: 'action must be retry or stop' })
+            return true
+          }
+          const complexity = [1, 2, 3, 4].includes(body.complexity as number) ? (body.complexity as Complexity) : undefined
+          const error = run.answerRecovery({
+            action: body.action,
+            ...(typeof body.hint === 'string' && body.hint.trim() ? { hint: body.hint.trim().slice(0, 2000) } : {}),
+            ...(complexity ? { complexity } : {}),
+            by: 'studio',
+          })
+          send(res, error ? 409 : 200, error ? { error } : { ok: true })
           return true
         }
         const error = run.answerApproval({

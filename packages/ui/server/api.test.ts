@@ -150,6 +150,15 @@ describe('studio api', () => {
     expect(list.find((p) => p.name === 'upgrade-dependencies-safely')?.source).toBe('draft')
   })
 
+  it('answers stuck steps only with retry or stop, and only when one is waiting', async () => {
+    const start = (await (await post('/api/runs', { pattern: data(fix), goal: 'g', context: fix.demo!.context, provider: 'scripted', autoApprove: true })).json()) as { runId: string }
+    await readSse(await fetch(`${base}/api/runs/${start.runId}/events`))
+    expect((await post(`/api/runs/${start.runId}/recovery`, { action: 'maybe' })).status).toBe(400)
+    const none = await post(`/api/runs/${start.runId}/recovery`, { action: 'retry', hint: 'x' })
+    expect(none.status).toBe(409)
+    expect(((await none.json()) as { error: string }).error).toMatch(/no stuck step is waiting/)
+  })
+
   it('refuses cross-site and non-JSON POSTs', async () => {
     const plain = await fetch(`${base}/api/patterns`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' })
     expect(plain.status).toBe(403)

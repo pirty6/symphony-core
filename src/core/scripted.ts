@@ -61,6 +61,16 @@ export function scriptedResolution(
       ...(at ? { at } : {}),
     };
   }
+  // A demo has no human to retry a stuck step: it stops, as a failed step always did.
+  if (pause.kind === 'stuck') {
+    return {
+      kind: 'recovery',
+      pauseId: pause.pauseId,
+      action: 'stop',
+      by: 'scripted',
+      ...(at ? { at } : {}),
+    };
+  }
   const answer = demo?.approvals?.[pause.nodeId]?.(engine.state, visit) ?? {
     approved: true,
     updates: Object.fromEntries(pause.outputSchema.map((f) => [f.name, zeroValue(f.type)])),

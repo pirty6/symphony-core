@@ -51,7 +51,7 @@ import {
   type PatternMeta,
   type RunView,
 } from './lib/model'
-import { AiTakes, ApprovalCard, EdgeEditor, GateCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
+import { AiTakes, ApprovalCard, RecoveryCard, EdgeEditor, GateCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
 import { Library } from './panels/Library'
 import { ResultPreview, ResultReader } from './panels/Result'
 import { PatternPanel } from './panels/PatternPanel'
@@ -638,6 +638,7 @@ export default function Studio() {
         )}
         <GateCard view={view} onResume={() => control('resume')} onStep={() => control('step')} onStop={() => control('stop')} />
         <ApprovalCard view={view} onAnswer={(a) => view.runId && void api.approve(view.runId, a).catch((e: Error) => setError(e.message))} />
+        <RecoveryCard view={view} onAnswer={(a) => view.runId && void api.recover(view.runId, a).catch((e: Error) => setError(e.message))} />
         {resultBanner}
         <nav className="tabs">
           {(['node', 'ai', 'state'] as const).map((t) => (

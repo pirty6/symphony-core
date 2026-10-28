@@ -7,7 +7,7 @@
 import type { SavedRun } from './types.js';
 
 /** Bump when advance() could take a different path for the same recorded answers. */
-export const ENGINE_VERSION = '1.0.0';
+export const ENGINE_VERSION = '1.1.0';
 
 /** The run format this engine writes. */
 export const RUN_SCHEMA_VERSION = 3;

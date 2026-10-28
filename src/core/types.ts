@@ -348,7 +348,37 @@ export interface ToolPause {
   readonly moveKey: string;
 }
 
-export type Pause = AgentPause | ApprovalPause | ToolPause;
+/**
+ * An AI step used up its attempts. Instead of failing the run, the engine waits
+ * for a human: retry it (with a hint, a smarter model) or stop the run.
+ */
+export interface StuckPause {
+  readonly kind: 'stuck';
+  readonly pauseId: string;
+  readonly step: number;
+  readonly nodeId: string;
+  readonly label: string;
+  /** Why the last attempt was rejected. */
+  readonly feedback: readonly string[];
+  /** Attempts made so far at this step. */
+  readonly attempts: number;
+  /** Complexity tier the step was played at. */
+  readonly complexity: Complexity;
+  readonly moveKey: string;
+}
+
+/** A human's decision at a stuck step. */
+export interface Recovery {
+  readonly action: 'retry' | 'stop';
+  /** Added to the AI's feedback on retry. */
+  readonly hint?: string;
+  /** Play the retry at this tier (e.g. a smarter model). */
+  readonly complexity?: Complexity;
+  readonly by?: string;
+  readonly at?: string;
+}
+
+export type Pause = AgentPause | ApprovalPause | ToolPause | StuckPause;
 
 export interface AgentResolution {
   readonly kind: 'agent';
@@ -386,7 +416,17 @@ export interface ToolResolution {
   readonly at?: string;
 }
 
-export type Resolution = AgentResolution | ApprovalResolution | ToolResolution | CancelResolution;
+export interface RecoveryResolution extends Recovery {
+  readonly kind: 'recovery';
+  readonly pauseId: string;
+}
+
+export type Resolution =
+  | AgentResolution
+  | ApprovalResolution
+  | ToolResolution
+  | RecoveryResolution
+  | CancelResolution;
 
 // ── Events (returned by the engine, never side effects) ────────────
 
@@ -427,6 +467,12 @@ export type EngineEvent =
       readonly values: Readonly<Record<string, unknown>>;
     }
   | { readonly type: 'paused'; readonly pause: Pause }
+  | {
+      readonly type: 'recovered';
+      readonly step: number;
+      readonly nodeId: string;
+      readonly recovery: Recovery;
+    }
   | {
       readonly type: 'response-rejected';
       readonly nodeId: string;
@@ -476,6 +522,8 @@ export interface PerformedStep {
   }[];
   readonly transcript?: AiTranscript;
   readonly approval?: { readonly approved: boolean; readonly by?: string };
+  /** Human decisions when the step got stuck (retry with hint or model, or stop). */
+  readonly recoveries?: readonly Recovery[];
   readonly at?: string;
 }
 

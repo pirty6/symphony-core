@@ -147,10 +147,55 @@ describe('divergence', () => {
         result: { bogus: i },
         at: 't',
       });
+    expect(f.state.pause?.kind).toBe('stuck');
+    f = advance(score, f.state, {
+      kind: 'recovery',
+      pauseId: f.state.pause!.pauseId,
+      action: 'stop',
+      at: 't',
+    });
     expect(f.state.kind).toBe('failed');
     const failed = replayPerformance(score, toPerformance(f.state));
     expect(failed.divergence.reproduced).toBe(true);
     expect(failed.result.state.events).toEqual(f.state.events);
+    // Runs recorded before stuck steps existed have no decision: they replay as 'stop'.
+    const old = toPerformance(f.state);
+    const legacy = {
+      ...old,
+      steps: old.steps.map(({ recoveries: _r, ...s }) => s),
+      events: old.events.filter((e) => e.type !== 'recovered'),
+    };
+    expect(replayPerformance(score, legacy).divergence.reproduced).toBe(true);
+  });
+
+  it('replays a stuck step that a human retried with a hint and a tier', () => {
+    const score = compileScore(hangman, { goal: 'g', generatedAt: 't' });
+    let r = createEngine(score, { startedAt: 't' });
+    const send = (res: Record<string, unknown>) => {
+      r = advance(score, r.state, { pauseId: r.state.pause!.pauseId, at: 't', ...res } as never);
+    };
+    for (let i = 0; i < 3; i += 1) send({ kind: 'agent', result: { bogus: i } });
+    send({ kind: 'recovery', action: 'retry', hint: 'one word', complexity: 3 });
+    send({ kind: 'agent', result: { bogus: 9 } });
+    send({ kind: 'agent', result: { bogus: 10 } });
+    send({ kind: 'agent', result: { bogus: 11 } });
+    expect(r.state.pause?.kind).toBe('stuck');
+    send({ kind: 'recovery', action: 'retry' });
+    send({
+      kind: 'agent',
+      result: {
+        updates: { word: 'cat' },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+      },
+    });
+    send({ kind: 'cancel', reason: 'done here' });
+    const perf = toPerformance(r.state);
+    const pick = perf.steps.find((s) => s.nodeId === 'pick')!;
+    expect(pick.attempts).toHaveLength(6);
+    expect(pick.recoveries?.map((x) => x.action)).toEqual(['retry', 'retry']);
+    const again = replayPerformance(score, perf);
+    expect(again.divergence.reproduced).toBe(true);
+    expect(again.result.state.events).toEqual(r.state.events);
   });
 
   it('replays tool results and tool failures', () => {

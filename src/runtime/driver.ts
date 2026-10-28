@@ -22,6 +22,8 @@ import type {
   AiTranscript,
   ApprovalPause,
   ToolPause,
+  Recovery,
+  StuckPause,
   DemoScript,
   EngineEvent,
   ExecutableScore,
@@ -123,6 +125,9 @@ export interface HumanAnswer {
   readonly scripted?: boolean;
 }
 
+/** A human's decision when an AI step is stuck (out of attempts). */
+export type RecoveryAnswer = Omit<Recovery, 'at'>;
+
 let counter = 0;
 
 export class Run {
@@ -140,6 +145,7 @@ export class Run {
   private stopRequested: string | undefined;
   private release: (() => void) | undefined;
   private approvalWaiter: ((a: HumanAnswer | undefined) => void) | undefined;
+  private recoveryWaiter: ((a: RecoveryAnswer | undefined) => void) | undefined;
   private abort: AbortController | undefined;
   private finished: Promise<Performance> | undefined;
 
@@ -211,11 +217,19 @@ export class Run {
     this.abort?.abort();
     this.release?.();
     this.approvalWaiter?.(undefined);
+    this.recoveryWaiter?.(undefined);
   }
 
   answerApproval(answer: HumanAnswer): string | undefined {
     if (!this.approvalWaiter) return 'no approval is pending';
     this.approvalWaiter(answer);
+    return undefined;
+  }
+
+  /** Answer a stuck step: retry it (with a hint or another tier) or stop the run. */
+  answerRecovery(answer: RecoveryAnswer): string | undefined {
+    if (!this.recoveryWaiter) return 'no stuck step is waiting';
+    this.recoveryWaiter(answer);
     return undefined;
   }
 
@@ -420,6 +434,30 @@ export class Run {
     };
   }
 
+  private async runRecovery(pause: StuckPause): Promise<Resolution | undefined> {
+    // Unattended runs have nobody to ask: the step fails as it always did.
+    if (this.opts.autoApprove) {
+      return scriptedResolution(this.opts.demo, pause, this.engine, this.now());
+    }
+    const answered = new Promise<RecoveryAnswer | undefined>((resolve) => {
+      this.recoveryWaiter = resolve;
+    });
+    this.setStatus('awaiting-approval', { nodeId: pause.nodeId });
+    const answer = await answered;
+    this.recoveryWaiter = undefined;
+    if (!answer || this.stopRequested) return undefined;
+    this.setStatus('running', { nodeId: pause.nodeId });
+    return {
+      kind: 'recovery',
+      pauseId: pause.pauseId,
+      action: answer.action,
+      ...(answer.hint?.trim() ? { hint: answer.hint.trim() } : {}),
+      ...(answer.complexity ? { complexity: answer.complexity } : {}),
+      by: answer.by ?? 'user',
+      at: this.now(),
+    };
+  }
+
   private performance(): Performance {
     const p = toPerformance(this.engine);
     return this.opts.restore ? { ...p, basedOn: this.opts.restore.basedOn } : p;
@@ -450,7 +488,9 @@ export class Run {
           ? await this.runAgent(pause)
           : pause.kind === 'tool'
             ? await this.runTool(pause)
-            : await this.runApproval(pause);
+            : pause.kind === 'stuck'
+              ? await this.runRecovery(pause)
+              : await this.runApproval(pause);
       if (!res) {
         const current = this.engine.pause ?? pause;
         this.apply(

@@ -53,6 +53,86 @@ export function GateCard({ view, onResume, onStep, onStop }: { view: RunView; on
   )
 }
 
+export interface RecoveryAnswer {
+  action: 'retry' | 'stop'
+  hint?: string
+  complexity?: number
+}
+
+/** A stuck AI step (out of attempts): what went wrong, then retry it or stop the run. */
+export function RecoveryCard({ view, onAnswer }: { view: RunView; onAnswer: (a: RecoveryAnswer) => void }) {
+  const pause = view.pause
+  const [hint, setHint] = useState('')
+  const [tier, setTier] = useState(0)
+  const [sentFor, setSentFor] = useState<string | undefined>()
+  const pauseId = pause?.pauseId
+  useEffect(() => {
+    setHint('')
+    setTier(0)
+  }, [pauseId])
+  if (view.status !== 'awaiting-approval' || pause?.kind !== 'stuck') return null
+  const sent = sentFor === pause.pauseId
+  const answer = (a: RecoveryAnswer) => {
+    setSentFor(pause.pauseId)
+    onAnswer(a)
+  }
+  return (
+    <form
+      className="card approval stuck"
+      data-testid="recovery-card"
+      onSubmit={(e) => {
+        e.preventDefault()
+        answer({ action: 'retry', ...(hint.trim() ? { hint: hint.trim() } : {}), ...(tier ? { complexity: tier } : {}) })
+      }}
+    >
+      <h3>⚠ {pause.label} is stuck</h3>
+      <p>
+        No valid answer in {pause.attempts} attempts (tier {pause.complexity}). The run is waiting: retry this step, or stop the run. The AI
+        output tab shows what it tried.
+      </p>
+      <ul className="stuck-feedback">
+        {pause.feedback.map((f, i) => (
+          <li key={i}>{f}</li>
+        ))}
+      </ul>
+      <fieldset className="editor" disabled={sent}>
+        <label className="field">
+          Hint for the AI (optional)
+          <textarea
+            rows={2}
+            value={hint}
+            placeholder="e.g. the page is rate-limited: report it as unreadable"
+            onChange={(e) => setHint(e.target.value)}
+            aria-label="recovery hint"
+          />
+        </label>
+        <label className="field">
+          Model for the retry
+          <select value={tier} onChange={(e) => setTier(Number(e.target.value))} aria-label="recovery tier">
+            <option value={0}>same (tier {pause.complexity})</option>
+            {[1, 2, 3, 4]
+              .filter((t) => t !== pause.complexity)
+              .map((t) => (
+                <option key={t} value={t}>
+                  tier {t}
+                  {t > pause.complexity ? ' (smarter)' : ''}
+                </option>
+              ))}
+          </select>
+        </label>
+        <div className="row">
+          <button type="submit" className="primary">
+            ↻ Retry step
+          </button>
+          <button type="button" onClick={() => answer({ action: 'stop' })}>
+            ✕ Stop run
+          </button>
+        </div>
+      </fieldset>
+    </form>
+  )
+}
+
 export function ApprovalCard({
   view,
   onAnswer,
