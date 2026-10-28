@@ -8,6 +8,7 @@
  *   draft "<request>" [--save]             let the AI draft a new pattern
  *   verify <run.json>                      integrity + deterministic replay check
  *   compare <a.json> <b.json>              first divergence between two runs and its cause
+ *   rehearse <pattern> -n N                play a score N times; which nodes agree
  *   runs                                   saved runs
  */
 import 'dotenv/config';
@@ -16,8 +17,8 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
-import { compareRuns } from './core/compare.js';
-import { engineNote } from './core/migrate.js';
+import { agreement, compareRuns } from './core/compare.js';
+import { engineNote, RUN_SCHEMA_VERSION } from './core/migrate.js';
 import { replayPerformance } from './core/replay.js';
 import { parseFieldInput } from './core/schema.js';
 import type {
@@ -27,6 +28,7 @@ import type {
   Improvisation,
   Pattern,
   Performance,
+  SavedRun,
 } from './core/types.js';
 import { maestro, PATTERNS } from './patterns/index.js';
 import { concertNext } from './runtime/concert.js';
@@ -154,6 +156,10 @@ interface PlayOptions {
   readonly save: boolean;
   readonly rl?: ReturnType<typeof createInterface>;
   readonly next?: (perf: Performance) => Promise<NextPerformance | undefined>;
+  /** Print only the header and the saved file. */
+  readonly quiet?: boolean;
+  /** Never replay recorded answers (rehearsals measure the musicians). */
+  readonly fresh?: boolean;
 }
 
 function describeGate(state: Readonly<Record<string, unknown>>): string {
@@ -192,7 +198,7 @@ async function play(
       ...(o.model ? { model: o.model } : {}),
     }),
     ...(demo ? { demo } : {}),
-    ...(playsFromRepertoire(score.improvisation)
+    ...(playsFromRepertoire(score.improvisation) && !o.fresh
       ? { repertoire: await loadRepertoire(runsDir) }
       : {}),
     autoApprove: o.autoApprove,
@@ -208,7 +214,7 @@ async function play(
   );
   const rl = o.rl;
   run.subscribe(async (m) => {
-    printMessage(m, (s) => process.stdout.write(s));
+    if (!o.quiet) printMessage(m, (s) => process.stdout.write(s));
     if (m.type === 'status' && m.status === 'paused') {
       if (!rl) return run.resume();
       await rl.question(c.yellow('  enter = continue '));
@@ -237,7 +243,7 @@ async function play(
   process.off('SIGINT', stop);
   const saved = run.messages.find((m) => m.type === 'performance');
   if (saved?.type === 'performance' && saved.savedTo) console.log(c.dim(`saved ${saved.savedTo}`));
-  console.log(c.dim(`final state ${JSON.stringify(perf.finalState).slice(0, 2000)}`));
+  if (!o.quiet) console.log(c.dim(`final state ${JSON.stringify(perf.finalState).slice(0, 2000)}`));
   return perf;
 }
 
@@ -269,16 +275,21 @@ const RUN_OPTIONS = {
   'no-save': { type: 'boolean', default: false },
 } as const;
 
-async function cmdRun(argv: string[], cwd: string): Promise<number> {
-  const { values, positionals } = parseArgs({
-    args: argv,
-    allowPositionals: true,
-    options: {
-      ...RUN_OPTIONS,
-      goal: { type: 'string' },
-      context: { type: 'string', short: 'c', multiple: true },
-    },
-  });
+const SCORE_OPTIONS = {
+  ...RUN_OPTIONS,
+  goal: { type: 'string' },
+  context: { type: 'string', short: 'c', multiple: true },
+} as const;
+
+type ScoreArgs = ReturnType<
+  typeof parseArgs<{ options: typeof SCORE_OPTIONS; allowPositionals: true }>
+>;
+
+/** Pattern + compiled score from `run`-style arguments, or an exit code. */
+async function scoreFromArgs(
+  { values, positionals }: Pick<ScoreArgs, 'values' | 'positionals'>,
+  cwd: string,
+): Promise<{ pattern: Pattern; score: ExecutableScore; provider: ProviderName } | number> {
   const name = positionals[0];
   const pattern = (await allPatterns(cwd)).find((p) => p.name === name);
   if (!pattern) {
@@ -309,12 +320,21 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
     }
     throw e;
   }
+  return { pattern, score, provider: values.provider };
+}
+
+async function cmdRun(argv: string[], cwd: string): Promise<number> {
+  const args = parseArgs({ args: argv, allowPositionals: true, options: SCORE_OPTIONS });
+  const values = args.values;
+  const built = await scoreFromArgs(args, cwd);
+  if (typeof built === 'number') return built;
+  const { pattern, score, provider } = built;
   const rl = process.stdin.isTTY
     ? createInterface({ input: process.stdin, output: process.stdout })
     : undefined;
   try {
     const perf = await play(score, pattern, cwd, {
-      providerName: values.provider,
+      providerName: provider,
       ...(values.model ? { model: values.model } : {}),
       autoApprove: values['auto-approve'],
       step: values.step,
@@ -326,6 +346,60 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
   } finally {
     rl?.close();
   }
+}
+
+async function cmdRehearse(argv: string[], cwd: string): Promise<number> {
+  const args = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: { ...SCORE_OPTIONS, times: { type: 'string', short: 'n', default: '3' } },
+  });
+  const times = Number(args.values.times);
+  if (!Number.isInteger(times) || times < 2 || times > 20) {
+    console.error('--times must be a whole number from 2 to 20');
+    return 1;
+  }
+  const built = await scoreFromArgs(args, cwd);
+  if (typeof built === 'number') return built;
+  const { pattern, score, provider } = built;
+  const runs: SavedRun[] = [];
+  for (let i = 1; i <= times; i++) {
+    console.log(c.dim(`take ${i} of ${times}`));
+    const performance = await play(score, pattern, cwd, {
+      providerName: provider,
+      ...(args.values.model ? { model: args.values.model } : {}),
+      autoApprove: true,
+      step: false,
+      breakpoints: [],
+      save: !args.values['no-save'],
+      quiet: true,
+      fresh: true,
+    });
+    runs.push({ schemaVersion: RUN_SCHEMA_VERSION, score, performance });
+  }
+  const rows = agreement(runs);
+  const width = Math.max(4, ...rows.map((r) => r.nodeId.length));
+  console.log(
+    `\n${c.bold('rehearsal')} ${c.dim(`${times} performances of ${pattern.name} · score ${score.id.slice(0, 12)} · fresh answers (no recorded ones)`)}`,
+  );
+  console.log(c.dim(`${'node'.padEnd(width)}  ${'kind'.padEnd(9)} reached  variants  agreement`));
+  for (const r of rows) {
+    const line = `${r.nodeId.padEnd(width)}  ${r.kind.padEnd(9)} ${`${r.reached}/${times}`.padEnd(8)} ${String(r.variants).padEnd(9)} ${Math.round(r.agreement * 100)}%`;
+    console.log(r.variants > 1 || r.reached < times ? c.yellow(line) : line);
+  }
+  const steady = rows.filter((r) => r.variants === 1 && r.reached === times);
+  console.log(`\n${steady.length}/${rows.length} nodes played the same notes every time.`);
+  for (let i = 1; i < runs.length; i++) {
+    const cmp = compareRuns(runs[0]!, runs[i]!);
+    if (cmp.first) {
+      console.log(
+        c.dim(
+          `take 1 vs ${i + 1}: first divergence at ${cmp.first.nodeId ?? 'the start'}: ${CAUSE_TEXT[cmp.first.cause]}`,
+        ),
+      );
+    }
+  }
+  return 0;
 }
 
 async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
@@ -530,6 +604,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       return cmdVerify(rest[0]);
     case 'compare':
       return cmdCompare(rest);
+    case 'rehearse':
+      return cmdRehearse(rest, cwd);
     case 'runs':
       for (const r of await listRuns(join(cwd, RUNS_DIR)))
         console.log(
@@ -550,6 +626,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   draft "<request>"            AI drafts a pattern (--provider copilot, --save)
   verify <run.json>            integrity + deterministic replay check
   compare <a.json> <b.json>    where two runs diverge and why (plan, environment, AI, human, engine)
+  rehearse <pattern> -n 3      play the same score N times with fresh answers; per-node agreement
+      (takes the same options as run; approvals are auto-approved)
   runs                         saved runs
 
 Studio (visual): npm start`);

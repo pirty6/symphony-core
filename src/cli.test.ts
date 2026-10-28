@@ -82,6 +82,16 @@ describe('main', () => {
     expect(plain()).toMatch(/first divergence: the plan[\s\S]*goal, context differ/);
   });
 
+  it('rehearses a score and reports per-node agreement', async () => {
+    expect(await main(['rehearse', 'hangman', '-n', '1'], cwd)).toBe(1);
+    expect(plain()).toMatch(/--times must be a whole number from 2 to 20/);
+    out = '';
+    expect(await main(['rehearse', 'hangman', '-n', '2', '--no-save'], cwd)).toBe(0);
+    expect(plain()).toMatch(/rehearsal 2 performances of hangman/);
+    expect(plain()).toMatch(/pick\s+agent\s+2\/2\s+1\s+100%/);
+    expect(plain()).toMatch(/7\/7 nodes played the same notes every time/);
+  });
+
   it('reports compile errors for missing context', async () => {
     expect(await main(['run', 'review', '-c', 'target=', '--no-save'], cwd)).toBe(1);
     expect(out).toMatch(/missing required context 'target'/);
