@@ -41,6 +41,7 @@
     "cli": "tsx src/cli.ts",
     "mcp": "tsx src/mcp-server.ts",
     "mcp:http": "tsx src/mcp-server.ts --http",
+    "install:vscode": "tsx src/install-vscode.ts",
     "postinstall": "node scripts/install-ui.mjs",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",

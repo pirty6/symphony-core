@@ -297,6 +297,59 @@ roster the maestro uses to debate a plan, aimed at a conclusion instead.
 npm run cli -- run investigate -c question="Why do runs replay exactly?" --provider copilot
 ```
 
+## Use it from VS Code chat and Copilot Studio
+
+Symphony is also an MCP server (`src/mcp-server.ts`) with the same pipeline as tools: `maestro`,
+`run_pattern` (with `chain`), `get_run`, `answer_approval`, `answer_stuck`, `stop_run`,
+`list_patterns`. Runs go on in the background; the chat polls them and relays every approval and
+stuck step to you. Each run is saved and replayable as usual.
+
+### VS Code: `/maestrov2`
+
+```bash
+npm install
+npm run install:vscode      # once; add -- --insiders for VS Code Insiders, -- --uninstall to remove
+```
+
+This installs, for every workspace:
+- the `/maestrov2` prompt and the `maestro-v2` agent, in your user prompts folder;
+- the `symphony` MCP server, in your user `mcp.json`. Your other servers and comments are kept,
+  and a `.bak` copy is written.
+
+VS Code starts the server whenever the agent needs it, so there is nothing to keep running. Reload
+the window, then type `/maestrov2 find out why login fails on CI, then fix it` in Chat. It works
+on the folder you have open (the workspace root VS Code reports), and the AI runs on your signed-in
+Copilot account.
+
+### Copilot Studio
+
+Copilot Studio runs in the cloud and connects to MCP servers over **Streamable HTTP**, so it needs
+a URL that reaches the server. To use your machine through a VS Code dev tunnel:
+
+```bash
+export SYMPHONY_MCP_KEY=$(openssl rand -hex 24)   # keep it: Copilot Studio needs it
+export SYMPHONY_WORKSPACE=/path/to/your/repo      # the folder pipelines work in
+npm run mcp:http                                  # http://127.0.0.1:8787/mcp
+
+brew install --cask devtunnel                     # once (Windows: winget install Microsoft.devtunnel)
+devtunnel user login
+devtunnel host -p 8787 --allow-anonymous          # prints https://<id>-8787.<region>.devtunnels.ms
+```
+
+The tunnel lets Copilot Studio through; Symphony's API key protects `/mcp`, and `/health` is open
+so you can check the URL. Then, in Copilot Studio:
+1. Open your agent: **Tools**, **Add a tool**, **New tool**, **Model Context Protocol**.
+2. Name `Symphony`; server URL `https://<id>-8787.<region>.devtunnels.ms/mcp`.
+3. Authentication **API key**, in a **header** named `x-api-key`; create the connection with your
+   `SYMPHONY_MCP_KEY`.
+4. Paste [integrations/copilot-studio/instructions.md](integrations/copilot-studio/instructions.md)
+   into the agent's instructions.
+
+Remote callers are read-only. Patterns that edit files and run tests (fix, refactor) are refused,
+and other executor steps (investigate's experiments) play with read-only permissions. To allow
+edits on the host, set `SYMPHONY_ALLOW_EDITS=1`. Symphony's own server is never offered to its AI
+steps, so pipelines don't nest.
+
 ## Fix and refactor
 
 Both patterns end with the same shared **edit and verify** phase
