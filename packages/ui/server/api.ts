@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { CompileError, compileScore } from '../../../src/core/compile.js'
 import { parseDraft, patternToTypeScript } from '../../../src/core/draft.js'
 import { patternToGraph } from '../../../src/core/graph.js'
+import { engineNote } from '../../../src/core/migrate.js'
 import { replayPerformance } from '../../../src/core/replay.js'
 import { isImprovisation, playsFromRepertoire } from '../../../src/core/jazz.js'
 import type { Complexity, ExecutableScore, Pattern } from '../../../src/core/types.js'
@@ -389,9 +390,17 @@ export function createApi(opts: ApiOptions) {
           send(res, 400, { error: 'invalid path' })
           return true
         }
-        const { run, issues } = await loadRun(file)
+        const { run, issues, migrated } = await loadRun(file)
         const reproduced = issues.length === 0 && replayPerformance(run.score, run.performance).divergence.reproduced
-        send(res, 200, { run, issues, reproduced, graph: patternToGraph(run.score) })
+        // When a replay diverges, say whether a different engine version recorded it.
+        const engine = !reproduced && issues.length === 0 ? engineNote(run.performance.engine) : undefined
+        send(res, 200, {
+          run,
+          issues: engine ? [...issues, engine] : issues,
+          reproduced,
+          migrated,
+          graph: patternToGraph(run.score),
+        })
         return true
       }
       send(res, 404, { error: 'not found' })

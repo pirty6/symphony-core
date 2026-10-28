@@ -168,7 +168,7 @@ describe('replay view and decoration', () => {
     const { run } = await liveMessages()
     const perf = run.messages.find((m) => m.type === 'performance')!
     if (perf.type !== 'performance') throw new Error('no performance')
-    const v = replayView({ schemaVersion: 2, score: run.score, performance: perf.performance }, { reproduced: true, issues: [] })
+    const v = replayView({ schemaVersion: 3, score: run.score, performance: perf.performance }, { reproduced: true, issues: [] })
     expect(v.mode).toBe('replay')
     expect(v.frames.length).toBe(perf.performance.events.length)
     const frame = currentFrame(v)

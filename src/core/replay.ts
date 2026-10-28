@@ -6,6 +6,7 @@
  *   replayPerformance(score, perf) — re-run the engine on recorded answers
  *   divergence(a, b)          — compare two performances
  */
+import { ENGINE_VERSION, RUN_SCHEMA_VERSION } from './migrate.js';
 import { advance, createEngine, type AdvanceResult } from './engine.js';
 import type {
   EngineEvent,
@@ -267,7 +268,8 @@ export function replayPerformance(
     r = advance(score, r.state, res);
   }
   const replayed: Performance = {
-    schemaVersion: 2,
+    schemaVersion: RUN_SCHEMA_VERSION,
+    engine: ENGINE_VERSION,
     scoreId: r.state.scoreId,
     startedAt: r.state.startedAt,
     outcome: r.state.kind === 'running' ? 'in-progress' : r.state.outcome,

@@ -9,7 +9,7 @@ import { hangman, investigate } from '../patterns/index.js';
 function play(p: Pattern, demo: DemoScript = p.demo!, goal = 'g'): SavedRun {
   const score = compileScore(p, { goal, context: p.demo?.context ?? {}, generatedAt: 't' });
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     score,
     performance: toPerformance(runScripted(score, demo, { at: 't' }).state),
   };

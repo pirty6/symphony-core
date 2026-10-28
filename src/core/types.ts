@@ -478,7 +478,9 @@ export interface PerformedStep {
 }
 
 export interface Performance {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
+  /** Engine version that played it (ENGINE_VERSION). */
+  readonly engine: string;
   readonly scoreId: string;
   readonly startedAt: string;
   readonly completedAt?: string;
@@ -492,7 +494,7 @@ export interface Performance {
 
 /** Score + Performance persisted together: the audit artifact. */
 export interface SavedRun {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly score: ExecutableScore;
   readonly performance: Performance;
 }

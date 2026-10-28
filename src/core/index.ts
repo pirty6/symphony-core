@@ -12,3 +12,4 @@ export * from './draft.js';
 export * from './replay.js';
 export * from './jazz.js';
 export * from './compare.js';
+export * from './migrate.js';

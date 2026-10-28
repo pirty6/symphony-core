@@ -17,6 +17,7 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
 import { compareRuns } from './core/compare.js';
+import { engineNote } from './core/migrate.js';
 import { replayPerformance } from './core/replay.js';
 import { parseFieldInput } from './core/schema.js';
 import type {
@@ -446,7 +447,8 @@ async function cmdVerify(file: string | undefined): Promise<number> {
     console.error('usage: symphony verify <run.json>');
     return 1;
   }
-  const { run, issues } = await loadRun(resolve(file));
+  const { run, issues, migrated } = await loadRun(resolve(file));
+  for (const m of migrated) console.log(c.dim(`upgraded: ${m}`));
   if (issues.length) {
     console.log(c.red(issues.join('\n')));
     return 2;
@@ -457,6 +459,8 @@ async function cmdVerify(file: string | undefined): Promise<number> {
       ? c.green('✔ reproduced exactly')
       : c.red(`✘ diverged ${JSON.stringify(divergence)}`),
   );
+  const engine = divergence.reproduced ? undefined : engineNote(run.performance.engine);
+  if (engine) console.log(c.yellow(engine));
   return divergence.reproduced ? 0 : 2;
 }
 

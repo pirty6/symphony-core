@@ -94,10 +94,10 @@ describe('sources.catalog', () => {
     const runs = join(dir, '.symphony', 'runs');
     const score = compileScore(fix, { context: fix.demo!.context!, generatedAt: 't' });
     const performance = toPerformance(runScripted(score, fix.demo, { at: 't' }).state);
-    await saveRun(runs, { schemaVersion: 2, score, performance });
+    await saveRun(runs, { schemaVersion: 3, score, performance });
     const once = await sourceCatalog(ctx(dir), { probeGitHub: false, mcp: { includeUser: false } });
     await saveRun(runs, {
-      schemaVersion: 2,
+      schemaVersion: 3,
       score,
       performance: { ...performance, startedAt: 'u' },
     });

@@ -15,6 +15,7 @@
  *   - a move (moveType, targetSite, stateHash) is never repeated
  *   - per-node maxVisits and per-score maxSteps bound every loop
  */
+import { ENGINE_VERSION, RUN_SCHEMA_VERSION } from './migrate.js';
 import { evalExpr, evaluateGuard, parseExpr } from './expr.js';
 import { hashOf } from './hash.js';
 import { solosActive, takesFor } from './jazz.js';
@@ -715,7 +716,8 @@ function resolveApproval(
 
 export function toPerformance(st: EngineState): Performance {
   return {
-    schemaVersion: 2,
+    schemaVersion: RUN_SCHEMA_VERSION,
+    engine: ENGINE_VERSION,
     scoreId: st.scoreId,
     startedAt: st.startedAt,
     ...(st.kind !== 'running' && st.completedAt ? { completedAt: st.completedAt } : {}),

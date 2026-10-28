@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { verifyScore } from '../core/compile.js';
 import { patternToTypeScript } from '../core/draft.js';
 import { hashOf } from '../core/hash.js';
+import { migrateRun } from '../core/migrate.js';
 import type { Pattern, SavedRun } from '../core/types.js';
 import { validatePattern } from '../core/validate.js';
 import { repertoireFrom, type Repertoire } from './repertoire.js';
@@ -57,15 +58,17 @@ export async function saveRun(dir: string, run: SavedRun): Promise<string> {
   return file;
 }
 
-export async function loadRun(file: string): Promise<{ run: SavedRun; issues: string[] }> {
-  const run = JSON.parse(await readFile(file, 'utf8')) as SavedRun;
-  const issues =
-    run.schemaVersion === 2
-      ? verifyScore(run.score).map((i) => i.message)
-      : ['not a schemaVersion 2 run'];
+export async function loadRun(
+  file: string,
+): Promise<{ run: SavedRun; issues: string[]; migrated: readonly string[] }> {
+  const raw = JSON.parse(await readFile(file, 'utf8')) as unknown;
+  const m = migrateRun(raw);
+  // An unreadable format is still returned as-is so callers can show what it is.
+  const run = m.run ?? (raw as SavedRun);
+  const issues = m.run ? verifyScore(run.score).map((i) => i.message) : [...m.issues];
   if (run.performance?.scoreId !== run.score?.id)
     issues.push('performance.scoreId does not match score.id');
-  return { run, issues };
+  return { run, issues, migrated: m.migrated };
 }
 
 export async function listRuns(dir: string): Promise<RunSummary[]> {

@@ -366,7 +366,7 @@ describe('Run', () => {
     }).start();
     expect(asked).toEqual(['pick']);
     const repertoire = repertoireFrom([
-      { run: { schemaVersion: 2, score, performance: first }, file: 'first.json' },
+      { run: { schemaVersion: 3, score, performance: first }, file: 'first.json' },
     ]);
     const run2 = new Run({
       score,
@@ -390,7 +390,7 @@ describe('Run', () => {
 
     const jazz = compileScore(hangman, { goal: 'g', improvisation: 1, generatedAt: 't' });
     const jazzRep = repertoireFrom([
-      { run: { schemaVersion: 2, score: jazz, performance: first }, file: 'x' },
+      { run: { schemaVersion: 3, score: jazz, performance: first }, file: 'x' },
     ]);
     await new Run({
       score: jazz,

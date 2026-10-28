@@ -28,7 +28,7 @@ describe('run store', () => {
     const performance = toPerformance(
       runScripted(score, fix.demo, { at: '2026-01-01T00:00:00Z' }).state,
     );
-    const file = await saveRun(dir, { schemaVersion: 2, score, performance });
+    const file = await saveRun(dir, { schemaVersion: 3, score, performance });
     const list = await listRuns(dir);
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({

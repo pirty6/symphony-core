@@ -446,7 +446,7 @@ export class Run {
     let savedTo: string | undefined;
     if (this.opts.onSave) {
       savedTo = await this.opts
-        .onSave({ schemaVersion: 2, score: this.score, performance })
+        .onSave({ schemaVersion: 3, score: this.score, performance })
         .catch(() => undefined);
     }
     this.push({ type: 'performance', performance, ...(savedTo ? { savedTo } : {}) });
