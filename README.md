@@ -60,7 +60,7 @@ commands only).
 | Inspector | **Gate card** when paused: before a node runs, or *after the AI answered but before the engine applies it* (shows the proposed JSON). **Approval card** for human nodes; at the maestro's go-gate it shows the composed score, the debate notes and the inputs. **AI output** streams the agent's text, model and tier, tool calls, permission denials and submitted result; in jazz, each take and the bandleader's merge. **State** shows every key with what just changed. |
 | Result | When a run ends, its result (the last data carried toward the end, e.g. `answer` and `openQuestions`) appears formatted at the top of the inspector. **Read full result** opens a wide reader with Copy and Download .md; long results open it automatically. Esc closes it. |
 | Timeline | Every engine event. Scrub back and forth; the canvas and inspector follow. |
-| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). Offline-demo runs are hidden behind **Show N offline-demo runs**, so the list holds your real runs. |
+| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). Offline-demo runs are hidden behind **Show N offline-demo runs**, so the list holds your real runs. **Running now** lists every run the server is playing; click one to switch to it (its stream replays from the start). |
 
 Stop mid-process: **Pause** halts at the next gate, **breakpoints** (the dot on a node) halt
 before and after that node, **step mode** halts at every gate, and **Stop** aborts the live AI call
@@ -322,6 +322,29 @@ npm run cli -- run investigate -c question="Why do runs replay exactly?" --provi
 
 Runs are saved to `.symphony/runs`, or to `SYMPHONY_RUNS_DIR` when it is set. The test suites
 point it at a temporary folder, so their runs never reach your lists.
+
+### Several runs at once
+
+One server (the studio, or the MCP server behind `/maestrov2` and Copilot Studio) plays any number
+of runs at the same time, each with its own state, saved file and scratch folder. In the studio,
+start another run while one is waiting and switch between them under **Running now**.
+
+Runs that edit files (fix, refactor, implement) with a real AI each play in their **own git
+worktree** (`src/runtime/worktree.ts`), so two of them never see each other's edits or test
+results:
+
+1. The worktree starts from a snapshot of your workspace as it is: `HEAD` plus your uncommitted
+   and untracked files, with `node_modules` (and `.venv`) linked so the tests run as they do for
+   you. The snapshot is committed only inside the worktree, so the run's diff shows its own edits.
+2. When the run ends, its edits come back as one patch. They are **applied to your workspace** if
+   the run succeeded and the patch applies cleanly; otherwise (it failed, was stopped, or you
+   changed the same lines meanwhile) the patch is kept in `.symphony/patches/` and the result
+   says `git apply <patch>`. The worktree is then removed.
+3. The result card, the CLI and `get_run` say where the edits went (`Performance.edits`).
+
+`SYMPHONY_WORKTREES=off` makes editing runs work in your workspace directly (one at a time, as
+before); `SYMPHONY_KEEP_WORKTREE=1` keeps the worktree for debugging. Outside a git repository
+runs edit the workspace directly. A resumed editing run starts again from your workspace as it is.
 
 ### Cleaning up
 
