@@ -13,9 +13,10 @@ const ui = fileURLToPath(new URL('../packages/ui/', import.meta.url));
 if (!existsSync(ui)) process.exit(0);
 
 const windows = process.platform === 'win32';
-const result = spawnSync(windows ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund'], {
-  cwd: ui,
-  stdio: 'inherit',
-  shell: windows,
-});
+const result = spawnSync(
+  windows ? 'npm.cmd' : 'npm',
+  // Same peer handling as the root (.npmrc): see the note there.
+  ['install', '--no-audit', '--no-fund', '--legacy-peer-deps'],
+  { cwd: ui, stdio: 'inherit', shell: windows },
+);
 process.exit(result.status ?? 1);
