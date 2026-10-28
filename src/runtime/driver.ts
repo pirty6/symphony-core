@@ -459,7 +459,7 @@ export class Run {
   }
 
   private performance(): Performance {
-    const p = toPerformance(this.engine);
+    const p = { ...toPerformance(this.engine), provider: this.opts.provider.name };
     return this.opts.restore ? { ...p, basedOn: this.opts.restore.basedOn } : p;
   }
 

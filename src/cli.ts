@@ -34,7 +34,7 @@ import type {
 } from './core/types.js';
 import { maestro, maestroThen, PATTERNS } from './patterns/index.js';
 import { concertNext } from './runtime/concert.js';
-import { loadRepertoire } from './runtime/store.js';
+import { loadRepertoire, runsDirFor } from './runtime/store.js';
 import { IMPROVISATION_LEVELS, isImprovisation, playsFromRepertoire } from './core/jazz.js';
 import { Run, type NextPerformance, type RunMessage, type RunOptions } from './runtime/driver.js';
 import { draftPattern } from './runtime/drafting.js';
@@ -195,7 +195,7 @@ async function play(
 ): Promise<Performance> {
   const extras = await runtimeExtras(cwd, cwd, process.env);
   for (const s of extras.mcpSkipped) console.log(c.dim(`MCP server skipped: ${s}`));
-  const runsDir = join(cwd, RUNS_DIR);
+  const runsDir = runsDirFor(cwd);
   // A composed score has no demo script; reuse the library's when it is a known pattern.
   const demo = pattern.demo ?? (await allPatterns(cwd)).find((p) => p.name === pattern.name)?.demo;
   const run = new Run({
@@ -827,12 +827,18 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       return cmdContinue('resumed', rest, cwd);
     case 'fork':
       return cmdContinue('forked', rest, cwd);
-    case 'runs':
-      for (const r of await listRuns(join(cwd, RUNS_DIR)))
+    case 'runs': {
+      const dir = runsDirFor(cwd);
+      const all = await listRuns(dir);
+      const shown = rest.includes('--all') ? all : all.filter((r) => !r.demo);
+      for (const r of shown)
         console.log(
-          `${r.startedAt}  ${r.pattern.padEnd(12)} ${r.outcome.padEnd(10)} ${join(RUNS_DIR, r.file)}`,
+          `${r.startedAt}  ${r.pattern.padEnd(12)} ${r.outcome.padEnd(10)} ${join(dir, r.file)}${r.demo ? c.dim('  (demo)') : ''}`,
         );
+      const hidden = all.length - shown.length;
+      if (hidden > 0) console.log(c.dim(`${hidden} offline-demo runs hidden (--all to show them)`));
       return 0;
+    }
     default:
       console.log(`symphony <command>
 
@@ -852,7 +858,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   resume <run.json>            continue an interrupted or stopped run from its last checkpoint
   fork <run.json> --at <step>  keep steps before <step>, play the rest again as a new run
       --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
-  runs                         saved runs (in-progress = interrupted, resumable)
+  runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
 
 Studio (visual): npm start`);
       return cmd ? 1 : 0;

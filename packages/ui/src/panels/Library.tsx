@@ -28,6 +28,9 @@ interface Props {
 
 export function Library(p: Props) {
   const [request, setRequest] = useState('')
+  const [showDemo, setShowDemo] = useState(false)
+  const demoCount = p.saved.filter((r) => r.demo).length
+  const saved = showDemo ? p.saved : p.saved.filter((r) => !r.demo)
   const onDragStart = (e: DragEvent, kind: PaletteKind) => {
     e.dataTransfer.setData('application/symphony-node', kind)
     e.dataTransfer.effectAllowed = 'move'
@@ -96,15 +99,23 @@ export function Library(p: Props) {
             ↻
           </button>
         </h2>
-        {p.saved.length === 0 && <small className="muted">Runs are saved to .symphony/runs</small>}
-        {p.saved.slice(0, 30).map((r) => (
+        {saved.length === 0 && (
+          <small className="muted">{demoCount > 0 ? 'No runs with a real AI yet.' : 'Runs are saved to .symphony/runs'}</small>
+        )}
+        {saved.slice(0, 30).map((r) => (
           <button type="button" key={r.file} className="lib-item saved" onClick={() => p.onOpenSaved(r.file)} title={r.goal}>
             <b>{r.pattern}</b> <span className={`tag outcome-${r.outcome}`}>{r.outcome}</span>
+            {r.demo && <span className="tag demo">demo</span>}
             <small>
               {new Date(r.startedAt).toLocaleString()} · {r.steps} steps
             </small>
           </button>
         ))}
+        {demoCount > 0 && (
+          <button type="button" className="link show-demo" onClick={() => setShowDemo(!showDemo)} data-testid="toggle-demo-runs">
+            {showDemo ? 'Hide' : 'Show'} {demoCount} offline-demo run{demoCount === 1 ? '' : 's'}
+          </button>
+        )}
       </section>
     </aside>
   )

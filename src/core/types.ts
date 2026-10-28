@@ -531,6 +531,8 @@ export interface Performance {
   readonly schemaVersion: 3;
   /** Engine version that played it (ENGINE_VERSION). */
   readonly engine: string;
+  /** Who played the AI steps ('scripted' = the offline demo). Absent in older runs. */
+  readonly provider?: string;
   /** Set when this performance continued another one from a checkpoint. */
   readonly basedOn?: {
     readonly kind: 'resumed' | 'forked';

@@ -1116,3 +1116,11 @@ pre {
   font-size: 12px;
   color: var(--bad);
 }
+.tag.demo {
+  color: var(--muted);
+  border: 1px dashed var(--border);
+}
+.show-demo {
+  margin-top: 6px;
+  font-size: 12px;
+}

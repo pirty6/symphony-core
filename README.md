@@ -60,7 +60,7 @@ commands only).
 | Inspector | **Gate card** when paused: before a node runs, or *after the AI answered but before the engine applies it* (shows the proposed JSON). **Approval card** for human nodes; at the maestro's go-gate it shows the composed score, the debate notes and the inputs. **AI output** streams the agent's text, model and tier, tool calls, permission denials and submitted result; in jazz, each take and the bandleader's merge. **State** shows every key with what just changed. |
 | Result | When a run ends, its result (the last data carried toward the end, e.g. `answer` and `openQuestions`) appears formatted at the top of the inspector. **Read full result** opens a wide reader with Copy and Download .md; long results open it automatically. Esc closes it. |
 | Timeline | Every engine event. Scrub back and forth; the canvas and inspector follow. |
-| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). |
+| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). Offline-demo runs are hidden behind **Show N offline-demo runs**, so the list holds your real runs. |
 
 Stop mid-process: **Pause** halts at the next gate, **breakpoints** (the dot on a node) halt
 before and after that node, **step mode** halts at every gate, and **Stop** aborts the live AI call
@@ -101,7 +101,7 @@ npm run cli -- compare <a.json> <b.json>             # where two runs diverge, a
 npm run cli -- rehearse analyze -n 5 --provider copilot -i swing   # how deterministic is the AI here?
 npm run cli -- resume .symphony/runs/fix/<file>.json # continue an interrupted or stopped run
 npm run cli -- fork .symphony/runs/fix/<file>.json --at 4   # keep steps 1-3, play the rest again
-npm run cli -- runs                                  # saved runs (in-progress = resumable)
+npm run cli -- runs [--all]                          # saved runs (in-progress = resumable); --all adds demo runs
 ```
 
 ## Concepts
@@ -296,6 +296,9 @@ roster the maestro uses to debate a plan, aimed at a conclusion instead.
 ```bash
 npm run cli -- run investigate -c question="Why do runs replay exactly?" --provider copilot
 ```
+
+Runs are saved to `.symphony/runs`, or to `SYMPHONY_RUNS_DIR` when it is set. The test suites
+point it at a temporary folder, so their runs never reach your lists.
 
 ## Use it from VS Code chat and Copilot Studio
 

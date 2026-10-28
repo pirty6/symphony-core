@@ -20,6 +20,8 @@ export interface SavedSummary {
   readonly outcome: string
   readonly startedAt: string
   readonly steps: number
+  /** Played by the offline demo: hidden from the list unless asked for. */
+  readonly demo?: boolean
 }
 
 export interface ContinueRunRequest {

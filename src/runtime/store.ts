@@ -45,6 +45,29 @@ export interface RunSummary {
   readonly outcome: string;
   readonly startedAt: string;
   readonly steps: number;
+  /** Played by the offline demo (canned answers): hidden from recent lists by default. */
+  readonly demo: boolean;
+}
+
+/**
+ * Played by the offline demo: the run says so, or (older runs) every AI answer
+ * it recorded came from the scripted provider.
+ */
+export function isDemoRun(perf: Pick<SavedRun['performance'], 'provider' | 'steps'>): boolean {
+  if (perf.provider) return perf.provider === 'scripted';
+  const players = perf.steps.flatMap((s) => [
+    ...(s.transcript ? [s.transcript.provider] : []),
+    ...(s.attempts ?? []).flatMap((a) => (a.transcript ? [a.transcript.provider] : [])),
+  ]);
+  return players.length > 0 && players.every((p) => p === 'scripted');
+}
+
+/**
+ * Where runs are saved: SYMPHONY_RUNS_DIR (tests point it at a temp folder so
+ * their runs never reach your lists), else <root>/.symphony/runs.
+ */
+export function runsDirFor(root: string, env: NodeJS.ProcessEnv = process.env): string {
+  return env.SYMPHONY_RUNS_DIR || join(root, '.symphony', 'runs');
 }
 
 const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, '-');
@@ -98,6 +121,7 @@ export async function listRuns(dir: string): Promise<RunSummary[]> {
           outcome: run.performance.outcome,
           startedAt: run.performance.startedAt,
           steps: run.performance.steps.length,
+          demo: isDemoRun(run.performance),
         });
       } catch {
         // skip unreadable files

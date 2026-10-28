@@ -6,6 +6,7 @@ import { startLive, type RunView } from '../lib/model'
 import { ApprovalCard, GateCard, NodeEditor, RecoveryCard, StateView } from './Inspector'
 import { newNode } from '../lib/model'
 import { PatternPanel } from './PatternPanel'
+import { Library } from './Library'
 import { describeEvent } from '../lib/events'
 import { Timeline } from './Timeline'
 import { Toolbar } from './Toolbar'
@@ -227,3 +228,43 @@ describe('NodeEditor', () => {
   })
 })
 
+
+describe('Library saved runs', () => {
+  const run = (file: string, demo: boolean) => ({
+    file,
+    pattern: file,
+    goal: 'g',
+    scoreId: 's',
+    outcome: 'success',
+    startedAt: '2026-10-28T00:00:00Z',
+    steps: 3,
+    demo,
+  })
+  const props = {
+    library: [],
+    activeName: '',
+    editable: true,
+    asking: false,
+    onLoad: () => {},
+    onNew: () => {},
+    onOpenSaved: () => {},
+    onRefreshSaved: () => {},
+    onAsk: () => {},
+  }
+
+  it('hides offline-demo runs until asked', () => {
+    render(<Library {...props} saved={[run('real', false), run('demo1', true), run('demo2', true)]} />)
+    expect(screen.getByText('real')).toBeInTheDocument()
+    expect(screen.queryByText('demo1')).toBeNull()
+    fireEvent.click(screen.getByText('Show 2 offline-demo runs'))
+    expect(screen.getByText('demo1')).toBeInTheDocument()
+    expect(screen.getAllByText('demo')).toHaveLength(2)
+    fireEvent.click(screen.getByText('Hide 2 offline-demo runs'))
+    expect(screen.queryByText('demo2')).toBeNull()
+  })
+
+  it('says so when every run is a demo', () => {
+    render(<Library {...props} saved={[run('demo1', true)]} />)
+    expect(screen.getByText('No runs with a real AI yet.')).toBeInTheDocument()
+  })
+})

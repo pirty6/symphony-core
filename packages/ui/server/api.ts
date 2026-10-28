@@ -39,16 +39,7 @@ import {
   runtimeExtras,
   type RuntimeExtras,
 } from '../../../src/runtime/factory.js'
-import {
-  gitFingerprint,
-  listRuns,
-  loadPatternFiles,
-  loadRepertoire,
-  loadRun,
-  runPath,
-  savePatternFile,
-  saveRun,
-} from '../../../src/runtime/store.js'
+import { gitFingerprint, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
 
 export interface ApiOptions {
   /** Repository root (where src/patterns lives). */
@@ -126,7 +117,7 @@ export function createApi(opts: ApiOptions) {
   const runs = opts.runs ?? new Map<string, Run>()
   const env = opts.env ?? process.env
   const workspace = opts.workspace ?? opts.repoRoot
-  const runsDir = join(opts.repoRoot, RUNS_DIR)
+  const runsDir = runsDirFor(opts.repoRoot, env)
   const draftsDir = join(opts.repoRoot, DRAFTS_DIR)
 
   async function library(): Promise<{ pattern: Pattern; source: 'builtin' | 'draft' }[]> {

@@ -48,6 +48,7 @@ describe('Run', () => {
     expect(run.status).toBe('done');
     expect(run.messages.some((m) => m.type === 'provider' && m.event.type === 'delta')).toBe(true);
     expect(replayPerformance(fixScore, perf).divergence.reproduced).toBe(true);
+    expect(perf.provider).toBe('scripted');
   });
 
   it('is deterministic across runs', async () => {

@@ -10,6 +10,8 @@ import { runScripted } from '../core/scripted.js';
 import { fix, review } from '../patterns/index.js';
 import {
   gitFingerprint,
+  isDemoRun,
+  runsDirFor,
   listRuns,
   loadPatternFiles,
   loadRun,
@@ -87,5 +89,33 @@ describe('gitFingerprint', () => {
     expect(a).not.toBe('');
     expect(a).not.toBe(b);
     expect(await gitFingerprint(repo)).toBe(b);
+  });
+});
+
+describe('demo runs stay out of your lists', () => {
+  const score = compileScore(fix, { context: fix.demo!.context!, generatedAt: 't' });
+  const perf = toPerformance(runScripted(score, fix.demo, { at: 't' }).state);
+  const live = {
+    ...perf,
+    steps: perf.steps.map((s) =>
+      s.transcript ? { ...s, transcript: { ...s.transcript, provider: 'copilot' } } : s,
+    ),
+  };
+
+  it('knows a demo run by its provider, or (older runs) by who answered', () => {
+    expect(isDemoRun({ ...perf, provider: 'scripted' })).toBe(true);
+    expect(isDemoRun({ ...perf, provider: 'copilot' })).toBe(false);
+    expect(isDemoRun(perf)).toBe(true);
+    expect(isDemoRun(live)).toBe(false);
+    expect(isDemoRun({ ...perf, steps: [] })).toBe(false);
+  });
+
+  it('lists them flagged, and SYMPHONY_RUNS_DIR moves where runs are saved', async () => {
+    const dir = join(root, 'demo-flag');
+    await saveRun(dir, { schemaVersion: 3, score, performance: perf });
+    await saveRun(dir, { schemaVersion: 3, score, performance: { ...live, startedAt: 'u' } });
+    expect((await listRuns(dir)).map((r) => r.demo).toSorted()).toEqual([false, true]);
+    expect(runsDirFor('/repo', {})).toBe(join('/repo', '.symphony', 'runs'));
+    expect(runsDirFor('/repo', { SYMPHONY_RUNS_DIR: '/tmp/x' })).toBe('/tmp/x');
   });
 });

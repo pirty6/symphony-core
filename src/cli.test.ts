@@ -58,8 +58,13 @@ describe('main', () => {
     expect(await main(['verify', saved!], cwd)).toBe(0);
     expect(out).toMatch(/reproduced exactly/);
     out = '';
+    // An offline-demo run: hidden from the list unless --all.
     expect(await main(['runs'], cwd)).toBe(0);
-    expect(out).toMatch(/fix\s+success/);
+    expect(plain()).not.toMatch(/fix\s+success/);
+    expect(plain()).toMatch(/\d+ offline-demo runs hidden \(--all to show them\)/);
+    out = '';
+    expect(await main(['runs', '--all'], cwd)).toBe(0);
+    expect(plain()).toMatch(/fix\s+success .*\(demo\)/);
   });
 
   it('two offline runs are identical even though the first one changes the runs folder', async () => {

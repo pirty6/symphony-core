@@ -23,9 +23,14 @@ import { concertNext } from '../runtime/concert.js';
 import { Run } from '../runtime/driver.js';
 import type { Provider } from '../runtime/provider.js';
 import { envConfig, makeProvider, runtimeExtras, type ProviderName } from '../runtime/factory.js';
-import { gitFingerprint, loadPatternFiles, loadRepertoire, saveRun } from '../runtime/store.js';
+import {
+  gitFingerprint,
+  loadPatternFiles,
+  loadRepertoire,
+  runsDirFor,
+  saveRun,
+} from '../runtime/store.js';
 
-export const RUNS_DIR = '.symphony/runs';
 const DRAFTS_DIR = 'src/patterns/drafts';
 
 /**
@@ -214,7 +219,7 @@ export class RunManager {
     chain: readonly string[],
   ): Promise<string> {
     const workspace = await this.opts.workspace();
-    const runsDir = join(workspace, RUNS_DIR);
+    const runsDir = runsDirFor(workspace, this.opts.env);
     const extras = await runtimeExtras(workspace, this.opts.repoRoot, this.opts.env);
     const providerName = req.provider ?? 'copilot';
     const base = makeProvider({
