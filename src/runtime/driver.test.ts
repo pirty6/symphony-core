@@ -439,10 +439,10 @@ describe('Run', () => {
   });
 });
 
-describe('checkpoints, resume and fork', () => {
-  const offline = () => ScriptedProvider.forPattern(fix);
-  const strip = ({ basedOn: _b, ...p }: SavedRun['performance']) => p;
+const offline = () => ScriptedProvider.forPattern(fix);
+const strip = ({ basedOn: _b, ...p }: SavedRun['performance']) => p;
 
+describe('checkpoints, resume and fork', () => {
   async function checkpoints(): Promise<SavedRun[]> {
     const saved: SavedRun[] = [];
     await new Run({

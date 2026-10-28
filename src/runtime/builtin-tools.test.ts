@@ -29,6 +29,9 @@ function repo(name: string): string {
   return dir;
 }
 
+const prior = (c: { descriptions: readonly string[] }) =>
+  c.descriptions.find((d) => d.startsWith('prior-runs:'));
+
 const ctx = (workspace: string) => ({
   workspace,
   repoRoot: workspace,
@@ -105,7 +108,6 @@ describe('sources.catalog', () => {
       probeGitHub: false,
       mcp: { includeUser: false },
     });
-    const prior = (x: typeof once) => x.descriptions.find((d) => d.startsWith('prior-runs:'));
     expect(prior(once)).toMatch(/^prior-runs: earlier Symphony runs/);
     expect(prior(twice)).toBe(prior(once));
   });

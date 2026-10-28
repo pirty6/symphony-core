@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { blocks, Markdown } from './markdown'
+import { Markdown } from './markdown'
+import { blocks } from './markdown-blocks'
 
 describe('markdown', () => {
   it('splits headings, paragraphs, lists and code', () => {

@@ -464,9 +464,11 @@ async function cmdContinue(
   }
   let result;
   try {
-    result = restoreEngine(run.score, perf, {
-      ...(kind === 'forked' ? { throughStep, startedAt: new Date().toISOString() } : {}),
-    });
+    result = restoreEngine(
+      run.score,
+      perf,
+      kind === 'forked' ? { throughStep, startedAt: new Date().toISOString() } : {},
+    );
   } catch (e) {
     console.error(c.red((e as Error).message));
     return 2;

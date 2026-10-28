@@ -88,6 +88,8 @@ const callTool = async (cfg: SessionConfig, name: string, args: unknown) => {
   return tool.handler!(args, {} as never);
 };
 
+const listModels = async () => [{ id: 'claude-haiku-5.5', supportedReasoningEfforts: ['low'] }];
+
 describe('CopilotProvider', () => {
   it('streams, enforces read-only and captures submit_result', async () => {
     const { client, sessions } = fakeClient(async (cfg, emit) => {
@@ -456,7 +458,6 @@ describe('CopilotProvider', () => {
   });
 
   it('ignores a forced MODEL the account cannot use and falls back to the tiers', async () => {
-    const listModels = async () => [{ id: 'claude-haiku-5.5', supportedReasoningEfforts: ['low'] }];
     const unavailable = new CopilotProvider({
       clientFactory: () => ({ ...fakeClient(async () => {}).client, listModels }),
       model: 'claude-opus-4.6',
