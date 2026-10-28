@@ -5,6 +5,7 @@
  */
 import type { FieldType, MoveVerdict, NodeResult, StateField } from './types.js';
 import { FIELD_TYPES } from './types.js';
+import { canonicalJson } from './hash.js';
 
 export const RESERVED_NAMES: readonly string[] = ['state', 'verdict', 'true', 'false', 'null'];
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -43,13 +44,26 @@ export function checkValue(type: FieldType, value: unknown): string | undefined 
     case 'number[]': {
       if (!Array.isArray(value)) return `expected ${type}, got ${got}`;
       const inner = type === 'string[]' ? 'string' : 'number';
-      const bad = value.findIndex((v) => typeof v !== inner);
-      return bad === -1 ? undefined : `expected ${type}, item ${bad} is ${typeof value[bad]}`;
+      const bad = value.findIndex(
+        (v) => typeof v !== inner || (inner === 'number' && !Number.isFinite(v)),
+      );
+      return bad === -1 ? undefined : `expected ${type}, item ${bad} is ${String(value[bad])}`;
     }
     case 'object':
-      return value !== null && typeof value === 'object' && !Array.isArray(value)
-        ? undefined
-        : `expected object, got ${got}`;
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        return `expected object, got ${got}`;
+      }
+      return plainJsonError(value);
+  }
+}
+
+/** State must be plain JSON so it hashes faithfully. */
+function plainJsonError(value: unknown): string | undefined {
+  try {
+    canonicalJson(value);
+    return undefined;
+  } catch (e) {
+    return (e as Error).message;
   }
 }
 

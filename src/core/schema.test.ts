@@ -180,3 +180,11 @@ describe('parseFieldInput / formatFieldInput', () => {
     expect(formatFieldInput(2)).toBe('2');
   });
 });
+
+describe('state values must be plain JSON', () => {
+  it('rejects NaN inside number lists and non-JSON objects', () => {
+    expect(checkValue('number[]', [1, NaN])).toMatch(/item 1 is NaN/);
+    expect(checkValue('object', { at: new Date(0) })).toMatch(/Date/);
+    expect(checkValue('object', { ok: [1, { a: 'b' }] })).toBeUndefined();
+  });
+});

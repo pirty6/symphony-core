@@ -6,19 +6,41 @@
  * `hashOf`, so equal values always hash equally regardless of key order.
  */
 
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    if (value === undefined) return 'null';
-    if (typeof value === 'number' && !Number.isFinite(value)) return 'null';
-    return JSON.stringify(value);
+/** A value that cannot be hashed faithfully: hashing it would let distinct values collide. */
+export class HashError extends Error {}
+
+/**
+ * Canonical JSON: sorted keys, no whitespace. Only plain JSON is accepted
+ * (object properties that are `undefined` are dropped, as JSON does). NaN,
+ * Infinity, `undefined` in arrays, Dates, Maps, class instances and functions
+ * throw instead of silently turning into `null` or `{}` and aliasing.
+ */
+export function canonicalJson(value: unknown, path = '$'): string {
+  if (value === null) return 'null';
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return JSON.stringify(value);
+    case 'number':
+      if (!Number.isFinite(value)) throw new HashError(`${path} is ${value}: not JSON`);
+      return JSON.stringify(value);
+    case 'object':
+      break;
+    default:
+      throw new HashError(`${path} is ${typeof value}: not JSON`);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((v) => canonicalJson(v)).join(',')}]`;
+    return `[${value.map((v, i) => canonicalJson(v, `${path}[${i}]`)).join(',')}]`;
+  }
+  const proto = Object.getPrototypeOf(value) as unknown;
+  if (proto !== Object.prototype && proto !== null) {
+    const name = (value as object).constructor?.name ?? 'object';
+    throw new HashError(`${path} is a ${name}: not plain JSON`);
   }
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, v]) => v !== undefined)
     .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`;
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v, `${path}.${k}`)}`).join(',')}}`;
 }
 
 const K = new Uint32Array([
