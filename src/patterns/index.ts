@@ -4,10 +4,19 @@ import { hangman } from './hangman.js';
 import { analyze } from './analyze.js';
 import { investigate } from './investigate.js';
 import { composedScore, maestro } from './maestro.js';
+import { refactor } from './refactor.js';
 import { review } from './review.js';
 
 /** The pattern library. Patterns are TypeScript modules; add new ones here. */
-export const PATTERNS: readonly Pattern[] = [maestro, investigate, fix, review, analyze, hangman];
+export const PATTERNS: readonly Pattern[] = [
+  maestro,
+  investigate,
+  fix,
+  refactor,
+  review,
+  analyze,
+  hangman,
+];
 
 export function findPattern(name: string): Pattern | undefined {
   return PATTERNS.find((p) => p.name === name);
@@ -35,4 +44,4 @@ export function routeMatches(prompt: string, library: readonly Pattern[]): Patte
     .map((m) => m.pattern);
 }
 
-export { analyze, composedScore, fix, hangman, investigate, maestro, review };
+export { analyze, composedScore, fix, hangman, investigate, maestro, refactor, review };
