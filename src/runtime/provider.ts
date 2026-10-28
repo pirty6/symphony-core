@@ -343,7 +343,16 @@ function segmentIsReadOnly(segment: string): boolean {
   if (t[0] === 'for') return /^[A-Za-z_]\w*$/.test(t[1] ?? '') && (t.length === 2 || t[2] === 'in');
   const cmd = t[0];
   if (!cmd) return true;
-  if (cmd.includes('=') || !READ_ONLY_COMMANDS.has(cmd)) return false;
+  // NAME=value words: alone they only set shell variables; before a command they
+  // become its environment (PAGER, GIT_*, LD_PRELOAD…), so only before safe builtins.
+  if (cmd.includes('=')) {
+    const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/;
+    const first = t.findIndex((w) => !assignment.test(w));
+    if (first === -1) return true;
+    const rest = t.slice(first);
+    return ENV_PREFIX_SAFE.has(rest[0]!) && segmentIsReadOnly(rest.join(' '));
+  }
+  if (!READ_ONLY_COMMANDS.has(cmd)) return false;
   const args = t.slice(1);
   if (args.some((a) => a.startsWith('--output'))) return false;
   if (cmd === 'sort') return !args.some((a) => a === '-o' || a.startsWith('-o'));
@@ -374,13 +383,60 @@ function segmentIsReadOnly(segment: string): boolean {
   return true;
 }
 
+const MAX_SUBSTITUTION_DEPTH = 3;
+
+/**
+ * Replace each `$(…)` (outside single quotes) by a placeholder after checking
+ * the command inside it; undefined when one is not read-only or cannot be parsed.
+ */
+function withoutSubstitutions(text: string, depth: number): string | undefined {
+  let out = '';
+  let single = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (ch === "'") single = !single;
+    if (single || ch !== '$' || text[i + 1] !== '(' || text[i + 2] === '(') {
+      out += ch;
+      continue;
+    }
+    // Find the matching ')', minding nested parentheses and quotes.
+    let level = 0;
+    let quote: string | undefined;
+    let end = -1;
+    for (let j = i + 1; j < text.length; j += 1) {
+      const c = text[j]!;
+      if (quote) {
+        if (c === quote) quote = undefined;
+      } else if (c === '"' || c === "'") quote = c;
+      else if (c === '(') level += 1;
+      else if (c === ')' && --level === 0) {
+        end = j;
+        break;
+      }
+    }
+    if (end < 0 || depth >= MAX_SUBSTITUTION_DEPTH) return undefined;
+    if (!isReadOnlyCommand(text.slice(i + 2, end), depth + 1)) return undefined;
+    out += 'SUBSTITUTION';
+    i = end;
+  }
+  return out;
+}
+
+/** Builtins that never start another program, so variables set before them cannot change what runs. */
+const ENV_PREFIX_SAFE: ReadonlySet<string> = new Set(['echo', 'printf', 'true', 'test', '[']);
+
 /**
  * Conservative read-only check for a shell command line: every segment between
  * `&&`, `||`, `;` and `|` must be an allowlisted read-only command. Command
  * substitution, process substitution and output redirection are refused.
  */
-export function isReadOnlyCommand(text: string): boolean {
-  if (/\$\(|`|<\(|>\(/.test(text)) return false;
+export function isReadOnlyCommand(text: string, depth = 0): boolean {
+  // $(…) runs a command too: allowed only when what it runs is itself read-only.
+  const flat = withoutSubstitutions(text, depth);
+  if (flat === undefined) return false;
+  text = flat;
+  // Anything left that could run a command: backticks, $( the scanner could not read, <(…), >(…).
+  if (/\$\(|`|<\(|>\(/.test(text.replace(/'[^']*'/g, ''))) return false;
   // Output may only go to another stream (2>&1) or nowhere (/dev/null); any other `>` writes a file.
   const unquoted = text
     .replace(/"[^"]*"|'[^']*'/g, '')
