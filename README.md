@@ -93,6 +93,8 @@ npm run cli -- run hangman                           # play in the terminal
 npm run cli -- run fix --auto-approve                # scripted run, saved to .symphony/runs
 npm run cli -- run investigate -c question="Where is auth handled?" --provider copilot
 npm run cli -- run fix --step --break apply          # pause at gates
+npm run cli -- run investigate -c question="Why do logins fail on CI?" --then fix --provider copilot
+#   chain: fix starts with what investigate found; inputs for it: -c fix.testCommand="npm test"
 npm run cli -- draft "triage a flaky test" --provider copilot --save
 npm run cli -- verify .symphony/runs/fix/<file>.json # integrity + deterministic replay check
 npm run cli -- compare <a.json> <b.json>             # where two runs diverge, and why
@@ -294,6 +296,33 @@ roster the maestro uses to debate a plan, aimed at a conclusion instead.
 ```bash
 npm run cli -- run investigate -c question="Why do runs replay exactly?" --provider copilot
 ```
+
+## Fix and refactor
+
+Both patterns end with the same shared **edit and verify** phase
+(`src/patterns/phases/editVerify.ts`): the executor edits; the **engine** captures the diff
+(`git.diff`) and runs the tests, and the lint command if you give one (`tests.run`). "Tests
+passed" is a fact, never the AI's report. The test command is a run input (`testCommand`) or the
+project's own test script; the AI never chooses it. Output is normalized so identical results
+hash identically. A failure is triaged before retrying:
+
+| Triage | Then |
+|--------|------|
+| PATCH: the edit is wrong or incomplete | edit again with the failure (up to `maxAttempts`, 3) |
+| DIAGNOSIS: the plan or root cause is wrong | fix goes back to research with the failure (up to `maxDiagnoses`, 1) and you approve the new plan |
+| ENVIRONMENT: flaky, missing dependency, failing before the change | stop: another edit cannot fix it |
+| No progress: the edit changed nothing, or repeats the last attempt | caught before the tests run again: re-diagnose, or stop |
+
+- **fix** = investigate's diagnosis + edit and verify: competing hypotheses, evidence for and
+  against each, a diagnosis that must name files and rule on every hypothesis, the skeptic and
+  pragmatist (by complexity), then your approval, showing root cause, rulings, files and plan.
+- **refactor** = a green baseline + a plan + edit and verify. It will not start on red tests;
+  the plan lists the behaviour that must not change and the tests that prove it; bugs noticed on
+  the way go to `noticedBugs` instead of being fixed (that would change behaviour).
+
+**Chaining**: one pattern's result feeds the next pattern's goal input (`core/chain.ts`):
+`--then` in the CLI, **Then run** in the studio, or the maestro when a request asks for two shapes
+("find out why X, then fix it"). Each run is still its own score and performance.
 
 ## Library API
 
