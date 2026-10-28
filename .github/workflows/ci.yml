@@ -38,6 +38,9 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm install
+      - name: npm debug log
+        if: failure()
+        run: tail -n 120 ~/.npm/_logs/*-debug-0.log
       - run: npm test
       - run: npm run test:ui
       - run: npm run cli -- run fix --auto-approve --no-save
