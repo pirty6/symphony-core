@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileScore } from '../../core/compile.js';
 import { runScripted } from '../../core/scripted.js';
-import type { Complexity, DemoScript } from '../../core/types.js';
+import type { Complexity, DemoScript, EngineEvent } from '../../core/types.js';
 import { validatePattern } from '../../core/validate.js';
 import { investigate } from '../index.js';
 import { challengePhase, hypothesesPhase, withState } from './debate.js';
@@ -87,7 +87,10 @@ describe('debate phases in investigate', () => {
         ...agents,
         hypothesize: (s, v) =>
           proposals++ === 0
-            ? { ...agents.hypothesize!(s, v), updates: { hypotheses: ['H1: only one'] } }
+            ? {
+                ...agents.hypothesize!(s, v),
+                updates: { hypotheses: ['H1: only one'], ratedComplexity: 2 },
+              }
             : agents.hypothesize!(s, v),
         answer: (s, v) => {
           const good = agents.answer!(s, v);
@@ -108,6 +111,62 @@ describe('debate phases in investigate', () => {
         (e) => e.nodeId === 'answer' && /one ruling per hypothesis/.test(e.errors.join()),
       ),
     ).toBe(true);
+  });
+});
+
+/** The tier each AI step was played at. */
+const tiers = (st: { events: readonly EngineEvent[] }) =>
+  Object.fromEntries(
+    st.events.flatMap((e) =>
+      e.type === 'paused' && e.pause.kind === 'agent' ? [[e.pause.nodeId, e.pause.complexity]] : [],
+    ),
+  );
+
+describe('complexity: rated from the problem, scaled per step', () => {
+  const rate = (rated: number): DemoScript => ({
+    ...demo,
+    agents: {
+      ...agents,
+      hypothesize: (s, v) => ({
+        ...agents.hypothesize!(s, v),
+        updates: { ...agents.hypothesize!(s, v).updates, ratedComplexity: rated },
+      }),
+    },
+  });
+  const auto = (script: DemoScript, complexity?: Complexity) =>
+    runScripted(
+      compileScore(investigate, {
+        context: demo.context!,
+        ...(complexity ? { complexity } : {}),
+        generatedAt: 't',
+      }),
+      script,
+      { at: 't' },
+    ).state;
+
+  it('auto: a harder question raises the complexity, and with it the debate', () => {
+    const easy = auto(rate(1));
+    const hard = auto(rate(4));
+    expect(easy.state.complexity).toBe(1);
+    expect(hard.state.complexity).toBe(4);
+    expect(easy.steps.some((s) => s.nodeId === 'challenge')).toBe(false);
+    expect(hard.steps.some((s) => s.nodeId === 'second')).toBe(true);
+  });
+
+  it('a chosen complexity always wins over the rating', () => {
+    expect(auto(rate(4), 1).state.complexity).toBe(1);
+  });
+
+  it('each step plays a tier above or below the run: triage cheaper, the answer smarter', () => {
+    const t = tiers(auto(rate(3)));
+    expect(t.hypothesize).toBe(3);
+    expect(t.triage).toBe(2);
+    expect(t.deepRead).toBe(3);
+    expect(t.answer).toBe(4);
+    expect(t.challenge).toBe(4);
+    const low = tiers(auto(rate(1)));
+    expect(low.triage).toBe(1);
+    expect(low.answer).toBe(2);
   });
 });
 
@@ -161,7 +220,8 @@ describe('debate fragments', () => {
       ],
       edges: [
         { id: 'a', from: 'start', to: h.entry },
-        { id: 'b', from: h.entry, to: 'research' },
+        ...h.edges,
+        { id: 'b', from: h.exit!, to: 'research' },
         { id: 'c', from: 'research', to: c.entry },
         ...c.edges,
       ],

@@ -74,6 +74,11 @@ export interface AgentNode extends NodeBase {
   readonly capabilities?: readonly Capability[];
   /** Fixed model tier for this node; otherwise state.complexity, then the score's. */
   readonly complexity?: Complexity;
+  /**
+   * Tiers above (+) or below (-) the run's complexity for this step, clamped to 1-4:
+   * bulk mechanical steps -1, steps that judge or write the conclusion +1.
+   */
+  readonly complexityShift?: number;
   /** No workspace tools at all: the agent works only from its input. */
   readonly isolated?: boolean;
   /**

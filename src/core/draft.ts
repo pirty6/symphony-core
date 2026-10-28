@@ -67,6 +67,9 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(capabilities.length > 0 ? { capabilities } : {}),
         ...(isComplexity(raw.complexity) ? { complexity: raw.complexity } : {}),
         ...(raw.isolated === true ? { isolated: true } : {}),
+        ...(Number.isInteger(raw.complexityShift)
+          ? { complexityShift: raw.complexityShift as number }
+          : {}),
         ...(raw.solo === true ? { solo: true } : {}),
       };
     }
@@ -204,7 +207,7 @@ export function draftInstructions(): string {
 Node kinds:
 - start {id,kind:"start",label}: exactly one.
 - agent {id,kind:"agent",role:"assessor"|"executor",label,directive,reads:[state keys],writes:[state keys],maxVisits?,
-  capabilities?:["web","mcp"], checks?:[{expr,message}], complexity?:1-4, isolated?:true (no workspace tools),
+  capabilities?:["web","mcp"], checks?:[{expr,message}], complexity?:1-4 (fixed tier), complexityShift?:-2..2 (tiers above or below the run's complexity: bulk steps -1, judging or concluding steps +1), isolated?:true (no workspace tools),
   solo?:true (assessor only: from Swing up the AI picks one of its labelled, unguarded out edges)} - checks are expressions over state+answer that must be true
   or the answer is rejected and re-asked (use them to force full coverage, e.g. subset(batch, examined)).
   assessor = read-only research/analysis; executor = may edit files and run commands. AI runs ONLY in agent nodes.

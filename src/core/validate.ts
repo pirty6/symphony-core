@@ -176,6 +176,12 @@ export function validateGraph(g: PatternGraph): ValidationReport {
             errors.push({ ...at, message: `check '${c.expr}' needs a message` });
           checkExpr(c.expr, guardFields, at, 'check', errors);
         }
+        if (
+          n.complexityShift !== undefined &&
+          (!Number.isInteger(n.complexityShift) || Math.abs(n.complexityShift) > 3)
+        ) {
+          errors.push({ ...at, message: 'complexityShift must be a whole number from -3 to 3' });
+        }
         if (n.complexity !== undefined && ![1, 2, 3, 4].includes(n.complexity)) {
           errors.push({ ...at, message: 'complexity must be 1, 2, 3 or 4' });
         }

@@ -253,12 +253,15 @@ function follow(
 export function complexityFor(
   score: ExecutableScore,
   state: Readonly<Record<string, unknown>>,
-  node: { readonly complexity?: Complexity },
+  node: { readonly complexity?: Complexity; readonly complexityShift?: number },
 ): Complexity {
-  const fromState = state.complexity;
   if (node.complexity) return node.complexity;
-  if (fromState === 1 || fromState === 2 || fromState === 3 || fromState === 4) return fromState;
-  return score.complexity ?? 2;
+  const fromState = state.complexity;
+  const run =
+    fromState === 1 || fromState === 2 || fromState === 3 || fromState === 4
+      ? fromState
+      : (score.complexity ?? 2);
+  return Math.min(4, Math.max(1, run + (node.complexityShift ?? 0))) as Complexity;
 }
 
 function choicesOf(score: ExecutableScore, node: ScoreNode) {

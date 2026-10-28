@@ -76,22 +76,23 @@ describe('compileScore', () => {
     ).toThrow(/goalFrom 'nope' must be a required string input/);
   });
 
-  it('a complexity field starts at the score complexity unless given', () => {
+  it('a complexity field starts at the chosen complexity, or 0 (auto) when none was chosen', () => {
     const tiered = {
       ...pattern,
       state: [...pattern.state, { name: 'complexity', type: 'number' as const }],
     };
+    const run = (extra: object) =>
+      compileScore(tiered, { goal: 'g', context: { topic: 't' }, ...extra });
+    expect(run({}).initialState.complexity).toBe(0);
+    expect(run({}).complexity).toBe(2);
+    expect(run({ complexity: 4 }).initialState.complexity).toBe(4);
     expect(
-      compileScore(tiered, { goal: 'g', context: { topic: 't' } }).initialState.complexity,
-    ).toBe(2);
-    expect(
-      compileScore(tiered, { goal: 'g', context: { topic: 't' }, complexity: 4 }).initialState
-        .complexity,
-    ).toBe(4);
-    expect(
-      compileScore(tiered, { goal: 'g', context: { topic: 't', complexity: 1 }, complexity: 4 })
-        .initialState.complexity,
+      run({ complexity: 4, context: { topic: 't', complexity: 1 } }).initialState.complexity,
     ).toBe(1);
+    expect(
+      compileScore({ ...tiered, complexity: 3 }, { goal: 'g', context: { topic: 't' } })
+        .initialState.complexity,
+    ).toBe(3);
   });
 
   it('verifyScore detects tampering', () => {

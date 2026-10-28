@@ -8,7 +8,7 @@ function tierHint(tiers?: Tiers): string {
   const lines = ([1, 2, 3, 4] as const).map(
     (c) => `${c} ${TIER_NAMES[c]}: ${tiers?.[c] ? `${tiers[c]!.model}${tiers[c]!.effort ? ` (${tiers[c]!.effort})` : ''}` : 'default model'}`,
   )
-  return `Model tier per complexity (Copilot):\n${lines.join('\n')}\nauto = the pattern's default; the maestro decides for scores it composes.`
+  return `Model tier per complexity (Copilot):\n${lines.join('\n')}\nauto = rated from the problem (investigate, fix, implement rate it before they start; the maestro for scores it composes). Each step then plays its own tier above or below that.`
 }
 
 export interface RunSettings {

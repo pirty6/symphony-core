@@ -123,6 +123,7 @@ export const fix: Pattern = {
       reads: ['issue', 'hint', 'hypotheses', 'findings', 'failureReason', 'testOutput'],
       writes: ['rootCause', 'files', 'plan', 'rulings'],
       retries: 2,
+      complexityShift: 1,
       maxVisits: 8,
       checks: [
         { expr: 'len(rootCause) > 0', message: 'State the root cause.' },
@@ -152,7 +153,8 @@ export const fix: Pattern = {
   ],
   edges: [
     { id: 'start-hypothesize', from: 'start', to: hypotheses.entry },
-    { id: 'hypothesize-research', from: hypotheses.entry, to: 'research' },
+    ...hypotheses.edges,
+    { id: 'rating-research', from: hypotheses.exit!, to: 'research' },
     { id: 'research-merge', from: 'research', to: 'mergeResearch' },
     { id: 'merge-diagnose', from: 'mergeResearch', to: 'diagnose' },
     { id: 'diagnose-challenge', from: 'diagnose', to: challenge.entry },
@@ -166,6 +168,7 @@ export const fix: Pattern = {
     agents: {
       hypothesize: () => ({
         updates: {
+          ratedComplexity: 2,
           hypotheses: [
             'H1: paginate slices from start - 1 | confirm if slice(start - 1, end) | refute if slice(start, end)',
             'H2: the caller passes a 0-based page | confirm if callers pass page - 1 | refute if callers pass 1-based pages',

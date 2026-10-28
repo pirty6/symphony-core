@@ -100,9 +100,12 @@ export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableSco
   const complexity = args.complexity ?? pattern.complexity ?? DEFAULT_COMPLEXITY;
   const initialState: Record<string, unknown> = {};
   for (const f of pattern.state) {
-    // A `complexity` field starts at the score's complexity, so conditions can scale the roster.
+    // A `complexity` field starts at the chosen complexity, or 0 ("auto": the pattern rates
+    // the problem and sets it, see phases/complexity.ts); conditions scale the roster from it.
     const fallback =
-      f.name === 'complexity' && f.type === 'number' ? complexity : zeroValue(f.type);
+      f.name === 'complexity' && f.type === 'number'
+        ? (args.complexity ?? pattern.complexity ?? 0)
+        : zeroValue(f.type);
     initialState[f.name] = structuredClone(context[f.name] ?? f.initial ?? fallback);
   }
 

@@ -341,6 +341,7 @@ export const investigate: Pattern = {
       reads: ['hypotheses', 'question', 'subQuestions', 'batch'],
       writes: ['triaged', 'batchRelevant', 'newFindings'],
       retries: 2,
+      complexityShift: -1,
       checks: [
         {
           expr: 'subset(batch, triaged)',
@@ -667,6 +668,7 @@ export const investigate: Pattern = {
       ],
       writes: ['answer', 'openQuestions', 'rulings'],
       retries: 2,
+      complexityShift: 1,
       checks: [
         { expr: 'len(answer) > 0', message: 'Write the answer.' },
         {
@@ -692,7 +694,8 @@ export const investigate: Pattern = {
     { id: 'catalog-plan', from: 'catalog', to: 'plan' },
     { id: 'plan-queue', from: 'plan', to: 'queue' },
     { id: 'queue-hypothesize', from: 'queue', to: hypotheses.entry },
-    { id: 'hypothesize-needFiles', from: hypotheses.entry, to: 'needFiles' },
+    ...hypotheses.edges,
+    { id: 'rating-needFiles', from: hypotheses.exit!, to: 'needFiles' },
     { id: 'needFiles-inventory', from: 'needFiles', to: 'inventory', branch: 'then' },
     { id: 'needFiles-needWeb', from: 'needFiles', to: 'needWeb', branch: 'else' },
     { id: 'inventory-queueFiles', from: 'inventory', to: 'queueFiles' },
@@ -927,6 +930,7 @@ export const investigate: Pattern = {
       }),
       hypothesize: () => ({
         updates: {
+          ratedComplexity: 2,
           hypotheses: [
             'H1: the engine validates every answer before state changes | confirm if advance() checks results before applying them | refute if a provider writes state directly',
             'H2: each provider validates its own answers | confirm if validation lives in src/runtime | refute if providers return raw results',

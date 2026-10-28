@@ -111,6 +111,7 @@ export const refactor: Pattern = {
       reads: ['target', 'hint', 'baselineOutput'],
       writes: ['files', 'plan', 'invariants', 'noticedBugs'],
       retries: 2,
+      complexityShift: 1,
       checks: [
         { expr: 'len(files) > 0', message: 'List the files to change.' },
         { expr: 'len(plan) > 0', message: 'Write the plan.' },

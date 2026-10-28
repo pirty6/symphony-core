@@ -15,6 +15,7 @@
  * edge into `entry` and supplies where the fragment exits.
  */
 import type { ScoreEdge, ScoreGroup, ScoreNode, StateField } from '../../core/types.js';
+import { applyRating, RATING_CHECK, RATING_DIRECTIVE, RATING_STATE } from './complexity.js';
 
 export interface Fragment {
   readonly state: readonly StateField[];
@@ -23,6 +24,8 @@ export interface Fragment {
   readonly group: ScoreGroup;
   /** Node to wire the incoming edge to. */
   readonly entry: string;
+  /** Node to wire the outgoing edge from, when the fragment continues (default: entry). */
+  readonly exit?: string;
 }
 
 /** Merge fragment state into a pattern's, keeping the pattern's own definition on name clashes. */
@@ -94,13 +97,15 @@ export interface HypothesesConfig {
 /** Competing explanations before any evidence is gathered. */
 export function hypothesesPhase(cfg: HypothesesConfig): Fragment {
   return {
-    state: debateState('hypotheses', 'rulings'),
+    state: [...debateState('complexity', 'hypotheses', 'rulings'), ...RATING_STATE],
     entry: 'hypothesize',
+    exit: 'applyRating',
     group: {
       id: 'hypothesesPhase',
       label: 'Competing hypotheses',
-      description: 'Every plausible explanation, each with what would confirm or refute it',
-      nodes: ['hypothesize'],
+      description:
+        'Every plausible explanation, each with what would confirm or refute it; how hard it is',
+      nodes: ['hypothesize', 'applyRating'],
     },
     nodes: [
       {
@@ -109,11 +114,13 @@ export function hypothesesPhase(cfg: HypothesesConfig): Fragment {
         role: 'assessor',
         isolated: true,
         label: 'Propose hypotheses',
-        directive: `You are the PROPOSER of competing hypotheses for \`${cfg.subject}\`. Before any evidence is read, list EVERY plausible answer or explanation, including the unwelcome ones and one that says the premise is wrong or the answer is "none of these". Write each \`hypotheses\` entry as "H<n>: <claim> | confirm if <evidence that would prove it> | refute if <evidence that would disprove it>". They must be distinct; the investigation will look for evidence for AND against each one, so do not rank them or pick a favourite.`,
+        directive: `You are the PROPOSER of competing hypotheses for \`${cfg.subject}\`. Before any evidence is read, list EVERY plausible answer or explanation, including the unwelcome ones and one that says the premise is wrong or the answer is "none of these". Write each \`hypotheses\` entry as "H<n>: <claim> | confirm if <evidence that would prove it> | refute if <evidence that would disprove it>". They must be distinct; the investigation will look for evidence for AND against each one, so do not rank them or pick a favourite.${RATING_DIRECTIVE}`,
         reads: [cfg.subject, ...cfg.context],
-        writes: ['hypotheses'],
+        writes: ['hypotheses', 'ratedComplexity'],
         retries: 2,
+        complexityShift: 1,
         checks: [
+          RATING_CHECK,
           {
             expr: 'len(hypotheses) >= 3',
             message: 'Give at least 3 competing hypotheses, including a "none of these" one.',
@@ -124,8 +131,9 @@ export function hypothesesPhase(cfg: HypothesesConfig): Fragment {
           },
         ],
       },
+      applyRating(),
     ],
-    edges: [],
+    edges: [{ id: 'hypothesize-applyRating', from: 'hypothesize', to: 'applyRating' }],
   };
 }
 
@@ -195,6 +203,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         reads: [subject, draft, evidence, 'hypotheses', 'rulings'],
         writes: ['objections'],
         retries: 2,
+        complexityShift: 1,
       },
       {
         id: 'hasObjections',
@@ -266,6 +275,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         reads: [subject, 'hypotheses', ...cfg.research],
         writes: ['secondOpinion'],
         retries: 2,
+        complexityShift: 1,
         checks: [{ expr: 'len(secondOpinion) > 0', message: 'Write your conclusion.' }],
       },
       {
@@ -278,6 +288,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         reads: [subject, draft, 'secondOpinion', evidence, 'hypotheses', 'rulings'],
         writes: [draft, 'rulings', 'disagreements'],
         retries: 2,
+        complexityShift: 1,
         checks: [
           {
             expr: 'len(rulings) == len(hypotheses)',
