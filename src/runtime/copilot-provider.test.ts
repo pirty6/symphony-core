@@ -104,6 +104,13 @@ describe('CopilotProvider', () => {
         verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
       });
       emit('tool.execution_complete', { toolCallId: 't1', success: true });
+      emit('assistant.usage', {
+        model: 'm1',
+        inputTokens: 1200,
+        outputTokens: 80,
+        cacheReadTokens: 900,
+      });
+      emit('assistant.usage', { model: 'm1', inputTokens: 300, outputTokens: 20 });
       emit('assistant.message', { content: 'Done.', model: 'm1' });
       emit('session.idle');
     });
@@ -121,6 +128,13 @@ describe('CopilotProvider', () => {
       verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
     });
     expect(res.transcript).toMatchObject({ provider: 'copilot', model: 'm1', output: 'Done.' });
+    expect(res.transcript.usage).toEqual({
+      calls: 2,
+      inputTokens: 1500,
+      outputTokens: 100,
+      cacheReadTokens: 900,
+      reasoningTokens: 0,
+    });
     expect(res.transcript.toolCalls.some((c) => c.denied)).toBe(true);
     expect(events.map((e) => e.type)).toEqual([
       'info',

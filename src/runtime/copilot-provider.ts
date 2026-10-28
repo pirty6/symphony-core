@@ -14,7 +14,7 @@ import { CopilotClient, defineTool, ToolSet } from '@github/copilot-sdk';
 import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
 import { webSearch, type SearchResult } from './web-search.js';
 import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
-import type { Complexity, Role, ToolCallRecord } from '../core/types.js';
+import type { Complexity, Role, TokenUsage, ToolCallRecord } from '../core/types.js';
 import type {
   AgentRequest,
   AgentResponse,
@@ -168,7 +168,7 @@ export class CopilotProvider implements Provider {
 
   private async runSession(
     run: SessionRun,
-  ): Promise<{ output: string; toolCalls: ToolCallRecord[]; model?: string }> {
+  ): Promise<{ output: string; toolCalls: ToolCallRecord[]; model?: string; usage?: TokenUsage }> {
     if (run.signal.aborted) throw abortError();
     const client = await this.ensureClient();
     if (run.signal.aborted) throw abortError();
@@ -239,6 +239,13 @@ export class CopilotProvider implements Provider {
     let output = '';
     let model: string | undefined;
     let failure: string | undefined;
+    const usage = {
+      calls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      reasoningTokens: 0,
+    };
     const names = new Map<string, string>();
     let settle!: () => void;
     const idle = new Promise<void>((resolve) => {
@@ -276,6 +283,15 @@ export class CopilotProvider implements Provider {
             name: names.get(id) ?? 'tool',
             ok: d.success === true,
           });
+          break;
+        }
+        case 'assistant.usage': {
+          const n = (k: string) => (typeof d[k] === 'number' ? (d[k] as number) : 0);
+          usage.calls += 1;
+          usage.inputTokens += n('inputTokens');
+          usage.outputTokens += n('outputTokens');
+          usage.cacheReadTokens += n('cacheReadTokens');
+          usage.reasoningTokens += n('reasoningTokens');
           break;
         }
         case 'session.error':
@@ -317,7 +333,7 @@ export class CopilotProvider implements Provider {
     }
     if (run.signal.aborted) throw abortError();
     if (failure && !output) output = `[${failure}]`;
-    return { output, toolCalls, ...(model ? { model } : {}) };
+    return { output, toolCalls, ...(model ? { model } : {}), ...(usage.calls ? { usage } : {}) };
   }
 
   /** Resolve the model and reasoning effort for a tier, checked against the models available. */
@@ -435,6 +451,7 @@ export class CopilotProvider implements Provider {
         prompt,
         output: out.output,
         toolCalls: out.toolCalls,
+        ...(out.usage ? { usage: out.usage } : {}),
         ...(startedAt ? { startedAt, completedAt: this.opts.clock!() } : {}),
         musician: {
           tier: pause.complexity,
@@ -487,7 +504,13 @@ export class CopilotProvider implements Provider {
     });
     return {
       result: submitted ?? extractJson(out.output),
-      transcript: { provider: this.name, prompt, output: out.output, toolCalls: out.toolCalls },
+      transcript: {
+        provider: this.name,
+        prompt,
+        output: out.output,
+        toolCalls: out.toolCalls,
+        ...(out.usage ? { usage: out.usage } : {}),
+      },
     };
   }
 

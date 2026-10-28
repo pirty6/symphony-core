@@ -10,6 +10,7 @@ import { resultText } from '../core/chain.js';
 import { compileScore } from '../core/compile.js';
 import { playsFromRepertoire } from '../core/jazz.js';
 import { zeroValue } from '../core/schema.js';
+import { formatUsage, performanceUsage } from '../core/usage.js';
 import type {
   Complexity,
   EngineEvent,
@@ -134,6 +135,8 @@ export interface RunView {
   readonly result?: string;
   readonly savedTo?: string;
   readonly note?: string;
+  /** Tokens the AI steps of this run spent so far. */
+  readonly tokens?: string;
 }
 
 const ACTIVE = new Set(['running', 'paused', 'awaiting-approval']);
@@ -320,6 +323,7 @@ export class RunManager {
     const ended = !ACTIVE.has(run.status) && engine !== undefined && engine.kind !== 'running';
     const result = ended ? resultText(run.score, engine.state) : '';
     const active = pause?.nodeId ?? engine?.cursor;
+    const used = performanceUsage(engine ?? { steps: [] }).total;
     return {
       runId: id,
       chain,
@@ -334,6 +338,7 @@ export class RunManager {
       ...(result ? { result } : {}),
       ...(managed.savedTo ? { savedTo: managed.savedTo } : {}),
       ...(managed.blocked ? { note: managed.blocked } : {}),
+      ...(used.calls > 0 ? { tokens: formatUsage(used) } : {}),
     };
   }
 

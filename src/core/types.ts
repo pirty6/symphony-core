@@ -270,6 +270,17 @@ export interface AiTranscript {
   readonly fromRepertoire?: string;
   /** Who played: enough to tell whether two answers came from the same musician. */
   readonly musician?: Musician;
+  /** Tokens the provider reported for this answer (all model calls of the session). */
+  readonly usage?: TokenUsage;
+}
+
+export interface TokenUsage {
+  /** Model calls made. */
+  readonly calls: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly reasoningTokens: number;
 }
 
 export interface Musician {

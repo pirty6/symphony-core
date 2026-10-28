@@ -19,6 +19,7 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
 import { handoffContext } from './core/chain.js';
+import { formatUsage, performanceUsage } from './core/usage.js';
 import { agreement, compareRuns } from './core/compare.js';
 import { engineNote, RUN_SCHEMA_VERSION } from './core/migrate.js';
 import { replayPerformance, restoreEngine } from './core/replay.js';
@@ -291,6 +292,8 @@ async function play(
   const saved = run.messages.find((m) => m.type === 'performance');
   if (saved?.type === 'performance' && saved.savedTo) console.log(c.dim(`saved ${saved.savedTo}`));
   if (!o.quiet) console.log(c.dim(`final state ${JSON.stringify(perf.finalState).slice(0, 2000)}`));
+  const used = performanceUsage(perf).total;
+  if (used.calls > 0) console.log(c.dim(`tokens: ${formatUsage(used)}`));
   return perf;
 }
 
