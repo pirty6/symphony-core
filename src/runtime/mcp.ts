@@ -141,6 +141,9 @@ async function readServers(file: string): Promise<Record<string, unknown> | unde
   return servers && typeof servers === 'object' ? servers : {};
 }
 
+/** Name of Symphony's own MCP server entry (see scripts/install-vscode.mjs). */
+export const SYMPHONY_SERVER_NAME = 'symphony';
+
 export async function discoverMcpServers(opts: McpOptions): Promise<McpDiscovery> {
   const env = opts.env ?? process.env;
   const home = opts.home ?? homedir();
@@ -163,6 +166,8 @@ export async function discoverMcpServers(opts: McpOptions): Promise<McpDiscovery
     if (!entries) continue;
     found.push(file);
     for (const [name, raw] of Object.entries(entries)) {
+      // Symphony's own server: its musicians must not start pipelines inside pipelines.
+      if (name === SYMPHONY_SERVER_NAME) continue;
       const converted =
         raw && typeof raw === 'object'
           ? convert(raw as Record<string, unknown>, opts.workspace, home, env)

@@ -145,6 +145,7 @@ describe('MCP discovery', () => {
       `{ // user servers
         "servers": {
           "teams": { "type": "stdio", "command": "agency", "args": ["mcp", "teams"] },
+          "symphony": { "type": "stdio", "command": "node", "args": ["mcp-server.js"] },
           "shared": { "command": "old" },
           "secret": { "command": "x", "env": { "TOKEN": "\${input:token}" } },
         },
