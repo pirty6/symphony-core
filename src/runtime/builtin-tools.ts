@@ -4,6 +4,7 @@
  *   repo.files       every file in the workspace (git-aware), plus what was excluded and why
  *   sources.catalog  every evidence source available to agents right now
  */
+import { workspaceTools } from './workspace-tools.js';
 import { execFile } from 'node:child_process';
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
@@ -272,6 +273,7 @@ export function builtinTools(opts: CatalogOptions = {}): ToolSpec[] {
       outputs: ['names', 'descriptions'],
       run: (_args, ctx) => sourceCatalog(ctx, opts),
     },
+    ...workspaceTools(),
     ...maestroTools(opts.library ?? (async () => PATTERNS)),
   ];
 }

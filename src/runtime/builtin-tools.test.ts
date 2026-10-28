@@ -117,6 +117,8 @@ describe('sources.catalog', () => {
     expect([...tools.keys()]).toEqual([
       'repo.files',
       'sources.catalog',
+      'tests.run',
+      'git.diff',
       'patterns.list',
       'patterns.route',
       'pattern.validate',
