@@ -146,3 +146,27 @@ test('warns before the offline demo ignores your own question, and remembers the
   await page.reload()
   await expect(page.getByLabel('provider')).toHaveValue('copilot')
 })
+
+test('a stuck AI step waits for you: retry with a hint and a smarter tier, then stop', async ({ page }) => {
+  // Make 'pick' impossible to satisfy, so every attempt is rejected and the step gets stuck.
+  await page.route('**/api/runs', async (route) => {
+    const body = route.request().postDataJSON() as { pattern: { nodes: { id: string; checks?: unknown[] }[] } }
+    for (const n of body.pattern.nodes) {
+      if (n.id === 'pick') n.checks = [{ expr: 'len(word) > 99', message: 'The word must be over 99 letters.' }]
+    }
+    await route.continue({ postData: JSON.stringify(body) })
+  })
+  await open(page, 'hangman')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  const card = page.getByTestId('recovery-card')
+  await expect(card).toContainText('Pick word is stuck')
+  await expect(card).toContainText('The word must be over 99 letters.')
+  await card.getByLabel('recovery hint').fill('use a much longer word')
+  await card.getByLabel('recovery tier').selectOption('4')
+  await card.getByRole('button', { name: '↻ Retry step' }).click()
+  await expect(page.getByTestId('timeline-events')).toContainText('pick: retry at tier 4 with hint "use a much longer word"')
+  await expect(card).toBeVisible()
+  await card.getByRole('button', { name: '✕ Stop run' }).click()
+  await expect(page.getByTestId('run-status')).toHaveText('failed')
+  await expect(page.getByTestId('timeline-events')).toContainText('pick: stopped by studio')
+})
