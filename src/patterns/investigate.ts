@@ -89,6 +89,22 @@ export const investigate: Pattern = {
         type: 'string[]',
         description: 'Items of the deep batch read completely',
       },
+      {
+        name: 'unreadable',
+        type: 'string[]',
+        description: 'Items of the deep batch that could not be read in full',
+      },
+      {
+        name: 'unreadableReasons',
+        type: 'string[]',
+        description: 'Why, per unreadable item, and how much was read',
+      },
+      {
+        name: 'notRead',
+        type: 'string[]',
+        description: 'Every item that could not be read in full',
+      },
+      { name: 'notReadReasons', type: 'string[]', description: 'Why, per notRead item' },
       { name: 'pendingExperiments', type: 'string[]' },
       { name: 'currentExperiment', type: 'string', description: 'Experiment to run now' },
       { name: 'ran', type: 'string[]', description: 'Experiments run' },
@@ -359,15 +375,25 @@ export const investigate: Pattern = {
       capabilities: ['web'],
       label: 'Deep read',
       directive:
-        'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`, without repeating `findings`. List each item of `deepBatch` you read completely in `examined`.' +
+        'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`, without repeating `findings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend: put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
         AGAINST,
       reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch', 'findings'],
-      writes: ['examined', 'newFindings'],
+      writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
       retries: 2,
       checks: [
         {
-          expr: 'subset(deepBatch, examined)',
-          message: 'Read EVERY item of deepBatch completely and list it in examined.',
+          expr: 'subset(deepBatch, examined + unreadable)',
+          message:
+            'Account for EVERY item of deepBatch: read it completely and list it in examined, or list it in unreadable with a reason.',
+        },
+        {
+          expr: 'subset(unreadable, deepBatch)',
+          message: 'unreadable may only list items of deepBatch.',
+        },
+        {
+          expr: 'len(unreadableReasons) == len(unreadable)',
+          message:
+            'Give one reason in unreadableReasons per item in unreadable, in the same order.',
         },
       ],
     },
@@ -375,7 +401,13 @@ export const investigate: Pattern = {
       id: 'mergeDeep',
       kind: 'compute',
       label: 'Record deep read',
-      assign: [{ field: 'findings', expr: 'findings + newFindings' }],
+      assign: [
+        { field: 'findings', expr: 'findings + newFindings' },
+        { field: 'notRead', expr: 'notRead + unreadable' },
+        { field: 'notReadReasons', expr: 'notReadReasons + unreadableReasons' },
+        { field: 'unreadable', expr: '[]' },
+        { field: 'unreadableReasons', expr: '[]' },
+      ],
     },
     {
       id: 'hasExperiments',
@@ -583,7 +615,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Write answer',
       directive:
-        'Answer `question` using only `findings`, citing evidence inline (path:line, URL, issue/PR #, commit, experiment). End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put every unanswered sub-question in `openQuestions`. In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered.',
+        'Answer `question` using only `findings`, citing evidence inline (path:line, URL, issue/PR #, commit, experiment). End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), items that could not be read in full and why (`notRead`, `notReadReasons`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put every unanswered sub-question in `openQuestions`. In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered.',
       reads: [
         'question',
         'subQuestions',
@@ -595,6 +627,8 @@ export const investigate: Pattern = {
         'excludedFiles',
         'pages',
         'ran',
+        'notRead',
+        'notReadReasons',
         'confidence',
         'hypotheses',
         'disagreements',
@@ -777,6 +811,8 @@ export const investigate: Pattern = {
         return {
           updates: {
             examined: batch,
+            unreadable: [],
+            unreadableReasons: [],
             newFindings: batch.map((f) =>
               f.startsWith('http')
                 ? `${f} — state machines apply transitions only on valid input`

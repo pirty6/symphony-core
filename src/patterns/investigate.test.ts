@@ -78,3 +78,57 @@ describe('investigate adapts its evidence to the question', () => {
     expect(r.state.state.ran).toEqual([]);
   });
 });
+
+describe('items that cannot be read', () => {
+  // Regression: a live run failed at deepRead because a page returned HTTP 429 and the
+  // AI honestly said so; the rule accepted only "read completely", so honesty failed the run.
+  const script = (deepRead: NonNullable<DemoScript['agents']>[string]): DemoScript => ({
+    ...demo,
+    agents: { ...demo.agents, deepRead },
+  });
+  const verdict = {
+    outcome: 'applied' as const,
+    confidence: 0.6,
+    shouldTerminate: false,
+    reason: 'r',
+  };
+  const play = (s: DemoScript) =>
+    runScripted(compileScore(investigate, { context: demo.context! }), s);
+
+  it('are reported with a reason and land in the coverage, instead of failing the run', () => {
+    const r = play(
+      script((s) => {
+        const [page, ...rest] = s.deepBatch as string[];
+        return {
+          updates: {
+            examined: rest,
+            unreadable: [page!],
+            unreadableReasons: ['HTTP 429 twice; read nothing'],
+            newFindings: ['x — y'],
+          },
+          verdict,
+        };
+      }),
+    );
+    expect(r.state.outcome).toBe('success');
+    expect((r.state.state.notRead as string[]).length).toBeGreaterThan(0);
+    expect((r.state.state.notReadReasons as string[])[0]).toBe('HTTP 429 twice; read nothing');
+    expect(r.state.state.unreadable).toEqual([]);
+  });
+
+  it('may not be dropped silently', () => {
+    const r = play(
+      script((s) => ({
+        updates: {
+          examined: (s.deepBatch as string[]).slice(1),
+          unreadable: [],
+          unreadableReasons: [],
+          newFindings: ['x — y'],
+        },
+        verdict,
+      })),
+    );
+    expect(r.state.outcome).toBe('failed');
+    expect(r.state.reason).toMatch(/Account for EVERY item of deepBatch/);
+  });
+});
