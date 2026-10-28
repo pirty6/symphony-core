@@ -32,6 +32,8 @@ import {
   metaOf,
   newNode,
   phaseDisplay,
+  resultMarkdown,
+  runResult,
   replayView,
   startLive,
   streamsFor,
@@ -46,6 +48,7 @@ import {
 } from './lib/model'
 import { AiTakes, ApprovalCard, EdgeEditor, GateCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
 import { Library } from './panels/Library'
+import { ResultPreview, ResultReader } from './panels/Result'
 import { PatternPanel } from './panels/PatternPanel'
 import { Timeline } from './panels/Timeline'
 import { Toolbar, type RunSettings, type Tiers } from './panels/Toolbar'
@@ -56,6 +59,8 @@ const defaultEdgeOptions: DefaultEdgeOptions = { type: 'data', markerEnd: { type
 const BLANK: PatternMeta = { name: 'my-flow', description: 'A new flow', requiredContext: [], verbTriggers: [], state: [] }
 const ACTIVE = new Set(['running', 'paused', 'awaiting-approval'])
 const READABLE_ZOOM = 0.55
+/** Results longer than this (characters of Markdown) open in the reader when a live run ends. */
+const LONG_RESULT = 600
 type Tab = 'node' | 'ai' | 'state'
 
 function contextStrings(ctx: Record<string, unknown> | undefined): Record<string, string> {
@@ -86,6 +91,8 @@ export default function Studio() {
   })
   const [tiers, setTiers] = useState<Tiers | undefined>()
   const [notice, setNotice] = useState<string | null>(null)
+  /** The full-screen result reader is open. */
+  const [reading, setReading] = useState(false)
   const [breakpoints, setBreakpoints] = useState<Set<string>>(new Set())
   const [view, setView] = useState<RunView>(IDLE_VIEW)
   const [selected, setSelected] = useState<string | null>(null)
@@ -243,6 +250,17 @@ export default function Studio() {
   const selectedEdge = edges.find((e) => e.id === selected)
   const focusNode = nodes.find((n) => n.id === focusId)
   const streams = focusId ? streamsFor(view, focusId, frame) : []
+  const result = useMemo(() => runResult(view), [view])
+  const goalText = view.goal ?? ''
+
+  // Open the reader once when a live run finishes with more than the inspector card can show.
+  const finished = view.mode === 'live' && result && resultMarkdown(result, '').length > LONG_RESULT ? view.runId : undefined
+  useEffect(() => {
+    if (finished) setReading(true)
+  }, [finished])
+  useEffect(() => {
+    if (view.mode === 'idle' || ACTIVE.has(view.status)) setReading(false)
+  }, [view.mode, view.status])
 
   const activeStep = view.mode !== 'idle' ? (frame.pausedNodeId ?? frame.activeNodeId) : undefined
   const followId = activeStep ? (display.phaseOf.get(activeStep) ?? activeStep) : undefined
@@ -305,9 +323,9 @@ export default function Studio() {
     await start({ pattern, goal, context: ctx }, breakpoints)
   }
 
-  const followRun = (runId: string) => {
+  const followRun = (runId: string, goal?: string) => {
     unsubscribe.current?.()
-    setView(startLive(runId))
+    setView(startLive(runId, goal))
     setSelected(null)
     setTab('ai')
     unsubscribe.current = subscribeRun(runId, (m) => setView((v) => (v.runId === runId ? applyMessage(v, m) : v)))
@@ -318,7 +336,7 @@ export default function Studio() {
     bps: ReadonlySet<string>,
   ) => {
     try {
-      const { runId } = await api.startRun({
+      const { runId, score } = await api.startRun({
         ...what,
         provider: settings.provider,
         ...(settings.model ? { model: settings.model } : {}),
@@ -328,7 +346,7 @@ export default function Studio() {
         ...(settings.complexity ? { complexity: settings.complexity } : {}),
         improvisation: settings.improvisation,
       })
-      followRun(runId)
+      followRun(runId, score.goal)
     } catch (e) {
       setError(e instanceof ApiError && e.issues.length ? `${e.message}` : (e as Error).message)
     }
@@ -362,7 +380,7 @@ export default function Studio() {
           setGoal(r.score.goal)
           setContext(contextStrings(r.score.context as Record<string, unknown>))
           setNotice(`♪ The maestro composed '${handedOn.pattern.name}' (complexity ${r.score.complexity}). Now performing it.`)
-          followRun(childId)
+          followRun(childId, r.score.goal)
         },
         (e: Error) => setError(e.message),
       )
@@ -422,11 +440,20 @@ export default function Studio() {
             {view.replay.reproduced ? '✓ verified: replaying recorded answers reproduces this run exactly' : `✘ not reproducible ${view.replay.issues.join('; ')}`}
           </div>
         )}
+        {result && <ResultPreview result={result} onOpen={() => setReading(true)} />}
       </div>
     ) : null
 
   return (
     <div className="studio">
+      {reading && result && result.keys.length > 0 && (
+        <ResultReader
+          result={result}
+          title={`${meta.name}: ${view.performance?.outcome ?? view.status}`}
+          {...(goalText.trim() ? { subtitle: goalText.trim() } : {})}
+          onClose={() => setReading(false)}
+        />
+      )}
       <Toolbar
         title={meta.name}
         mode={view.mode}

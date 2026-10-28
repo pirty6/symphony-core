@@ -764,8 +764,21 @@ export const investigate: Pattern = {
       }),
       answer: (s) => ({
         updates: {
-          answer:
-            'validateNodeResult in src/core/schema.ts:115, called by resolveAgent in src/core/engine.ts, rejects malformed answers before state changes so runs stay deterministic.',
+          answer: [
+            "**AI answers are validated in the engine, before any state changes.** `resolveAgent` in `src/core/engine.ts` calls `checkAgentResult` (`src/core/schema.ts`), which checks the shape of `{ updates, verdict }`, that every key is one the node may write, and the solo route; then the node's acceptance checks run on the merged state.",
+            '',
+            '## Why',
+            '',
+            '1. **Determinism**: `advance()` is pure, so a rejected answer leaves the state hash unchanged and a retry gets the same move key.',
+            '2. **Auditability**: each rejected attempt is recorded with its errors in the Performance, so a replay reproduces the failure too.',
+            '3. **Safety**: an assessor can never write keys it was not given (`updates.x is not writable here`).',
+            '',
+            '## Coverage',
+            '',
+            `- Files triaged: ${((s.triaged as string[]) ?? []).length}; read completely: ${((s.examined as string[]) ?? []).length}`,
+            `- Web pages read: ${((s.pages as string[]) ?? []).length}; experiments run: ${((s.ran as string[]) ?? []).length}`,
+            `- Sources searched: ${((s.consulted as string[]) ?? []).join(', ') || 'none'}; skipped: ${((s.skipSources as string[]) ?? []).join(', ') || 'none'}`,
+          ].join('\n'),
           openQuestions: (s.gaps as string[]) ?? [],
         },
         verdict: v('answered'),

@@ -17,6 +17,8 @@ import {
   newNode,
   phaseDisplay,
   replayView,
+  resultMarkdown,
+  runResult,
   startLive,
   streamFor,
   toFlow,
@@ -110,6 +112,21 @@ describe('phases on the canvas', () => {
 })
 
 describe('live run view', () => {
+  it('exposes the result: what was carried into the end node', async () => {
+    const { messages } = await liveMessages()
+    let v: RunView = startLive('r', 'fix it')
+    for (const m of messages.slice(0, 3)) v = applyMessage(v, m)
+    expect(runResult(v)).toBeUndefined()
+    for (const m of messages.slice(3)) v = applyMessage(v, m)
+    const r = runResult(v)!
+    expect(r.keys.length).toBeGreaterThan(0)
+    expect(Object.keys(r.values)).toEqual([...r.keys])
+    expect(v.goal).toBe('fix it')
+    expect(resultMarkdown({ keys: ['answer', 'open'], values: { answer: 'Yes.', open: ['a'] } }, 'run')).toBe(
+      '# run\n\n## answer\n\nYes.\n\n## open\n\n- a\n',
+    )
+  })
+
   it('folds messages into frames, streams and final state', async () => {
     const { messages, run } = await liveMessages()
     let v: RunView = startLive(run.id)

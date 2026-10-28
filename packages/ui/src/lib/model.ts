@@ -186,6 +186,8 @@ export interface AiStream {
 export interface RunView {
   readonly mode: 'idle' | 'live' | 'replay'
   readonly runId?: string
+  /** The goal of the score being performed. */
+  readonly goal?: string
   readonly status: RunStatus
   readonly frames: readonly Frame[]
   /** Frame index being shown; null follows the latest frame. */
@@ -203,8 +205,8 @@ export interface RunView {
 
 export const IDLE_VIEW: RunView = { mode: 'idle', status: 'idle', frames: [], cursor: null, streams: [] }
 
-export function startLive(runId: string): RunView {
-  return { ...IDLE_VIEW, mode: 'live', runId, status: 'running' }
+export function startLive(runId: string, goal?: string): RunView {
+  return { ...IDLE_VIEW, mode: 'live', runId, status: 'running', ...(goal ? { goal } : {}) }
 }
 
 export function currentFrame(v: RunView): Frame {
@@ -355,6 +357,7 @@ export function replayView(run: SavedRun, check: { reproduced: boolean; issues: 
   const status: RunStatus = perf.outcome === 'failed' ? 'failed' : perf.outcome === 'cancelled' ? 'cancelled' : 'done'
   return {
     mode: 'replay',
+    goal: run.score.goal,
     status,
     frames,
     cursor: frames.length > 0 ? frames.length - 1 : null,
@@ -425,6 +428,47 @@ export function decorate(
       }
     }),
   }
+}
+
+// ── result ──────────────────────────────────────────────────────────
+
+export interface RunResult {
+  /** Keys the run delivered: the last data carried along the path to its end (e.g. answer, openQuestions). */
+  readonly keys: readonly string[]
+  readonly values: Readonly<Record<string, unknown>>
+}
+
+/** What a finished run produced, read from its final frames. Undefined while it runs. */
+export function runResult(v: RunView): RunResult | undefined {
+  const last = v.frames.at(-1)
+  if (!last?.outcome) return undefined
+  const final = v.performance?.finalState ?? last.state
+  let keys: readonly string[] = []
+  for (let i = v.frames.length - 1; i >= 0; i--) {
+    const f = v.frames[i]!
+    if (f.event?.type === 'edge-taken' && f.event.carried.length > 0) {
+      keys = f.event.carried
+      break
+    }
+  }
+  return { keys, values: Object.fromEntries(keys.map((k) => [k, final[k]])) }
+}
+
+/** The result as Markdown, for copying and downloading. */
+export function resultMarkdown(r: RunResult, title: string): string {
+  const body = r.keys.map((k) => {
+    const v = r.values[k]
+    const text =
+      typeof v === 'string'
+        ? v
+        : Array.isArray(v) && v.every((x) => typeof x === 'string')
+          ? v.length > 0
+            ? v.map((x) => `- ${x}`).join('\n')
+            : '_none_'
+          : '```json\n' + JSON.stringify(v, null, 2) + '\n```'
+    return `## ${k}\n\n${text}`
+  })
+  return [`# ${title}`, ...body].join('\n\n') + '\n'
 }
 
 // ── phases ──────────────────────────────────────────────────────────
