@@ -39,6 +39,7 @@
     "start": "npm run dev --prefix packages/ui --",
     "studio": "npm run dev --prefix packages/ui --",
     "cli": "tsx src/cli.ts",
+    "postinstall": "node scripts/install-ui.mjs",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -65,9 +66,6 @@
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
-  "workspaces": [
-    "packages/*"
-  ],
   "bin": {
     "symphony": "dist/cli.js"
   }
