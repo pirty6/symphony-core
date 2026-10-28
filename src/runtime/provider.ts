@@ -221,6 +221,9 @@ const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'sort',
   'find',
   'git',
+  'test',
+  '[',
+  'read',
 ]);
 const READ_ONLY_GIT: ReadonlySet<string> = new Set([
   'diff',
@@ -304,8 +307,40 @@ function ghIsReadOnly(args: readonly string[]): boolean {
   return Boolean(group && action && GH_READ[group]?.has(action));
 }
 
+/** Shell words that only shape control flow: the command after them is what runs. */
+const LEADING_KEYWORDS: ReadonlySet<string> = new Set([
+  'do',
+  'then',
+  'else',
+  'elif',
+  'if',
+  'while',
+  'until',
+  '!',
+  '{',
+]);
+const CLOSING_KEYWORDS: ReadonlySet<string> = new Set(['done', 'fi', '}']);
+
+/** Drop input redirections (`< file`, `<file`), which only read. */
+function withoutInput(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i]!;
+    if (a === '<') i += 1;
+    else if (!(a.startsWith('<') && !a.startsWith('<<'))) out.push(a);
+  }
+  return out;
+}
+
 function segmentIsReadOnly(segment: string): boolean {
-  const t = tokens(segment);
+  // Subshell and group brackets around a command change nothing about what it does.
+  let t = tokens(segment.replace(/^[(\s]+/, '').replace(/[)\s]+$/, ''));
+  while (t[0] !== undefined && LEADING_KEYWORDS.has(t[0])) t = t.slice(1);
+  // `done < file`, `fi`, `}`: closers, optionally reading input.
+  if (t[0] !== undefined && CLOSING_KEYWORDS.has(t[0]))
+    return withoutInput(t.slice(1)).length === 0;
+  // `for NAME in WORDS`: the words are data, never run ($(…) is refused for the whole line).
+  if (t[0] === 'for') return /^[A-Za-z_]\w*$/.test(t[1] ?? '') && (t.length === 2 || t[2] === 'in');
   const cmd = t[0];
   if (!cmd) return true;
   if (cmd.includes('=') || !READ_ONLY_COMMANDS.has(cmd)) return false;
@@ -346,7 +381,12 @@ function segmentIsReadOnly(segment: string): boolean {
  */
 export function isReadOnlyCommand(text: string): boolean {
   if (/\$\(|`|<\(|>\(/.test(text)) return false;
-  if (/(^|[^0-9&])>{1,2}(?!&)/.test(text.replace(/"[^"]*"|'[^']*'/g, ''))) return false;
+  // Output may only go to another stream (2>&1) or nowhere (/dev/null); any other `>` writes a file.
+  const unquoted = text
+    .replace(/"[^"]*"|'[^']*'/g, '')
+    .replace(/[0-9&]?>>?\s*\/dev\/null(?![\w/.-])/g, '')
+    .replace(/[0-9]?>&[0-9]/g, '');
+  if (unquoted.includes('>')) return false;
   return splitCommands(text).every((seg) => segmentIsReadOnly(seg.trim()));
 }
 

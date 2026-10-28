@@ -101,6 +101,15 @@ describe('isReadOnlyCommand', () => {
     'gh api repos/o/r/issues/1/comments',
     'gh api -X GET repos/o/r/pulls',
     "sed -n '550,650p' node_modules/x/README.md",
+    // Regression: refused in a live run although every command in it only reads.
+    'cd /repo && for f in packages/ui/server/api.ts package.json .github/workflows/ci.yml; do echo "=== $f ==="; grep -n -i "fix\\|investigate\\|refactor\\|maestro" "$f" | head -10; done',
+    'for f in a b; do\n  wc -l "$f"\ndone',
+    'while read f; do head -1 "$f"; done < files.txt',
+    'if [ -f package.json ]; then cat package.json; else echo none; fi',
+    'test -d src && ls src',
+    '(cd src && ls)',
+    'grep -rn TODO src 2>/dev/null | head',
+    'git log --oneline 2>&1 >/dev/null; ls &>/dev/null',
   ])('allows %s', (cmd) => {
     expect(isReadOnlyCommand(cmd)).toBe(true);
   });
@@ -132,6 +141,19 @@ describe('isReadOnlyCommand', () => {
     "sed -i 's/a/b/' f.ts",
     "sed -n '1p;w out.txt' f",
     "sed 's/a/b/' f",
+    // A loop or condition never hides a write.
+    'for f in a b; do rm "$f"; done',
+    'for f in rm; do $f -rf x; done',
+    'for f in a; do echo $f; done > out.txt',
+    'while read f; do git checkout "$f"; done < files.txt',
+    'if true; then npm install; fi',
+    '(cd src && rm x)',
+    'f=rm; $f x',
+    // Redirection only to another stream or to /dev/null.
+    'grep -rn TODO src 2>notes.txt',
+    'ls &>listing.txt',
+    'ls 2>/dev/nullx',
+    'echo x >/dev/null/../../tmp/f',
   ])('refuses %s', (cmd) => {
     expect(isReadOnlyCommand(cmd)).toBe(false);
   });
