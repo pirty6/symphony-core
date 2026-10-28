@@ -120,6 +120,11 @@ describe('pattern library', () => {
   it('routes prompts by verb triggers', () => {
     expect(routePrompt('Please fix this broken test')?.name).toBe('fix');
     expect(routePrompt('review my PR')?.name).toBe('review');
+    expect(routePrompt('Implement a --json flag for list')?.name).toBe('implement');
+    expect(routePrompt('add support for YAML config files')?.name).toBe('implement');
+    // A bug fix that adds a test is still a fix; "address" is not "add".
+    expect(routePrompt('fix the crash and add a test')?.name).toBe('fix');
+    expect(routePrompt('address the review comments')?.name).toBe('review');
     expect(routePrompt('hello')).toBeUndefined();
   });
 });

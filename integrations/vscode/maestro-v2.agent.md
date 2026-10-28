@@ -1,5 +1,5 @@
 ---
-description: "Symphony Maestro v2: runs deterministic, auditable Symphony pipelines (maestro, investigate, fix, refactor, review, analyze) through the symphony MCP server and relays every approval and stuck step to you. Use when: /maestrov2, run the maestro, Symphony pipeline, deterministic investigation or fix."
+description: "Symphony Maestro v2: runs deterministic, auditable Symphony pipelines (maestro, investigate, fix, refactor, implement, review, analyze) through the symphony MCP server and relays every approval and stuck step to you. Use when: /maestrov2, run the maestro, Symphony pipeline, deterministic investigation, fix or feature implementation."
 name: "maestro-v2"
 argument-hint: "What do you want done? e.g. find out why login fails on CI, then fix it"
 tools: ['symphony/*']

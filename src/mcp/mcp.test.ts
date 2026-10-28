@@ -62,6 +62,7 @@ describe('Symphony MCP server', () => {
     });
     expect(byName.investigate).toMatchObject({ editsFiles: false, available: true });
     expect(byName.refactor).toMatchObject({ editsFiles: true });
+    expect(byName.implement).toMatchObject({ editsFiles: true });
     expect(byName.hangman).toBeUndefined();
   });
 

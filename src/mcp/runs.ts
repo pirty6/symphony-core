@@ -38,7 +38,7 @@ const DRAFTS_DIR = 'src/patterns/drafts';
 
 /**
  * True when a pattern changes the workspace to do its job: the engine diffs the
- * edits and runs the project's tests (fix, refactor). Remote callers may not run
+ * edits and runs the project's tests (fix, refactor, implement). Remote callers may not run
  * these; other executor steps (investigate's experiments) run read-only for them.
  */
 export function editsFiles(p: Pick<Pattern, 'nodes'>): boolean {

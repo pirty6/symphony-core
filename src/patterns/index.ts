@@ -1,6 +1,7 @@
 import type { Pattern } from '../core/types.js';
 import { fix } from './fix.js';
 import { hangman } from './hangman.js';
+import { implement } from './implement.js';
 import { analyze } from './analyze.js';
 import { investigate } from './investigate.js';
 import { composedScore, maestro, maestroThen } from './maestro.js';
@@ -13,6 +14,7 @@ export const PATTERNS: readonly Pattern[] = [
   investigate,
   fix,
   refactor,
+  implement,
   review,
   analyze,
   hangman,
@@ -49,6 +51,7 @@ export {
   composedScore,
   fix,
   hangman,
+  implement,
   investigate,
   maestro,
   maestroThen,
