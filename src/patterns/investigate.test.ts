@@ -132,3 +132,32 @@ describe('items that cannot be read', () => {
     expect(r.state.reason).toMatch(/Account for EVERY item of deepBatch/);
   });
 });
+
+describe('open questions', () => {
+  // Regression: a live run failed at the answer because the AI reworded the remaining gaps
+  // instead of copying them verbatim. The engine now adds them itself.
+  it('include every remaining gap verbatim, plus the AI own wording', () => {
+    const v = { outcome: 'applied' as const, confidence: 0.9, shouldTerminate: false, reason: 'r' };
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        assess: (s) => ({
+          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.9 },
+          verdict: v,
+        }),
+        answer: (s, n) => {
+          const good = demo.agents!.answer!(s, n);
+          return { ...good, updates: { ...good.updates, openQuestions: ['my own wording of it'] } };
+        },
+      },
+    };
+    const r = runScripted(
+      compileScore(investigate, { context: demo.context!, complexity: 1 }),
+      script,
+    );
+    expect(r.state.outcome).toBe('success');
+    const gap = (r.state.state.subQuestions as string[])[0];
+    expect(r.state.state.openQuestions).toEqual([gap, 'my own wording of it']);
+  });
+});

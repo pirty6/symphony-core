@@ -615,7 +615,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Write answer',
       directive:
-        'Answer `question` using only `findings`, citing evidence inline (path:line, URL, issue/PR #, commit, experiment). End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), items that could not be read in full and why (`notRead`, `notReadReasons`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put every unanswered sub-question in `openQuestions`. In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered.',
+        'Answer `question` using only `findings`, citing evidence inline (path:line, URL, issue/PR #, commit, experiment). End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), items that could not be read in full and why (`notRead`, `notReadReasons`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered.',
       reads: [
         'question',
         'subQuestions',
@@ -642,11 +642,14 @@ export const investigate: Pattern = {
           message:
             'Give exactly one ruling per hypothesis: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence".',
         },
-        {
-          expr: 'subset(gaps, openQuestions)',
-          message: 'Every remaining gap must be listed in openQuestions.',
-        },
       ],
+    },
+    {
+      id: 'listOpen',
+      kind: 'compute',
+      label: 'List open questions',
+      // The engine, not the AI, guarantees every remaining gap is reported verbatim.
+      assign: [{ field: 'openQuestions', expr: 'unique(gaps + openQuestions)' }],
     },
     ...hypotheses.nodes,
     ...challenge.nodes,
@@ -725,7 +728,8 @@ export const investigate: Pattern = {
     { id: 'clarify-useHint', from: 'clarify', to: 'useHint', branch: 'approved' },
     { id: 'clarify-answer', from: 'clarify', to: 'answer', branch: 'rejected' },
     { id: 'useHint-chase', from: 'useHint', to: 'chase' },
-    { id: 'answer-challenge', from: 'answer', to: challenge.entry },
+    { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
+    { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
   ],
   demo: {
