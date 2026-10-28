@@ -17,7 +17,10 @@ import {
   newNode,
   phaseDisplay,
   replayView,
+  changedFromDemo,
+  isOfflineDemo,
   musicianLines,
+  parseStoredSettings,
   originSummary,
   originsByNode,
   resultMarkdown,
@@ -125,6 +128,32 @@ describe('origins', () => {
     expect(by.get(agent.nodeId)?.origin).toBe('script')
     expect(originsByNode(perf, 0).size).toBe(0)
     expect(originSummary(perf)).toMatch(/^\d+ scripted · .*\d+ engine$/)
+  })
+})
+
+describe('offline demo', () => {
+  it('keeps the AI choice, flags canned results and inputs the demo ignores', async () => {
+    expect(parseStoredSettings('{"provider":"copilot","model":"m","x":1}')).toEqual({ provider: 'copilot', model: 'm' })
+    expect(parseStoredSettings('{"provider":"gpt"}')).toEqual({})
+    expect(parseStoredSettings('not json')).toEqual({})
+    expect(parseStoredSettings(null)).toEqual({})
+    const { messages } = await liveMessages()
+    const done = messages.find((m) => m.type === 'performance')
+    const perf = done?.type === 'performance' ? done.performance : undefined
+    expect(isOfflineDemo(perf)).toBe(true)
+    const live = perf && {
+      ...perf,
+      steps: perf.steps.map((s) => (s.transcript ? { ...s, transcript: { ...s.transcript, provider: 'copilot' } } : s)),
+    }
+    expect(isOfflineDemo(live)).toBe(false)
+    const replayed = perf && {
+      ...perf,
+      steps: perf.steps.map((s) => (s.transcript ? { ...s, transcript: { ...s.transcript, fromRepertoire: 'r.json' } } : s)),
+    }
+    expect(isOfflineDemo(replayed)).toBe(true)
+    expect(isOfflineDemo(undefined)).toBe(false)
+    expect(changedFromDemo({ question: 'mine ' }, { question: 'demo' })).toEqual(['question'])
+    expect(changedFromDemo({ question: ' demo' }, { question: 'demo' })).toEqual([])
   })
 })
 

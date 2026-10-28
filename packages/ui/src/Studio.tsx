@@ -30,7 +30,10 @@ import {
   decorate,
   fromFlow,
   metaOf,
+  changedFromDemo,
+  isOfflineDemo,
   newNode,
+  parseStoredSettings,
   originSummary,
   originsByNode,
   phaseDisplay,
@@ -61,6 +64,7 @@ const defaultEdgeOptions: DefaultEdgeOptions = { type: 'data', markerEnd: { type
 const BLANK: PatternMeta = { name: 'my-flow', description: 'A new flow', requiredContext: [], verbTriggers: [], state: [] }
 const ACTIVE = new Set(['running', 'paused', 'awaiting-approval'])
 const READABLE_ZOOM = 0.55
+const SETTINGS_KEY = 'symphony.settings'
 /** Results longer than this (characters of Markdown) open in the reader when a live run ends. */
 const LONG_RESULT = 600
 type Tab = 'node' | 'ai' | 'state'
@@ -83,14 +87,18 @@ export default function Studio() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([])
   const [goal, setGoal] = useState('')
   const [context, setContext] = useState<Record<string, string>>({})
-  const [settings, setSettings] = useState<RunSettings>({
+  const [settings, setSettings] = useState<RunSettings>(() => ({
     provider: 'scripted',
     model: '',
+    ...parseStoredSettings(localStorage.getItem(SETTINGS_KEY)),
     autoApprove: false,
     stepMode: false,
     complexity: 0,
     improvisation: 0,
-  })
+  }))
+  useEffect(() => {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ provider: settings.provider, model: settings.model }))
+  }, [settings.provider, settings.model])
   const [tiers, setTiers] = useState<Tiers | undefined>()
   const [notice, setNotice] = useState<string | null>(null)
   /** The full-screen result reader is open. */
@@ -256,6 +264,10 @@ export default function Studio() {
   const focusNode = nodes.find((n) => n.id === focusId)
   const streams = focusId ? streamsFor(view, focusId, frame) : []
   const result = useMemo(() => runResult(view), [view])
+  const offline = isOfflineDemo(view.performance)
+  // The offline demo plays answers written for the demo inputs; warn before it ignores the user's own.
+  const demoInputs = useMemo(() => contextStrings(library.find((l) => l.name === meta.name)?.demo?.context), [library, meta.name])
+  const ignoredInputs = editable && settings.provider === 'scripted' ? changedFromDemo(context, demoInputs) : []
   const goalText = view.goal ?? ''
 
   // Open the reader once when a live run finishes with more than the inspector card can show.
@@ -472,6 +484,12 @@ export default function Studio() {
             {view.replay.reproduced ? '✓ verified: replaying recorded answers reproduces this run exactly' : `✘ not reproducible ${view.replay.issues.join('; ')}`}
           </div>
         )}
+        {offline && (
+          <div className="issue" data-testid="offline-result">
+            🎭 Offline demo: these are canned answers written for the demo inputs, not an investigation of yours. Choose
+            Copilot under AI and run again.
+          </div>
+        )}
         {view.performance && view.performance.steps.length > 0 && (
           <div className="muted origin-summary" data-testid="origin-summary">
             played by: {originSummary(view.performance)}
@@ -508,7 +526,7 @@ export default function Studio() {
       {reading && result && result.keys.length > 0 && (
         <ResultReader
           result={result}
-          title={`${meta.name}: ${view.performance?.outcome ?? view.status}`}
+          title={`${meta.name}: ${view.performance?.outcome ?? view.status}${offline ? ' · offline demo (canned answers)' : ''}`}
           {...(goalText.trim() ? { subtitle: goalText.trim() } : {})}
           onClose={() => setReading(false)}
         />
@@ -597,6 +615,15 @@ export default function Studio() {
             {error}
             <button type="button" className="link" onClick={() => setError(null)} aria-label="dismiss">
               ✕
+            </button>
+          </div>
+        )}
+        {ignoredInputs.length > 0 && (
+          <div className="card issue" data-testid="demo-warning">
+            🎭 <b>Scripted (offline demo)</b> plays canned answers written for the demo inputs, so it will ignore your{' '}
+            {ignoredInputs.join(', ')}.
+            <button type="button" className="primary" onClick={() => changeSettings({ ...settings, provider: 'copilot' })}>
+              Use Copilot
             </button>
           </div>
         )}

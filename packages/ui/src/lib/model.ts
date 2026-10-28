@@ -517,6 +517,37 @@ export function originSummary(perf: Performance): string {
   return [...parts, ...(takes ? [`${takes} AI steps with takes merged`] : [])].join(' · ')
 }
 
+// ── settings and the offline demo ─────────────────────────────────────
+
+export interface StoredSettings {
+  provider: 'scripted' | 'copilot'
+  model: string
+}
+
+/** The AI choice kept between visits, so a reload never silently switches to the offline demo. */
+export function parseStoredSettings(raw: string | null): Partial<StoredSettings> {
+  try {
+    const v = JSON.parse(raw ?? '{}') as Record<string, unknown>
+    return {
+      ...(v.provider === 'scripted' || v.provider === 'copilot' ? { provider: v.provider } : {}),
+      ...(typeof v.model === 'string' ? { model: v.model } : {}),
+    }
+  } catch {
+    return {}
+  }
+}
+
+/** True when every AI step was a canned demo answer (played now, or replayed from an earlier demo run). */
+export function isOfflineDemo(perf: Performance | undefined): boolean {
+  const ai = (perf?.steps ?? []).filter((s) => s.kind === 'agent')
+  return ai.length > 0 && ai.every((s) => s.transcript?.provider === 'scripted')
+}
+
+/** Inputs the user typed that the demo's canned answers were not written for. */
+export function changedFromDemo(context: Readonly<Record<string, string>>, demo: Readonly<Record<string, string>>): string[] {
+  return Object.keys(demo).filter((k) => (context[k] ?? '').trim() !== (demo[k] ?? '').trim())
+}
+
 // ── phases ──────────────────────────────────────────────────────────
 
 export type PhaseNodeData = {
