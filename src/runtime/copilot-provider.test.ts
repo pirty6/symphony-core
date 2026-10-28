@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionConfig } from '@github/copilot-sdk';
-import type { AgentPause } from '../core/types.js';
+import { compileScore } from '../core/compile.js';
+import { replayPerformance } from '../core/replay.js';
+import type { AgentPause, Pattern } from '../core/types.js';
 import {
   CopilotProvider,
   parseTiers,
@@ -8,6 +10,7 @@ import {
   type SessionLike,
 } from './copilot-provider.js';
 import type { ProviderEvent } from './provider.js';
+import { Run } from './driver.js';
 
 const pause: AgentPause = {
   kind: 'agent',
@@ -481,5 +484,90 @@ describe('CopilotProvider', () => {
     expect(res.transcript.prompt).toContain('## Solo: you choose where the tune goes next');
     const schema = sessions[0]!.cfg.tools![0]!.parameters as { required: string[] };
     expect(schema.required).toContain('next');
+  });
+});
+
+// Regression: a live investigate run failed at deepRead after the model garbled its
+// submit_result call and then kept omitting the verdict on fresh retries.
+describe('CopilotProvider + engine: malformed submissions', () => {
+  const deepRead: Pattern = {
+    name: 'deep-read',
+    description: 'one read-only step',
+    requiredContext: [],
+    state: [
+      { name: 'examined', type: 'string[]' },
+      { name: 'newFindings', type: 'string[]' },
+    ],
+    nodes: [
+      { id: 'start', kind: 'start', label: 'Start' },
+      {
+        id: 'deepRead',
+        kind: 'agent',
+        role: 'assessor',
+        label: 'Deep read',
+        directive: 'read',
+        reads: [],
+        writes: ['examined', 'newFindings'],
+        retries: 2,
+      },
+      { id: 'done', kind: 'end', label: 'Done', outcome: 'success' },
+    ],
+    edges: [
+      { id: 'e1', from: 'start', to: 'deepRead' },
+      { id: 'e2', from: 'deepRead', to: 'done' },
+    ],
+    start: 'start',
+  };
+  const score = compileScore(deepRead, { goal: 'read', generatedAt: 't' });
+  const updates = { examined: ['src/cli.ts'], newFindings: ['src/cli.ts:1 — finding'] };
+  const verdict = { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'read' };
+  const garbled = {
+    updates: '\n<parameter name="examined">["src/cli.ts"]',
+    verdict: '\n<parameter name="outcome">applied',
+  };
+
+  it('a garbled call and a missing verdict are fixed in-session: one clean engine attempt', async () => {
+    // Like a real model: it submits again only when told its call was rejected.
+    const { client, sessions } = fakeClient(async (cfg, emit) => {
+      for (const attempt of [garbled, { updates }, { updates, verdict }]) {
+        const reply = String(await callTool(cfg, 'submit_result', attempt));
+        if (!reply.startsWith('REJECTED')) break;
+      }
+      emit('session.idle');
+    });
+    const run = new Run({
+      score,
+      provider: new CopilotProvider({ clientFactory: () => client }),
+      clock: () => 't',
+    });
+    const perf = await run.start();
+    expect(perf.outcome).toBe('success');
+    expect(sessions).toHaveLength(1);
+    expect(perf.events.filter((e) => e.type === 'response-rejected')).toEqual([]);
+    expect(perf.finalState).toMatchObject(updates);
+    expect(perf.steps.find((s) => s.nodeId === 'deepRead')!.attempts ?? []).toEqual([]);
+    expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
+  });
+
+  it('an answer the AI never fixes is still rejected by the engine and fails the run', async () => {
+    const { client, sessions } = fakeClient(async (cfg, emit) => {
+      for (let i = 0; i < 5; i++) {
+        const reply = String(await callTool(cfg, 'submit_result', { updates }));
+        if (!reply.startsWith('REJECTED')) break;
+      }
+      emit('session.idle');
+    });
+    const run = new Run({
+      score,
+      provider: new CopilotProvider({ clientFactory: () => client }),
+      clock: () => 't',
+    });
+    const perf = await run.start();
+    expect(perf.outcome).toBe('failed');
+    expect(sessions).toHaveLength(3);
+    const rejected = perf.events.filter((e) => e.type === 'response-rejected');
+    expect(rejected).toHaveLength(3);
+    expect(perf.finalState.examined).toEqual([]);
+    expect(perf.reason).toMatch(/deepRead.*verdict is missing/);
   });
 });

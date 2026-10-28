@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  checkAgentResult,
   checkValue,
   formatFieldInput,
   parseFieldInput,
@@ -81,6 +82,62 @@ describe('validateNodeResult', () => {
   it('rejects non-objects and missing writes when applied', () => {
     expect(validateNodeResult('text', writes).ok).toBe(false);
     expect(validateNodeResult({ updates: { word: 'a' }, verdict }, writes).ok).toBe(false);
+  });
+});
+
+describe('checkAgentResult (regressions from a live deepRead failure)', () => {
+  const deepWrites: StateField[] = [
+    { name: 'examined', type: 'string[]' },
+    { name: 'newFindings', type: 'string[]' },
+  ];
+  const updates = { examined: ['src/cli.ts'], newFindings: ['src/cli.ts:1 — finding'] };
+
+  it('rejects a garbled tool call whose fields arrived as text', () => {
+    // Recorded verbatim (shortened) from the failed run: the model leaked XML into the JSON.
+    const garbled = {
+      updates: '\n<parameter name="examined">["src/cli.ts"]',
+      newFindings: ['src/cli.ts:1 — finding'],
+      verdict: '\n<parameter name="outcome">applied',
+      confidence: 0.9,
+      shouldTerminate: false,
+      reason: 'done',
+    };
+    expect(checkAgentResult(garbled, deepWrites)).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/^updates arrived as text/)],
+    });
+  });
+
+  it('names a missing verdict and shows the expected shape', () => {
+    const r = checkAgentResult({ updates }, deepWrites);
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.errors[0]).toMatch(
+      /^verdict is missing: .*"outcome".*"confidence".*"shouldTerminate".*"reason"/,
+    );
+  });
+
+  it('says what a non-object verdict was', () => {
+    const r = checkAgentResult({ updates, verdict: 'applied' }, deepWrites);
+    expect(!r.ok && r.errors[0]).toMatch(/^verdict must be an object .*got "applied"/);
+    expect(checkAgentResult({ updates, verdict: [] }, deepWrites).ok).toBe(false);
+  });
+
+  it('rejects keys the node may not write', () => {
+    const r = checkAgentResult(
+      { updates: { ...updates, examined_note: 'x' }, verdict },
+      deepWrites,
+    );
+    expect(!r.ok && r.errors[0]).toMatch(/examined_note is not writable/);
+  });
+
+  it('accepts the corrected answer, and checks solo routes', () => {
+    expect(checkAgentResult({ updates, verdict }, deepWrites)).toEqual({
+      ok: true,
+      value: { updates, verdict },
+    });
+    const choices = [{ edgeId: 'a' }, { edgeId: 'b' }];
+    expect(checkAgentResult({ updates, verdict }, deepWrites, choices).ok).toBe(false);
+    expect(checkAgentResult({ updates, verdict, next: 'b' }, deepWrites, choices).ok).toBe(true);
   });
 });
 
