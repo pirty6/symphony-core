@@ -76,6 +76,24 @@ describe('compileScore', () => {
     ).toThrow(/goalFrom 'nope' must be a required string input/);
   });
 
+  it('a complexity field starts at the score complexity unless given', () => {
+    const tiered = {
+      ...pattern,
+      state: [...pattern.state, { name: 'complexity', type: 'number' as const }],
+    };
+    expect(
+      compileScore(tiered, { goal: 'g', context: { topic: 't' } }).initialState.complexity,
+    ).toBe(2);
+    expect(
+      compileScore(tiered, { goal: 'g', context: { topic: 't' }, complexity: 4 }).initialState
+        .complexity,
+    ).toBe(4);
+    expect(
+      compileScore(tiered, { goal: 'g', context: { topic: 't', complexity: 1 }, complexity: 4 })
+        .initialState.complexity,
+    ).toBe(1);
+  });
+
   it('verifyScore detects tampering', () => {
     const s = compileScore(pattern, args);
     expect(verifyScore(s)).toEqual([]);

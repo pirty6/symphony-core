@@ -50,9 +50,17 @@ describe('pattern library', () => {
     ]);
     expect(r.state.state.consulted).toEqual(['git-history']);
     expect(r.state.state.skipSources).toEqual(['experiment', 'prior-runs']);
-    expect(steps.filter((s) => s.nodeId === 'chase')).toHaveLength(1);
-    expect(steps.filter((s) => s.nodeId === 'assess')).toHaveLength(2);
+    // One gap round, then one round for the skeptic's objection.
+    expect(steps.filter((s) => s.nodeId === 'chase')).toHaveLength(2);
+    expect(steps.filter((s) => s.nodeId === 'assess')).toHaveLength(3);
     expect(r.state.state.openQuestions).toEqual([]);
+    // The debate: hypotheses up front, the skeptic twice, a ruling on every hypothesis.
+    expect(steps.filter((s) => s.nodeId === 'hypothesize')).toHaveLength(1);
+    expect(steps.filter((s) => s.nodeId === 'challenge')).toHaveLength(2);
+    expect(steps.some((s) => s.nodeId === 'second')).toBe(false);
+    const st = r.state.state;
+    expect((st.rulings as string[]).length).toBe((st.hypotheses as string[]).length);
+    expect(st.debateRounds).toBe(1);
   });
 
   it('investigate rejects a plan that ignores a source and a triage that skips a file', () => {

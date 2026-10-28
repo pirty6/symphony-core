@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { investigate } from '../../../src/patterns/investigate'
 
 async function open(page: Page, pattern: string) {
   await page.goto(`/#${pattern}`)
@@ -97,7 +98,7 @@ test('phases collapse into one node, light up while running and open into their 
   await page.getByRole('button', { name: 'close phase listPhase' }).dispatchEvent('click')
   await expect(page.getByTestId('node-inventory')).toHaveCount(0)
   await page.getByTestId('toggle-phases').click()
-  await expect(page.locator('.phase-frame')).toHaveCount(7)
+  await expect(page.locator('.phase-frame')).toHaveCount(investigate.groups!.length)
 })
 
 test('the result opens in a reader when a run ends', async ({ page }) => {

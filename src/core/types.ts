@@ -202,6 +202,8 @@ export interface PatternGraph {
   readonly improvisation?: Improvisation;
   /** Phases: named groups of nodes, collapsed into one node on the canvas. */
   readonly groups?: readonly ScoreGroup[];
+  /** State keys the run delivers (shown as its result), e.g. ['answer', 'openQuestions']. */
+  readonly result?: readonly string[];
 }
 
 export interface Pattern extends PatternGraph {

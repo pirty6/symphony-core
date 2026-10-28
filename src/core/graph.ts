@@ -42,8 +42,11 @@ export function estimateHeight(node: ScoreNode): number {
     case 'start':
     case 'end':
       return 64;
-    case 'agent':
-      return 150;
+    case 'agent': {
+      // Header and directive, a row per ~3 data chips in and out, checks, and the origin badge.
+      const rows = Math.ceil(node.reads.length / 3) + Math.ceil(node.writes.length / 3);
+      return Math.max(150, 104 + 15 * rows + (node.checks?.length ? 18 : 0) + 22);
+    }
     case 'compute':
       return 64 + 17 * node.assign.length;
     case 'condition':

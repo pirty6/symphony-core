@@ -47,6 +47,8 @@ export interface PatternMeta {
   maxSteps?: number
   /** Required input whose value is the run's goal. */
   goalFrom?: string
+  /** State keys the run delivers. */
+  result?: string[]
   /** Phases: named groups of steps the canvas can collapse. */
   groups?: ScoreGroup[]
 }
@@ -60,6 +62,7 @@ export function metaOf(p: PatternData): PatternMeta {
     state: [...p.state],
     ...(p.maxSteps ? { maxSteps: p.maxSteps } : {}),
     ...(p.goalFrom ? { goalFrom: p.goalFrom } : {}),
+    ...(p.result?.length ? { result: [...p.result] } : {}),
     ...(p.groups?.length ? { groups: p.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) } : {}),
   }
 }
@@ -106,6 +109,7 @@ export function fromFlow(meta: PatternMeta, nodes: readonly FlowNode[], edges: r
     requiredContext: meta.requiredContext,
     verbTriggers: meta.verbTriggers,
     ...(meta.goalFrom ? { goalFrom: meta.goalFrom } : {}),
+    ...(meta.result?.length ? { result: meta.result } : {}),
     ...g,
     ...(groups.length > 0 ? { groups } : {}),
   }
@@ -191,6 +195,8 @@ export interface RunView {
   readonly runId?: string
   /** The goal of the score being performed. */
   readonly goal?: string
+  /** State keys the score declares as its result. */
+  readonly resultKeys?: readonly string[]
   readonly status: RunStatus
   readonly frames: readonly Frame[]
   /** Frame index being shown; null follows the latest frame. */
@@ -208,8 +214,15 @@ export interface RunView {
 
 export const IDLE_VIEW: RunView = { mode: 'idle', status: 'idle', frames: [], cursor: null, streams: [] }
 
-export function startLive(runId: string, goal?: string): RunView {
-  return { ...IDLE_VIEW, mode: 'live', runId, status: 'running', ...(goal ? { goal } : {}) }
+export function startLive(runId: string, goal?: string, resultKeys?: readonly string[]): RunView {
+  return {
+    ...IDLE_VIEW,
+    mode: 'live',
+    runId,
+    status: 'running',
+    ...(goal ? { goal } : {}),
+    ...(resultKeys?.length ? { resultKeys } : {}),
+  }
 }
 
 export function currentFrame(v: RunView): Frame {
@@ -370,6 +383,7 @@ export function replayView(run: SavedRun, check: { reproduced: boolean; issues: 
   return {
     mode: 'replay',
     goal: run.score.goal,
+    ...(run.score.result?.length ? { resultKeys: run.score.result } : {}),
     status,
     frames,
     cursor: frames.length > 0 ? frames.length - 1 : null,
@@ -447,7 +461,7 @@ export function decorate(
 // ── result ──────────────────────────────────────────────────────────
 
 export interface RunResult {
-  /** Keys the run delivered: the last data carried along the path to its end (e.g. answer, openQuestions). */
+  /** Keys the run delivered: the score's declared result, else the last data carried toward its end. */
   readonly keys: readonly string[]
   readonly values: Readonly<Record<string, unknown>>
 }
@@ -457,8 +471,8 @@ export function runResult(v: RunView): RunResult | undefined {
   const last = v.frames.at(-1)
   if (!last?.outcome) return undefined
   const final = v.performance?.finalState ?? last.state
-  let keys: readonly string[] = []
-  for (let i = v.frames.length - 1; i >= 0; i--) {
+  let keys: readonly string[] = v.resultKeys ?? []
+  for (let i = v.frames.length - 1; i >= 0 && keys.length === 0; i--) {
     const f = v.frames[i]!
     if (f.event?.type === 'edge-taken' && f.event.carried.length > 0) {
       keys = f.event.carried

@@ -99,7 +99,7 @@ describe('phases on the canvas', () => {
       expect(ids).toContain(e.source)
       expect(ids).toContain(e.target)
     }
-    expect(d.edges.some((e) => e.source === 'planPhase' && e.target === 'listPhase')).toBe(true)
+    expect(d.edges.some((e) => e.source === 'hypothesesPhase' && e.target === 'listPhase')).toBe(true)
   })
 
   it('frames opened phases behind their steps', () => {
@@ -178,6 +178,9 @@ describe('live run view', () => {
     expect(r.keys.length).toBeGreaterThan(0)
     expect(Object.keys(r.values)).toEqual([...r.keys])
     expect(v.goal).toBe('fix it')
+    const declared = runResult({ ...v, resultKeys: ['tries', 'missing'] })!
+    expect(declared.keys).toEqual(['tries', 'missing'])
+    expect(Object.keys(declared.values)).toEqual(['tries', 'missing'])
     expect(resultMarkdown({ keys: ['answer', 'open'], values: { answer: 'Yes.', open: ['a'] } }, 'run')).toBe(
       '# run\n\n## answer\n\nYes.\n\n## open\n\n- a\n',
     )

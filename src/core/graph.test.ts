@@ -111,7 +111,15 @@ describe('phases', () => {
       kind: 'phase',
       members: expect.arrayContaining(['inventory', 'listPages']),
     });
-    expect(v.edges.find((e) => e.source === 'planPhase' && e.target === 'listPhase')).toBeDefined();
+    expect(
+      v.edges.find((e) => e.source === 'planPhase' && e.target === 'hypothesesPhase'),
+    ).toBeDefined();
+    expect(
+      v.edges.find((e) => e.source === 'hypothesesPhase' && e.target === 'listPhase'),
+    ).toBeDefined();
+    expect(
+      v.edges.find((e) => e.source === 'hypothesesPhase' && e.target === 'planPhase'),
+    ).toBeUndefined();
     expect(v.edges.some((e) => e.source === e.target)).toBe(false);
     const toTriage = v.edges.filter((e) => e.target === 'triagePhase');
     expect(toTriage).toHaveLength(1);

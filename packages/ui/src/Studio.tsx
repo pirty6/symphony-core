@@ -340,9 +340,9 @@ export default function Studio() {
     await start({ pattern, goal, context: ctx }, breakpoints)
   }
 
-  const followRun = (runId: string, goal?: string) => {
+  const followRun = (runId: string, score?: { goal: string; result?: readonly string[] }) => {
     unsubscribe.current?.()
-    setView(startLive(runId, goal))
+    setView(startLive(runId, score?.goal, score?.result))
     setSelected(null)
     setTab('ai')
     unsubscribe.current = subscribeRun(runId, (m) => setView((v) => (v.runId === runId ? applyMessage(v, m) : v)))
@@ -363,7 +363,7 @@ export default function Studio() {
         ...(settings.complexity ? { complexity: settings.complexity } : {}),
         improvisation: settings.improvisation,
       })
-      followRun(runId, score.goal)
+      followRun(runId, score)
     } catch (e) {
       setError(e instanceof ApiError && e.issues.length ? `${e.message}` : (e as Error).message)
     }
@@ -397,7 +397,7 @@ export default function Studio() {
           setGoal(r.score.goal)
           setContext(contextStrings(r.score.context as Record<string, unknown>))
           setNotice(`♪ The maestro composed '${handedOn.pattern.name}' (complexity ${r.score.complexity}). Now performing it.`)
-          followRun(childId, r.score.goal)
+          followRun(childId, r.score)
         },
         (e: Error) => setError(e.message),
       )
@@ -441,7 +441,7 @@ export default function Studio() {
           ? `▶ Resuming: recorded steps replayed, the rest played live (${settings.provider}).`
           : `⑂ Forked at step ${atStep}: steps before it kept, the rest played live (${settings.provider}).`,
       )
-      followRun(runId, score.goal)
+      followRun(runId, score)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : (e as Error).message)
     }
@@ -460,6 +460,7 @@ export default function Studio() {
           state: [...res.run.score.state],
           maxSteps: res.run.score.maxSteps,
           ...(res.run.score.groups?.length ? { groups: res.run.score.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) } : {}),
+          ...(res.run.score.result?.length ? { result: [...res.run.score.result] } : {}),
         },
         res.graph,
       )

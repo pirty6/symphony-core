@@ -1,4 +1,22 @@
 import type { Pattern } from '../core/types.js';
+import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
+
+const hypotheses = hypothesesPhase({
+  subject: 'question',
+  context: ['hint', 'subQuestions', 'sourceInfo'],
+});
+const challenge = challengePhase({
+  subject: 'question',
+  evidence: 'findings',
+  draft: 'answer',
+  gaps: 'gaps',
+  reopen: 'chase',
+  done: 'done',
+  research: ['subQuestions', 'sourceInfo', 'useSources', 'hint'],
+});
+
+const AGAINST =
+  ' Look for evidence for AND against every entry of `hypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]".';
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -31,52 +49,65 @@ export const investigate: Pattern = {
     'Answer a question exhaustively with the evidence it needs: repo files, web pages, experiments, history, GitHub, dependencies, MCP. Nothing listed is skipped; every claim is cited.',
   verbTriggers: ['investigate', 'explain', 'why', 'how does', 'find out', 'research'],
   requiredContext: ['question'],
+  result: ['answer', 'rulings', 'openQuestions', 'disagreements'],
   goalFrom: 'question',
   maxSteps: 5000,
-  state: [
-    { name: 'question', type: 'string', description: 'What to find out' },
-    { name: 'hint', type: 'string', description: 'Optional human clarification' },
-    { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
-    { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
-    { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
-    { name: 'searchTerms', type: 'string[]', description: 'Queries for search-based sources' },
-    { name: 'useSources', type: 'string[]', description: 'Sources to use' },
-    { name: 'skipSources', type: 'string[]', description: 'Sources not used' },
-    { name: 'skipReasons', type: 'string[]', description: 'Why each skipped source was skipped' },
-    { name: 'repoFiles', type: 'string[]', description: 'Every file in the workspace' },
-    { name: 'excludedFiles', type: 'string[]', description: 'Files not triaged, with reasons' },
-    { name: 'pages', type: 'string[]', description: 'Web pages to read in full (URLs)' },
-    {
-      name: 'experiments',
-      type: 'string[]',
-      description: 'Experiments to run: command, what it measures',
-    },
-    { name: 'batchSize', type: 'number', initial: 25 },
-    { name: 'pendingFiles', type: 'string[]' },
-    { name: 'batch', type: 'string[]', description: 'Files to triage now' },
-    { name: 'triaged', type: 'string[]', description: 'Files of the batch that were opened' },
-    { name: 'batchRelevant', type: 'string[]', description: 'Relevant files of the batch' },
-    { name: 'relevantFiles', type: 'string[]' },
-    { name: 'deepBatchSize', type: 'number', initial: 4 },
-    { name: 'pendingDeep', type: 'string[]' },
-    { name: 'deepBatch', type: 'string[]', description: 'Files and pages to read completely now' },
-    { name: 'examined', type: 'string[]', description: 'Items of the deep batch read completely' },
-    { name: 'pendingExperiments', type: 'string[]' },
-    { name: 'currentExperiment', type: 'string', description: 'Experiment to run now' },
-    { name: 'ran', type: 'string[]', description: 'Experiments run' },
-    { name: 'pendingSources', type: 'string[]' },
-    { name: 'currentSource', type: 'string', description: 'Source to search now' },
-    { name: 'queries', type: 'string[]', description: 'Queries, commands and tool calls made' },
-    { name: 'consulted', type: 'string[]', description: 'Sources searched' },
-    { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
-    { name: 'findings', type: 'string[]', description: 'All evidence, each with its location' },
-    { name: 'gaps', type: 'string[]', description: 'Sub-questions without enough evidence' },
-    { name: 'gapRounds', type: 'number' },
-    { name: 'maxGapRounds', type: 'number', initial: 2 },
-    { name: 'confidence', type: 'number', description: '0..1 that findings answer the question' },
-    { name: 'answer', type: 'string', description: 'Final answer citing evidence' },
-    { name: 'openQuestions', type: 'string[]', description: 'Sub-questions still unanswered' },
-  ],
+  state: withState(
+    [
+      { name: 'question', type: 'string', description: 'What to find out' },
+      { name: 'hint', type: 'string', description: 'Optional human clarification' },
+      { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
+      { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
+      { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
+      { name: 'searchTerms', type: 'string[]', description: 'Queries for search-based sources' },
+      { name: 'useSources', type: 'string[]', description: 'Sources to use' },
+      { name: 'skipSources', type: 'string[]', description: 'Sources not used' },
+      { name: 'skipReasons', type: 'string[]', description: 'Why each skipped source was skipped' },
+      { name: 'repoFiles', type: 'string[]', description: 'Every file in the workspace' },
+      { name: 'excludedFiles', type: 'string[]', description: 'Files not triaged, with reasons' },
+      { name: 'pages', type: 'string[]', description: 'Web pages to read in full (URLs)' },
+      {
+        name: 'experiments',
+        type: 'string[]',
+        description: 'Experiments to run: command, what it measures',
+      },
+      { name: 'batchSize', type: 'number', initial: 25 },
+      { name: 'pendingFiles', type: 'string[]' },
+      { name: 'batch', type: 'string[]', description: 'Files to triage now' },
+      { name: 'triaged', type: 'string[]', description: 'Files of the batch that were opened' },
+      { name: 'batchRelevant', type: 'string[]', description: 'Relevant files of the batch' },
+      { name: 'relevantFiles', type: 'string[]' },
+      { name: 'deepBatchSize', type: 'number', initial: 4 },
+      { name: 'pendingDeep', type: 'string[]' },
+      {
+        name: 'deepBatch',
+        type: 'string[]',
+        description: 'Files and pages to read completely now',
+      },
+      {
+        name: 'examined',
+        type: 'string[]',
+        description: 'Items of the deep batch read completely',
+      },
+      { name: 'pendingExperiments', type: 'string[]' },
+      { name: 'currentExperiment', type: 'string', description: 'Experiment to run now' },
+      { name: 'ran', type: 'string[]', description: 'Experiments run' },
+      { name: 'pendingSources', type: 'string[]' },
+      { name: 'currentSource', type: 'string', description: 'Source to search now' },
+      { name: 'queries', type: 'string[]', description: 'Queries, commands and tool calls made' },
+      { name: 'consulted', type: 'string[]', description: 'Sources searched' },
+      { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
+      { name: 'findings', type: 'string[]', description: 'All evidence, each with its location' },
+      { name: 'gaps', type: 'string[]', description: 'Sub-questions without enough evidence' },
+      { name: 'gapRounds', type: 'number' },
+      { name: 'maxGapRounds', type: 'number', initial: 2 },
+      { name: 'confidence', type: 'number', description: '0..1 that findings answer the question' },
+      { name: 'answer', type: 'string', description: 'Final answer citing evidence' },
+      { name: 'openQuestions', type: 'string[]', description: 'Sub-questions still unanswered' },
+    ],
+    hypotheses,
+    challenge,
+  ),
   start: 'start',
   groups: [
     {
@@ -85,6 +116,7 @@ export const investigate: Pattern = {
       description: 'Available sources, sub-questions, which evidence applies',
       nodes: ['catalog', 'plan', 'queue'],
     },
+    hypotheses.group,
     {
       id: 'listPhase',
       label: 'List evidence',
@@ -137,6 +169,7 @@ export const investigate: Pattern = {
       description: 'Targeted research, then a human hint',
       nodes: ['assess', 'moreGaps', 'chase', 'mergeChase', 'confident', 'clarify', 'useHint'],
     },
+    challenge.group,
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
@@ -272,8 +305,9 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Triage files',
       directive:
-        'Open EVERY file in `batch` (view each one; for long files look through all of it, not just the top). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".',
-      reads: ['question', 'subQuestions', 'batch'],
+        'Open EVERY file in `batch` (view each one; for long files look through all of it, not just the top). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
+        AGAINST,
+      reads: ['hypotheses', 'question', 'subQuestions', 'batch'],
       writes: ['triaged', 'batchRelevant', 'newFindings'],
       retries: 2,
       checks: [
@@ -325,8 +359,9 @@ export const investigate: Pattern = {
       capabilities: ['web'],
       label: 'Deep read',
       directive:
-        'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`, without repeating `findings`. List each item of `deepBatch` you read completely in `examined`.',
-      reads: ['question', 'subQuestions', 'deepBatch', 'findings'],
+        'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`, without repeating `findings`. List each item of `deepBatch` you read completely in `examined`.' +
+        AGAINST,
+      reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch', 'findings'],
       writes: ['examined', 'newFindings'],
       retries: 2,
       checks: [
@@ -428,8 +463,17 @@ export const investigate: Pattern = {
       label: 'Search source',
       capabilities: ['web', 'mcp'],
       directive:
-        'Search `currentSource` (see `sourceInfo` for how to use it) for evidence on every sub-question, using `searchTerms` and your own follow-up queries. Be exhaustive: look at several results, read full pages, threads, issues and diffs, and follow links. Record every query, command or tool call in `queries`, and every relevant fact as "source | location (URL, issue/PR #, commit, tool) — fact" in `newFindings`. If the source has nothing relevant, add one finding saying what you searched.',
-      reads: ['question', 'subQuestions', 'searchTerms', 'currentSource', 'sourceInfo', 'findings'],
+        'Search `currentSource` (see `sourceInfo` for how to use it) for evidence on every sub-question, using `searchTerms` and your own follow-up queries. Be exhaustive: look at several results, read full pages, threads, issues and diffs, and follow links. Record every query, command or tool call in `queries`, and every relevant fact as "source | location (URL, issue/PR #, commit, tool) — fact" in `newFindings`. If the source has nothing relevant, add one finding saying what you searched.' +
+        AGAINST,
+      reads: [
+        'hypotheses',
+        'question',
+        'subQuestions',
+        'searchTerms',
+        'currentSource',
+        'sourceInfo',
+        'findings',
+      ],
       writes: ['queries', 'newFindings'],
       retries: 2,
       checks: [
@@ -483,8 +527,9 @@ export const investigate: Pattern = {
       label: 'Close gaps',
       capabilities: ['web', 'mcp'],
       directive:
-        'Close every gap in `gaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.',
-      reads: ['question', 'gaps', 'hint', 'findings', 'sourceInfo', 'consulted'],
+        'Close every gap in `gaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
+        AGAINST,
+      reads: ['hypotheses', 'question', 'gaps', 'hint', 'findings', 'sourceInfo', 'consulted'],
       writes: ['queries', 'newFindings'],
       retries: 2,
       checks: [
@@ -538,7 +583,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Write answer',
       directive:
-        'Answer `question` using only `findings`, citing evidence inline (path:line, URL, issue/PR #, commit, experiment). End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put every unanswered sub-question in `openQuestions`.',
+        'Answer `question` using only `findings`, citing evidence inline (path:line, URL, issue/PR #, commit, experiment). End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put every unanswered sub-question in `openQuestions`. In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered.',
       reads: [
         'question',
         'subQuestions',
@@ -551,24 +596,34 @@ export const investigate: Pattern = {
         'pages',
         'ran',
         'confidence',
+        'hypotheses',
+        'disagreements',
       ],
-      writes: ['answer', 'openQuestions'],
+      writes: ['answer', 'openQuestions', 'rulings'],
       retries: 2,
       checks: [
         { expr: 'len(answer) > 0', message: 'Write the answer.' },
+        {
+          expr: 'len(rulings) == len(hypotheses)',
+          message:
+            'Give exactly one ruling per hypothesis: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence".',
+        },
         {
           expr: 'subset(gaps, openQuestions)',
           message: 'Every remaining gap must be listed in openQuestions.',
         },
       ],
     },
+    ...hypotheses.nodes,
+    ...challenge.nodes,
     { id: 'done', kind: 'end', label: 'Answered' },
   ],
   edges: [
     { id: 'start-catalog', from: 'start', to: 'catalog' },
     { id: 'catalog-plan', from: 'catalog', to: 'plan' },
     { id: 'plan-queue', from: 'plan', to: 'queue' },
-    { id: 'queue-needFiles', from: 'queue', to: 'needFiles' },
+    { id: 'queue-hypothesize', from: 'queue', to: hypotheses.entry },
+    { id: 'hypothesize-needFiles', from: hypotheses.entry, to: 'needFiles' },
     { id: 'needFiles-inventory', from: 'needFiles', to: 'inventory', branch: 'then' },
     { id: 'needFiles-needWeb', from: 'needFiles', to: 'needWeb', branch: 'else' },
     { id: 'inventory-queueFiles', from: 'inventory', to: 'queueFiles' },
@@ -636,7 +691,8 @@ export const investigate: Pattern = {
     { id: 'clarify-useHint', from: 'clarify', to: 'useHint', branch: 'approved' },
     { id: 'clarify-answer', from: 'clarify', to: 'answer', branch: 'rejected' },
     { id: 'useHint-chase', from: 'useHint', to: 'chase' },
-    { id: 'answer-done', from: 'answer', to: 'done' },
+    { id: 'answer-challenge', from: 'answer', to: challenge.entry },
+    ...challenge.edges,
   ],
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
@@ -780,8 +836,58 @@ export const investigate: Pattern = {
             `- Sources searched: ${((s.consulted as string[]) ?? []).join(', ') || 'none'}; skipped: ${((s.skipSources as string[]) ?? []).join(', ') || 'none'}`,
           ].join('\n'),
           openQuestions: (s.gaps as string[]) ?? [],
+          rulings: ((s.hypotheses as string[]) ?? []).map((h, i) =>
+            i === 0
+              ? `${h.split(':')[0]}: CONFIRMED — src/core/engine.ts resolveAgent validates before applying`
+              : `${h.split(':')[0]}: REFUTED — no state change happens outside advance()`,
+          ),
         },
         verdict: v('answered'),
+      }),
+      hypothesize: () => ({
+        updates: {
+          hypotheses: [
+            'H1: the engine validates every answer before state changes | confirm if advance() checks results before applying them | refute if a provider writes state directly',
+            'H2: each provider validates its own answers | confirm if validation lives in src/runtime | refute if providers return raw results',
+            'H3: answers are not validated at all (premise wrong) | confirm if results are applied unchecked | refute if any schema check runs',
+          ],
+        },
+        verdict: v('hypotheses proposed'),
+      }),
+      challenge: (_s, visit) => ({
+        updates: {
+          objections:
+            visit === 0
+              ? [
+                  'The answer says a rejected answer keeps the same move key, but no finding cites it: check moveKeyOf in src/core/engine.ts',
+                ]
+              : [],
+        },
+        verdict: v(visit === 0 ? 'one unsupported claim' : 'the answer stands'),
+      }),
+      triageObjections: (s) => ({
+        updates: {
+          objectionTriage: ((s.objections as string[]) ?? []).map(
+            (o) => `${o.slice(0, 40)}…: REAL — it is a claim in the answer`,
+          ),
+          realObjections: (s.objections as string[]) ?? [],
+        },
+        verdict: v('triaged'),
+      }),
+      second: () => ({
+        updates: {
+          secondOpinion:
+            'The engine validates (src/core/engine.ts resolveAgent → checkAgentResult). H1 confirmed; H2 and H3 refuted.',
+        },
+        verdict: v('independent answer'),
+      }),
+      reconcile: (s) => ({
+        updates: {
+          answer: s.answer,
+          rulings: s.rulings,
+          disagreements: [],
+        },
+        verdict: v('reconciled'),
       }),
     },
     approvals: {

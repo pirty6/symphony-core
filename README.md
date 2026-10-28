@@ -246,6 +246,9 @@ the listing adapts to the question: "is this on the internet?", "does this work 
    git history, GitHub if `gh` is signed in, installed dependencies, the web, experiments, each MCP
    server, earlier Symphony runs). The AI splits the question into sub-questions and decides which
    sources apply. Every source must be used or skipped with a reason, or the plan is rejected.
+   **Competing hypotheses**: before any evidence is read, an isolated proposer lists at least 3
+   distinct explanations (including "none of these"), each with what would confirm or refute it.
+   Every later research step looks for evidence for *and against* each one.
 2. **List evidence**: only what the plan chose. *Workspace* lists every file (git-aware; binaries,
    lockfiles and files over 512 KB are excluded with the reason). *Web* has the AI search and list
    the pages worth reading. *Experiment* has the AI design the commands to run (benchmarks, timing,
@@ -261,7 +264,23 @@ the listing adapts to the question: "is this on the internet?", "does this work 
 7. **Close gaps** (loop): unanswered sub-questions get targeted research (up to `maxGapRounds`),
    then a human hint if confidence stays low.
 8. **Answer**: cites evidence and ends with a coverage report: files triaged and excluded, pages
-   read, experiments run, sources searched and skipped, what is still unknown.
+   read, experiments run, sources searched and skipped, what is still unknown. It must give a
+   ruling (CONFIRMED, REFUTED or UNKNOWN, with evidence) on every hypothesis.
+9. **Challenge the answer**, scaled by complexity:
+
+   | Complexity | Who | Does |
+   |-----------|-----|------|
+   | 1 | nobody | the answer stands |
+   | ≥2 | Skeptic (isolated) | concrete, checkable objections: unsupported claims, hypotheses dismissed without evidence, alternatives the evidence also fits, paths nobody followed |
+   | ≥3 | Pragmatist (isolated) | keeps only the REAL objections; theoretical ones don't cost a research round |
+   | 4 | Second investigator | answers from scratch without seeing the first answer; a reconciler merges both and lists disagreements |
+
+   Real objections go back to "Close gaps" as research targets, at most `maxDebateRounds` (2)
+   times, so the debate always ends.
+
+The debate is a shared building block (`src/patterns/phases/debate.ts`): `hypothesesPhase` and
+`challengePhase` return state, nodes, edges and a phase that any pattern can wire in, the same
+roster the maestro uses to debate a plan, aimed at a conclusion instead.
 
 ```bash
 npm run cli -- run investigate -c question="Why do runs replay exactly?" --provider copilot

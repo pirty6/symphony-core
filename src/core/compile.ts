@@ -59,6 +59,7 @@ export function scoreId(score: Hashable): string {
     complexity: score.complexity,
     improvisation: score.improvisation,
     groups: score.groups,
+    result: score.result,
   });
 }
 
@@ -96,9 +97,13 @@ export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableSco
   }
   if (issues.length > 0) throw new CompileError(issues);
 
+  const complexity = args.complexity ?? pattern.complexity ?? DEFAULT_COMPLEXITY;
   const initialState: Record<string, unknown> = {};
   for (const f of pattern.state) {
-    initialState[f.name] = structuredClone(context[f.name] ?? f.initial ?? zeroValue(f.type));
+    // A `complexity` field starts at the score's complexity, so conditions can scale the roster.
+    const fallback =
+      f.name === 'complexity' && f.type === 'number' ? complexity : zeroValue(f.type);
+    initialState[f.name] = structuredClone(context[f.name] ?? f.initial ?? fallback);
   }
 
   const body: Hashable = structuredClone({
@@ -112,9 +117,10 @@ export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableSco
     edges: pattern.edges,
     start: pattern.start,
     maxSteps: pattern.maxSteps ?? DEFAULT_MAX_STEPS,
-    complexity: args.complexity ?? pattern.complexity ?? DEFAULT_COMPLEXITY,
+    complexity,
     improvisation: args.improvisation ?? pattern.improvisation ?? 0,
     ...(pattern.groups ? { groups: pattern.groups } : {}),
+    ...(pattern.result ? { result: pattern.result } : {}),
     initialState,
   });
   return deepFreeze({
