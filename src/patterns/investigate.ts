@@ -105,6 +105,13 @@ export const investigate: Pattern = {
         description: 'Every item that could not be read in full',
       },
       { name: 'notReadReasons', type: 'string[]', description: 'Why, per notRead item' },
+      { name: 'unreadRetries', type: 'number' },
+      {
+        name: 'maxUnreadRetries',
+        type: 'number',
+        initial: 1,
+        description: 'Extra tries for items that could not be read (rate limits, timeouts)',
+      },
       { name: 'pendingExperiments', type: 'string[]' },
       { name: 'currentExperiment', type: 'string', description: 'Experiment to run now' },
       { name: 'ran', type: 'string[]', description: 'Experiments run' },
@@ -157,7 +164,15 @@ export const investigate: Pattern = {
       id: 'deepPhase',
       label: 'Deep read',
       description: 'Every relevant file and listed page, completely',
-      nodes: ['deepQueue', 'deepLeft', 'takeDeep', 'deepRead', 'mergeDeep'],
+      nodes: [
+        'deepQueue',
+        'deepLeft',
+        'takeDeep',
+        'deepRead',
+        'mergeDeep',
+        'retryUnread',
+        'requeueUnread',
+      ],
     },
     {
       id: 'experimentPhase',
@@ -375,7 +390,7 @@ export const investigate: Pattern = {
       capabilities: ['web'],
       label: 'Deep read',
       directive:
-        'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`, without repeating `findings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend: put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
+        'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`, without repeating `findings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
         AGAINST,
       reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch', 'findings'],
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
@@ -395,6 +410,24 @@ export const investigate: Pattern = {
           message:
             'Give one reason in unreadableReasons per item in unreadable, in the same order.',
         },
+      ],
+    },
+    {
+      id: 'retryUnread',
+      kind: 'condition',
+      label: 'Retry unreadable?',
+      // Rate limits and timeouts often clear by the end of deep reading: one more try, then report.
+      expression: 'len(notRead) > 0 && unreadRetries < maxUnreadRetries',
+    },
+    {
+      id: 'requeueUnread',
+      kind: 'compute',
+      label: 'Queue unreadable again',
+      assign: [
+        { field: 'pendingDeep', expr: 'notRead' },
+        { field: 'notRead', expr: '[]' },
+        { field: 'notReadReasons', expr: '[]' },
+        { field: 'unreadRetries', expr: 'unreadRetries + 1' },
       ],
     },
     {
@@ -683,7 +716,16 @@ export const investigate: Pattern = {
     { id: 'mergeTriage-filesLeft', from: 'mergeTriage', to: 'filesLeft', label: 'next batch' },
     { id: 'deepQueue-deepLeft', from: 'deepQueue', to: 'deepLeft' },
     { id: 'deepLeft-takeDeep', from: 'deepLeft', to: 'takeDeep', branch: 'then' },
-    { id: 'deepLeft-hasExperiments', from: 'deepLeft', to: 'hasExperiments', branch: 'else' },
+    { id: 'deepLeft-retryUnread', from: 'deepLeft', to: 'retryUnread', branch: 'else' },
+    {
+      id: 'retryUnread-requeue',
+      from: 'retryUnread',
+      to: 'requeueUnread',
+      branch: 'then',
+      label: 'try unreadable again',
+    },
+    { id: 'retryUnread-hasExperiments', from: 'retryUnread', to: 'hasExperiments', branch: 'else' },
+    { id: 'requeue-deepLeft', from: 'requeueUnread', to: 'deepLeft' },
     { id: 'takeDeep-deepRead', from: 'takeDeep', to: 'deepRead' },
     { id: 'deepRead-mergeDeep', from: 'deepRead', to: 'mergeDeep' },
     { id: 'mergeDeep-deepLeft', from: 'mergeDeep', to: 'deepLeft', label: 'next' },

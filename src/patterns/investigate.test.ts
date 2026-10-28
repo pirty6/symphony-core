@@ -111,9 +111,38 @@ describe('items that cannot be read', () => {
       }),
     );
     expect(r.state.outcome).toBe('success');
+    // Retried once (maxUnreadRetries), still unreadable: reported, never retried again.
+    expect(r.state.state.unreadRetries).toBe(1);
     expect((r.state.state.notRead as string[]).length).toBeGreaterThan(0);
     expect((r.state.state.notReadReasons as string[])[0]).toBe('HTTP 429 twice; read nothing');
     expect(r.state.state.unreadable).toEqual([]);
+  });
+
+  it('get one more try at the end of deep reading (a rate limit may have cleared)', () => {
+    const tries = new Map<string, number>();
+    const r = play(
+      script((s) => {
+        const batch = s.deepBatch as string[];
+        const url = batch.find((x) => x.startsWith('http'));
+        const n = url ? (tries.get(url) ?? 0) : 0;
+        if (url) tries.set(url, n + 1);
+        const flaky = url && n === 0 ? [url] : [];
+        return {
+          updates: {
+            examined: batch.filter((x) => !flaky.includes(x)),
+            unreadable: flaky,
+            unreadableReasons: flaky.map(() => 'HTTP 429'),
+            newFindings: ['x — y'],
+          },
+          verdict,
+        };
+      }),
+    );
+    expect(r.state.outcome).toBe('success');
+    expect([...tries.values()]).toEqual([2]);
+    expect(r.state.state.notRead).toEqual([]);
+    expect(r.state.state.unreadRetries).toBe(1);
+    expect(r.state.steps.filter((x) => x.nodeId === 'requeueUnread')).toHaveLength(1);
   });
 
   it('may not be dropped silently', () => {
