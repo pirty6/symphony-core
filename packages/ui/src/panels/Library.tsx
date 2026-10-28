@@ -23,6 +23,7 @@ interface Props {
   onNew: () => void
   onOpenSaved: (file: string) => void
   onRefreshSaved: () => void
+  onPrune: () => void
   onAsk: (request: string) => void
 }
 
@@ -97,6 +98,15 @@ export function Library(p: Props) {
           Saved runs
           <button type="button" className="link" onClick={p.onRefreshSaved} title="Refresh">
             ↻
+          </button>
+          <button
+            type="button"
+            className="link"
+            onClick={p.onPrune}
+            data-testid="prune-runs"
+            title="Clean up: delete demo runs older than 7 days and compact runs older than 30 days (they still replay; the AI's raw text is dropped). Also runs by itself once a day."
+          >
+            🧹
           </button>
         </h2>
         {saved.length === 0 && (

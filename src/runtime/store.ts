@@ -3,9 +3,10 @@
  * user pattern files. Kept out of the pure core on purpose.
  */
 import { execFile } from 'node:child_process';
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { compactPerformance, expandPerformance } from '../core/compact.js';
 import { verifyScore } from '../core/compile.js';
 import { patternToTypeScript } from '../core/draft.js';
 import { hashOf } from '../core/hash.js';
@@ -106,7 +107,12 @@ export async function loadRun(
   const raw = JSON.parse(await readFile(file, 'utf8')) as unknown;
   const m = migrateRun(raw);
   // An unreadable format is still returned as-is so callers can show what it is.
-  const run = m.run ?? (raw as SavedRun);
+  const loaded = m.run ?? (raw as SavedRun);
+  // A compacted run gets its timeline back by replaying its recorded answers.
+  const run =
+    m.run && loaded.performance.compacted
+      ? { ...loaded, performance: expandPerformance(loaded.score, loaded.performance) }
+      : loaded;
   const issues = m.run ? verifyScore(run.score).map((i) => i.message) : [...m.issues];
   if (run.performance?.scoreId !== run.score?.id)
     issues.push('performance.scoreId does not match score.id');
@@ -148,6 +154,129 @@ export async function listRuns(dir: string): Promise<RunSummary[]> {
     }
   }
   return out.toSorted((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
+}
+
+// ── retention ──────────────────────────────────────────────────────
+
+export interface RetentionPolicy {
+  /** Demo runs older than this are deleted. */
+  readonly demoDays: number;
+  /** Real runs older than this are compacted (compact.ts): AI text dropped, still replayable. */
+  readonly compactDays: number;
+  /** Scratch folders left by crashed runs older than this are deleted. */
+  readonly scratchHours: number;
+}
+
+export const DEFAULT_RETENTION: RetentionPolicy = {
+  demoDays: 7,
+  compactDays: 30,
+  scratchHours: 24,
+};
+
+export interface PruneReport {
+  readonly deleted: readonly string[];
+  readonly compacted: readonly string[];
+  readonly scratch: readonly string[];
+  /** Bytes freed (estimated on a dry run). */
+  readonly freed: number;
+}
+
+const DAY = 86_400_000;
+
+async function entries(dir: string): Promise<{ path: string; size: number; age: number }[]> {
+  const now = Date.now();
+  let names: string[] = [];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const out: { path: string; size: number; age: number }[] = [];
+  for (const n of names) {
+    const s = await stat(join(dir, n)).catch(() => undefined);
+    if (s) out.push({ path: join(dir, n), size: s.size, age: now - s.mtimeMs });
+  }
+  return out;
+}
+
+/**
+ * Keep saved runs from piling up: delete old demo runs, compact old real runs (only
+ * when they still replay exactly) and remove scratch folders that crashed runs left.
+ * Age is the time since the file was last written.
+ */
+export async function pruneRuns(
+  dir: string,
+  opts: {
+    readonly policy?: Partial<RetentionPolicy>;
+    readonly scratchDir?: string;
+    readonly dryRun?: boolean;
+    readonly age?: (file: string, mtimeAge: number) => number;
+  } = {},
+): Promise<PruneReport> {
+  const policy = { ...DEFAULT_RETENTION, ...opts.policy };
+  const age = opts.age ?? ((_f: string, a: number) => a);
+  const deleted: string[] = [];
+  const compacted: string[] = [];
+  const scratch: string[] = [];
+  let freed = 0;
+  for (const folder of await entries(dir)) {
+    for (const f of await entries(folder.path)) {
+      if (!f.path.endsWith('.json')) continue;
+      const days = age(f.path, f.age) / DAY;
+      if (days < Math.min(policy.demoDays, policy.compactDays)) continue;
+      let run: SavedRun;
+      try {
+        run = JSON.parse(await readFile(f.path, 'utf8')) as SavedRun;
+      } catch {
+        continue;
+      }
+      const name = relative(resolve(dir), f.path);
+      if (isDemoRun(run.performance)) {
+        if (days < policy.demoDays) continue;
+        deleted.push(name);
+        freed += f.size;
+        if (!opts.dryRun) await rm(f.path, { force: true });
+      } else if (days >= policy.compactDays && !run.performance.compacted) {
+        const migrated = migrateRun(run).run;
+        const small = migrated && compactPerformance(migrated.score, migrated.performance);
+        if (!small || !migrated) continue;
+        const text = `${JSON.stringify({ ...migrated, performance: small }, null, 2)}\n`;
+        compacted.push(name);
+        freed += Math.max(0, f.size - text.length);
+        if (!opts.dryRun) await writeFile(f.path, text);
+      }
+    }
+  }
+  if (opts.scratchDir) {
+    for (const d of await entries(opts.scratchDir)) {
+      if (age(d.path, d.age) < policy.scratchHours * 3_600_000) continue;
+      scratch.push(d.path);
+      if (!opts.dryRun) await rm(d.path, { recursive: true, force: true });
+    }
+  }
+  return { deleted, compacted, scratch, freed };
+}
+
+/**
+ * Prune at most once a day (a marker file in the runs folder records the last time).
+ * SYMPHONY_RETENTION=off turns it off. Never throws.
+ */
+export async function autoPrune(
+  workspace: string,
+  runsDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<PruneReport | undefined> {
+  if (env.SYMPHONY_RETENTION === 'off') return undefined;
+  const marker = join(runsDir, '.last-prune');
+  try {
+    const last = await stat(marker).catch(() => undefined);
+    if (last && Date.now() - last.mtimeMs < DAY) return undefined;
+    await mkdir(runsDir, { recursive: true });
+    await writeFile(marker, `${new Date().toISOString()}\n`);
+    return await pruneRuns(runsDir, { scratchDir: join(workspace, '.symphony', 'scratch') });
+  } catch {
+    return undefined;
+  }
 }
 
 /** Resolve a run file inside `dir`, refusing paths that escape it. */

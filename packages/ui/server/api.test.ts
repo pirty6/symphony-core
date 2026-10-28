@@ -84,6 +84,12 @@ describe('studio api', () => {
     expect(file).toMatchObject({ reproduced: true, issues: [] })
   })
 
+  it('cleans up saved runs on request (today\'s runs are kept)', async () => {
+    const report = await (await post('/api/saved/prune', { dryRun: true })).json()
+    expect(report).toEqual({ deleted: [], compacted: [], scratch: [], freed: 0 })
+    expect((await (await fetch(`${base}/api/saved`)).json()) as unknown[]).toHaveLength(1)
+  })
+
   it('forks a saved run from a step and refuses to resume a finished one', async () => {
     const [first] = (await (await fetch(`${base}/api/saved`)).json()) as { file: string }[]
     const settings = { provider: 'scripted', autoApprove: true, stepMode: false, breakpoints: [] }

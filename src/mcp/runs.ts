@@ -25,6 +25,7 @@ import { Run } from '../runtime/driver.js';
 import type { Provider } from '../runtime/provider.js';
 import { envConfig, makeProvider, runtimeExtras, type ProviderName } from '../runtime/factory.js';
 import {
+  autoPrune,
   gitFingerprint,
   runScratch,
   loadPatternFiles,
@@ -224,6 +225,7 @@ export class RunManager {
   ): Promise<string> {
     const workspace = await this.opts.workspace();
     const runsDir = runsDirFor(workspace, this.opts.env);
+    void autoPrune(workspace, runsDir, this.opts.env);
     const extras = await runtimeExtras(workspace, this.opts.repoRoot, this.opts.env);
     const providerName = req.provider ?? 'copilot';
     const base = makeProvider({

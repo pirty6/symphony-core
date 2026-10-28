@@ -249,6 +249,7 @@ describe('Library saved runs', () => {
     onNew: () => {},
     onOpenSaved: () => {},
     onRefreshSaved: () => {},
+    onPrune: () => {},
     onAsk: () => {},
   }
 
@@ -266,5 +267,12 @@ describe('Library saved runs', () => {
   it('says so when every run is a demo', () => {
     render(<Library {...props} saved={[run('demo1', true)]} />)
     expect(screen.getByText('No runs with a real AI yet.')).toBeInTheDocument()
+  })
+
+  it('has a clean-up button for saved runs', () => {
+    let pruned = 0
+    render(<Library {...props} saved={[]} onPrune={() => (pruned += 1)} />)
+    fireEvent.click(screen.getByTestId('prune-runs'))
+    expect(pruned).toBe(1)
   })
 })

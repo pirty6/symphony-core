@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -65,6 +65,11 @@ describe('main', () => {
     out = '';
     expect(await main(['runs', '--all'], cwd)).toBe(0);
     expect(plain()).toMatch(/fix\s+success .*\(demo\)/);
+    out = '';
+    // Retention: today's runs are kept; a dry run only reports.
+    expect(await main(['runs', '--prune', '--dry-run'], cwd)).toBe(0);
+    expect(plain()).toMatch(/would delete 0 old demo run\(s\), compact 0 old run\(s\)/);
+    expect(existsSync(join(cwd, '.symphony', 'runs', '.last-prune'))).toBe(true);
   });
 
   it('two offline runs are identical even though the first one changes the runs folder', async () => {

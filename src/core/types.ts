@@ -566,6 +566,11 @@ export interface Performance {
   readonly steps: readonly PerformedStep[];
   /** Full ordered event log; enough to replay the run visually. */
   readonly events: readonly EngineEvent[];
+  /**
+   * Set when retention compacted an old run: the AI's prompt and output text are gone,
+   * and events, changes and inputs are rebuilt by replay when it is loaded (compact.ts).
+   */
+  readonly compacted?: true;
 }
 
 /** Score + Performance persisted together: the audit artifact. */

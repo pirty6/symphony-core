@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,7 +21,9 @@ import {
   isDemoRun,
   runsDirFor,
   runScratch,
+  autoPrune,
   listRuns,
+  pruneRuns,
   loadPatternFiles,
   loadRun,
   runPath,
@@ -138,5 +148,74 @@ describe('run scratch folders', () => {
     const kept = await runScratch(root, { SYMPHONY_KEEP_SCRATCH: '1' });
     await kept.remove();
     expect(existsSync(kept.dir)).toBe(true);
+  });
+});
+
+describe('retention: saved runs do not pile up', () => {
+  const score = compileScore(fix, { context: fix.demo!.context!, generatedAt: 't' });
+  const perf = toPerformance(runScripted(score, fix.demo, { at: 't' }).state);
+  const DAY = 86_400_000;
+
+  async function workspace() {
+    const ws = mkdtempSync(join(root, 'ws-'));
+    const dir = join(ws, '.symphony', 'runs');
+    const save = (startedAt: string, provider: string) =>
+      saveRun(dir, { schemaVersion: 3, score, performance: { ...perf, startedAt, provider } });
+    const files = {
+      oldDemo: await save('a', 'scripted'),
+      newDemo: await save('b', 'scripted'),
+      oldReal: await save('c', 'copilot'),
+      newReal: await save('d', 'copilot'),
+    };
+    const scratch = join(ws, '.symphony', 'scratch');
+    mkdirSync(join(scratch, 'crashed'), { recursive: true });
+    mkdirSync(join(scratch, 'running'), { recursive: true });
+    const days: Record<string, number> = {
+      [files.oldDemo]: 8,
+      [files.newDemo]: 2,
+      [files.oldReal]: 31,
+      [files.newReal]: 29,
+      [join(scratch, 'crashed')]: 2,
+      [join(scratch, 'running')]: 0.1,
+    };
+    const age = (f: string) => (days[f] ?? 0) * DAY;
+    return { ws, dir, files, scratch, age };
+  }
+
+  it('deletes old demo runs, compacts old real runs and clears crashed scratch', async () => {
+    const { dir, files, scratch, age } = await workspace();
+    const before = statSync(files.oldReal).size;
+    const dry = await pruneRuns(dir, { scratchDir: scratch, age, dryRun: true });
+    expect(dry.deleted).toHaveLength(1);
+    expect(existsSync(files.oldDemo)).toBe(true);
+    expect(statSync(files.oldReal).size).toBe(before);
+
+    const report = await pruneRuns(dir, { scratchDir: scratch, age });
+    expect(report).toEqual({ ...dry });
+    expect(report.compacted).toEqual([files.oldReal.slice(dir.length + 1)]);
+    expect(report.scratch).toEqual([join(scratch, 'crashed')]);
+    expect(existsSync(files.oldDemo)).toBe(false);
+    expect([files.newDemo, files.newReal].every((f) => existsSync(f))).toBe(true);
+    expect(existsSync(join(scratch, 'running'))).toBe(true);
+    expect(statSync(files.oldReal).size).toBeLessThan(before);
+    expect(JSON.parse(readFileSync(files.oldReal, 'utf8')).performance.compacted).toBe(true);
+  });
+
+  it('a compacted run loads with its timeline rebuilt and still verifies', async () => {
+    const { dir, files, age } = await workspace();
+    await pruneRuns(dir, { age });
+    const { run, issues } = await loadRun(files.oldReal);
+    expect(issues).toEqual([]);
+    expect(run.performance.compacted).toBe(true);
+    expect(run.performance.events).toEqual(perf.events);
+  });
+
+  it('runs by itself at most once a day, and SYMPHONY_RETENTION=off turns it off', async () => {
+    const { ws, dir } = await workspace();
+    expect(await autoPrune(ws, dir, { SYMPHONY_RETENTION: 'off' })).toBeUndefined();
+    expect(await autoPrune(ws, dir, {})).toBeDefined();
+    expect(existsSync(join(dir, '.last-prune'))).toBe(true);
+    expect(await autoPrune(ws, dir, {})).toBeUndefined();
+    expect((await listRuns(dir)).length).toBe(4);
   });
 });

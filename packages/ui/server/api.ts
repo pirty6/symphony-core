@@ -14,6 +14,7 @@
  *   POST /api/runs {…, chain: [pattern…]}: patterns to play after it with its result
  *   POST /api/runs/:id/recovery {action: retry|stop, hint?, complexity?}  (a stuck AI step)
  *   GET  /api/saved                        saved runs
+ *   POST /api/saved/prune {dryRun?}        retention: delete old demo runs, compact old runs
  *   GET  /api/saved/file?path=             saved run + integrity + replay check
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -39,7 +40,7 @@ import {
   runtimeExtras,
   type RuntimeExtras,
 } from '../../../src/runtime/factory.js'
-import { gitFingerprint, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
+import { autoPrune, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
 
 export interface ApiOptions {
   /** Repository root (where src/patterns lives). */
@@ -119,6 +120,8 @@ export function createApi(opts: ApiOptions) {
   const workspace = opts.workspace ?? opts.repoRoot
   const runsDir = runsDirFor(opts.repoRoot, env)
   const draftsDir = join(opts.repoRoot, DRAFTS_DIR)
+  const scratchDir = join(workspace, '.symphony', 'scratch')
+  void autoPrune(workspace, runsDir, env)
 
   async function library(): Promise<{ pattern: Pattern; source: 'builtin' | 'draft' }[]> {
     const drafts = await loadPatternFiles(draftsDir, opts.importer)
@@ -453,6 +456,11 @@ export function createApi(opts: ApiOptions) {
       }
       if (method === 'GET' && path === '/api/saved') {
         send(res, 200, await listRuns(runsDir))
+        return true
+      }
+      if (method === 'POST' && path === '/api/saved/prune') {
+        const body = await readJson(req)
+        send(res, 200, await pruneRuns(runsDir, { scratchDir, dryRun: body.dryRun === true }))
         return true
       }
       if (method === 'GET' && path === '/api/saved/file') {

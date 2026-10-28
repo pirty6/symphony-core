@@ -583,6 +583,23 @@ export default function Studio() {
         }}
         onOpenSaved={(f) => void openSaved(f)}
         onRefreshSaved={refreshSaved}
+        onPrune={() =>
+          void api
+            .prune(true)
+            .then(async (plan) => {
+              const n = plan.deleted.length + plan.compacted.length + plan.scratch.length
+              if (n === 0) return setNotice('Nothing to clean up: demo runs are kept 7 days, real runs 30 days before compacting.')
+              const mb = (plan.freed / 1e6).toFixed(1)
+              const ok = window.confirm(
+                `Delete ${plan.deleted.length} old demo run(s), compact ${plan.compacted.length} old run(s) (they still replay; the AI's raw text is dropped) and clear ${plan.scratch.length} scratch folder(s)? Frees about ${mb} MB.`,
+              )
+              if (!ok) return
+              const done = await api.prune(false)
+              setNotice(`Cleaned up ${done.deleted.length + done.compacted.length + done.scratch.length} item(s), ${(done.freed / 1e6).toFixed(1)} MB freed.`)
+              refreshSaved()
+            })
+            .catch((e: Error) => setError(`Clean up failed: ${e.message}`))
+        }
         onAsk={(r) => void ask(r)}
       />
       <main className="canvas" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>

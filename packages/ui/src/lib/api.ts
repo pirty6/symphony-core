@@ -89,6 +89,11 @@ export const api = {
   approve: (runId: string, body: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) =>
     post(`/api/runs/${runId}/approval`, body).then((r) => json<{ ok: boolean }>(r)),
   saved: () => fetch('/api/saved').then((r) => json<SavedSummary[]>(r)),
+  /** Retention: delete old demo runs, compact old runs (dryRun only reports). */
+  prune: (dryRun: boolean) =>
+    post('/api/saved/prune', { dryRun }).then((r) =>
+      json<{ deleted: string[]; compacted: string[]; scratch: string[]; freed: number }>(r),
+    ),
   run: (runId: string) =>
     fetch(`/api/runs/${runId}`).then((r) => json<{ id: string; status: string; score: ExecutableScore; graph: VisualGraph }>(r)),
   tiers: () => fetch('/api/tiers').then((r) => json<Record<Complexity, { model: string; effort?: string }>>(r)),

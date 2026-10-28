@@ -47,7 +47,9 @@ import {
   type ProviderName,
 } from './runtime/factory.js';
 import {
+  autoPrune,
   gitFingerprint,
+  pruneRuns,
   runScratch,
   listRuns,
   loadPatternFiles,
@@ -797,6 +799,9 @@ async function cmdCompare(files: string[]): Promise<number> {
 
 export async function main(argv: string[], cwd = process.cwd()): Promise<number> {
   const [cmd, ...rest] = argv;
+  // Retention runs by itself at most once a day (SYMPHONY_RETENTION=off disables it).
+  if (cmd === 'run' || cmd === 'maestro' || (cmd === 'runs' && !rest.includes('--prune')))
+    await autoPrune(cwd, runsDirFor(cwd));
   switch (cmd) {
     case 'list':
       for (const p of await allPatterns(cwd)) {
@@ -835,6 +840,16 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       return cmdContinue('forked', rest, cwd);
     case 'runs': {
       const dir = runsDirFor(cwd);
+      if (rest.includes('--prune')) {
+        const dryRun = rest.includes('--dry-run');
+        const r = await pruneRuns(dir, { scratchDir: join(cwd, '.symphony', 'scratch'), dryRun });
+        const verb = dryRun ? 'would' : 'did';
+        console.log(
+          `${verb} delete ${r.deleted.length} old demo run(s), compact ${r.compacted.length} old run(s), clear ${r.scratch.length} scratch folder(s); ${(r.freed / 1e6).toFixed(1)} MB`,
+        );
+        for (const f of [...r.deleted, ...r.compacted]) console.log(c.dim(`  ${f}`));
+        return 0;
+      }
       const all = await listRuns(dir);
       const shown = rest.includes('--all') ? all : all.filter((r) => !r.demo);
       for (const r of shown)
@@ -865,6 +880,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   fork <run.json> --at <step>  keep steps before <step>, play the rest again as a new run
       --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
+  runs --prune [--dry-run]     delete demo runs >7 days, compact runs >30 days (still replayable)
 
 Studio (visual): npm start`);
       return cmd ? 1 : 0;
