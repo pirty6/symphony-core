@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -40,6 +40,13 @@ describe('normalizeOutput', () => {
     expect(a).toContain('./src/a.ts');
     // oxlint-disable-next-line no-control-regex
     expect(a).not.toMatch(/\x1b|412ms|10:01/);
+  });
+
+  it('also removes durations named in the label (node --test)', () => {
+    expect(normalizeOutput('ℹ pass 4\nℹ duration_ms 90.747209')).toBe(
+      normalizeOutput('ℹ pass 4\nℹ duration_ms 12.5'),
+    );
+    expect(normalizeOutput('elapsed: 3.2')).toBe('elapsed: <duration>');
   });
 
   it('keeps the head and tail of long output', () => {
@@ -118,5 +125,12 @@ describe('git.diff', () => {
     writeFileSync(join(d, 'new.txt'), 'y');
     expect((await workspaceDiff(ctx(d))).hash).not.toBe(added.hash);
     expect(execFileSync('git', ['-C', d, 'diff', '--cached', '--name-only']).toString()).toBe('');
+    // Regression: the run's own checkpoint file counted as an edit and changed the hash every save.
+    mkdirSync(join(d, '.symphony', 'runs'), { recursive: true });
+    writeFileSync(join(d, '.symphony', 'runs', 'r.json'), '{"n":1}');
+    const withRun = await workspaceDiff(ctx(d));
+    expect(withRun.files).toEqual(['a.txt', 'new.txt']);
+    writeFileSync(join(d, '.symphony', 'runs', 'r.json'), '{"n":2}');
+    expect((await workspaceDiff(ctx(d))).hash).toBe(withRun.hash);
   });
 });

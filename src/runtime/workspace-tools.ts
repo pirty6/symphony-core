@@ -37,6 +37,8 @@ export function normalizeOutput(text: string, workspace = ''): string {
     .replace(/\b\d{1,2}:\d{2}:\d{2}(\.\d+)?\b/g, '<time>')
     .replace(/(\/private)?\/var\/folders\/[^\s:'")]+|\/tmp\/[^\s:'")]+/g, '<tmp>')
     .replace(/\b\d+(\.\d+)?\s?(ms|s|sec|secs|seconds|m|min)\b/g, '<duration>')
+    // The unit in the label instead: node --test's "duration_ms 90.7", "elapsed: 1.2".
+    .replace(/\b(duration|elapsed|took|time)(_\w+)?([:=]?\s+)\d+(\.\d+)?\b/gi, '$1$2$3<duration>')
     .replace(/[ \t]+$/gm, '');
   const lines = s.trim().split('\n');
   if (lines.length <= MAX_LINES) return lines.join('\n');
@@ -117,6 +119,8 @@ export type WorkspaceDiff = {
 };
 
 const MAX_DIFF = 30_000;
+/** Symphony's own files (saved runs, checkpoints) are never the edit. */
+const NOT_THE_EDIT = ':(exclude).symphony';
 
 /** Changes in the workspace against HEAD. Read-only: never touches the index. */
 export async function workspaceDiff(ctx: ToolContext): Promise<WorkspaceDiff> {
@@ -128,9 +132,22 @@ export async function workspaceDiff(ctx: ToolContext): Promise<WorkspaceDiff> {
         signal: ctx.signal,
       })
     ).stdout;
-  const diff = await run(['--no-pager', 'diff', 'HEAD', '--no-color', '--no-ext-diff']);
-  const changed = (await run(['diff', 'HEAD', '--name-only'])).split('\n').filter(Boolean);
-  const untracked = (await run(['ls-files', '--others', '--exclude-standard']))
+  const diff = await run([
+    '--no-pager',
+    'diff',
+    'HEAD',
+    '--no-color',
+    '--no-ext-diff',
+    '--',
+    '.',
+    NOT_THE_EDIT,
+  ]);
+  const changed = (await run(['diff', 'HEAD', '--name-only', '--', '.', NOT_THE_EDIT]))
+    .split('\n')
+    .filter(Boolean);
+  const untracked = (
+    await run(['ls-files', '--others', '--exclude-standard', '--', '.', NOT_THE_EDIT])
+  )
     .split('\n')
     .filter(Boolean);
   const h = createHash('sha256').update(diff);
