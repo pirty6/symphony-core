@@ -46,6 +46,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     return json(PATTERNS.map(({ demo, ...p }) => ({ ...p, source: 'builtin', graph: patternToGraph(p), demo: demo ? { goal: demo.goal ?? '', context: demo.context ?? {} } : undefined })))
   }
   if (url === '/api/saved') return json([])
+  if (url === '/api/runs' && !init?.method) return json([])
   if (url === '/api/tiers') return json({ 1: { model: 'claude-haiku-5.5', effort: 'low' } })
   if (url === '/api/runs' && init?.method === 'POST') {
     const parsed = parseDraft(body.pattern)
@@ -126,7 +127,7 @@ describe('Studio (integration)', () => {
     fireEvent.click(screen.getByText('State'))
     expect(screen.getByTestId('state-won')).toHaveTextContent('true')
     expect(screen.getByTestId('timeline-events')).toHaveTextContent('success: reached end')
-    const body = JSON.parse(String(vi.mocked(fetch).mock.calls.find(([u]) => u === '/api/runs')![1]!.body)) as { pattern: { name: string } }
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls.find(([u, init]) => u === '/api/runs' && init?.method === 'POST')![1]!.body)) as { pattern: { name: string } }
     expect(body.pattern.name).toBe('hangman')
   })
 

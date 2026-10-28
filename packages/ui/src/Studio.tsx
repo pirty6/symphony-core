@@ -23,7 +23,7 @@ import { formatUsage, performanceUsage } from '@core/usage'
 import { DataEdge } from './canvas/DataEdge'
 import { FlowNode } from './canvas/FlowNode'
 import { FrameNode, PhaseNode } from './canvas/PhaseNode'
-import { ApiError, api, subscribeRun, type LibraryItem, type SavedSummary, type StartRunRequest } from './lib/api'
+import { ApiError, api, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
 import {
   IDLE_VIEW,
   applyMessage,
@@ -31,6 +31,7 @@ import {
   decorate,
   fromFlow,
   metaOf,
+  scoreMeta,
   changedFromDemo,
   isOfflineDemo,
   newNode,
@@ -83,6 +84,7 @@ export default function Studio() {
   const [phaseSizes, setPhaseSizes] = useState<ReadonlyMap<string, { width: number; height: number }>>(new Map())
   const [library, setLibrary] = useState<LibraryItem[]>([])
   const [saved, setSaved] = useState<SavedSummary[]>([])
+  const [live, setLive] = useState<LiveRun[]>([])
   const [meta, setMeta] = useState<PatternMeta>(BLANK)
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeType>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([])
@@ -156,6 +158,13 @@ export default function Studio() {
   )
 
   const refreshSaved = useCallback(() => void api.saved().then(setSaved, () => setSaved([])), [])
+  // Several runs can play at once on this server; poll so the list stays current.
+  useEffect(() => {
+    const poll = () => void api.liveRuns().then(setLive, () => undefined)
+    poll()
+    const timer = setInterval(poll, 2000)
+    return () => clearInterval(timer)
+  }, [])
 
   // Load the library and the pattern named in the URL once; later loads are user actions.
   const loadPatternRef = useRef(loadPattern)
@@ -459,23 +468,25 @@ export default function Studio() {
     }
   }
 
+  /** Open a run the server is playing (started here, in another tab, or by a chain). */
+  const openLive = async (runId: string) => {
+    try {
+      const r = await api.run(runId)
+      showGraph(scoreMeta(r.score), r.graph)
+      setGoal(r.score.goal)
+      setContext(contextStrings(r.score.context as Record<string, unknown>))
+      setNotice(null)
+      followRun(runId, r.score)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   const openSaved = async (file: string) => {
     try {
       const res = await api.savedFile(file)
       unsubscribe.current?.()
-      showGraph(
-        {
-          name: res.run.score.pattern,
-          description: res.run.score.description,
-          requiredContext: [],
-          verbTriggers: [],
-          state: [...res.run.score.state],
-          maxSteps: res.run.score.maxSteps,
-          ...(res.run.score.groups?.length ? { groups: res.run.score.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) } : {}),
-          ...(res.run.score.result?.length ? { result: [...res.run.score.result] } : {}),
-        },
-        res.graph,
-      )
+      showGraph(scoreMeta(res.run.score), res.graph)
       setGoal(res.run.score.goal)
       setContext(contextStrings(res.run.score.context as Record<string, unknown>))
       setView(replayView(res.run, { reproduced: res.reproduced, issues: res.issues, file }))
@@ -583,6 +594,9 @@ export default function Studio() {
         }}
         onOpenSaved={(f) => void openSaved(f)}
         onRefreshSaved={refreshSaved}
+        live={live}
+        liveId={view.mode === 'live' ? view.runId : undefined}
+        onOpenLive={(id) => void openLive(id)}
         onPrune={() =>
           void api
             .prune(true)

@@ -269,6 +269,28 @@ describe('Library saved runs', () => {
     expect(screen.getByText('No runs with a real AI yet.')).toBeInTheDocument()
   })
 
+  it('lists the runs playing now and opens another one', () => {
+    const opened: string[] = []
+    const live = [
+      { id: 'a', pattern: 'investigate', goal: 'why?', status: 'running' },
+      { id: 'b', pattern: 'fix', goal: 'the bug', status: 'awaiting-approval' },
+      { id: 'c', pattern: 'review', goal: 'old', status: 'done' },
+    ]
+    render(<Library {...props} saved={[]} live={live} liveId="a" onOpenLive={(id) => opened.push(id)} />)
+    const section = screen.getByTestId('live-runs')
+    expect(section).toHaveTextContent('investigate')
+    expect(section).toHaveTextContent('on screen')
+    expect(section).not.toHaveTextContent('review')
+    fireEvent.click(screen.getByTitle('the bug'))
+    fireEvent.click(screen.getByTitle('why?'))
+    expect(opened).toEqual(['b'])
+  })
+
+  it('has no running section when nothing is playing', () => {
+    render(<Library {...props} saved={[]} live={[{ id: 'c', pattern: 'review', goal: 'g', status: 'done' }]} />)
+    expect(screen.queryByTestId('live-runs')).toBeNull()
+  })
+
   it('has a clean-up button for saved runs', () => {
     let pruned = 0
     render(<Library {...props} saved={[]} onPrune={() => (pruned += 1)} />)

@@ -152,6 +152,7 @@ test('warns before the offline demo ignores your own question, and remembers the
 test('a stuck AI step waits for you: retry with a hint and a smarter tier, then stop', async ({ page }) => {
   // Make 'pick' impossible to satisfy, so every attempt is rejected and the step gets stuck.
   await page.route('**/api/runs', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
     const body = route.request().postDataJSON() as { pattern: { nodes: { id: string; checks?: unknown[] }[] } }
     for (const n of body.pattern.nodes) {
       if (n.id === 'pick') n.checks = [{ expr: 'len(word) > 99', message: 'The word must be over 99 letters.' }]
@@ -184,4 +185,28 @@ test('then run: a successful run hands its result to the next pattern, and the s
   await expect(page.getByTestId('run-result')).toContainText("reached end 'fixed'")
   await page.getByRole('button', { name: 'State' }).click()
   await expect(page.getByTestId('state-issue')).toContainText('What the investigate run found')
+})
+
+test('several runs play at once on one server; the studio switches between them', async ({ page }) => {
+  await open(page, 'hangman')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('approval-card')).toBeVisible()
+  // A second run while the first waits for its guess.
+  await page.locator('button.lib-item').filter({ has: page.locator('b', { hasText: /^fix$/ }) }).click()
+  await expect(page.locator('.tb-title')).toContainText('fix')
+  await page.getByText('auto-approve').click()
+  await page.getByLabel('step mode').check()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('gate-card')).toContainText('Paused before “hypothesize”')
+  const live = page.getByTestId('live-runs')
+  await expect(live.getByRole('button', { name: /fix/ }).first()).toContainText('on screen')
+  // Newest first: the first hangman is the one started above, still waiting for a guess.
+  await live.getByRole('button', { name: /hangman/ }).first().click()
+  await expect(page.locator('.tb-title')).toContainText('hangman')
+  await expect(page.getByTestId('approval-card')).toBeVisible()
+  await guess(page, 'p')
+  // And back to fix, still paused where it was.
+  await live.getByRole('button', { name: /fix/ }).first().click()
+  await expect(page.locator('.tb-title')).toContainText('fix')
+  await expect(page.getByTestId('gate-card')).toContainText('Paused before “hypothesize”')
 })

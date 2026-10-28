@@ -12,6 +12,13 @@ export interface LibraryItem extends PatternData {
   readonly demo?: { readonly goal: string; readonly context: Record<string, unknown> }
 }
 
+export interface LiveRun {
+  id: string
+  pattern: string
+  goal: string
+  status: string
+}
+
 export interface SavedSummary {
   readonly file: string
   readonly pattern: string
@@ -89,6 +96,8 @@ export const api = {
   approve: (runId: string, body: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) =>
     post(`/api/runs/${runId}/approval`, body).then((r) => json<{ ok: boolean }>(r)),
   saved: () => fetch('/api/saved').then((r) => json<SavedSummary[]>(r)),
+  /** Runs this server started (live and finished), newest first. */
+  liveRuns: () => fetch('/api/runs').then((r) => json<LiveRun[]>(r)),
   /** Retention: delete old demo runs, compact old runs (dryRun only reports). */
   prune: (dryRun: boolean) =>
     post('/api/saved/prune', { dryRun }).then((r) =>
@@ -103,7 +112,7 @@ export const api = {
     ),
 }
 
-const TERMINAL = new Set(['done', 'failed', 'cancelled'])
+export const TERMINAL = new Set(['done', 'failed', 'cancelled'])
 
 /** Subscribe to a run. EventSource resumes from the last seq on reconnect; closes at the end. */
 export function subscribeRun(runId: string, onMessage: (m: RunMessage) => void): () => void {

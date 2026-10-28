@@ -7,7 +7,7 @@
  *   POST /api/patterns        {pattern}    save as src/patterns/drafts/<name>.ts
  *   POST /api/draft           {request}    AI drafts a pattern (SSE stream)
  *   POST /api/runs            {pattern, goal, context, provider, ...} -> { runId, score }
- *   GET  /api/runs                         active runs
+ *   GET  /api/runs                         runs started by this server, newest first
  *   GET  /api/runs/:id/events              SSE: engine + provider + status messages
  *   POST /api/runs/:id/control {action}    pause | resume | step | stop | breakpoints | stepMode
  *   POST /api/runs/:id/approval {approved, updates, scripted}
@@ -377,7 +377,8 @@ export function createApi(opts: ApiOptions) {
         return true
       }
       if (method === 'GET' && path === '/api/runs') {
-        send(res, 200, [...runs.values()].map((r) => ({ id: r.id, pattern: r.score.pattern, status: r.status })))
+        // Newest first; every run this server started, so the studio can switch between them.
+        send(res, 200, [...runs.values()].toReversed().map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, status: r.status })))
         return true
       }
       if (method === 'GET' && path === '/api/tiers') {

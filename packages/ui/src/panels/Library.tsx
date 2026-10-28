@@ -1,5 +1,5 @@
 import { useState, type DragEvent } from 'react'
-import type { LibraryItem, SavedSummary } from '../lib/api'
+import { TERMINAL, type LibraryItem, type LiveRun, type SavedSummary } from '../lib/api'
 import type { PaletteKind } from '../lib/model'
 
 const PALETTE: { kind: PaletteKind; icon: string; label: string; hint: string }[] = [
@@ -17,6 +17,10 @@ interface Props {
   library: readonly LibraryItem[]
   activeName: string
   saved: readonly SavedSummary[]
+  /** Runs the server is playing; the one on screen is `liveId`. */
+  live?: readonly LiveRun[]
+  liveId?: string | undefined
+  onOpenLive?: (id: string) => void
   editable: boolean
   asking: boolean
   onLoad: (item: LibraryItem) => void
@@ -32,6 +36,7 @@ export function Library(p: Props) {
   const [showDemo, setShowDemo] = useState(false)
   const demoCount = p.saved.filter((r) => r.demo).length
   const saved = showDemo ? p.saved : p.saved.filter((r) => !r.demo)
+  const running = (p.live ?? []).filter((r) => !TERMINAL.has(r.status))
   const onDragStart = (e: DragEvent, kind: PaletteKind) => {
     e.dataTransfer.setData('application/symphony-node', kind)
     e.dataTransfer.effectAllowed = 'move'
@@ -93,6 +98,25 @@ export function Library(p: Props) {
         </section>
       )}
 
+      {running.length > 0 && (
+        <section data-testid="live-runs">
+          <h2>Running now</h2>
+          {running.map((r) => (
+            <button
+              type="button"
+              key={r.id}
+              className={`lib-item saved${r.id === p.liveId ? ' active' : ''}`}
+              onClick={() => p.onOpenLive?.(r.id)}
+              title={r.goal}
+              disabled={r.id === p.liveId}
+            >
+              <b>{r.pattern}</b> <span className={`tag status-${r.status}`}>{r.status}</span>
+              {r.id === p.liveId && <span className="tag">on screen</span>}
+              <small>{r.goal}</small>
+            </button>
+          ))}
+        </section>
+      )}
       <section>
         <h2>
           Saved runs

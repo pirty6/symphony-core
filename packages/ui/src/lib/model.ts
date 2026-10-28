@@ -7,7 +7,7 @@ import type { Edge, Node } from '@xyflow/react'
 import { originOf, type Origin, type StepOrigin } from '@core/compare'
 import { graphToPattern, groupFrames, phaseView, readsOf, writesOf, type VisualGraph } from '@core/graph'
 import { EMPTY_FRAME, framesOf, reduceFrame, type Frame, type NodeStatus } from '@core/replay'
-import type { AiTranscript, NodeKind, Pause, Performance, Role, SavedRun, ScoreEdge, ScoreGroup, ScoreNode, StateField } from '@core/types'
+import type { AiTranscript, ExecutableScore, NodeKind, Pause, Performance, Role, SavedRun, ScoreEdge, ScoreGroup, ScoreNode, StateField } from '@core/types'
 import type { NextPerformance, PatternData, RunMessage } from './api'
 
 // ── canvas ──────────────────────────────────────────────────────────
@@ -64,6 +64,20 @@ export function metaOf(p: PatternData): PatternMeta {
     ...(p.goalFrom ? { goalFrom: p.goalFrom } : {}),
     ...(p.result?.length ? { result: [...p.result] } : {}),
     ...(p.groups?.length ? { groups: p.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) } : {}),
+  }
+}
+
+/** What the studio shows for a run's score (saved or live): enough to draw and label it. */
+export function scoreMeta(score: ExecutableScore): PatternMeta {
+  return {
+    name: score.pattern,
+    description: score.description,
+    requiredContext: [],
+    verbTriggers: [],
+    state: [...score.state],
+    maxSteps: score.maxSteps,
+    ...(score.groups?.length ? { groups: score.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) } : {}),
+    ...(score.result?.length ? { result: [...score.result] } : {}),
   }
 }
 
