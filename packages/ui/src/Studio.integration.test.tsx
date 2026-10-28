@@ -109,7 +109,8 @@ describe('Studio (integration)', () => {
   it('loads the library and the requested pattern', async () => {
     renderStudio()
     expect(await screen.findByText('Play a round of hangman', {}, { timeout: 5000 })).toBeInTheDocument()
-    expect(screen.getByTestId('node-pick')).toBeInTheDocument()
+    // React Flow copies nodes into its own store a render later: wait for the node itself.
+    expect(await screen.findByTestId('node-pick', {}, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.getByText(/Valid: every path is bounded/)).toBeInTheDocument()
   })
 
@@ -147,7 +148,7 @@ describe('Studio (integration)', () => {
   it('blocks runs while the graph is invalid and points at the node', async () => {
     renderStudio()
     await screen.findByText('Play a round of hangman', {}, { timeout: 5000 })
-    fireEvent.click(screen.getByTestId('node-over'))
+    fireEvent.click(await screen.findByTestId('node-over', {}, { timeout: 5000 }))
     fireEvent.change(screen.getByLabelText('expression'), { target: { value: 'won ||' } })
     expect(screen.getByText('▶ Run')).toBeDisabled()
     expect(screen.getByTestId('node-over')).toHaveClass('has-issues')
