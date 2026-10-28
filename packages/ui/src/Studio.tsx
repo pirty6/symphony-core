@@ -103,6 +103,8 @@ export default function Studio() {
   const [notice, setNotice] = useState<string | null>(null)
   /** The full-screen result reader is open. */
   const [reading, setReading] = useState(false)
+  /** Pattern to play after this one with its result ('' = none). */
+  const [thenPattern, setThenPattern] = useState('')
   const [breakpoints, setBreakpoints] = useState<Set<string>>(new Set())
   const [view, setView] = useState<RunView>(IDLE_VIEW)
   const [selected, setSelected] = useState<string | null>(null)
@@ -141,6 +143,7 @@ export default function Studio() {
       unsubscribe.current?.()
       showGraph(metaOf(item), item.graph)
       setGoal(item.demo?.goal ?? item.description)
+      setThenPattern('')
       setContext(contextStrings(item.demo?.context))
       setBreakpoints(new Set())
       setView(IDLE_VIEW)
@@ -362,6 +365,7 @@ export default function Studio() {
         breakpoints: [...bps],
         ...(settings.complexity ? { complexity: settings.complexity } : {}),
         improvisation: settings.improvisation,
+        ...(thenPattern && what.pattern.name !== 'maestro' ? { chain: [thenPattern] } : {}),
       })
       followRun(runId, score)
     } catch (e) {
@@ -385,10 +389,13 @@ export default function Studio() {
   }
 
   // The maestro handed on its composed score: show it and follow its performance.
+  const metaRef = useRef(meta)
+  metaRef.current = meta
   const handedOn = view.next
   useEffect(() => {
     if (!handedOn) return
     const meta = metaOf(handedOn.pattern)
+    const from = metaRef.current.name
     if (handedOn.runId) {
       const childId = handedOn.runId
       void api.run(childId).then(
@@ -396,7 +403,11 @@ export default function Studio() {
           showGraph(meta, r.graph)
           setGoal(r.score.goal)
           setContext(contextStrings(r.score.context as Record<string, unknown>))
-          setNotice(`♪ The maestro composed '${handedOn.pattern.name}' (complexity ${r.score.complexity}). Now performing it.`)
+          setNotice(
+            from === 'maestro'
+              ? `♪ The maestro composed '${handedOn.pattern.name}' (complexity ${r.score.complexity}). Now performing it.`
+              : `♪ ${from} finished. Now playing '${handedOn.pattern.name}' with what it found.`,
+          )
           followRun(childId, r.score)
         },
         (e: Error) => setError(e.message),
@@ -681,6 +692,9 @@ export default function Studio() {
                 onMeta={setMeta}
                 onGoal={setGoal}
                 onContext={setContext}
+                thenOptions={library.map((l) => l.name).filter((n) => n !== meta.name && n !== 'maestro' && n !== 'hangman')}
+                then={thenPattern}
+                onThen={setThenPattern}
                 onSelect={setSelected}
                 onExport={() => api.typescript(pattern).then((r) => r.source)}
                 onSave={() =>

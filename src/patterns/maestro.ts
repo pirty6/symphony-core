@@ -52,6 +52,11 @@ export const maestro: Pattern = {
     },
     { name: 'classifyReason', type: 'string' },
     {
+      name: 'thenPattern',
+      type: 'string',
+      description: "Pattern to play after the composed score with its result, or ''",
+    },
+    {
       name: 'template',
       type: 'object',
       description: 'Definition of the chosen pattern ({} when new)',
@@ -125,9 +130,9 @@ export const maestro: Pattern = {
       complexity: 2,
       label: 'Route and classify',
       directive:
-        "Decide which pattern from `summaries` fits `request`, or 'new' if none has the right shape. `suggested` is the verb-trigger match: keep it unless the request clearly signals another shape (e.g. 'fix' but architectural -> not fix; 'investigate' but the cause is already known -> fix). Then classify complexity, picking the LOWEST tier that covers the risk: 1 routine and well understood; 2 some judgement or several steps; 3 cross-cutting, risky or ambiguous; 4 novel, where the pattern fit itself is in question. Explain both choices in one or two sentences in `classifyReason`.",
+        "Decide which pattern from `summaries` fits `request`, or 'new' if none has the right shape. `suggested` is the verb-trigger match: keep it unless the request clearly signals another shape (e.g. 'fix' but architectural -> not fix; 'investigate' but the cause is already known -> fix). Then classify complexity, picking the LOWEST tier that covers the risk: 1 routine and well understood; 2 some judgement or several steps; 3 cross-cutting, risky or ambiguous; 4 novel, where the pattern fit itself is in question. Explain both choices in one or two sentences in `classifyReason`. If the request asks for two shapes in sequence (e.g. 'find out why X, then fix it' -> chosen investigate, then fix; 'understand this module and clean it up' -> investigate, then refactor), set `thenPattern` to the second pattern from `names`: it plays after the first with what the first found. Otherwise set `thenPattern` to ''. Do not chain when one pattern already covers both (fix diagnoses before it edits).",
       reads: ['request', 'summaries', 'suggested'],
-      writes: ['chosen', 'complexity', 'classifyReason'],
+      writes: ['chosen', 'complexity', 'classifyReason', 'thenPattern'],
       retries: 2,
       checks: [
         {
@@ -135,6 +140,11 @@ export const maestro: Pattern = {
           message: "chosen must be a name from the library or 'new'.",
         },
         { expr: 'includes([1, 2, 3, 4], complexity)', message: 'complexity must be 1, 2, 3 or 4.' },
+        {
+          expr: 'empty(thenPattern) || (includes(names, thenPattern) && thenPattern != chosen && thenPattern != "maestro")',
+          message:
+            "thenPattern must be '' or another pattern name from names (not chosen, not maestro).",
+        },
       ],
     },
     {
@@ -440,6 +450,7 @@ ${SCORE_FORMAT}`,
           chosen: String(s.suggested),
           complexity: s.suggested === 'new' ? 2 : 3,
           classifyReason: `Verb match '${String(s.suggested)}'; flaky behaviour makes it riskier than routine.`,
+          thenPattern: '',
         },
         verdict: v('routed'),
       }),
@@ -528,6 +539,12 @@ function typedContext(pattern: Pattern, raw: unknown): Record<string, unknown> {
  * The score the maestro composed, ready to perform: compiled with the request as goal,
  * the extracted inputs, the final complexity and the maestro run's improvisation level.
  */
+/** Patterns the maestro chose to play after its composed score (at most one). */
+export function maestroThen(finalState: Readonly<Record<string, unknown>>): string[] {
+  const then = finalState.thenPattern;
+  return typeof then === 'string' && then.trim() ? [then.trim()] : [];
+}
+
 export function composedScore(
   maestroScore: ExecutableScore,
   finalState: Readonly<Record<string, unknown>>,

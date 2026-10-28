@@ -13,6 +13,10 @@ interface Props {
   onMeta: (m: PatternMeta) => void
   onGoal: (g: string) => void
   onContext: (c: Record<string, string>) => void
+  /** Patterns that can play after this one with its result. */
+  thenOptions?: readonly string[]
+  then?: string
+  onThen?: (name: string) => void
   onSelect: (id: string) => void
   onExport: () => Promise<string>
   onSave: () => Promise<string>
@@ -59,6 +63,19 @@ export function PatternPanel(p: Props) {
             <summary className="muted">Other initial state ({secondary.length})</summary>
             {secondary.map(field)}
           </details>
+        )}
+        {p.onThen && m.name !== 'maestro' && (p.thenOptions?.length ?? 0) > 0 && (
+          <label className="field" title="When this run succeeds, play another pattern with what it found (its result goes into that pattern's goal input).">
+            Then run
+            <select value={p.then ?? ''} onChange={(e) => p.onThen?.(e.target.value)} aria-label="then run">
+              <option value="">nothing</option>
+              {p.thenOptions!.map((n) => (
+                <option key={n} value={n}>
+                  {n}, with what {m.name} found
+                </option>
+              ))}
+            </select>
+          </label>
         )}
       </section>
 

@@ -18,6 +18,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
+import { handoffContext } from './core/chain.js';
 import { agreement, compareRuns } from './core/compare.js';
 import { engineNote, RUN_SCHEMA_VERSION } from './core/migrate.js';
 import { replayPerformance, restoreEngine } from './core/replay.js';
@@ -31,7 +32,7 @@ import type {
   Performance,
   SavedRun,
 } from './core/types.js';
-import { maestro, PATTERNS } from './patterns/index.js';
+import { maestro, maestroThen, PATTERNS } from './patterns/index.js';
 import { concertNext } from './runtime/concert.js';
 import { loadRepertoire } from './runtime/store.js';
 import { IMPROVISATION_LEVELS, isImprovisation, playsFromRepertoire } from './core/jazz.js';
@@ -325,7 +326,66 @@ const SCORE_OPTIONS = {
   ...RUN_OPTIONS,
   goal: { type: 'string' },
   context: { type: 'string', short: 'c', multiple: true },
+  // oxlint-disable-next-line unicorn/no-thenable -- the --then flag; parseArgs config, never awaited
+  then: { type: 'string', multiple: true },
 } as const;
+
+/** `-c key=value` pairs for this pattern, and `-c next.key=value` pairs for chained ones. */
+function splitContext(
+  pairs: readonly string[] | undefined,
+  then: readonly string[],
+): { own: string[]; chained: Map<string, string[]> } {
+  const own: string[] = [];
+  const chained = new Map<string, string[]>();
+  for (const pair of pairs ?? []) {
+    const dot = pair.indexOf('.');
+    const name = dot > 0 ? pair.slice(0, dot) : '';
+    if (then.includes(name) && dot < pair.indexOf('=')) {
+      chained.set(name, [...(chained.get(name) ?? []), pair.slice(dot + 1)]);
+    } else own.push(pair);
+  }
+  return { own, chained };
+}
+
+const thenList = (raw: readonly string[] | undefined) =>
+  (raw ?? [])
+    .flatMap((t) => t.split(','))
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+/**
+ * Play a score, then each chained pattern while runs succeed: the next one's
+ * goal input gets what the previous run delivered (core handoffContext).
+ */
+async function playChain(
+  first: { score: ExecutableScore; pattern: Pattern },
+  then: readonly string[],
+  cwd: string,
+  o: PlayOptions,
+  chained: ReadonlyMap<string, string[]> = new Map(),
+): Promise<Performance> {
+  let current = first;
+  let perf = await play(current.score, current.pattern, cwd, o);
+  for (const name of then) {
+    if (perf.outcome !== 'success') break;
+    const pattern = (await allPatterns(cwd)).find((p) => p.name === name);
+    if (!pattern) throw new Error(`--then: unknown pattern '${name}'`);
+    const given = parseContext(chained.get(name) ?? [], pattern);
+    const context = handoffContext(pattern, { score: current.score, performance: perf }, given);
+    const score = compileScore(pattern, {
+      goal: current.score.goal,
+      context,
+      complexity: current.score.complexity,
+      improvisation: current.score.improvisation,
+    });
+    console.log(
+      `\n${c.bold(`♪ then ${name}`)} ${c.dim(`with what ${current.pattern.name} found`)}`,
+    );
+    current = { score, pattern };
+    perf = await play(score, pattern, cwd, o);
+  }
+  return perf;
+}
 
 type ScoreArgs = ReturnType<
   typeof parseArgs<{ options: typeof SCORE_OPTIONS; allowPositionals: true }>
@@ -346,9 +406,8 @@ async function scoreFromArgs(
     console.error(`--provider must be scripted or copilot`);
     return 1;
   }
-  const context = values.context
-    ? parseContext(values.context, pattern)
-    : (pattern.demo?.context ?? {});
+  const { own } = splitContext(values.context, thenList(values.then));
+  const context = own.length > 0 ? parseContext(own, pattern) : (pattern.demo?.context ?? {});
   const complexity = complexityOf(values.complexity);
   const improvisation = levelOf(values.improvisation);
   let score;
@@ -379,15 +438,22 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
     ? createInterface({ input: process.stdin, output: process.stdout })
     : undefined;
   try {
-    const perf = await play(score, pattern, cwd, {
-      providerName: provider,
-      ...(values.model ? { model: values.model } : {}),
-      autoApprove: values['auto-approve'],
-      step: values.step,
-      breakpoints: values.break ?? [],
-      save: !values['no-save'],
-      ...(rl ? { rl } : {}),
-    });
+    const then = thenList(values.then);
+    const perf = await playChain(
+      { score, pattern },
+      then,
+      cwd,
+      {
+        providerName: provider,
+        ...(values.model ? { model: values.model } : {}),
+        autoApprove: values['auto-approve'],
+        step: values.step,
+        breakpoints: values.break ?? [],
+        save: !values['no-save'],
+        ...(rl ? { rl } : {}),
+      },
+      splitContext(values.context, then).chained,
+    );
     return perf.outcome === 'failed' ? 2 : 0;
   } finally {
     rl?.close();
@@ -585,6 +651,7 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
     ...(rl ? { rl } : {}),
   };
   let child: { score: ExecutableScore; pattern: Pattern } | undefined;
+  let then: string[] = [];
   try {
     const perf = await play(score, maestro, cwd, {
       ...o,
@@ -598,6 +665,7 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
     });
     if (perf.outcome !== 'success') return 2;
     if (!child) return 1;
+    then = maestroThen(perf.finalState);
     if (values.save) {
       console.log(
         c.dim(
@@ -613,8 +681,10 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
         console.log(`  ${n.id.padEnd(14)} ${n.kind.padEnd(10)} ${n.label}`);
       return 0;
     }
-    console.log(`\n${c.bold('♪ performing the composed score')}`);
-    const childPerf = await play(child.score, child.pattern, cwd, o);
+    console.log(
+      `\n${c.bold('♪ performing the composed score')}${then.length ? c.dim(`, then ${then.join(', ')}`) : ''}`,
+    );
+    const childPerf = await playChain(child, then, cwd, o);
     return childPerf.outcome === 'failed' ? 2 : 0;
   } finally {
     rl?.close();

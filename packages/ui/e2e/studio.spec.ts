@@ -170,3 +170,16 @@ test('a stuck AI step waits for you: retry with a hint and a smarter tier, then 
   await expect(page.getByTestId('run-status')).toHaveText('failed')
   await expect(page.getByTestId('timeline-events')).toContainText('pick: stopped by studio')
 })
+
+test('then run: a successful run hands its result to the next pattern, and the studio follows it', async ({ page }) => {
+  await open(page, 'investigate')
+  await page.getByLabel('auto-approve').check()
+  await page.getByLabel('then run').selectOption('fix')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('notice')).toContainText("investigate finished. Now playing 'fix' with what it found.")
+  await expect(page.locator('.tb-title')).toContainText('fix')
+  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await expect(page.getByTestId('run-result')).toContainText("reached end 'fixed'")
+  await page.getByRole('button', { name: 'State' }).click()
+  await expect(page.getByTestId('state-issue')).toContainText('What the investigate run found')
+})

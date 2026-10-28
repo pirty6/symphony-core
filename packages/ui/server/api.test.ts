@@ -159,6 +159,20 @@ describe('studio api', () => {
     expect(((await none.json()) as { error: string }).error).toMatch(/no stuck step is waiting/)
   })
 
+  it('chains a second pattern after a successful run, with what the first found', async () => {
+    const { investigate } = await import('../../../src/patterns/index.js')
+    const start = (await (
+      await post('/api/runs', { pattern: data(investigate), goal: 'g', context: investigate.demo!.context, provider: 'scripted', autoApprove: true, chain: ['fix'] })
+    ).json()) as { runId: string }
+    const first = await readSse(await fetch(`${base}/api/runs/${start.runId}/events`))
+    const next = first.find((m) => m.type === 'next') as { runId: string; pattern: { name: string }; context: { issue: string } }
+    expect(next.pattern.name).toBe('fix')
+    expect(next.context.issue).toContain('What the investigate run found')
+    const second = await readSse(await fetch(`${base}/api/runs/${next.runId}/events`))
+    expect(second.at(-1)).toMatchObject({ type: 'status', status: 'done' })
+    expect(second.some((m) => m.type === 'next')).toBe(false)
+  })
+
   it('refuses cross-site and non-JSON POSTs', async () => {
     const plain = await fetch(`${base}/api/patterns`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' })
     expect(plain.status).toBe(403)

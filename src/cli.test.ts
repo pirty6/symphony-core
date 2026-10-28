@@ -139,6 +139,33 @@ describe('main', () => {
     expect(unattendedApproval('scripted')).toBe('demo-answer');
   });
 
+  it('chains patterns with --then: the next gets what the previous found', async () => {
+    expect(
+      await main(
+        [
+          'run',
+          'investigate',
+          '--then',
+          'fix',
+          '-c',
+          'question=Why?',
+          '-c',
+          'fix.hint=look at paginate',
+          '--auto-approve',
+        ],
+        cwd,
+      ),
+    ).toBe(0);
+    expect(plain()).toMatch(/♪ then fix with what investigate found/);
+    const saved = [...plain().matchAll(/saved (\S+\.json)/g)].map((m) => m[1]!);
+    expect(saved).toHaveLength(2);
+    const second = JSON.parse(readFileSync(saved[1]!, 'utf8'));
+    expect(second.score.pattern).toBe('fix');
+    expect(second.score.context.hint).toBe('look at paginate');
+    expect(second.score.context.issue).toMatch(/^Why\?\n\n## What the investigate run found/);
+    expect(second.performance.outcome).toBe('success');
+  });
+
   it('reports compile errors for missing context', async () => {
     expect(await main(['run', 'review', '-c', 'target=', '--no-save'], cwd)).toBe(1);
     expect(out).toMatch(/missing required context 'target'/);

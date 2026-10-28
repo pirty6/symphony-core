@@ -11,6 +11,7 @@
  *   GET  /api/runs/:id/events              SSE: engine + provider + status messages
  *   POST /api/runs/:id/control {action}    pause | resume | step | stop | breakpoints | stepMode
  *   POST /api/runs/:id/approval {approved, updates, scripted}
+ *   POST /api/runs {…, chain: [pattern…]}: patterns to play after it with its result
  *   POST /api/runs/:id/recovery {action: retry|stop, hint?, complexity?}  (a stuck AI step)
  *   GET  /api/saved                        saved runs
  *   GET  /api/saved/file?path=             saved run + integrity + replay check
@@ -24,6 +25,7 @@ import { engineNote } from '../../../src/core/migrate.js'
 import { replayPerformance, restoreEngine } from '../../../src/core/replay.js'
 import { isImprovisation, playsFromRepertoire } from '../../../src/core/jazz.js'
 import type { Complexity, ExecutableScore, Pattern } from '../../../src/core/types.js'
+import { chainNext } from '../../../src/runtime/chain.js'
 import { concertNext } from '../../../src/runtime/concert.js'
 import { validatePattern } from '../../../src/core/validate.js'
 import { PATTERNS } from '../../../src/patterns/index.js'
@@ -164,6 +166,8 @@ export function createApi(opts: ApiOptions) {
     readonly stepMode: boolean
     readonly breakpoints: string[]
     readonly restore?: RunOptions['restore']
+    /** Patterns to play after this one, each with what the previous found. */
+    readonly chain?: readonly string[]
   }
 
   async function launch(score: ExecutableScore, pattern: Pattern, settings: Settings): Promise<Run> {
@@ -175,7 +179,13 @@ export function createApi(opts: ApiOptions) {
     const next = concertNext({
       maestroScore: score,
       // The composed score plays with the same settings, starting fresh (no breakpoints).
-      start: async (s, p) => (await launch(s, p, { ...settings, breakpoints: [] })).id,
+      start: async (s, p, chain) => (await launch(s, p, { ...settings, breakpoints: [], chain })).id,
+    }) ?? chainNext({
+      chain: settings.chain ?? [],
+      score,
+      library: async () => (await library()).map((l) => l.pattern),
+      improvisation: score.improvisation,
+      start: async (s, p, rest) => (await launch(s, p, { ...settings, breakpoints: [], chain: rest })).id,
     })
     const run = new Run({
       id,
@@ -215,6 +225,7 @@ export function createApi(opts: ApiOptions) {
       autoApprove: body.autoApprove === true,
       stepMode: body.stepMode === true,
       breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
+      chain: Array.isArray(body.chain) ? body.chain.filter((t): t is string => typeof t === 'string' && t !== 'maestro') : [],
     })
   }
 

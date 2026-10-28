@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { runScripted } from '../core/scripted.js';
 import type { DemoScript, Pattern } from '../core/types.js';
-import { analyze, composedScore, maestro } from './index.js';
+import { analyze, composedScore, maestro, maestroThen } from './index.js';
 
 const demo = maestro.demo!;
 const nodesRun = (r: ReturnType<typeof runScripted>) => r.state.steps.map((s) => s.nodeId);
@@ -21,12 +21,39 @@ function run(
   return { score, r: runScripted(score, script, { at: 't' }) };
 }
 
-const classifyAs = (chosen: string, complexity: number) => () => ({
-  updates: { chosen, complexity, classifyReason: 'test' },
-  verdict: { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' },
-});
+const classifyAs =
+  (chosen: string, complexity: number, thenPattern = '') =>
+  () => ({
+    updates: { chosen, complexity, classifyReason: 'test', thenPattern },
+    verdict: { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' },
+  });
 
 describe('maestro', () => {
+  it('may chain a second pattern after the composed score, never the same one or itself', () => {
+    // The demo library holds fix and analyze.
+    const { r } = run('Find out why signups dropped, then fix it', {
+      classify: classifyAs('analyze', 1, 'fix'),
+    });
+    expect(r.state.outcome).toBe('success');
+    expect(maestroThen(r.state.state)).toEqual(['fix']);
+    let n = 0;
+    const bad = run('fix it', {
+      classify: () => {
+        const answers = [
+          classifyAs('fix', 1, 'fix')(),
+          classifyAs('fix', 1, 'maestro')(),
+          classifyAs('fix', 1)(),
+        ];
+        return answers[n++]!;
+      },
+    });
+    const rejected = bad.r.state.events.flatMap((e) =>
+      e.type === 'response-rejected' ? [e.errors.join()] : [],
+    );
+    expect(rejected.filter((e) => /thenPattern must be/.test(e))).toHaveLength(2);
+    expect(maestroThen(bad.r.state.state)).toEqual([]);
+  });
+
   it('tier 3 debates with proposer, skeptic and pragmatist, then composes the fix score', () => {
     const { score, r } = run('Fix the flaky login test that fails on CI');
     expect(r.state.outcome).toBe('success');

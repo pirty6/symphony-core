@@ -5,14 +5,18 @@
  */
 import { CompileError } from '../core/compile.js';
 import type { ExecutableScore, Improvisation, Pattern, Performance } from '../core/types.js';
-import { composedScore } from '../patterns/maestro.js';
+import { composedScore, maestroThen } from '../patterns/maestro.js';
 import type { NextPerformance } from './driver.js';
 
 export function concertNext(opts: {
   readonly maestroScore: ExecutableScore;
   readonly improvisation?: Improvisation;
-  /** Start the composed score; returns the new run id. */
-  readonly start: (score: ExecutableScore, pattern: Pattern) => Promise<string>;
+  /** Start the composed score, then the patterns to chain after it; returns the new run id. */
+  readonly start: (
+    score: ExecutableScore,
+    pattern: Pattern,
+    then: readonly string[],
+  ) => Promise<string>;
 }): ((performance: Performance) => Promise<NextPerformance | undefined>) | undefined {
   if (opts.maestroScore.pattern !== 'maestro') return undefined;
   return async (performance) => {
@@ -34,7 +38,7 @@ export function concertNext(opts: {
       };
     }
     if (!composed) return undefined;
-    const runId = await opts.start(composed.score, composed.pattern);
+    const runId = await opts.start(composed.score, composed.pattern, maestroThen(state));
     return { pattern: composed.pattern, context: composed.score.context, runId };
   };
 }

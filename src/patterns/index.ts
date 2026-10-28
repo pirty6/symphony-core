@@ -3,7 +3,7 @@ import { fix } from './fix.js';
 import { hangman } from './hangman.js';
 import { analyze } from './analyze.js';
 import { investigate } from './investigate.js';
-import { composedScore, maestro } from './maestro.js';
+import { composedScore, maestro, maestroThen } from './maestro.js';
 import { refactor } from './refactor.js';
 import { review } from './review.js';
 
@@ -44,4 +44,14 @@ export function routeMatches(prompt: string, library: readonly Pattern[]): Patte
     .map((m) => m.pattern);
 }
 
-export { analyze, composedScore, fix, hangman, investigate, maestro, refactor, review };
+export {
+  analyze,
+  composedScore,
+  fix,
+  hangman,
+  investigate,
+  maestro,
+  maestroThen,
+  refactor,
+  review,
+};
