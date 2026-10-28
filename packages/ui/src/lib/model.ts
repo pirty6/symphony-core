@@ -6,7 +6,7 @@
 import type { Edge, Node } from '@xyflow/react'
 import { graphToPattern, groupFrames, phaseView, readsOf, writesOf, type VisualGraph } from '@core/graph'
 import { EMPTY_FRAME, framesOf, reduceFrame, type Frame, type NodeStatus } from '@core/replay'
-import type { NodeKind, Pause, Performance, Role, SavedRun, ScoreEdge, ScoreGroup, ScoreNode, StateField } from '@core/types'
+import type { AiTranscript, NodeKind, Pause, Performance, Role, SavedRun, ScoreEdge, ScoreGroup, ScoreNode, StateField } from '@core/types'
 import type { NextPerformance, PatternData, RunMessage } from './api'
 
 // ── canvas ──────────────────────────────────────────────────────────
@@ -311,6 +311,14 @@ export function applyMessage(v: RunView, m: RunMessage): RunView {
   }
 }
 
+/** Who played a recorded answer: tier, requested model, account, SDK and sampling. */
+export function musicianLines(t: AiTranscript): string[] {
+  const m = t.musician
+  if (!m) return []
+  const asked = m.requestedModel ? `asked for ${m.requestedModel}${m.effort ? ` (${m.effort})` : ''}` : 'default model'
+  return [[`tier ${m.tier}`, asked, m.account, m.sdk].filter(Boolean).join(' · '), `sampling: ${m.sampling}`]
+}
+
 export function replayView(run: SavedRun, check: { reproduced: boolean; issues: readonly string[]; file?: string }): RunView {
   const perf = run.performance
   const frames = framesOf(perf.events)
@@ -332,7 +340,7 @@ export function replayView(run: SavedRun, check: { reproduced: boolean; issues: 
           messages: [],
           tools: t.toolCalls.map((c, j) => ({ id: String(j), name: c.name, ...(c.ok !== undefined ? { ok: c.ok } : {}), args: c.args })),
           permissions: [],
-          info: [`take ${k + 1} · ${t.provider}${t.model ? ` · ${t.model}` : ''}`],
+          info: [`take ${k + 1} · ${t.provider}${t.model ? ` · ${t.model}` : ''}`, ...musicianLines(t)],
         }),
       )
       streams.push({
@@ -347,7 +355,7 @@ export function replayView(run: SavedRun, check: { reproduced: boolean; issues: 
         permissions: [],
         ...(a.t?.takes?.length ? { take: 0 } : {}),
         info: a.t
-          ? [`${a.t.fromRepertoire ? `🎼 replayed from ${a.t.fromRepertoire} · ` : ''}${a.t.provider}${a.t.model ? ` · ${a.t.model}` : ''}`]
+          ? [`${a.t.fromRepertoire ? `🎼 replayed from ${a.t.fromRepertoire} · ` : ''}${a.t.provider}${a.t.model ? ` · ${a.t.model}` : ''}`, ...musicianLines(a.t)]
           : [],
         ...(a.result ? { result: a.result } : {}),
         ...(a.rejected ? { rejected: a.rejected } : {}),

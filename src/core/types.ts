@@ -266,6 +266,22 @@ export interface AiTranscript {
   readonly takes?: readonly AiTranscript[];
   /** Set when the answer was replayed from a recorded performance (classical). */
   readonly fromRepertoire?: string;
+  /** Who played: enough to tell whether two answers came from the same musician. */
+  readonly musician?: Musician;
+}
+
+export interface Musician {
+  /** Complexity tier the step asked for. */
+  readonly tier: Complexity;
+  /** Model the tier (or MODEL) resolved to; the provider's default when absent. */
+  readonly requestedModel?: string;
+  readonly effort?: string;
+  /** Account the provider used, e.g. 'token' or 'signed-in user'. */
+  readonly account?: string;
+  /** Provider SDK and version, e.g. '@github/copilot-sdk@1.0.6'. */
+  readonly sdk?: string;
+  /** Sampling settings, or why they are not recorded. */
+  readonly sampling: string;
 }
 
 // ── Engine: pauses and resolutions ─────────────────────────────────

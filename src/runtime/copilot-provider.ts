@@ -7,6 +7,9 @@
  *   - deltas, reasoning, tool calls and permission decisions stream to the UI
  *   - AbortSignal aborts the live session (stop mid-node)
  */
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { CopilotClient, defineTool, ToolSet } from '@github/copilot-sdk';
 import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
 import { webSearch, type SearchResult } from './web-search.js';
@@ -106,6 +109,30 @@ interface SessionRun {
   readonly signal: AbortSignal;
   readonly onEvent: (e: ProviderEvent) => void;
 }
+
+/** '@github/copilot-sdk@x.y.z', read once from the installed package. */
+const SDK = (() => {
+  try {
+    let dir = dirname(fileURLToPath(import.meta.resolve('@github/copilot-sdk')));
+    for (let i = 0; i < 4; i++, dir = dirname(dir)) {
+      try {
+        const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+          name?: string;
+          version?: string;
+        };
+        if (pkg.name === '@github/copilot-sdk') return `${pkg.name}@${pkg.version}`;
+      } catch {
+        // keep walking up
+      }
+    }
+  } catch {
+    // not resolvable (e.g. bundled): leave it out
+  }
+  return undefined;
+})();
+
+export const SAMPLING_NOTE =
+  'provider default: the Copilot SDK does not expose seed or temperature; use classical mode (recorded answers) for identical notes';
 
 /** In-session retries of a malformed submit_result before the engine judges it. */
 const MAX_SUBMIT_CORRECTIONS = 2;
@@ -409,6 +436,14 @@ export class CopilotProvider implements Provider {
         output: out.output,
         toolCalls: out.toolCalls,
         ...(startedAt ? { startedAt, completedAt: this.opts.clock!() } : {}),
+        musician: {
+          tier: pause.complexity,
+          ...(tier.model ? { requestedModel: tier.model } : {}),
+          ...(tier.effort ? { effort: tier.effort } : {}),
+          account: this.usingSignedInUser ? 'signed-in user' : 'token',
+          ...(SDK ? { sdk: SDK } : {}),
+          sampling: SAMPLING_NOTE,
+        },
       },
     };
   }

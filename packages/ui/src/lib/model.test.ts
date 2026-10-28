@@ -17,6 +17,7 @@ import {
   newNode,
   phaseDisplay,
   replayView,
+  musicianLines,
   resultMarkdown,
   runResult,
   startLive,
@@ -108,6 +109,16 @@ describe('phases on the canvas', () => {
     const { demo: _h, ...plain } = hangman
     const f = toFlow(patternToGraph(hangman))
     expect(phaseDisplay(plain, f, new Set(), EMPTY_FRAME).nodes).toHaveLength(f.nodes.length)
+  })
+})
+
+describe('musician', () => {
+  it('summarises who played a recorded answer', () => {
+    const t = { provider: 'copilot', prompt: '', output: '', toolCalls: [] }
+    expect(musicianLines(t)).toEqual([])
+    expect(
+      musicianLines({ ...t, musician: { tier: 3, requestedModel: 'm', effort: 'high', account: 'token', sdk: 'sdk@1', sampling: 'default' } }),
+    ).toEqual(['tier 3 · asked for m (high) · token · sdk@1', 'sampling: default'])
   })
 })
 

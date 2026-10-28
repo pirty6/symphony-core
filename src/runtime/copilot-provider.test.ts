@@ -423,8 +423,16 @@ describe('CopilotProvider', () => {
         onEvent: (e) => events.push(e),
         ...extra,
       });
-    await go(1);
+    const first = await go(1);
     expect(sessions[0]!.cfg).toMatchObject({ model: 'claude-haiku-5.5', reasoningEffort: 'low' });
+    expect(first.transcript.musician).toEqual({
+      tier: 1,
+      requestedModel: 'claude-haiku-5.5',
+      effort: 'low',
+      account: 'signed-in user',
+      sdk: expect.stringMatching(/^@github\/copilot-sdk@\d+\.\d+\.\d+/),
+      sampling: expect.stringMatching(/does not expose seed or temperature/),
+    });
     await go(4);
     expect(sessions[1]!.cfg.model).toBe('claude-opus-5.5');
     expect(sessions[1]!.cfg.reasoningEffort).toBeUndefined();
