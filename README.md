@@ -102,6 +102,7 @@ npm run cli -- rehearse analyze -n 5 --provider copilot -i swing   # how determi
 npm run cli -- resume .symphony/runs/fix/<file>.json # continue an interrupted or stopped run
 npm run cli -- fork .symphony/runs/fix/<file>.json --at 4   # keep steps 1-3, play the rest again
 npm run cli -- runs [--all]                          # saved runs (in-progress = resumable); --all adds demo runs
+npm run cli -- runs --prune [--dry-run]              # delete old demo runs, compact old runs (see Cleaning up)
 ```
 
 ## Concepts
@@ -166,7 +167,7 @@ state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= &&
 | Every AI response is validated | `validateNodeResult`: verdict shape, typed `writes`, no undeclared keys. Invalid answers are re-asked with the errors (bounded `retries`), then the run fails. |
 | Never repeat `(moveType, targetSite, stateHash)` | The engine refuses a repeated move; `stateHash` covers run state plus a git workspace fingerprint. |
 | Every loop terminates | Per-node `maxVisits` and per-score `maxSteps`. |
-| Assessors are read-only | Permission policy in `src/runtime/provider.ts`: reads and URLs allowed; shell only for allowlisted read-only commands (`git diff/log/show/blame`, `gh issue/pr/run/search view\|list`, `gh api` GETs, `grep`, `ls`, ...); loops and conditions (`for`/`while`/`if`) allowed when every command inside them is; MCP only for read-only tools; writes and command substitutions refused, and output may only be redirected to `/dev/null` or another stream. |
+| Assessors are read-only | Permission policy in `src/runtime/provider.ts`: reads and URLs allowed; shell only for allowlisted read-only commands (`git diff/log/show/blame`, `gh issue/pr/run/search view\|list`, `gh api` GETs, `grep`, `ls`, ...); loops and conditions (`for`/`while`/`if`) allowed when every command inside them is; MCP only for read-only tools; command substitutions (`$(…)`, backticks) only when every command inside them is read-only; `NAME=value` alone, or before `echo`/`printf`/`test`; writes refused, and output may only be redirected to `/dev/null` or another stream. |
 | Nothing is skipped | Acceptance checks reject answers that leave out items (files, sources, gaps); the engine, not the AI, owns the work queues. |
 | Stale or duplicate input is ignored | Every resolution must echo the open `pauseId`. |
 | Runs are reproducible | `replayPerformance` re-runs the engine on recorded answers and diffs it. |
@@ -220,7 +221,19 @@ replayable:
 ### Complexity → model
 
 Each agent call uses the model of its tier, with reasoning effort when the model supports it.
-A node may pin its tier; otherwise a state field `complexity` (the maestro's) or the score's is used.
+
+**Where the run's complexity comes from.** If you choose one (toolbar, `--complexity`, or the
+maestro's classification), it is used. Otherwise it is **auto** (`complexity = 0`): the
+hypotheses proposer of investigate, fix and implement rates the problem 1-4 with a rubric
+(1 = one obvious place, 2 = a few places and some judgement, 3 = cross-cutting, ambiguous or needs
+experiments, 4 = novel or high-stakes), and an `applyRating` step sets it
+(`src/patterns/phases/complexity.ts`). So a harder question gets a bigger model *and* a deeper
+debate (skeptic at ≥2, pragmatist at ≥3, second investigator at 4). Steps before the rating, and
+patterns without one (refactor, review, analyze), play at tier 2.
+
+**Per step.** A node may pin its tier (`complexity`) or shift the run's tier (`complexityShift`,
+-3..3, clamped to 1-4): triage and listing play one tier cheaper, answers, diagnoses, designs and
+debaters one tier smarter.
 
 | Tier | Default model (Copilot) |
 |---|---|
@@ -230,7 +243,17 @@ A node may pin its tier; otherwise a state field `complexity` (the maestro's) or
 | 4 novel | `claude-opus-5.5` (xhigh) |
 
 Override with `SYMPHONY_TIERS="1=claude-haiku-4.5,3=gpt-6.1-sol:high"`. Unavailable models fall
-back to your default model with a note. `MODEL`/`COPILOT_MODEL` force one model for every tier.
+back to your default model with a note. `MODEL`/`COPILOT_MODEL` force one model for every tier
+(leave them unset to use the tiers).
+
+### Tokens and prompt size
+
+Copilot reports token usage per call; each AI transcript records it (`usage`), and the CLI, the
+studio's summary line and the MCP `get_run` show the run's total (calls, input, output, cached).
+Answers replayed from the repertoire cost 0. Prompts send each step only what it `reads`: the goal
+is not repeated when it is one of the inputs, context keys already in the input are dropped, and
+loops read only what is new (investigate's deep reads don't resend every earlier finding). Prompt
+wording is not part of a move's identity, so trimming never breaks Classical replay.
 
 ### Classical to jazz: the improvisation knob
 
@@ -300,6 +323,20 @@ npm run cli -- run investigate -c question="Why do runs replay exactly?" --provi
 Runs are saved to `.symphony/runs`, or to `SYMPHONY_RUNS_DIR` when it is set. The test suites
 point it at a temporary folder, so their runs never reach your lists.
 
+### Cleaning up
+
+- **Scratch**: each real run gets its own `.symphony/scratch/<run>` folder; executors are told to
+  put temporary scripts and output there, and it is deleted when the run ends (success, failure or
+  stop). `SYMPHONY_KEEP_SCRATCH=1` keeps it for debugging.
+- **Retention**, once a day by itself (`SYMPHONY_RETENTION=off` disables it), or on demand with
+  `npm run cli -- runs --prune [--dry-run]` or the 🧹 button next to Saved runs:
+
+  | What | When | Then |
+  |------|------|------|
+  | Offline-demo runs | older than 7 days | deleted |
+  | Real runs | older than 30 days | **compacted**: events, per-step changes and inputs, and the AI's prompt and output text are dropped; every answer, hash, decision, who answered and token usage are kept. Only if the run still replays exactly; opening it rebuilds its timeline by replay. |
+  | Scratch folders left by a crashed run | older than 1 day | deleted |
+
 ## Use it from VS Code chat and Copilot Studio
 
 Symphony is also an MCP server (`src/mcp-server.ts`) with the same pipeline as tools: `maestro`,
@@ -348,14 +385,14 @@ so you can check the URL. Then, in Copilot Studio:
 4. Paste [integrations/copilot-studio/instructions.md](integrations/copilot-studio/instructions.md)
    into the agent's instructions.
 
-Remote callers are read-only. Patterns that edit files and run tests (fix, refactor) are refused,
+Remote callers are read-only. Patterns that edit files and run tests (fix, refactor, implement) are refused,
 and other executor steps (investigate's experiments) play with read-only permissions. To allow
 edits on the host, set `SYMPHONY_ALLOW_EDITS=1`. Symphony's own server is never offered to its AI
 steps, so pipelines don't nest.
 
-## Fix and refactor
+## Fix, refactor and implement
 
-Both patterns end with the same shared **edit and verify** phase
+All three end with the same shared **edit and verify** phase
 (`src/patterns/phases/editVerify.ts`): the executor edits; the **engine** captures the diff
 (`git.diff`) and runs the tests, and the lint command if you give one (`tests.run`). "Tests
 passed" is a fact, never the AI's report. The test command is a run input (`testCommand`) or the
@@ -375,6 +412,16 @@ hash identically. A failure is triaged before retrying:
 - **refactor** = a green baseline + a plan + edit and verify. It will not start on red tests;
   the plan lists the behaviour that must not change and the tests that prove it; bugs noticed on
   the way go to `noticedBugs` instead of being fixed (that would change behaviour).
+- **implement** = a green baseline + competing approaches (including "it already exists") +
+  evidence from the code + a **design with acceptance criteria** and the tests that will prove
+  them, which the skeptic attacks and you approve + edit and verify (a wrong design goes back to
+  exploring) + an **acceptance review**: passing tests are not enough; every criterion must be MET
+  with evidence (a test or the code in the diff), and unmet ones go back to editing up to
+  `maxReviews` (2) times, else the run ends partial.
+
+```bash
+npm run cli -- run implement -c request="Add a --json flag to the list command" --provider copilot
+```
 
 **Chaining**: one pattern's result feeds the next pattern's goal input (`core/chain.ts`):
 `--then` in the CLI, **Then run** in the studio, or the maestro when a request asks for two shapes
