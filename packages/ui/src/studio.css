@@ -1082,3 +1082,22 @@ pre {
   color: var(--accent);
   word-break: break-all;
 }
+.fn-origin {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.fn-origin.origin-live {
+  border-color: var(--executor);
+}
+.fn-origin.origin-repertoire {
+  border-color: var(--approval);
+}
+.origin-summary {
+  font-size: 12px;
+  margin-top: 4px;
+}

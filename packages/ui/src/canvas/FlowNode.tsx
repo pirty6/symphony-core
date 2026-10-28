@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { KIND_LABEL, type FlowNode as FlowNodeType } from '../lib/model'
+import { KIND_LABEL, ORIGIN_LABEL, type FlowNode as FlowNodeType } from '../lib/model'
 
 const ICON: Record<string, string> = {
   start: '▶',
@@ -68,6 +68,11 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
       <div className="fn-kind">
         {n.kind === 'agent' ? `${n.role} · AI` : KIND_LABEL[n.kind]} · <code>{id}</code>
       </div>
+      {data.origin && n.kind === 'agent' && (
+        <div className={`fn-origin origin-${data.origin.origin}`} title={data.origin.detail} data-testid={`origin-${id}`}>
+          {ORIGIN_LABEL[data.origin.origin]}
+        </div>
+      )}
       {n.kind === 'agent' && (
         <>
           <p className="fn-text">{n.directive}</p>

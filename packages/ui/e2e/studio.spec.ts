@@ -79,6 +79,8 @@ test('bebop plays takes that a bandleader merges', async ({ page }) => {
   await page.getByTestId('node-collect').click()
   await page.getByRole('button', { name: 'AI output' }).click()
   await expect(page.getByTestId('ai-takes').locator('summary')).toHaveText(['Take 1', 'Take 2', '🎺 Bandleader: merged answer'])
+  await expect(page.getByTestId('origin-summary')).toContainText('with takes')
+  await expect(page.getByTestId('origin-collect')).toHaveText('📜 scripted')
 })
 
 test('phases collapse into one node, light up while running and open into their steps', async ({ page }) => {

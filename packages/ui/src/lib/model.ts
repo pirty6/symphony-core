@@ -4,6 +4,7 @@
  * the canvas, inspector and timeline render.
  */
 import type { Edge, Node } from '@xyflow/react'
+import { originOf, type Origin, type StepOrigin } from '@core/compare'
 import { graphToPattern, groupFrames, phaseView, readsOf, writesOf, type VisualGraph } from '@core/graph'
 import { EMPTY_FRAME, framesOf, reduceFrame, type Frame, type NodeStatus } from '@core/replay'
 import type { AiTranscript, NodeKind, Pause, Performance, Role, SavedRun, ScoreEdge, ScoreGroup, ScoreNode, StateField } from '@core/types'
@@ -20,6 +21,8 @@ export type FlowNodeData = {
   breakpoint?: boolean
   issues?: string[]
   gate?: 'before' | 'after'
+  /** Who played this node's latest step in a finished run. */
+  origin?: StepOrigin
   onToggleBreakpoint?: (id: string) => void
 }
 export type FlowNode = Node<FlowNodeData>
@@ -399,6 +402,7 @@ export function decorate(
     breakpoints: ReadonlySet<string>
     issues: ReadonlyMap<string, string[]>
     gate?: RunView['gate']
+    origins?: ReadonlyMap<string, StepOrigin>
     onToggleBreakpoint?: (id: string) => void
   },
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
@@ -416,6 +420,7 @@ export function decorate(
           breakpoint: opts.breakpoints.has(n.id),
           ...(issues ? { issues } : { issues: undefined }),
           ...(opts.gate?.nodeId === n.id ? { gate: opts.gate.phase } : { gate: undefined }),
+          origin: opts.origins?.get(n.id),
           ...(opts.onToggleBreakpoint ? { onToggleBreakpoint: opts.onToggleBreakpoint } : {}),
         },
       }
@@ -477,6 +482,38 @@ export function resultMarkdown(r: RunResult, title: string): string {
     return `## ${k}\n\n${text}`
   })
   return [`# ${title}`, ...body].join('\n\n') + '\n'
+}
+
+// ── origins ─────────────────────────────────────────────────────────
+
+/** Who played each node's latest step, up to a step number. */
+export function originsByNode(perf: Performance | undefined, upToStep = Infinity): Map<string, StepOrigin> {
+  const out = new Map<string, StepOrigin>()
+  for (const s of perf?.steps ?? []) if (s.step <= upToStep) out.set(s.nodeId, originOf(s))
+  return out
+}
+
+export const ORIGIN_LABEL: Record<Origin, string> = {
+  live: '🎷 live AI',
+  repertoire: '🎼 recorded answer',
+  script: '📜 scripted',
+  tool: '⚙ tool',
+  human: '✋ human',
+  engine: '♩ engine',
+}
+
+/** e.g. "12 live AI · 4 tool · 1 human · 30 engine · 3 AI steps with takes merged" */
+export function originSummary(perf: Performance): string {
+  const counts = new Map<Origin, number>()
+  let takes = 0
+  for (const s of perf.steps) {
+    const o = originOf(s)
+    counts.set(o.origin, (counts.get(o.origin) ?? 0) + 1)
+    if (s.transcript?.takes?.length) takes++
+  }
+  const order: Origin[] = ['live', 'repertoire', 'script', 'tool', 'human', 'engine']
+  const parts = order.filter((o) => counts.has(o)).map((o) => `${counts.get(o)} ${ORIGIN_LABEL[o].replace(/^\S+ /, '')}`)
+  return [...parts, ...(takes ? [`${takes} AI steps with takes merged`] : [])].join(' · ')
 }
 
 // ── phases ──────────────────────────────────────────────────────────

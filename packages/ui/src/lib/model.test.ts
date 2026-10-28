@@ -18,6 +18,8 @@ import {
   phaseDisplay,
   replayView,
   musicianLines,
+  originSummary,
+  originsByNode,
   resultMarkdown,
   runResult,
   startLive,
@@ -109,6 +111,20 @@ describe('phases on the canvas', () => {
     const { demo: _h, ...plain } = hangman
     const f = toFlow(patternToGraph(hangman))
     expect(phaseDisplay(plain, f, new Set(), EMPTY_FRAME).nodes).toHaveLength(f.nodes.length)
+  })
+})
+
+describe('origins', () => {
+  it('labels who played each node and summarises the run', async () => {
+    const { messages } = await liveMessages()
+    const done = messages.find((m) => m.type === 'performance')
+    const perf = done?.type === 'performance' ? done.performance : undefined
+    if (!perf) throw new Error('no performance')
+    const by = originsByNode(perf)
+    const agent = perf.steps.find((s) => s.kind === 'agent')!
+    expect(by.get(agent.nodeId)?.origin).toBe('script')
+    expect(originsByNode(perf, 0).size).toBe(0)
+    expect(originSummary(perf)).toMatch(/^\d+ scripted · .*\d+ engine$/)
   })
 })
 

@@ -31,6 +31,8 @@ import {
   fromFlow,
   metaOf,
   newNode,
+  originSummary,
+  originsByNode,
   phaseDisplay,
   resultMarkdown,
   runResult,
@@ -218,11 +220,14 @@ export default function Studio() {
     setTimeout(() => void fitView({ padding: 0.15, duration: 300 }), 50)
   }, [allOpen, phaseIds, fitView])
 
+  const origins = useMemo(() => originsByNode(view.performance, frame.step), [view.performance, frame.step])
+
   const display = useMemo(() => {
     const d = decorate(nodes, edges, frame, {
       breakpoints,
       issues: editable ? issues : new Map(),
       ...(view.gate ? { gate: view.gate } : {}),
+      origins,
       onToggleBreakpoint: toggleBreakpoint,
     })
     const writes = new Map(nodes.map((n) => [n.id, writesOf(n.data.node, { state: meta.state, nodes: [], edges: [], start: '' })]))
@@ -233,7 +238,7 @@ export default function Studio() {
       return size ? { ...n, measured: size } : n
     })
     return { ...shown, nodes: sized }
-  }, [nodes, edges, frame, breakpoints, editable, issues, view.gate, toggleBreakpoint, meta.state, pattern, expanded, openPhase, closePhase, phaseSizes])
+  }, [nodes, edges, frame, breakpoints, editable, issues, view.gate, origins, toggleBreakpoint, meta.state, pattern, expanded, openPhase, closePhase, phaseSizes])
 
   const onCanvasNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -438,6 +443,11 @@ export default function Studio() {
         {view.replay && (
           <div className={view.replay.reproduced ? 'ok' : 'issue'} data-testid="replay-check">
             {view.replay.reproduced ? '✓ verified: replaying recorded answers reproduces this run exactly' : `✘ not reproducible ${view.replay.issues.join('; ')}`}
+          </div>
+        )}
+        {view.performance && view.performance.steps.length > 0 && (
+          <div className="muted origin-summary" data-testid="origin-summary">
+            played by: {originSummary(view.performance)}
           </div>
         )}
         {result && <ResultPreview result={result} onOpen={() => setReading(true)} />}
