@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { main, parseContext } from './cli.js';
+import { main, parseContext, unattendedApproval } from './cli.js';
 import { fix, hangman } from './patterns/index.js';
 
 const cwd = mkdtempSync(join(tmpdir(), 'symphony-cli-'));
@@ -132,6 +132,11 @@ describe('main', () => {
     });
     out = '';
     expect(await main(['verify', forked], cwd)).toBe(0);
+  });
+
+  it('never approves for a real AI when nobody is at a terminal', () => {
+    expect(unattendedApproval('copilot')).toBe('stop');
+    expect(unattendedApproval('scripted')).toBe('demo-answer');
   });
 
   it('reports compile errors for missing context', async () => {

@@ -165,6 +165,15 @@ interface PlayOptions {
   readonly restore?: RunOptions['restore'];
 }
 
+/**
+ * What to do with an approval when nobody is at a terminal and --auto-approve was not given.
+ * The offline demo's answers are canned and edit nothing; a real AI's would let it act
+ * (e.g. edit files) without anyone deciding, so the run stops instead.
+ */
+export function unattendedApproval(provider: ProviderName): 'demo-answer' | 'stop' {
+  return provider === 'scripted' ? 'demo-answer' : 'stop';
+}
+
 function describeGate(state: Readonly<Record<string, unknown>>): string {
   const p = state.normalized as Pattern | undefined;
   if (!p?.nodes) return '';
@@ -251,6 +260,12 @@ async function play(
           ...(complexity && complexity !== pause.complexity ? { complexity } : {}),
           by: 'cli',
         });
+        return;
+      }
+      if (!rl && unattendedApproval(o.providerName) === 'stop') {
+        run.stop(
+          `'${pause?.nodeId ?? '?'}' needs your approval but there is no terminal: run it in a terminal, or pass --auto-approve`,
+        );
         return;
       }
       if (!rl || pause?.kind !== 'approval') {
