@@ -645,3 +645,46 @@ describe('scratch cleanup', () => {
     expect((await done).outcome).toBe('cancelled');
   });
 });
+
+describe('runs in their own worktree', () => {
+  it('brings the edits back when the run ends and records where they went', async () => {
+    const outcomes: string[] = [];
+    const saved: SavedRun[] = [];
+    const run = new Run({
+      score: fixScore,
+      provider: ScriptedProvider.forPattern(fix),
+      demo: fix.demo,
+      autoApprove: true,
+      clock,
+      onSave: async (r) => {
+        saved.push(r);
+        return 'f.json';
+      },
+      isolation: {
+        finish: async (outcome) => {
+          outcomes.push(outcome);
+          return { kind: 'applied', files: ['src/paginate.ts'] };
+        },
+      },
+    });
+    const perf = await run.start();
+    expect(outcomes).toEqual(['success']);
+    expect(perf.edits).toEqual({ kind: 'applied', files: ['src/paginate.ts'] });
+    expect(saved.at(-1)!.performance.edits).toEqual(perf.edits);
+    expect(replayPerformance(fixScore, perf).divergence.reproduced).toBe(true);
+  });
+
+  it('a failure to collect the edits is recorded, never fails the run', async () => {
+    const run = new Run({
+      score: fixScore,
+      provider: ScriptedProvider.forPattern(fix),
+      demo: fix.demo,
+      autoApprove: true,
+      clock,
+      isolation: { finish: () => Promise.reject(new Error('disk full')) },
+    });
+    const perf = await run.start();
+    expect(perf.outcome).toBe('success');
+    expect(perf.edits?.reason).toMatch(/disk full/);
+  });
+});

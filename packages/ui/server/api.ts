@@ -40,6 +40,7 @@ import {
   runtimeExtras,
   type RuntimeExtras,
 } from '../../../src/runtime/factory.js'
+import { isolate, editsFiles } from '../../../src/runtime/worktree.js'
 import { autoPrune, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
 
 export interface ApiOptions {
@@ -140,12 +141,12 @@ export function createApi(opts: ApiOptions) {
   let extras: Promise<RuntimeExtras> | undefined
   const runtime = () => (extras ??= runtimeExtras(workspace, opts.repoRoot, env))
 
-  function providerFor(name: unknown, model: unknown, pattern?: Pattern, mcpServers?: RuntimeExtras['mcpServers']) {
+  function providerFor(name: unknown, model: unknown, pattern?: Pattern, mcpServers?: RuntimeExtras['mcpServers'], dir = workspace) {
     if (!isProviderName(name)) throw new CompileError([{ message: 'provider must be scripted or copilot' }])
     return makeProvider({
       provider: name,
       ...(pattern ? { pattern } : {}),
-      workingDirectory: workspace,
+      workingDirectory: dir,
       delayMs: opts.scriptedDelayMs ?? 0,
       ...(mcpServers ? { mcpServers } : {}),
       ...envConfig(env),
@@ -167,8 +168,13 @@ export function createApi(opts: ApiOptions) {
   async function launch(score: ExecutableScore, pattern: Pattern, settings: Settings): Promise<Run> {
     const demo = pattern.demo ?? (await demoFor(pattern.name))
     const withDemo: Pattern = demo ? { ...pattern, demo } : pattern
-    const { tools, toolContext, mcpServers } = await runtime()
-    const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers)
+    const { tools, toolContext: shared, mcpServers } = await runtime()
+    // A real AI editing files plays in its own worktree, so runs can play at once.
+    const isolation =
+      settings.provider === 'copilot' && editsFiles(score) ? await isolate(workspace, score.pattern, env) : undefined
+    const dir = isolation?.dir ?? workspace
+    const toolContext = isolation ? { ...shared, workspace: dir } : shared
+    const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir)
     const id = `run-${Date.now().toString(36)}-${(counter++).toString(36)}`
     const next = concertNext({
       maestroScore: score,
@@ -193,8 +199,9 @@ export function createApi(opts: ApiOptions) {
       stepMode: settings.stepMode,
       breakpoints: settings.breakpoints,
       ...(provider.name === 'copilot'
-        ? { envHash: () => gitFingerprint(workspace), scratch: await runScratch(workspace) }
+        ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
         : {}),
+      ...(isolation ? { isolation } : {}),
       onSave: (r) => saveRun(runsDir, r),
       checkpoint: true,
       ...(settings.restore ? { restore: settings.restore } : {}),

@@ -20,6 +20,7 @@ import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
 import { handoffContext } from './core/chain.js';
 import { formatUsage, performanceUsage } from './core/usage.js';
+import { describeEdits } from './core/edits.js';
 import { agreement, compareRuns } from './core/compare.js';
 import { engineNote, RUN_SCHEMA_VERSION } from './core/migrate.js';
 import { replayPerformance, restoreEngine } from './core/replay.js';
@@ -36,6 +37,7 @@ import type {
 import { maestro, maestroThen, PATTERNS } from './patterns/index.js';
 import { concertNext } from './runtime/concert.js';
 import { loadRepertoire, runsDirFor } from './runtime/store.js';
+import { editsFiles, isolate } from './runtime/worktree.js';
 import { IMPROVISATION_LEVELS, isImprovisation, playsFromRepertoire } from './core/jazz.js';
 import { Run, type NextPerformance, type RunMessage, type RunOptions } from './runtime/driver.js';
 import { draftPattern } from './runtime/drafting.js';
@@ -202,14 +204,21 @@ async function play(
   const runsDir = runsDirFor(cwd);
   // A composed score has no demo script; reuse the library's when it is a known pattern.
   const demo = pattern.demo ?? (await allPatterns(cwd)).find((p) => p.name === pattern.name)?.demo;
+  // A real AI editing files plays in its own worktree; its edits come back when it ends.
+  const isolation =
+    o.providerName === 'copilot' && editsFiles(score)
+      ? await isolate(cwd, score.pattern)
+      : undefined;
+  const dir = isolation?.dir ?? cwd;
+  if (isolation) console.log(c.dim(`playing in its own worktree: ${dir}`));
   const run = new Run({
     score,
     tools: extras.tools,
-    toolContext: extras.toolContext,
+    toolContext: isolation ? { ...extras.toolContext, workspace: dir } : extras.toolContext,
     provider: makeProvider({
       provider: o.providerName,
       pattern: demo ? { ...pattern, demo } : pattern,
-      workingDirectory: cwd,
+      workingDirectory: dir,
       mcpServers: extras.mcpServers,
       ...envConfig(process.env),
       ...(o.model ? { model: o.model } : {}),
@@ -222,8 +231,9 @@ async function play(
     stepMode: o.step,
     breakpoints: o.breakpoints,
     ...(o.providerName === 'copilot'
-      ? { envHash: () => gitFingerprint(cwd), scratch: await runScratch(cwd) }
+      ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(cwd) }
       : {}),
+    ...(isolation ? { isolation } : {}),
     ...(o.save ? { onSave: (r) => saveRun(runsDir, r), checkpoint: true } : {}),
     ...(o.restore ? { restore: o.restore } : {}),
     ...(o.next ? { next: o.next } : {}),
@@ -299,6 +309,7 @@ async function play(
   if (!o.quiet) console.log(c.dim(`final state ${JSON.stringify(perf.finalState).slice(0, 2000)}`));
   const used = performanceUsage(perf).total;
   if (used.calls > 0) console.log(c.dim(`tokens: ${formatUsage(used)}`));
+  if (perf.edits) console.log(describeEdits(perf.edits));
   return perf;
 }
 

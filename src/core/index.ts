@@ -11,6 +11,7 @@ export * from './graph.js';
 export * from './draft.js';
 export * from './replay.js';
 export * from './compact.js';
+export * from './edits.js';
 export * from './jazz.js';
 export * from './compare.js';
 export * from './migrate.js';

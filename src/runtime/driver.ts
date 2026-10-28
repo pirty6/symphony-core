@@ -20,6 +20,8 @@ import { scriptedResolution } from '../core/scripted.js';
 import type {
   AgentPause,
   AiTranscript,
+  EditsResult,
+  PerformanceOutcome,
   ApprovalPause,
   ToolPause,
   Recovery,
@@ -106,6 +108,11 @@ export interface RunOptions {
    * deletes it when the run ends (see store.ts runScratch).
    */
   readonly scratch?: { readonly dir: string; readonly remove: () => Promise<void> };
+  /**
+   * The run plays in its own worktree (worktree.ts); `finish` brings its edits back
+   * to the workspace (or saves a patch) when the run ends.
+   */
+  readonly isolation?: { readonly finish: (outcome: PerformanceOutcome) => Promise<EditsResult> };
   /** Also save (through onSave) after every step, so an interrupted run can be resumed. */
   readonly checkpoint?: boolean;
   /** Continue from a restored engine (restoreEngine) instead of starting fresh. */
@@ -153,6 +160,7 @@ export class Run {
   private recoveryWaiter: ((a: RecoveryAnswer | undefined) => void) | undefined;
   private abort: AbortController | undefined;
   private finished: Promise<Performance> | undefined;
+  private edits: EditsResult | undefined;
 
   constructor(opts: RunOptions) {
     this.opts = opts;
@@ -465,7 +473,11 @@ export class Run {
   }
 
   private performance(): Performance {
-    const p = { ...toPerformance(this.engine), provider: this.opts.provider.name };
+    const p: Performance = {
+      ...toPerformance(this.engine),
+      provider: this.opts.provider.name,
+      ...(this.edits ? { edits: this.edits } : {}),
+    };
     return this.opts.restore ? { ...p, basedOn: this.opts.restore.basedOn } : p;
   }
 
@@ -511,6 +523,14 @@ export class Run {
       }
       this.apply(advance(this.score, this.engine, res));
       if (this.opts.checkpoint && this.engine.kind === 'running') await this.save();
+    }
+    if (this.opts.isolation) {
+      const outcome = this.performance().outcome;
+      this.edits = await this.opts.isolation.finish(outcome).catch((e: Error) => ({
+        kind: 'unchanged' as const,
+        files: [],
+        reason: `could not collect the edits: ${e.message}`,
+      }));
     }
     const performance = this.performance();
     let savedTo: string | undefined;

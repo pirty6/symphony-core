@@ -20,6 +20,7 @@ import { formatFieldInput, parseFieldInput } from '@core/schema'
 import type { Branch, ScoreEdge, ScoreNode } from '@core/types'
 import { validatePattern } from '@core/validate'
 import { formatUsage, performanceUsage } from '@core/usage'
+import { describeEdits } from '@core/edits'
 import { DataEdge } from './canvas/DataEdge'
 import { FlowNode } from './canvas/FlowNode'
 import { FrameNode, PhaseNode } from './canvas/PhaseNode'
@@ -518,6 +519,11 @@ export default function Studio() {
           <div className="muted origin-summary" data-testid="origin-summary">
             played by: {originSummary(view.performance)}
             {performanceUsage(view.performance).total.calls > 0 && <> · tokens: {formatUsage(performanceUsage(view.performance).total)}</>}
+          </div>
+        )}
+        {view.performance?.edits && (
+          <div className={view.performance.edits.kind === 'patch' ? 'issue' : 'muted'} data-testid="edits-result">
+            {describeEdits(view.performance.edits)}
           </div>
         )}
         {view.mode === 'replay' && view.replay?.file && (

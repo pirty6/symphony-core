@@ -11,6 +11,7 @@ import { compileScore } from '../core/compile.js';
 import { playsFromRepertoire } from '../core/jazz.js';
 import { zeroValue } from '../core/schema.js';
 import { formatUsage, performanceUsage } from '../core/usage.js';
+import { describeEdits } from '../core/edits.js';
 import type {
   Complexity,
   EngineEvent,
@@ -33,19 +34,11 @@ import {
   runsDirFor,
   saveRun,
 } from '../runtime/store.js';
+import { editsFiles, isolate } from '../runtime/worktree.js';
 
 const DRAFTS_DIR = 'src/patterns/drafts';
 
-/**
- * True when a pattern changes the workspace to do its job: the engine diffs the
- * edits and runs the project's tests (fix, refactor, implement). Remote callers may not run
- * these; other executor steps (investigate's experiments) run read-only for them.
- */
-export function editsFiles(p: Pick<Pattern, 'nodes'>): boolean {
-  return p.nodes.some(
-    (n) => n.kind === 'tool' && (n.tool === 'git.diff' || n.tool === 'tests.run'),
-  );
-}
+export { editsFiles };
 
 /** Every AI step plays with read-only (assessor) permissions. */
 export function readOnly(provider: Provider): Provider {
@@ -139,6 +132,8 @@ export interface RunView {
   readonly note?: string;
   /** Tokens the AI steps of this run spent so far. */
   readonly tokens?: string;
+  /** Where the file edits went (the run played in its own worktree). */
+  readonly edits?: string;
 }
 
 const ACTIVE = new Set(['running', 'paused', 'awaiting-approval']);
@@ -228,10 +223,16 @@ export class RunManager {
     void autoPrune(workspace, runsDir, this.opts.env);
     const extras = await runtimeExtras(workspace, this.opts.repoRoot, this.opts.env);
     const providerName = req.provider ?? 'copilot';
+    // A real AI editing files plays in its own worktree, so several can play at once.
+    const isolation =
+      providerName === 'copilot' && this.opts.editsAllowed && editsFiles(score)
+        ? await isolate(workspace, score.pattern, this.opts.env)
+        : undefined;
+    const dir = isolation?.dir ?? workspace;
     const base = makeProvider({
       provider: providerName,
       pattern,
-      workingDirectory: workspace,
+      workingDirectory: dir,
       mcpServers: extras.mcpServers,
       ...envConfig(this.opts.env),
     });
@@ -255,15 +256,16 @@ export class RunManager {
       score,
       provider,
       tools: extras.tools,
-      toolContext: extras.toolContext,
+      toolContext: isolation ? { ...extras.toolContext, workspace: dir } : extras.toolContext,
       ...(pattern.demo ? { demo: pattern.demo } : {}),
       ...(playsFromRepertoire(score.improvisation)
         ? { repertoire: await loadRepertoire(runsDir) }
         : {}),
       autoApprove: req.autoApprove === true,
       ...(providerName === 'copilot'
-        ? { envHash: () => gitFingerprint(workspace), scratch: await runScratch(workspace) }
+        ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
         : {}),
+      ...(isolation ? { isolation } : {}),
       checkpoint: true,
       onSave: async (r) => {
         const file = await saveRun(runsDir, r);
@@ -329,6 +331,8 @@ export class RunManager {
     const result = ended ? resultText(run.score, engine.state) : '';
     const active = pause?.nodeId ?? engine?.cursor;
     const used = performanceUsage(engine ?? { steps: [] }).total;
+    const final = run.messages.findLast((m) => m.type === 'performance');
+    const edits = final?.type === 'performance' ? final.performance.edits : undefined;
     return {
       runId: id,
       chain,
@@ -344,6 +348,7 @@ export class RunManager {
       ...(managed.savedTo ? { savedTo: managed.savedTo } : {}),
       ...(managed.blocked ? { note: managed.blocked } : {}),
       ...(used.calls > 0 ? { tokens: formatUsage(used) } : {}),
+      ...(edits ? { edits: describeEdits(edits) } : {}),
     };
   }
 
