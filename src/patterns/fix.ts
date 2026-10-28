@@ -1,4 +1,6 @@
 import type { Pattern } from '../core/types.js';
+import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
+import { editVerifyPhase } from './phases/editVerify.js';
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -7,118 +9,238 @@ const v = (reason: string, confidence = 0.9) => ({
   reason,
 });
 
-/** Diagnose (read-only) -> human approves plan -> apply + verify (write) with a bounded retry loop. */
+const hypotheses = hypothesesPhase({ subject: 'issue', context: ['hint'] });
+const challenge = challengePhase({
+  subject: 'issue',
+  evidence: 'findings',
+  draft: 'rootCause',
+  gaps: 'gaps',
+  reopen: 'research',
+  done: 'approve',
+  research: ['hint', 'gaps'],
+});
+const edit = editVerifyPhase({
+  applyDirective:
+    'Implement `plan` by editing `files` (others only if the plan truly needs them). Fix the root cause in `rootCause`, not the symptom, and add or update a test that fails without the fix when that is feasible.',
+  applyReads: ['issue', 'rootCause', 'files', 'plan'],
+  triageReads: ['issue', 'rootCause', 'plan'],
+  success: 'fixed',
+  giveUp: 'gaveUp',
+  rediagnose: { node: 'research', gaps: 'gaps' },
+});
+
+/**
+ * Fix = investigate's diagnosis (competing hypotheses, evidence for and against,
+ * a skeptic) + edit-and-verify (the engine runs the tests; failures are triaged
+ * and a wrong diagnosis is redone, bounded).
+ */
 export const fix: Pattern = {
   name: 'fix',
-  description: 'Fix a bug: diagnose, get the plan approved, apply, run tests, retry up to 3 times.',
-  verbTriggers: ['fix', 'bug', 'broken', 'repair'],
+  description:
+    'Fix a bug: competing hypotheses, evidence, a diagnosis you approve, then edit while the engine runs the tests; wrong diagnoses are redone.',
+  verbTriggers: ['fix', 'bug', 'broken', 'repair', 'crash', 'failing'],
   requiredContext: ['issue'],
   goalFrom: 'issue',
-  state: [
-    { name: 'issue', type: 'string', description: 'Bug description' },
-    { name: 'rootCause', type: 'string' },
-    { name: 'files', type: 'string[]', description: 'Files to change' },
-    { name: 'plan', type: 'string' },
-    { name: 'changes', type: 'string[]', description: 'Summary of edits applied' },
-    { name: 'testsPassed', type: 'boolean' },
-    { name: 'testOutput', type: 'string', description: 'Relevant test output' },
-    { name: 'attempts', type: 'number' },
-    { name: 'maxAttempts', type: 'number', initial: 3 },
+  result: [
+    'rootCause',
+    'plan',
+    'changedFiles',
+    'testsPassed',
+    'failureKind',
+    'failureReason',
+    'rulings',
   ],
+  maxSteps: 400,
+  state: withState(
+    [
+      {
+        name: 'issue',
+        type: 'string',
+        description: 'The bug: symptom, how to reproduce, expected',
+      },
+      { name: 'hint', type: 'string', description: 'Optional: where to look, what you suspect' },
+      { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
+      { name: 'findings', type: 'string[]', description: 'All evidence, each with its location' },
+      { name: 'gaps', type: 'string[]', description: 'What the research must settle next' },
+      { name: 'rootCause', type: 'string', description: 'The root cause, with evidence' },
+      { name: 'files', type: 'string[]', description: 'Files to change' },
+      { name: 'plan', type: 'string', description: 'Step-by-step fix plan' },
+    ],
+    hypotheses,
+    challenge,
+    edit,
+  ),
   start: 'start',
+  groups: [
+    hypotheses.group,
+    {
+      id: 'diagnosePhase',
+      label: 'Diagnose',
+      description: 'Evidence for and against every hypothesis, then the root cause',
+      nodes: ['research', 'mergeResearch', 'diagnose'],
+    },
+    challenge.group,
+    edit.group,
+  ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
+    ...hypotheses.nodes,
+    {
+      id: 'research',
+      kind: 'agent',
+      role: 'assessor',
+      capabilities: ['web'],
+      label: 'Gather evidence',
+      directive:
+        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact as "path:line — fact" in `newFindings`, without repeating `findings`.',
+      reads: ['issue', 'hint', 'hypotheses', 'findings', 'gaps'],
+      writes: ['newFindings'],
+      retries: 2,
+      maxVisits: 8,
+      checks: [
+        {
+          expr: 'len(newFindings) > 0',
+          message: 'Record at least one finding, with its location.',
+        },
+      ],
+    },
+    {
+      id: 'mergeResearch',
+      kind: 'compute',
+      label: 'Record evidence',
+      assign: [
+        { field: 'findings', expr: 'findings + newFindings' },
+        { field: 'gaps', expr: '[]' },
+      ],
+    },
     {
       id: 'diagnose',
       kind: 'agent',
       role: 'assessor',
       label: 'Diagnose',
       directive:
-        'Read the code (no edits) to find the root cause of `issue`. Return the root cause, the files to change and a short step-by-step plan.',
-      reads: ['issue'],
-      writes: ['rootCause', 'files', 'plan'],
+        'From `findings` only, state the root cause of `issue` in `rootCause`, citing the evidence (path:line). Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way.',
+      reads: ['issue', 'hint', 'hypotheses', 'findings', 'failureReason', 'testOutput'],
+      writes: ['rootCause', 'files', 'plan', 'rulings'],
+      retries: 2,
+      maxVisits: 8,
+      checks: [
+        { expr: 'len(rootCause) > 0', message: 'State the root cause.' },
+        { expr: 'len(files) > 0', message: 'List the files to change.' },
+        { expr: 'len(plan) > 0', message: 'Write the plan.' },
+        {
+          expr: 'len(rulings) == len(hypotheses)',
+          message:
+            'Give exactly one ruling per hypothesis: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence".',
+        },
+      ],
     },
+    ...challenge.nodes,
     {
       id: 'approve',
       kind: 'approval',
       label: 'Approve plan',
-      message: 'Review the root cause and plan. Approve to let the executor edit files.',
+      message:
+        'Review the root cause, the hypotheses ruled out and the plan. Approve to let the executor edit files; the engine will run the tests.',
       writes: [],
+      shows: ['rootCause', 'rulings', 'files', 'plan'],
     },
-    {
-      id: 'apply',
-      kind: 'agent',
-      role: 'executor',
-      label: 'Apply fix',
-      directive:
-        'Edit only `files` to implement `plan`. If `testOutput` is set, it is the failure from the last attempt: address it. Return a summary of each change.',
-      reads: ['issue', 'rootCause', 'files', 'plan', 'testOutput'],
-      writes: ['changes'],
-      maxVisits: 3,
-    },
-    {
-      id: 'verify',
-      kind: 'agent',
-      role: 'executor',
-      label: 'Run tests',
-      directive:
-        "Run the project's test command (check package.json). Report whether tests passed and the relevant output (failures only, max 40 lines).",
-      reads: ['changes'],
-      writes: ['testsPassed', 'testOutput'],
-      maxVisits: 3,
-    },
-    {
-      id: 'count',
-      kind: 'compute',
-      label: 'Count attempt',
-      assign: [{ field: 'attempts', expr: 'attempts + 1' }],
-    },
-    { id: 'passed', kind: 'condition', label: 'Tests pass?', expression: 'testsPassed' },
-    { id: 'budget', kind: 'condition', label: 'Retry?', expression: 'attempts < maxAttempts' },
+    ...edit.nodes,
     { id: 'fixed', kind: 'end', label: 'Fixed', outcome: 'success' },
     { id: 'gaveUp', kind: 'end', label: 'Gave up', outcome: 'failed' },
     { id: 'rejected', kind: 'end', label: 'Plan rejected', outcome: 'partial' },
   ],
   edges: [
-    { id: 'start-diagnose', from: 'start', to: 'diagnose' },
-    { id: 'diagnose-approve', from: 'diagnose', to: 'approve' },
-    { id: 'approve-apply', from: 'approve', to: 'apply', branch: 'approved' },
+    { id: 'start-hypothesize', from: 'start', to: hypotheses.entry },
+    { id: 'hypothesize-research', from: hypotheses.entry, to: 'research' },
+    { id: 'research-merge', from: 'research', to: 'mergeResearch' },
+    { id: 'merge-diagnose', from: 'mergeResearch', to: 'diagnose' },
+    { id: 'diagnose-challenge', from: 'diagnose', to: challenge.entry },
+    ...challenge.edges,
+    { id: 'approve-apply', from: 'approve', to: edit.entry, branch: 'approved' },
     { id: 'approve-rejected', from: 'approve', to: 'rejected', branch: 'rejected' },
-    { id: 'apply-verify', from: 'apply', to: 'verify' },
-    { id: 'verify-count', from: 'verify', to: 'count' },
-    { id: 'count-passed', from: 'count', to: 'passed' },
-    { id: 'passed-fixed', from: 'passed', to: 'fixed', branch: 'then' },
-    { id: 'passed-budget', from: 'passed', to: 'budget', branch: 'else' },
-    { id: 'budget-apply', from: 'budget', to: 'apply', branch: 'then', label: 'retry' },
-    { id: 'budget-gaveUp', from: 'budget', to: 'gaveUp', branch: 'else' },
+    ...edit.edges,
   ],
   demo: {
     context: { issue: 'Page 2 repeats the last item of page 1' },
     agents: {
-      diagnose: () => ({
+      hypothesize: () => ({
         updates: {
-          rootCause: 'slice(start - 1, end) includes the previous item',
-          files: ['src/paginate.ts'],
+          hypotheses: [
+            'H1: paginate slices from start - 1 | confirm if slice(start - 1, end) | refute if slice(start, end)',
+            'H2: the caller passes a 0-based page | confirm if callers pass page - 1 | refute if callers pass 1-based pages',
+            'H3: the data has duplicates (premise wrong) | confirm if the source repeats the item | refute if items are unique',
+          ],
+        },
+        verdict: v('hypotheses proposed'),
+      }),
+      research: (s, visit) => ({
+        updates: {
+          newFindings:
+            visit === 0
+              ? [
+                  'src/paginate.ts:7 — slice(start - 1, end) [H1 for]',
+                  'src/list.ts:12 — callers pass 1-based pages [H2 against]',
+                  'src/data.ts:3 — ids are unique [H3 against]',
+                ]
+              : [
+                  `src/paginate.ts:9 — end is not clamped to items.length (${(s.gaps as string[]).join('; ')})`,
+                ],
+        },
+        verdict: v('evidence gathered'),
+      }),
+      diagnose: (s) => ({
+        updates: {
+          rootCause: 'src/paginate.ts:7 slices from start - 1, so each page starts one item early',
+          files: ['src/paginate.ts', 'src/paginate.test.ts'],
           plan: '1. use slice(start, end)\n2. add a test for page boundaries',
+          rulings: ((s.hypotheses as string[]) ?? []).map((h, i) =>
+            i === 0
+              ? `${h.split(':')[0]}: CONFIRMED — src/paginate.ts:7`
+              : `${h.split(':')[0]}: REFUTED — ${i === 1 ? 'src/list.ts:12' : 'src/data.ts:3'}`,
+          ),
         },
         verdict: v('root cause found'),
       }),
+      challenge: () => ({ updates: { objections: [] }, verdict: v('the diagnosis stands') }),
       apply: (_s, visit) => ({
         updates: {
           changes:
             visit === 0
               ? ['src/paginate.ts: slice(start, end)']
-              : ['src/paginate.ts: clamp end', 'test added'],
+              : [
+                  'src/paginate.ts: clamp end to items.length',
+                  'src/paginate.test.ts: boundary test',
+                ],
         },
         verdict: v('edited'),
       }),
-      verify: (_s, visit) =>
-        visit === 0
+      triage: () => ({
+        updates: {
+          failureKind: 'PATCH',
+          failureReason:
+            'paginate.test.ts "last page": expected 10 items, got 9; end is not clamped',
+        },
+        verdict: v('the edit is incomplete'),
+      }),
+    },
+    tools: {
+      captureDiff: (s) => {
+        const n = (s.attempts as number) ?? 0;
+        return {
+          diff: `--- a/src/paginate.ts\n+++ b/src/paginate.ts\n@@ -7 +7 @@ attempt ${n + 1}`,
+          hash: `diff-${n + 1}`,
+          files: n === 0 ? ['src/paginate.ts'] : ['src/paginate.test.ts', 'src/paginate.ts'],
+        };
+      },
+      runTests: (s) =>
+        ((s.attempts as number) ?? 0) === 0
           ? {
-              updates: { testsPassed: false, testOutput: 'expected 10 items, got 9' },
-              verdict: v('tests failed', 0.8),
+              passed: false,
+              output: 'FAIL paginate.test.ts > last page\nexpected 10 items, got 9',
+              command: 'npm test',
             }
-          : { updates: { testsPassed: true, testOutput: '' }, verdict: v('tests pass') },
+          : { passed: true, output: 'Tests 12 passed', command: 'npm test' },
     },
     approvals: { approve: () => ({ approved: true }) },
   },

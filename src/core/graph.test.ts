@@ -139,7 +139,9 @@ describe('phases', () => {
   });
 
   it('is the full graph when there are no phases, and frames expanded phases', () => {
-    expect(phaseView(fix, new Set()).nodes.map((n) => n.id)).toEqual(fix.nodes.map((n) => n.id));
+    expect(phaseView(hangman, new Set()).nodes.map((n) => n.id)).toEqual(
+      hangman.nodes.map((n) => n.id),
+    );
     const pos = layout(investigate);
     const frames = groupFrames(investigate, pos);
     expect(frames.map((f) => f.id)).toEqual(investigate.groups!.map((g) => g.id));

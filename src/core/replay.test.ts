@@ -67,7 +67,7 @@ describe('replayPerformance', () => {
   it('detects tampered answers', () => {
     const { score, perf } = demoRun(fix);
     const steps = perf.steps.map((s) =>
-      s.nodeId === 'verify' && s.updates?.testsPassed === false
+      s.nodeId === 'runTests' && s.updates?.testsPassed === false
         ? { ...s, updates: { ...s.updates, testsPassed: true } }
         : s,
     );

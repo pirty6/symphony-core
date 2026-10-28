@@ -220,12 +220,12 @@ describe('replay view and decoration', () => {
     expect(v.mode).toBe('replay')
     expect(v.frames.length).toBe(perf.performance.events.length)
     const frame = currentFrame(v)
-    expect(streamFor(v, 'verify', frame)?.result).toMatchObject({ updates: { testsPassed: true } })
+    expect(streamFor(v, 'diagnose', frame)?.result).toMatchObject({ updates: { files: ['src/paginate.ts', 'src/paginate.test.ts'] } })
     const flow = toFlow(patternToGraph(fix))
     const d = decorate(flow.nodes, flow.edges, frame, { breakpoints: new Set(['apply']), issues: new Map([['diagnose', ['bad']]]) })
     expect(d.nodes.find((n) => n.id === 'apply')!.data).toMatchObject({ breakpoint: true, visits: 2, status: 'done' })
     expect(d.nodes.find((n) => n.id === 'diagnose')!.data.issues).toEqual(['bad'])
-    expect(d.edges.find((e) => e.id === 'budget-apply')!.data!.count).toBe(1)
+    expect(d.edges.find((e) => e.id === 'planWrong-apply')!.data!.count).toBe(1)
   })
 
   it('starts idle', () => {

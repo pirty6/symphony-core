@@ -96,7 +96,7 @@ describe('Run', () => {
     run.resume();
     const after = await waitFor(run, statusIs('paused', { nodeId: 'diagnose', phase: 'after' }));
     expect(after.type === 'status' && after.proposed).toMatchObject({
-      updates: { files: ['src/paginate.ts'] },
+      updates: { files: ['src/paginate.ts', 'src/paginate.test.ts'] },
     });
     expect(run.engine.state.rootCause).toBe('');
     run.setBreakpoints([]);

@@ -336,11 +336,13 @@ export function restoreEngine(
     }
     events.push(...r.events);
   }
-  // Only continue from a history that reproduces exactly.
+  // Only continue from a history that reproduces exactly. Steps past the recording are
+  // the automatic ones (compute, conditions) that follow the last answer deterministically.
   const restored = r.state.steps;
   restored.forEach((s, i) => {
     const want = perf.steps[i];
-    if (!want || want.nodeId !== s.nodeId || want.stateHashAfter !== s.stateHashAfter) {
+    if (!want) return;
+    if (want.nodeId !== s.nodeId || want.stateHashAfter !== s.stateHashAfter) {
       throw new RestoreError(
         `recorded answers no longer reproduce the run at step ${s.step} (${s.nodeId}); fork from an earlier step`,
       );
