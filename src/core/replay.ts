@@ -256,6 +256,8 @@ export function replayPerformance(
     const n = fed.get(pause.step) ?? 0;
     fed.set(pause.step, n + 1);
     const res = recorded ? resolutionFrom(recorded, pause.pauseId, n) : undefined;
+    // A checkpoint of an unfinished run replays up to where it stopped.
+    if (!res && perf.outcome === 'in-progress') break;
     if (!res) {
       r = advance(score, r.state, {
         kind: 'cancel',

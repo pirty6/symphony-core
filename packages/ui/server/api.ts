@@ -15,19 +15,19 @@
  *   GET  /api/saved/file?path=             saved run + integrity + replay check
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { CompileError, compileScore } from '../../../src/core/compile.js'
 import { parseDraft, patternToTypeScript } from '../../../src/core/draft.js'
 import { patternToGraph } from '../../../src/core/graph.js'
 import { engineNote } from '../../../src/core/migrate.js'
-import { replayPerformance } from '../../../src/core/replay.js'
+import { replayPerformance, restoreEngine } from '../../../src/core/replay.js'
 import { isImprovisation, playsFromRepertoire } from '../../../src/core/jazz.js'
 import type { Complexity, ExecutableScore, Pattern } from '../../../src/core/types.js'
 import { concertNext } from '../../../src/runtime/concert.js'
 import { validatePattern } from '../../../src/core/validate.js'
 import { PATTERNS } from '../../../src/patterns/index.js'
 import { draftPattern } from '../../../src/runtime/drafting.js'
-import { Run } from '../../../src/runtime/driver.js'
+import { Run, type RunOptions } from '../../../src/runtime/driver.js'
 import {
   effectiveTiers,
   envConfig,
@@ -162,6 +162,7 @@ export function createApi(opts: ApiOptions) {
     readonly autoApprove: boolean
     readonly stepMode: boolean
     readonly breakpoints: string[]
+    readonly restore?: RunOptions['restore']
   }
 
   async function launch(score: ExecutableScore, pattern: Pattern, settings: Settings): Promise<Run> {
@@ -188,6 +189,8 @@ export function createApi(opts: ApiOptions) {
       breakpoints: settings.breakpoints,
       ...(provider.name === 'copilot' ? { envHash: () => gitFingerprint(workspace) } : {}),
       onSave: (r) => saveRun(runsDir, r),
+      checkpoint: true,
+      ...(settings.restore ? { restore: settings.restore } : {}),
       ...(next ? { next } : {}),
     })
     runs.set(run.id, run)
@@ -211,6 +214,49 @@ export function createApi(opts: ApiOptions) {
       autoApprove: body.autoApprove === true,
       stepMode: body.stepMode === true,
       breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
+    })
+  }
+
+  /** Resume an interrupted run in place, or fork a saved run from a step as a new run. */
+  async function continueRun(body: Record<string, unknown>): Promise<Run> {
+    const file = runPath(runsDir, typeof body.file === 'string' ? body.file : '')
+    if (!file) throw new CompileError([{ message: 'invalid run file' }])
+    const { run: saved, issues } = await loadRun(file)
+    if (issues.length) throw new CompileError(issues.map((message) => ({ message })))
+    const kind = body.kind === 'forked' ? 'forked' : 'resumed'
+    const perf = saved.performance
+    const last = perf.steps.at(-1)?.step ?? 0
+    if (kind === 'resumed' && perf.outcome !== 'in-progress' && perf.outcome !== 'cancelled') {
+      throw new CompileError([{ message: `this run already ended (${perf.outcome}); fork it from a step instead` }])
+    }
+    const at = Number(body.atStep)
+    if (kind === 'forked' && (!Number.isInteger(at) || at < 1 || at > last + 1)) {
+      throw new CompileError([{ message: `atStep must be a step from 1 to ${last + 1}` }])
+    }
+    const throughStep = kind === 'forked' ? at - 1 : last
+    let result
+    try {
+      result = restoreEngine(saved.score, perf, kind === 'forked' ? { throughStep, startedAt: new Date().toISOString() } : {})
+    } catch (e) {
+      throw new CompileError([{ message: (e as Error).message }])
+    }
+    const known = (await library()).find((l) => l.pattern.name === saved.score.pattern)?.pattern
+    const pattern: Pattern = known ?? {
+      name: saved.score.pattern,
+      description: saved.score.description,
+      requiredContext: [],
+      state: saved.score.state,
+      nodes: saved.score.nodes,
+      edges: saved.score.edges,
+      start: saved.score.start,
+    }
+    return launch(saved.score, pattern, {
+      provider: body.provider,
+      model: body.model,
+      autoApprove: body.autoApprove === true,
+      stepMode: body.stepMode === true,
+      breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
+      restore: { result, basedOn: { kind, from: relative(runsDir, file), throughStep } },
     })
   }
 
@@ -314,6 +360,11 @@ export function createApi(opts: ApiOptions) {
       }
       if (method === 'POST' && path === '/api/runs') {
         const run = await startRun(await readJson(req))
+        send(res, 200, { runId: run.id, score: run.score })
+        return true
+      }
+      if (method === 'POST' && path === '/api/runs/continue') {
+        const run = await continueRun(await readJson(req))
         send(res, 200, { runId: run.id, score: run.score })
         return true
       }

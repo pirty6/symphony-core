@@ -22,6 +22,17 @@ export interface SavedSummary {
   readonly steps: number
 }
 
+export interface ContinueRunRequest {
+  readonly file: string
+  readonly kind: 'resumed' | 'forked'
+  readonly atStep?: number
+  readonly provider: string
+  readonly model?: string
+  readonly autoApprove: boolean
+  readonly stepMode: boolean
+  readonly breakpoints: readonly string[]
+}
+
 export interface StartRunRequest {
   readonly pattern: PatternData
   readonly goal: string
@@ -64,6 +75,8 @@ export const api = {
   typescript: (pattern: PatternData) => post('/api/typescript', { pattern }).then((r) => json<{ source: string }>(r)),
   savePattern: (pattern: PatternData) => post('/api/patterns', { pattern }).then((r) => json<{ file: string }>(r)),
   startRun: (req: StartRunRequest) => post('/api/runs', req).then((r) => json<{ runId: string; score: ExecutableScore }>(r)),
+  /** Resume an interrupted run in place, or fork a saved run from a step (steps before it are kept). */
+  continueRun: (req: ContinueRunRequest) => post('/api/runs/continue', req).then((r) => json<{ runId: string; score: ExecutableScore }>(r)),
   control: (runId: string, action: string, extra: Record<string, unknown> = {}) =>
     post(`/api/runs/${runId}/control`, { action, ...extra }).then((r) => json<{ status: string }>(r)),
   approve: (runId: string, body: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) =>

@@ -1101,3 +1101,9 @@ pre {
   font-size: 12px;
   margin-top: 4px;
 }
+.continue-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}

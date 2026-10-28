@@ -476,6 +476,7 @@ describe('checkpoints, resume and fork', () => {
     const whole = saved.at(-1)!.performance;
     for (const cut of [0, 3, saved.length - 3]) {
       const partial = saved[cut]!.performance;
+      if (cut > 0) expect(replayPerformance(fixScore, partial).divergence.reproduced).toBe(true);
       const restored = restoreEngine(fixScore, partial);
       expect(restored.state.kind).toBe('running');
       const resumed = await new Run({

@@ -365,7 +365,8 @@ export function replayView(run: SavedRun, check: { reproduced: boolean; issues: 
       })
     })
   }
-  const status: RunStatus = perf.outcome === 'failed' ? 'failed' : perf.outcome === 'cancelled' ? 'cancelled' : 'done'
+  const status: RunStatus =
+    perf.outcome === 'failed' ? 'failed' : perf.outcome === 'cancelled' || perf.outcome === 'in-progress' ? 'cancelled' : 'done'
   return {
     mode: 'replay',
     goal: run.score.goal,

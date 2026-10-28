@@ -409,6 +409,32 @@ export default function Studio() {
     setSettings(s)
   }
 
+  /** Resume the open saved run, or fork it from a step; the studio follows the new performance. */
+  const continueSaved = async (kind: 'resumed' | 'forked', atStep?: number) => {
+    const file = view.replay?.file
+    if (!file) return
+    try {
+      const { runId, score } = await api.continueRun({
+        file,
+        kind,
+        ...(atStep !== undefined ? { atStep } : {}),
+        provider: settings.provider,
+        ...(settings.model ? { model: settings.model } : {}),
+        autoApprove: settings.autoApprove,
+        stepMode: settings.stepMode,
+        breakpoints: [...breakpoints],
+      })
+      setNotice(
+        kind === 'resumed'
+          ? `▶ Resuming: recorded steps replayed, the rest played live (${settings.provider}).`
+          : `⑂ Forked at step ${atStep}: steps before it kept, the rest played live (${settings.provider}).`,
+      )
+      followRun(runId, score.goal)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : (e as Error).message)
+    }
+  }
+
   const openSaved = async (file: string) => {
     try {
       const res = await api.savedFile(file)
@@ -421,6 +447,7 @@ export default function Studio() {
           verbTriggers: [],
           state: [...res.run.score.state],
           maxSteps: res.run.score.maxSteps,
+          ...(res.run.score.groups?.length ? { groups: res.run.score.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) } : {}),
         },
         res.graph,
       )
@@ -448,6 +475,28 @@ export default function Studio() {
         {view.performance && view.performance.steps.length > 0 && (
           <div className="muted origin-summary" data-testid="origin-summary">
             played by: {originSummary(view.performance)}
+          </div>
+        )}
+        {view.mode === 'replay' && view.replay?.file && (
+          <div className="continue-actions">
+            {(view.performance?.outcome === 'in-progress' || view.performance?.outcome === 'cancelled') && (
+              <button type="button" className="primary" onClick={() => void continueSaved('resumed')} title={`Continue live with ${settings.provider}`}>
+                ▶ Resume
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void continueSaved('forked', Math.max(1, frame.step))}
+              title={`Keep steps before ${Math.max(1, frame.step)}, play the rest again with ${settings.provider}. Scrub the timeline to choose the step.`}
+              data-testid="fork"
+            >
+              ⑂ Fork from step {Math.max(1, frame.step)}
+            </button>
+          </div>
+        )}
+        {view.performance?.basedOn && (
+          <div className="muted" data-testid="based-on">
+            {view.performance.basedOn.kind} from {view.performance.basedOn.from} after step {view.performance.basedOn.throughStep}
           </div>
         )}
         {result && <ResultPreview result={result} onOpen={() => setReading(true)} />}

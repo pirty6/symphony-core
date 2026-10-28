@@ -84,6 +84,24 @@ describe('studio api', () => {
     expect(file).toMatchObject({ reproduced: true, issues: [] })
   })
 
+  it('forks a saved run from a step and refuses to resume a finished one', async () => {
+    const [first] = (await (await fetch(`${base}/api/saved`)).json()) as { file: string }[]
+    const settings = { provider: 'scripted', autoApprove: true, stepMode: false, breakpoints: [] }
+    const refused = await post('/api/runs/continue', { file: first!.file, kind: 'resumed', ...settings })
+    expect(refused.status).toBe(400)
+    expect(((await refused.json()) as { error: string }).error).toMatch(/already ended \(success\)/)
+    const bad = await post('/api/runs/continue', { file: '../../etc/passwd', kind: 'forked', atStep: 2, ...settings })
+    expect(bad.status).toBe(400)
+    const fork = (await (await post('/api/runs/continue', { file: first!.file, kind: 'forked', atStep: 2, ...settings })).json()) as { runId: string }
+    const msgs = await readSse(await fetch(`${base}/api/runs/${fork.runId}/events`))
+    const done = msgs.find((m) => m.type === 'performance') as { performance: { outcome: string; basedOn: unknown }; savedTo: string }
+    expect(done.performance).toMatchObject({ outcome: 'success', basedOn: { kind: 'forked', from: first!.file, throughStep: 1 } })
+    const saved = (await (await fetch(`${base}/api/saved`)).json()) as { file: string }[]
+    const forked = saved.find((r) => r.file !== first!.file)!
+    const check = (await (await fetch(`${base}/api/saved/file?path=${encodeURIComponent(forked.file)}`)).json()) as { reproduced: boolean }
+    expect(check.reproduced).toBe(true)
+  })
+
   it('pauses in step mode and accepts human approvals', async () => {
     const start = (await (await post('/api/runs', { pattern: data(hangman), provider: 'scripted', stepMode: true })).json()) as { runId: string }
     const id = start.runId
