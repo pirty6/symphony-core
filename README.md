@@ -86,7 +86,11 @@ npm run cli -- run investigate -c question="Where is auth handled?" --provider c
 npm run cli -- run fix --step --break apply          # pause at gates
 npm run cli -- draft "triage a flaky test" --provider copilot --save
 npm run cli -- verify .symphony/runs/fix/<file>.json # integrity + deterministic replay check
-npm run cli -- runs                                  # saved runs
+npm run cli -- compare <a.json> <b.json>             # where two runs diverge, and why
+npm run cli -- rehearse analyze -n 5 --provider copilot -i swing   # how deterministic is the AI here?
+npm run cli -- resume .symphony/runs/fix/<file>.json # continue an interrupted or stopped run
+npm run cli -- fork .symphony/runs/fix/<file>.json --at 4   # keep steps 1-3, play the rest again
+npm run cli -- runs                                  # saved runs (in-progress = resumable)
 ```
 
 ## Concepts
@@ -155,6 +159,24 @@ state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= &&
 | Nothing is skipped | Acceptance checks reject answers that leave out items (files, sources, gaps); the engine, not the AI, owns the work queues. |
 | Stale or duplicate input is ignored | Every resolution must echo the open `pauseId`. |
 | Runs are reproducible | `replayPerformance` re-runs the engine on recorded answers and diffs it. |
+| Hashes never alias | `canonicalJson` refuses NaN, Infinity, `undefined` in arrays, Dates, Maps and class instances instead of collapsing them; state fields must be plain JSON. |
+| Runs survive crashes | The run is saved after every answer; `restoreEngine` rebuilds it from those answers (refusing histories that no longer reproduce) so it can be resumed or forked. |
+| Old runs stay readable | Runs record the engine version; older formats are upgraded by pure migrations; a diverging replay says if another engine version recorded it. |
+
+### What "deterministic" means here
+
+The **orchestration** is deterministic: same score + same answers = same performance, step for
+step, which `verify` proves for any saved run. The **musicians** are not: a live model can answer
+differently each time. Symphony makes that boundary explicit instead of hiding it:
+
+| Source of difference | How it is handled |
+|----------------------|-------------------|
+| The AI | Classical (improvisation 0) replays recorded answers for identical moves. Above that, every step is labelled by who played it (script, recorded answer, live AI, takes) and `rehearse` measures per-node agreement across N live performances. The Copilot SDK exposes no seed or temperature, so each transcript records the tier, requested model, effort, account and SDK version instead. |
+| The environment | Tool nodes are the only way the outside world gets in, and their outputs are recorded. The offline demo plays its recorded tool outputs, so it depends only on (pattern, goal, context). |
+| The plan | The score id hashes everything that shapes the run. |
+| The engine | Recorded with every run (`ENGINE_VERSION`). |
+
+`compare` names the first divergence between two runs and which of these caused it.
 
 ## The maestro, complexity and improvisation
 
