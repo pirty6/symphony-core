@@ -169,23 +169,36 @@ describe('maestro', () => {
     expect(never.r.state.outcome).toBe('failed');
   });
 
-  it('go-gate feedback escalates complexity and runs another round', () => {
+  const feedbackOnce = (smarter: boolean) => {
     let gates = 0;
-    const { r } = run(
+    return run(
       'fix it',
       { classify: classifyAs('fix', 2) },
       {
         approvals: {
           gate: () => ({
             approved: true,
-            updates: { feedback: gates++ === 0 ? 'also add a regression test' : '' },
+            updates: { feedback: gates++ === 0 ? 'also add a regression test' : '', smarter },
           }),
         },
       },
-    );
+    ).r;
+  };
+
+  it('go-gate feedback with smarter escalates complexity and runs another round', () => {
+    const r = feedbackOnce(true);
     expect(nodesRun(r).filter((n) => n === 'propose')).toHaveLength(2);
     expect(r.state.state).toMatchObject({ complexity: 3, round: 2 });
     expect(nodesRun(r)).toContain('pragmatist');
+  });
+
+  it('go-gate feedback alone runs another round at the same tier', () => {
+    const r = feedbackOnce(false);
+    expect(nodesRun(r).filter((n) => n === 'propose')).toHaveLength(2);
+    expect(r.state.state).toMatchObject({ complexity: 2, round: 2 });
+    // The same tier keeps the same (smaller) debate: no pragmatist at complexity 2.
+    expect(nodesRun(r)).not.toContain('pragmatist');
+    expect(r.state.outcome).toBe('success');
   });
 });
 
@@ -403,7 +416,7 @@ describe('maestro remembers approved compositions', () => {
         approvals: {
           gate: (_s, visit) => ({
             approved: true,
-            updates: { feedback: visit === 0 ? 'also check the retry logic' : '' },
+            updates: { feedback: visit === 0 ? 'also check the retry logic' : '', smarter: false },
           }),
         },
       },
@@ -417,7 +430,7 @@ describe('maestro remembers approved compositions', () => {
 /** A person who asks for another change at every go-gate. */
 const asking = (_s: Readonly<Record<string, unknown>>, visit: number) => ({
   approved: true,
-  updates: { feedback: `round ${visit + 1}: also check the retry logic` },
+  updates: { feedback: `round ${visit + 1}: also check the retry logic`, smarter: true },
 });
 
 describe('maestro never drops go-gate feedback', () => {
@@ -444,7 +457,7 @@ describe('maestro never drops go-gate feedback', () => {
         approvals: {
           gate: (s) => ({
             approved: true,
-            updates: { feedback: s.round === s.maxRounds ? '' : 'more' },
+            updates: { feedback: s.round === s.maxRounds ? '' : 'more', smarter: false },
           }),
         },
       },
@@ -600,7 +613,10 @@ describe('maestro keeps a requirement ledger (replaying run 05-02-16)', () => {
       },
       {
         approvals: {
-          gate: (_s, visit) => ({ approved: true, updates: { feedback: feedbacks[visit] ?? '' } }),
+          gate: (_s, visit) => ({
+            approved: true,
+            updates: { feedback: feedbacks[visit] ?? '', smarter: true },
+          }),
         },
       },
     );
@@ -700,7 +716,7 @@ describe('maestro fixes structural errors in the conductor (replaying 05-02-16)'
         approvals: {
           gate: (_s, visit) => ({
             approved: true,
-            updates: { feedback: visit === 0 ? ASKED : '' },
+            updates: { feedback: visit === 0 ? ASKED : '', smarter: true },
           }),
         },
       },

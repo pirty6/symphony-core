@@ -237,10 +237,12 @@ replayable:
 3. **Conductor**: folds the debate into one score (applies REAL concerns, ignores THEORETICAL ones).
    Skipped when the skeptic found nothing to change (below tier 4).
 4. **Validate** (tool): the adaptation applied to the template (or the draft) is checked
-   deterministically; errors go back to the proposer (max 6 rounds).
+   deterministically; errors go back to the conductor (revise) to fix, without a new debate
+   (max 6 rounds).
 5. **Read inputs** from the request (one line per input, not the whole score), then the **go-gate**,
    which shows how the pattern was tailored: approve with empty feedback to perform;
-   write feedback for another round (complexity escalates one tier); reject to stop. Feedback after
+   write feedback for another round, at the same complexity unless you tick `smarter` (one tier up:
+   a deeper debate on a stronger model); reject to stop. Feedback after
    the last round (`maxRounds`, 6) is never dropped: the run ends partial without performing,
    keeping the score and your feedback (`unappliedFeedback`, also in the debate notes).
 6. **Perform**: the composed score runs as its own linked, recorded run at the final complexity.

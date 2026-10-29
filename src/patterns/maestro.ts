@@ -20,7 +20,7 @@ import { fix } from './fix.js';
  *              2 + skeptic, 3 + pragmatist, 4 + template-critic (may reroute once)
  *   revise     the conductor folds the debate into one draft
  *   validate   a tool checks the draft deterministically; errors loop back (max rounds)
- *   go-gate    a human approves, sends feedback (next round escalates complexity) or stops
+ *   go-gate    a human approves, sends feedback (next round, one tier up if they ask) or stops
  *
  * The approved score (state.finalPattern) is then performed as its own run,
  * at the final complexity: see `composedScore`.
@@ -156,6 +156,12 @@ export const maestro: Pattern = {
       name: 'feedback',
       type: 'string',
       description: 'Your changes for another round (empty = go)',
+    },
+    {
+      name: 'smarter',
+      type: 'boolean',
+      description:
+        'With feedback: compose the next round one complexity tier higher (no = same tier)',
     },
     { name: 'finalPattern', type: 'object', description: 'The approved score' },
     {
@@ -595,8 +601,8 @@ ${SCORE_FORMAT}`,
       kind: 'approval',
       label: 'Go-gate',
       message:
-        'The maestro composed this score. Approve with empty feedback to perform it. Write feedback to send it back for another round (complexity escalates one tier). Reject to stop.',
-      writes: ['feedback'],
+        'The maestro composed this score. Approve with empty feedback to perform it. Write feedback to send it back for another round, at the same complexity unless you tick smarter (one tier higher: a deeper debate on a stronger model). Reject to stop.',
+      writes: ['feedback', 'smarter'],
       // How each requirement is met, and any that are not (out of rounds): shown before the go.
       shows: ['coverage', 'uncovered'],
       maxVisits: 6,
@@ -607,7 +613,8 @@ ${SCORE_FORMAT}`,
       label: 'Escalate',
       assign: [
         { field: 'round', expr: 'round + 1' },
-        { field: 'complexity', expr: 'if(complexity < 4, complexity + 1, 4)' },
+        // Feedback alone does not escalate: a small change need not buy a deeper debate.
+        { field: 'complexity', expr: 'if(smarter && complexity < 4, complexity + 1, complexity)' },
         // Feedback joins the ledger: later rounds must still meet it, not just read it once.
         { field: 'requirements', expr: 'append(requirements, "From your feedback: " + feedback)' },
         // Feedback on a reused composition composes it afresh.
@@ -894,7 +901,7 @@ ${SCORE_FORMAT}`,
         };
       },
     },
-    approvals: { gate: () => ({ approved: true, updates: { feedback: '' } }) },
+    approvals: { gate: () => ({ approved: true, updates: { feedback: '', smarter: false } }) },
   },
 };
 
