@@ -36,6 +36,11 @@ export function libraryPatterns(
   return [...known, ...drafts.filter((d) => !known.some((p) => p.name === d.name))];
 }
 
+/** Core patterns that do work (hangman is a demo game): what integrations list. */
+export function workPatternNames(): string[] {
+  return PATTERNS.filter((p) => p.name !== 'hangman').map((p) => p.name);
+}
+
 export function findPattern(name: string): Pattern | undefined {
   return PATTERNS.find((p) => p.name === name);
 }

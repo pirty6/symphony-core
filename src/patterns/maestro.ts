@@ -938,3 +938,8 @@ export function composedScore(
   });
   return { pattern, score };
 }
+
+/** The debaters, by the maestro's own step labels: integrations describe the debate from here. */
+export const DEBATE_ROLES: readonly string[] = ['propose', 'skeptic', 'pragmatist', 'critic'].map(
+  (id) => maestro.nodes.find((n) => n.id === id)!.label.toLowerCase(),
+);

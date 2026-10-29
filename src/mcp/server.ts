@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { Complexity, Improvisation } from '../core/types.js';
+import { DEBATE_ROLES } from '../patterns/maestro.js';
 import { editsFiles, type RunManager, type RunView } from './runs.js';
 
 export const SERVER_INFO = { name: 'symphony', version: '1.0.0' } as const;
@@ -95,7 +96,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
     'maestro',
     {
       title: 'Ask the maestro',
-      description: `Run the maestro meta-pipeline on a request: it routes to the right pattern, debates the algorithm (proposer, skeptic, pragmatist, template-critic by complexity), validates it, asks for a go, then performs the composed score (and a follow-up pattern when the request asks for two shapes). Returns a run_id. ${NEXT}`,
+      description: `Run the maestro meta-pipeline on a request: it routes to the right pattern, debates the algorithm (${DEBATE_ROLES.join(', ')} by complexity), validates it, asks for a go, then performs the composed score (and a follow-up pattern when the request asks for two shapes). Returns a run_id. ${NEXT}`,
       inputSchema: {
         request: z.string().min(1).describe("The user's problem, verbatim"),
         complexity,

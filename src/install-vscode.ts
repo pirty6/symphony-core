@@ -15,6 +15,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { homedir, platform } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { workPatternNames } from './patterns/index.js';
 import { SYMPHONY_SERVER_NAME, stripJsonc, userMcpFiles } from './runtime/mcp.js';
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -33,7 +34,7 @@ export function skillFromAgent(agent: string): string {
     .trim();
   return `---
 name: ${SKILL_NAME}
-description: "Run the Symphony maestro: a deterministic, auditable pipeline (maestro, investigate, fix, refactor, implement, backlog, review) through the symphony MCP server, relaying every approval and stuck step to the user. Use when: /maestrov2, maestrov2, maestro, run the maestro, Symphony, deterministic investigation, fix or feature implementation."
+description: "Run the Symphony maestro: a deterministic, auditable pipeline (${workPatternNames().join(', ')}) through the symphony MCP server, relaying every approval and stuck step to the user. Use when: /maestrov2, maestrov2, maestro, run the maestro, Symphony, deterministic investigation, fix or feature implementation."
 argument-hint: "What do you want done? e.g. find out why login fails on CI, then fix it"
 ---
 
