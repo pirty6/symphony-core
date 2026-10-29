@@ -206,13 +206,18 @@ describe('memory tools', () => {
   });
 });
 
+/** One file's section of a git diff, with `lines` added lines. */
+const fileDiff = (name: string, lines: number) =>
+  `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${'+x\n'.repeat(lines)}`;
+
 describe('truncateDiff', () => {
   it('names the files a long diff cut off, partly or entirely', () => {
-    const file = (name: string, n: number) =>
-      `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${'+x\n'.repeat(n)}`;
+    const file = fileDiff;
     const diff = file('a.ts', 5) + file('b.ts', 40) + file('c.ts', 5) + file('d.ts', 5);
     const out = truncateDiff(diff, 100);
     expect(out.startsWith(diff.slice(0, 100))).toBe(true);
-    expect(out).toMatch(/… diff truncated at 100 characters; partly shown: b\.ts; not shown: c\.ts, d\.ts …$/);
+    expect(out).toMatch(
+      /… diff truncated at 100 characters; partly shown: b\.ts; not shown: c\.ts, d\.ts …$/,
+    );
   });
 });
