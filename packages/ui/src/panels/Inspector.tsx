@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { TOOL_OUTPUTS } from '@core/catalog'
 import type { Frame } from '@core/replay'
 import { parseFieldInput } from '@core/schema'
 import type { ScoreEdge, ScoreNode, StateField } from '@core/types'
@@ -12,11 +13,6 @@ const list = (s: string) =>
 
 const json = (v: unknown) => JSON.stringify(v, null, 2)
 
-/** Built-in tools and their outputs (mirrors src/runtime/builtin-tools.ts). */
-const TOOL_OUTPUTS: Record<string, string[]> = {
-  'repo.files': ['files', 'excluded'],
-  'sources.catalog': ['names', 'descriptions'],
-}
 
 // ── cards shown while a run waits for the user ─────────────────────
 

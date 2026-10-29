@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { defaultTools, listRepoFiles, sourceCatalog } from './builtin-tools.js';
+import { builtinTools, defaultTools, listRepoFiles, sourceCatalog } from './builtin-tools.js';
+import { TOOL_OUTPUTS } from '../core/catalog.js';
 import { compileScore } from '../core/compile.js';
 import { toPerformance } from '../core/engine.js';
 import { runScripted } from '../core/scripted.js';
@@ -340,5 +341,14 @@ describe('maestro tools', () => {
     await expect(save.run({ pattern: { name: 'x' } }, ctx(repoRoot))).rejects.toThrow(
       /not a valid pattern/,
     );
+  });
+});
+
+describe('one source for tool names', () => {
+  it('the registry and the shared catalog (studio, docs) list the same tools and outputs', () => {
+    const registry = Object.fromEntries(
+      builtinTools({ probeGitHub: false }).map((t) => [t.name, [...t.outputs]]),
+    );
+    expect(registry).toEqual(TOOL_OUTPUTS);
   });
 });

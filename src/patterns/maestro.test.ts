@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { runScripted } from '../core/scripted.js';
 import type { DemoScript, Pattern } from '../core/types.js';
+import { TIER_NAMES } from '../core/catalog.js';
 import { analyze, composedScore, fix, maestro, maestroThen } from './index.js';
 
 const demo = maestro.demo!;
@@ -624,5 +625,13 @@ describe('maestro keeps a requirement ledger (replaying run 05-02-16)', () => {
     );
     expect(nodesRun(r)).toContain('gate');
     expect(r.state.state.uncovered).toEqual(['R1: NOT COVERED — x']);
+  });
+});
+
+describe('maestro shares its names with the other surfaces', () => {
+  it("the classifier's tiers are the shared tier names", () => {
+    const classify = maestro.nodes.find((n) => n.id === 'classify') as { directive: string };
+    for (const [tier, name] of Object.entries(TIER_NAMES))
+      expect(classify.directive).toMatch(new RegExp(`${tier} [^;]*\\b${name}\\b`));
   });
 });
