@@ -5,6 +5,7 @@ import { hangman } from './hangman.js';
 import { implement } from './implement.js';
 import { analyze } from './analyze.js';
 import { investigate } from './investigate.js';
+import { metaphor } from './metaphor.js';
 import { composedScore, maestro, maestroThen } from './maestro.js';
 import { refactor } from './refactor.js';
 import { review } from './review.js';
@@ -20,6 +21,7 @@ export const PATTERNS: readonly Pattern[] = [
   backlog,
   review,
   analyze,
+  metaphor,
   hangman,
 ];
 
@@ -59,6 +61,7 @@ export {
   investigate,
   maestro,
   maestroThen,
+  metaphor,
   refactor,
   review,
 };
