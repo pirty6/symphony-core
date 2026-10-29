@@ -62,7 +62,7 @@ export const implement: Pattern = {
   name: 'implement',
   description:
     'Build a feature: competing approaches, a design with acceptance criteria you approve, edits verified by the tests, then a review that every criterion is met.',
-  verbTriggers: ['implement', 'add ', 'build', 'create', 'feature', 'support for', 'new command'],
+  verbTriggers: ['implement', 'add', 'build', 'create', 'feature', 'support for', 'new command'],
   requiredContext: ['request'],
   goalFrom: 'request',
   result: [

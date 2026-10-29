@@ -169,6 +169,21 @@ export type WorkspaceDiff = {
 };
 
 const MAX_DIFF = 30_000;
+
+/** Cut a long diff, naming every file whose changes were cut off (nothing dropped silently). */
+export function truncateDiff(diff: string, max: number): string {
+  const headers = [...diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map((m) => ({
+    file: m[1]!,
+    at: m.index,
+  }));
+  const partly = headers.filter((h, i) => h.at < max && (headers[i + 1]?.at ?? diff.length) > max);
+  const omitted = headers.filter((h) => h.at >= max);
+  const said = [
+    ...(partly.length ? [`partly shown: ${partly.map((h) => h.file).join(', ')}`] : []),
+    ...(omitted.length ? [`not shown: ${omitted.map((h) => h.file).join(', ')}`] : []),
+  ];
+  return `${diff.slice(0, max)}\n… diff truncated at ${max} characters${said.length ? `; ${said.join('; ')}` : ''} …`;
+}
 /** Symphony's own files (saved runs, checkpoints) are never the edit. */
 const NOT_THE_EDIT = ':(exclude).symphony';
 
@@ -210,7 +225,7 @@ export async function workspaceDiff(ctx: ToolContext): Promise<WorkspaceDiff> {
     }
   }
   const files = [...new Set([...changed, ...untracked])].toSorted();
-  const shown = diff.length > MAX_DIFF ? `${diff.slice(0, MAX_DIFF)}\n… diff truncated …` : diff;
+  const shown = diff.length > MAX_DIFF ? truncateDiff(diff, MAX_DIFF) : diff;
   const extra = untracked.length
     ? `\nuntracked files:\n${untracked.map((f) => `  ${f}`).join('\n')}`
     : '';

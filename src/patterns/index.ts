@@ -7,6 +7,7 @@ import { investigate } from './investigate.js';
 import { composedScore, maestro, maestroThen } from './maestro.js';
 import { refactor } from './refactor.js';
 import { review } from './review.js';
+import { triggerMatches } from './route.js';
 
 /** The pattern library. Patterns are TypeScript modules; add new ones here. */
 export const PATTERNS: readonly Pattern[] = [
@@ -39,7 +40,7 @@ export function routeMatches(prompt: string, library: readonly Pattern[]): Patte
     .map((pattern, i) => ({
       pattern,
       i,
-      score: (pattern.verbTriggers ?? []).filter((t) => text.includes(t)).length,
+      score: (pattern.verbTriggers ?? []).filter((t) => triggerMatches(text, t)).length,
     }))
     .filter((m) => m.score > 0)
     .toSorted((a, b) => b.score - a.score || a.i - b.i)

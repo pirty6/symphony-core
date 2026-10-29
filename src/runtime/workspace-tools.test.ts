@@ -7,6 +7,7 @@ import {
   detectTestCommand,
   normalizeOutput,
   runCommand,
+  truncateDiff,
   workspaceDiff,
   workspaceTools,
 } from './workspace-tools.js';
@@ -202,5 +203,16 @@ describe('memory tools', () => {
       'config.js:1 — the default port is one above DEFAULTS `DEFAULTS.port + 1`',
     ]);
     expect(r.lessons[0]).toMatch(/Fixed "wrong default port": off by one \(files: config.js\)$/);
+  });
+});
+
+describe('truncateDiff', () => {
+  it('names the files a long diff cut off, partly or entirely', () => {
+    const file = (name: string, n: number) =>
+      `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${'+x\n'.repeat(n)}`;
+    const diff = file('a.ts', 5) + file('b.ts', 40) + file('c.ts', 5) + file('d.ts', 5);
+    const out = truncateDiff(diff, 100);
+    expect(out.startsWith(diff.slice(0, 100))).toBe(true);
+    expect(out).toMatch(/… diff truncated at 100 characters; partly shown: b\.ts; not shown: c\.ts, d\.ts …$/);
   });
 });

@@ -1,4 +1,5 @@
 import { compileScore } from '../core/compile.js';
+import { triggerMatches } from './route.js';
 import { draftInstructions, genericDraft, parseDraft } from '../core/draft.js';
 import type { ExecutableScore, Improvisation, Pattern } from '../core/types.js';
 import { analyze } from './analyze.js';
@@ -437,7 +438,9 @@ ${SCORE_FORMAT}`,
       }),
       route: (s) => {
         const text = String(s.request).toLowerCase();
-        const hit = DEMO_LIBRARY.find((p) => (p.verbTriggers ?? []).some((t) => text.includes(t)));
+        const hit = DEMO_LIBRARY.find((p) =>
+          (p.verbTriggers ?? []).some((t) => triggerMatches(text, t)),
+        );
         return { suggested: hit?.name ?? 'new' };
       },
       validate: (s) => {
