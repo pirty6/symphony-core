@@ -266,6 +266,32 @@ describe('CopilotProvider', () => {
     });
   });
 
+  it("applies the step's own checks in-session, so an empty answer is sent back at once", async () => {
+    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+    const replies: string[] = [];
+    const { client } = fakeClient(async (cfg, emit) => {
+      for (const words of [[], ['cat', 'dog']]) {
+        replies.push(String(await callTool(cfg, 'submit_result', { updates: { words }, verdict })));
+      }
+      emit('session.idle');
+    });
+    const p = new CopilotProvider({ clientFactory: () => client });
+    const res = await p.runAgent({
+      pause: {
+        ...pause,
+        outputSchema: [{ name: 'words', type: 'string[]' }],
+        checks: [{ expr: 'len(words) >= min', message: 'Give at least min words.' }],
+      },
+      state: { min: 2 },
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    expect(replies[0]).toMatch(/^REJECTED[\s\S]*Give at least min words\./);
+    expect(replies[1]).toMatch(/^Result recorded/);
+    expect(res.result).toMatchObject({ updates: { words: ['cat', 'dog'] } });
+  });
+
   it('falls back to JSON in the final message', async () => {
     const { client } = fakeClient(async (_cfg, emit) => {
       emit('assistant.message', { content: '```json\n{"updates":{"word":"dog"}}\n```' });

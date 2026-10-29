@@ -79,12 +79,24 @@ export const investigate: Pattern = {
         description: 'Experiments to run: command, what it measures',
       },
       { name: 'batchSize', type: 'number', initial: 25 },
+      {
+        name: 'batchWave',
+        type: 'number',
+        initial: 75,
+        description: 'Files per triage round, split into parallel calls of batchSize',
+      },
       { name: 'pendingFiles', type: 'string[]' },
       { name: 'batch', type: 'string[]', description: 'Files to triage now' },
       { name: 'triaged', type: 'string[]', description: 'Files of the batch that were opened' },
       { name: 'batchRelevant', type: 'string[]', description: 'Relevant files of the batch' },
       { name: 'relevantFiles', type: 'string[]' },
       { name: 'deepBatchSize', type: 'number', initial: 4 },
+      {
+        name: 'deepWave',
+        type: 'number',
+        initial: 12,
+        description: 'Items per deep-read round, split into parallel calls of deepBatchSize',
+      },
       { name: 'pendingDeep', type: 'string[]' },
       {
         name: 'deepBatch',
@@ -349,8 +361,8 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Next batch',
       assign: [
-        { field: 'batch', expr: 'take(pendingFiles, batchSize)' },
-        { field: 'pendingFiles', expr: 'drop(pendingFiles, batchSize)' },
+        { field: 'batch', expr: 'take(pendingFiles, batchWave)' },
+        { field: 'pendingFiles', expr: 'drop(pendingFiles, batchWave)' },
       ],
     },
     {
@@ -362,6 +374,7 @@ export const investigate: Pattern = {
         'Open EVERY file in `batch` (view each one; for long files look through all of it, not just the top). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
         AGAINST,
       reads: ['hypotheses', 'question', 'subQuestions', 'batch'],
+      fanOut: { over: 'batch', per: 'batchSize' },
       writes: ['triaged', 'batchRelevant', 'newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -405,8 +418,8 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Next deep batch',
       assign: [
-        { field: 'deepBatch', expr: 'take(pendingDeep, deepBatchSize)' },
-        { field: 'pendingDeep', expr: 'drop(pendingDeep, deepBatchSize)' },
+        { field: 'deepBatch', expr: 'take(pendingDeep, deepWave)' },
+        { field: 'pendingDeep', expr: 'drop(pendingDeep, deepWave)' },
       ],
     },
     {
@@ -419,6 +432,7 @@ export const investigate: Pattern = {
         'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
         AGAINST,
       reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch'],
+      fanOut: { over: 'deepBatch', per: 'deepBatchSize' },
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
       cites: 'newFindings',
       retries: 2,

@@ -518,6 +518,12 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     env: process.env,
     repeat: Number(args.values.repeat),
     keep: args.values.keep,
+    runsDir: join(
+      cwd,
+      '.symphony',
+      'evals',
+      `${new Date().toISOString().replace(/[:.]/g, '-')}-runs`,
+    ),
     provider: (workspace, pattern) =>
       makeProvider({
         provider: providerName,

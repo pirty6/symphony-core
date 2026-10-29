@@ -46,7 +46,16 @@ export function scriptedResolution(
   }
   if (pause.kind === 'agent') {
     const responder = demo?.agents?.[pause.nodeId];
-    const result = responder ? responder(engine.state, visit) : placeholderResult(pause);
+    // fanOut: each part answers from the state with its own chunk of the list.
+    const result = pause.parts
+      ? {
+          parts: pause.parts.map((part) =>
+            responder ? responder({ ...engine.state, ...part }, visit) : placeholderResult(pause),
+          ),
+        }
+      : responder
+        ? responder(engine.state, visit)
+        : placeholderResult(pause);
     return {
       kind: 'agent',
       pauseId: pause.pauseId,

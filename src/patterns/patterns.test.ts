@@ -30,7 +30,11 @@ describe('pattern library', () => {
 
   it('investigate covers every file, every chosen source and closes gaps', () => {
     const p = findPattern('investigate')!;
-    const score = compileScore(p, { goal: 'g', context: { ...p.demo!.context!, batchSize: 2 } });
+    // Small batches, one batch per round: the loop takes several rounds.
+    const score = compileScore(p, {
+      goal: 'g',
+      context: { ...p.demo!.context!, batchSize: 2, batchWave: 2 },
+    });
     const r = runScripted(score, p.demo);
     expect(r.state.outcome).toBe('success');
     const steps = r.state.steps;
@@ -39,6 +43,16 @@ describe('pattern library', () => {
       .flatMap((s) => s.updates?.triaged as string[]);
     expect(triaged.toSorted()).toEqual((r.state.state.repoFiles as string[]).toSorted());
     expect(steps.filter((s) => s.nodeId === 'triage')).toHaveLength(3);
+    // By default a round plays several batches at once (fanOut) and covers the same files.
+    const wide = runScripted(
+      compileScore(p, { goal: 'g', context: { ...p.demo!.context!, batchSize: 2 } }),
+      p.demo,
+    );
+    const wideTriage = wide.state.steps.filter((s) => s.nodeId === 'triage');
+    expect(wideTriage).toHaveLength(1);
+    expect(((wideTriage[0]!.updates?.triaged as string[] | undefined) ?? []).toSorted()).toEqual(
+      triaged.toSorted(),
+    );
     const examined = steps
       .filter((s) => s.nodeId === 'deepRead')
       .flatMap((s) => s.updates?.examined as string[]);

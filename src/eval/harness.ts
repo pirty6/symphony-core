@@ -3,11 +3,12 @@
  * change to Symphony: solved or not, citations valid or not, tokens, time, models.
  * A change ships only if it keeps the solved count and the citation validity.
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compileScore } from '../core/compile.js';
-import type { Pattern, TokenUsage } from '../core/types.js';
+import { RUN_SCHEMA_VERSION } from '../core/migrate.js';
+import type { Pattern, SavedRun, TokenUsage } from '../core/types.js';
 import { performanceUsage } from '../core/usage.js';
 import { Run } from '../runtime/driver.js';
 import { checkCitations } from '../runtime/evidence.js';
@@ -45,10 +46,12 @@ export interface EvalOptions {
   readonly repeat?: number;
   /** Keep each task's workspace (printed in the notes) for a closer look. */
   readonly keep?: boolean;
+  /** Save each task's run (score + performance) here, to open or replay it later. */
+  readonly runsDir?: string;
   readonly onResult?: (r: EvalResult) => void;
 }
 
-async function runTask(task: EvalTask, o: EvalOptions): Promise<EvalResult> {
+async function runTask(task: EvalTask, o: EvalOptions, take: number): Promise<EvalResult> {
   const pattern = o.library.find((p) => p.name === task.pattern);
   if (!pattern) throw new Error(`eval task '${task.id}': no pattern '${task.pattern}'`);
   const workspace = await mkdtemp(join(tmpdir(), `symphony-eval-${task.id}-`));
@@ -70,6 +73,13 @@ async function runTask(task: EvalTask, o: EvalOptions): Promise<EvalResult> {
     }).start();
     const ms = Date.now() - started;
     const state = perf.finalState;
+    let saved: string | undefined;
+    if (o.runsDir) {
+      await mkdir(o.runsDir, { recursive: true });
+      saved = join(o.runsDir, `${task.id}-${take}.json`);
+      const run: SavedRun = { schemaVersion: RUN_SCHEMA_VERSION, score, performance: perf };
+      await writeFile(saved, `${JSON.stringify(run, null, 2)}\n`);
+    }
     const verdict = await task.check({ workspace, outcome: perf.outcome, state });
     const findings = Array.isArray(state.findings)
       ? state.findings.filter((f): f is string => typeof f === 'string')
@@ -86,7 +96,12 @@ async function runTask(task: EvalTask, o: EvalOptions): Promise<EvalResult> {
       task: task.id,
       pattern: task.pattern,
       pass: verdict.pass,
-      notes: [...verdict.notes, ...(o.keep ? [`workspace ${workspace}`] : [])],
+      notes: [
+        ...verdict.notes,
+        ...(perf.outcome !== 'success' && perf.reason ? [perf.reason] : []),
+        ...(o.keep ? [`workspace ${workspace}`] : []),
+        ...(saved ? [`run ${saved}`] : []),
+      ],
       outcome: perf.outcome,
       ms,
       steps: perf.steps.length,
@@ -104,7 +119,7 @@ export async function runEval(o: EvalOptions): Promise<EvalReport> {
   const results: EvalResult[] = [];
   for (const task of o.tasks) {
     for (let i = 0; i < (o.repeat ?? 1); i += 1) {
-      const r = await runTask(task, o).catch(
+      const r = await runTask(task, o, i + 1).catch(
         (e: Error): EvalResult => ({
           task: task.id,
           pattern: task.pattern,

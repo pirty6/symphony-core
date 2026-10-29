@@ -88,6 +88,13 @@ export interface AgentNode extends NodeBase {
    */
   readonly cites?: string;
   /**
+   * Split the list in `over` into chunks of `per` items (a number, or a number
+   * field) and play one AI call per chunk at the same time; the answers are
+   * checked one by one and merged in chunk order, so the result does not depend
+   * on which call finished first. Every field the step writes must be a list.
+   */
+  readonly fanOut?: { readonly over: string; readonly per: number | string };
+  /**
    * Solo point: from Swing (improvisation >= 2) the AI chooses which labelled
    * out edge to take. Below that the first edge (the written melody) is played.
    */
@@ -277,6 +284,8 @@ export interface AiTranscript {
   readonly completedAt?: string;
   /** Independent takes that an integrator merged into this answer (jazz). */
   readonly takes?: readonly AiTranscript[];
+  /** fanOut: one transcript per part, in part order. */
+  readonly parts?: readonly AiTranscript[];
   /** Set when the answer was replayed from a recorded performance (classical). */
   readonly fromRepertoire?: string;
   /** Who played: enough to tell whether two answers came from the same musician. */
@@ -331,6 +340,13 @@ export interface AgentPause {
   readonly isolated: boolean;
   /** Field of `updates` whose entries cite the workspace (AgentNode.cites). */
   readonly cites?: string;
+  /** The step's acceptance checks, so a provider can apply them while the AI still has its context. */
+  readonly checks?: readonly AcceptanceCheck[];
+  /**
+   * fanOut: the input of each parallel call (the chunk replaces the list). The
+   * answer is { parts: [one result per part] }, or an already merged result (replay).
+   */
+  readonly parts?: readonly Readonly<Record<string, unknown>>[];
   /** Independent takes to play before integrating (1 = a single take). */
   readonly takes: number;
   /** Present at an active solo point: the routes the AI may choose from. */

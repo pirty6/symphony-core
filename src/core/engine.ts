@@ -22,6 +22,8 @@ import { solosActive, takesFor } from './jazz.js';
 import { checkAgentResult, checkValue, validateUpdates, type Checked } from './schema.js';
 import type {
   AcceptanceCheck,
+  AgentNode,
+  AgentPause,
   Complexity,
   AgentResolution,
   NodeResult,
@@ -271,6 +273,75 @@ function choicesOf(score: ExecutableScore, node: ScoreNode) {
     .map((e) => ({ edgeId: e.id, label: e.label ?? label(e.to), to: e.to }));
 }
 
+/** fanOut: the input of each parallel call, when the list splits into more than one chunk. */
+function partsOf(
+  node: AgentNode,
+  state: Readonly<Record<string, unknown>>,
+): { parts?: Readonly<Record<string, unknown>>[] } {
+  if (!node.fanOut) return {};
+  const list = state[node.fanOut.over];
+  const per = typeof node.fanOut.per === 'number' ? node.fanOut.per : state[node.fanOut.per];
+  if (!Array.isArray(list) || typeof per !== 'number' || per < 1) return {};
+  const input = pick(state, node.reads);
+  const parts: Readonly<Record<string, unknown>>[] = [];
+  for (let i = 0; i < list.length; i += per) {
+    parts.push({ ...input, [node.fanOut.over]: list.slice(i, i + per) });
+  }
+  return parts.length > 1 ? { parts } : {};
+}
+
+/**
+ * fanOut answers: check each part, then merge them in part order (lists are
+ * concatenated). A result without `parts` (a replayed, merged one) is checked as one.
+ */
+function checkParts(
+  raw: unknown,
+  pause: AgentPause,
+  transcript: AiTranscript | undefined,
+): Checked<NodeResult> | undefined {
+  const parts = (raw as { parts?: unknown } | null | undefined)?.parts;
+  if (!pause.parts || !Array.isArray(parts)) return undefined;
+  if (parts.length !== pause.parts.length) {
+    return {
+      ok: false,
+      errors: [`expected ${pause.parts.length} part results, got ${parts.length}`],
+    };
+  }
+  const errors: string[] = [];
+  const values: NodeResult[] = [];
+  parts.forEach((p, i) => {
+    const c: Checked<NodeResult> =
+      p === undefined
+        ? { ok: false, errors: [noResult(transcript?.parts?.[i])] }
+        : checkAgentResult(p, pause.outputSchema);
+    if (c.ok) values.push(c.value);
+    else errors.push(...c.errors.map((e) => `part ${i + 1} of ${parts.length}: ${e}`));
+  });
+  if (errors.length > 0) return { ok: false, errors };
+  const updates: Record<string, unknown> = {};
+  for (const f of pause.outputSchema) {
+    const lists = values.map((v) => v.updates[f.name]).filter(Array.isArray);
+    if (lists.length > 0) updates[f.name] = lists.flat();
+  }
+  const outcomes = values.map((v) => v.verdict.outcome);
+  return {
+    ok: true,
+    value: {
+      updates,
+      verdict: {
+        outcome: outcomes.every((o) => o === 'applied')
+          ? 'applied'
+          : outcomes.includes('failed')
+            ? 'failed'
+            : 'skipped',
+        confidence: Math.min(...values.map((v) => v.verdict.confidence)),
+        shouldTerminate: values.some((v) => v.verdict.shouldTerminate),
+        reason: values.map((v) => v.verdict.reason).join(' | '),
+      },
+    },
+  };
+}
+
 function makePause(
   score: ExecutableScore,
   ctx: Ctx,
@@ -304,7 +375,10 @@ function makePause(
       improvisation: score.improvisation,
       isolated: node.isolated === true,
       ...(node.cites ? { cites: node.cites } : {}),
-      takes: takesFor(score.improvisation, node.role),
+      ...(node.checks?.length ? { checks: node.checks } : {}),
+      ...partsOf(node, ctx.state),
+      // Parallel parts already multiply the calls: a fanned-out step plays one take.
+      takes: node.fanOut ? 1 : takesFor(score.improvisation, node.role),
       ...(node.solo && solosActive(score.improvisation) ? { choices: choicesOf(score, node) } : {}),
       attempt,
       // Each human retry grants a fresh budget; attempts keep counting so pause ids never repeat.
@@ -558,7 +632,8 @@ function resolveTool(
 }
 
 /** Evaluate acceptance checks against state as it would be after applying the answer. */
-function acceptance(
+/** A step's own checks on its answer, evaluated against the state it would produce. */
+export function acceptance(
   checks: readonly AcceptanceCheck[],
   state: Readonly<Record<string, unknown>>,
   value: NodeResult,
@@ -639,9 +714,10 @@ function resolveAgent(
   res: AgentResolution,
 ): void {
   const routed: ReturnType<typeof checkAgentResult> =
-    res.result === undefined
+    checkParts(res.result, pause, res.transcript) ??
+    (res.result === undefined
       ? { ok: false, errors: [noResult(res.transcript)] }
-      : checkAgentResult(res.result, pause.outputSchema, pause.choices);
+      : checkAgentResult(res.result, pause.outputSchema, pause.choices));
   const checked =
     routed.ok && node.kind === 'agent' && node.checks?.length
       ? acceptance(node.checks, ctx.state, routed.value)

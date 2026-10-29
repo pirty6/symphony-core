@@ -23,10 +23,10 @@ export function addUsage(a: TokenUsage, b: TokenUsage | undefined): TokenUsage {
   };
 }
 
-/** One answer's usage, including the jazz takes merged into it. */
+/** One answer's usage, including the jazz takes or fanOut parts merged into it. */
 export function transcriptUsage(t: AiTranscript | undefined): TokenUsage {
   if (!t || t.fromRepertoire) return NO_USAGE;
-  return (t.takes ?? []).reduce(
+  return [...(t.takes ?? []), ...(t.parts ?? [])].reduce(
     (sum, take) => addUsage(sum, transcriptUsage(take)),
     addUsage(NO_USAGE, t.usage),
   );

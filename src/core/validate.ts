@@ -188,6 +188,26 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         if (n.complexity !== undefined && ![1, 2, 3, 4].includes(n.complexity)) {
           errors.push({ ...at, message: 'complexity must be 1, 2, 3 or 4' });
         }
+        if (n.fanOut) {
+          const typeOf = (name: string) => g.state.find((f) => f.name === name)?.type;
+          const isList = (name: string) => String(typeOf(name) ?? '').endsWith('[]');
+          const { over, per } = n.fanOut;
+          if (!n.reads.includes(over) || !isList(over))
+            errors.push({ ...at, message: `fanOut.over '${over}' must be a list field it reads` });
+          if (
+            typeof per === 'number' ? !Number.isInteger(per) || per < 1 : typeOf(per) !== 'number'
+          )
+            errors.push({
+              ...at,
+              message: 'fanOut.per must be a positive whole number or a number field',
+            });
+          for (const w of n.writes.filter((x) => !isList(x)))
+            errors.push({
+              ...at,
+              message: `fanOut steps merge lists: '${w}' must be a list field`,
+            });
+          if (n.solo) errors.push({ ...at, message: 'a fanOut step cannot be a solo' });
+        }
         if (n.solo && n.role !== 'assessor') {
           errors.push({
             ...at,

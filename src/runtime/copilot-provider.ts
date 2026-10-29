@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { CopilotClient, defineTool, ToolSet } from '@github/copilot-sdk';
 import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
 import { webSearch, type SearchResult } from './web-search.js';
-import { isProviderBlock } from '../core/engine.js';
+import { acceptance, isProviderBlock } from '../core/engine.js';
 import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
 import { addUsage } from '../core/usage.js';
 import { checkCitations } from './evidence.js';
@@ -142,8 +142,11 @@ export const ISOLATED_SYSTEM = [
   'You work on one step of a deterministic workflow, inside a session with no workspace, files or shell.',
   'Use only the tools you are given (always submit_result; web_search and web_fetch when listed).',
   'Reason only from what the user message gives you and what those tools return. Never invent facts, file contents, line numbers or citations; say what you do not know.',
-  'Finish by calling submit_result exactly once with the requested JSON.',
+  'Finish by calling submit_result exactly once with the requested JSON. Make one tool call at a time, never several in parallel. Tool arguments are JSON values: `updates` is a JSON object (not a string) with exactly the listed keys, and lists are JSON arrays.',
 ].join('\n');
+
+const checkErrors = (c: { ok: boolean; errors?: readonly string[] }) =>
+  c.ok ? [] : [...(c.errors ?? [])];
 
 /** In-session retries of a malformed submit_result before the engine judges it. */
 const MAX_SUBMIT_CORRECTIONS = 2;
@@ -467,7 +470,11 @@ export class CopilotProvider implements Provider {
         // a fresh attempt that redoes all the reading. The engine re-checks anyway.
         const checked = checkAgentResult(args, pause.outputSchema, pause.choices);
         const errors = checked.ok
-          ? await this.citationErrors(pause, checked.value.updates)
+          ? [
+              ...(await this.citationErrors(pause, checked.value.updates)),
+              // The step's own checks too ("at least 3 hypotheses"), on the state it would produce.
+              ...checkErrors(acceptance(pause.checks ?? [], req.state, checked.value)),
+            ]
           : checked.errors;
         if (errors.length === 0 || corrections >= MAX_SUBMIT_CORRECTIONS) {
           return 'Result recorded. Your step is complete: stop now.';

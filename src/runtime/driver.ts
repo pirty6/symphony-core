@@ -90,6 +90,8 @@ export interface NextPerformance {
 
 type Unsequenced<T> = T extends { seq: number } ? Omit<T, 'seq'> : never;
 
+const DEFAULT_PARALLEL = 4;
+
 export interface RunOptions {
   readonly id?: string;
   readonly score: ExecutableScore;
@@ -113,6 +115,8 @@ export interface RunOptions {
    * to the workspace (or saves a patch) when the run ends.
    */
   readonly isolation?: { readonly finish: (outcome: PerformanceOutcome) => Promise<EditsResult> };
+  /** fanOut: how many parts of a step play at the same time (default 4). */
+  readonly parallel?: number;
   /** Also save (through onSave) after every step, so an interrupted run can be resumed. */
   readonly checkpoint?: boolean;
   /** Continue from a restored engine (restoreEngine) instead of starting fresh. */
@@ -276,7 +280,11 @@ export class Run {
   private async play(
     pause: AgentPause,
     signal: AbortSignal,
-    extra: { take?: number; integrate?: readonly unknown[] } = {},
+    extra: {
+      take?: number;
+      integrate?: readonly unknown[];
+      state?: Readonly<Record<string, unknown>>;
+    } = {},
   ): Promise<{ result: unknown; transcript: AiTranscript }> {
     return this.opts.provider.runAgent({
       pause,
@@ -316,6 +324,61 @@ export class Run {
     };
   }
 
+  /**
+   * fanOut: one call per part, at most `parallel` at a time. Answers stay in part
+   * order whatever finishes first; a part that errors gives no answer (the engine
+   * says which part). Parts show in the AI output as takes 1..n.
+   */
+  private async playParts(
+    pause: AgentPause,
+    signal: AbortSignal,
+  ): Promise<{ result: unknown; transcript: AiTranscript }> {
+    const { parts, ...single } = pause;
+    const all = parts ?? [];
+    const out: { result: unknown; transcript: AiTranscript }[] = [];
+    let next = 0;
+    const worker = async () => {
+      while (next < all.length && !signal.aborted) {
+        const i = next++;
+        const part = all[i]!;
+        out[i] = await this.play({ ...single, input: part }, signal, {
+          take: i + 1,
+          state: { ...this.engine.state, ...part },
+        }).catch((e: Error) => {
+          if (e.name === 'AbortError') throw e;
+          return {
+            result: undefined,
+            transcript: {
+              provider: this.opts.provider.name,
+              prompt: pause.directive,
+              output: `provider error: ${e.message}`,
+              toolCalls: [],
+            },
+          };
+        });
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(this.opts.parallel ?? DEFAULT_PARALLEL, all.length) }, worker),
+    );
+    if (signal.aborted) throw new DOMException('aborted', 'AbortError');
+    const transcripts = out.map((o) => o.transcript);
+    const model = transcripts.find((t) => t.model)?.model;
+    return {
+      result: { parts: out.map((o) => o.result) },
+      transcript: {
+        provider: this.opts.provider.name,
+        ...(model ? { model } : {}),
+        prompt: transcripts[0]?.prompt ?? pause.directive,
+        output: transcripts
+          .map((t, i) => `## Part ${i + 1} of ${all.length}\n${t.output}`)
+          .join('\n\n'),
+        toolCalls: transcripts.flatMap((t) => t.toolCalls),
+        parts: transcripts,
+      },
+    };
+  }
+
   /** Jazz: independent takes in parallel, then a bandleader merges them. */
   private async playTakes(
     pause: AgentPause,
@@ -345,7 +408,11 @@ export class Run {
     try {
       const res =
         this.fromRepertoire(pause) ??
-        (pause.takes > 1 ? await this.playTakes(pause, signal) : await this.play(pause, signal));
+        (pause.parts
+          ? await this.playParts(pause, signal)
+          : pause.takes > 1
+            ? await this.playTakes(pause, signal)
+            : await this.play(pause, signal));
       result = res.result;
       transcript = res.transcript;
     } catch (e) {
