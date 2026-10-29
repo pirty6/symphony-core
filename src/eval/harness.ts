@@ -185,6 +185,8 @@ const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1
 const pct = (a: number, b: number) =>
   b === 0 ? '' : ` (${a >= b ? '+' : ''}${Math.round(((a - b) / b) * 100)}%)`;
 
+const per = (x: EvalSummary, f: (x: EvalSummary) => number) => (x.runs ? f(x) / x.runs : 0);
+
 /** One line per result, then the totals; with a baseline, the change against it. */
 export function formatReport(report: EvalReport, baseline?: EvalReport): string {
   const lines = report.results.map(
@@ -193,10 +195,13 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   );
   const s = summarize(report.results);
   const b = baseline ? summarize(baseline.results) : undefined;
+  // Runs per task may differ from the baseline's: compare averages per run.
+  const delta = (f: (x: EvalSummary) => number) =>
+    b ? `${pct(per(s, f), per(b, f))} per run` : '';
   lines.push(
     '',
     `solved ${s.solved}/${s.runs}${b ? ` (baseline ${b.solved}/${b.runs})` : ''} · citations valid ${s.citationsChecked - s.citationsInvalid}/${s.citationsChecked}${b ? ` (baseline ${b.citationsChecked - b.citationsInvalid}/${b.citationsChecked})` : ''}`,
-    `tokens ${k(s.inputTokens)} in${b ? pct(s.inputTokens, b.inputTokens) : ''} (${k(s.cachedTokens)} cached) · ${k(s.outputTokens)} out${b ? pct(s.outputTokens, b.outputTokens) : ''} · time ${(s.ms / 1000).toFixed(0)}s${b ? pct(s.ms, b.ms) : ''}`,
+    `tokens ${k(s.inputTokens)} in${delta((x) => x.inputTokens)} (${k(s.cachedTokens)} cached) · ${k(s.outputTokens)} out${delta((x) => x.outputTokens)} · time ${(s.ms / 1000).toFixed(0)}s${delta((x) => x.ms)}`,
   );
   if (b && worseThan(s, b)) lines.push('⚠ worse than the baseline on correctness');
   return lines.join('\n');

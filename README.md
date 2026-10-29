@@ -104,6 +104,7 @@ npm run cli -- resume .symphony/runs/fix/<file>.json # continue an interrupted o
 npm run cli -- fork .symphony/runs/fix/<file>.json --at 4   # keep steps 1-3, play the rest again
 npm run cli -- runs [--all]                          # saved runs (in-progress = resumable); --all adds demo runs
 npm run cli -- runs --prune [--dry-run]              # delete old demo runs, compact old runs (see Cleaning up)
+npm run cli -- eval [--task a,b] [-n 3] [--compare <report.json>]   # tasks with known answers (see Quality, cost and speed)
 ```
 
 ## Concepts
@@ -450,6 +451,40 @@ npm run cli -- run implement -c request="Add a --json flag to the list command" 
 **Chaining**: one pattern's result feeds the next pattern's goal input (`core/chain.ts`):
 `--then` in the CLI, **Then run** in the studio, or the maestro when a request asks for two shapes
 ("find out why X, then fix it"). Each run is still its own score and performance.
+
+## Quality, cost and speed
+
+Every change here was measured with `symphony eval` and kept only if it did not lower the
+solved rate or citation validity.
+
+- **`symphony eval`** (`src/eval/`): small fixture repos with a known right answer: two fixes, an
+  implement and a refactor checked by hidden tests the AI never saw, and an investigate whose
+  docs say 8080 while the code says 8081. It records solved, citations valid, tokens, time and
+  models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline on
+  correctness.
+- **Checked evidence.** Findings are written `path:line — fact \`quote\``. A **Check citations**
+  step (`evidence.check`) after every research step keeps only findings whose file, line and
+  quote are real (the rest go to `unverified`); the Copilot provider also sends wrong citations
+  back in-session while the AI still has the files open (`cites`). Recorded findings get ids
+  (F1, F2…) and answers, root causes and designs must cite existing ids (`refs`, `ids`).
+- **The step's own checks run in-session** too ("at least 3 hypotheses"), so a bad answer is fixed
+  while the AI still has its context instead of costing a fresh attempt.
+- **Parallel parts (`fanOut`).** investigate's triage and deep reads take a wave of three batches
+  and play them at once (at most 4 calls); answers are checked per part and merged in part order,
+  so the result does not depend on timing and replays exactly.
+- **Memory across runs** (`.symphony/memory.json`). Facts that passed the citation check are
+  remembered; a **Recall earlier runs** step brings back those that share words with the question
+  *and still match the files today* (re-checked at recall), plus lessons from earlier fix and
+  implement runs. They are leads to check, never evidence.
+- **Low confidence is re-checked** (`verifyBelow`, 0.6 on answers, diagnoses and designs): once,
+  one tier smarter. **Second opinions use another model family** (`otherModel`; set
+  `SYMPHONY_ALT_MODEL`, default `gpt-6.1-sol`).
+- **Prompts**: what is fixed for a step comes first and the changing input last, so repeat visits
+  reuse the model's prompt cache; steps with no workspace tools get a short system prompt instead
+  of the SDK's (~4k tokens fewer per call); every step is anchored to the overall goal.
+- **Time limit per step** (15 min, `SYMPHONY_STEP_TIMEOUT_S`): a hung call is retried, then waits
+  for a human like any stuck step. Mechanical steps already play a tier lower (smaller model,
+  lower reasoning effort) through `complexityShift`.
 
 ## Library API
 

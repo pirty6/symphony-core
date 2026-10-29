@@ -115,6 +115,9 @@ describe('eval harness', () => {
     expect(text).toMatch(/citations valid 1\/2/);
     expect(text).toMatch(/⚠ worse than the baseline on correctness/);
     expect(formatReport(baseline, baseline)).not.toMatch(/⚠/);
+    // Two runs against a baseline of one: compared per run, not in total.
+    const twice = await evaluate(true, 2);
+    expect(formatReport(twice, baseline)).toMatch(/tokens 2\.0k in \(\+0%\) per run/);
   });
 
   it('an unknown pattern is a failed result, not a crash', async () => {
