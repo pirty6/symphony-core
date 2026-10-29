@@ -448,14 +448,27 @@ hash identically. A failure is triaged before retrying:
   the way go to `noticedBugs` instead of being fixed (that would change behaviour).
 - **implement** = a green baseline + competing approaches (including "it already exists") +
   evidence from the code + a **design with acceptance criteria** and the tests that will prove
-  them, which the skeptic attacks and you approve + edit and verify (a wrong design goes back to
-  exploring) + an **acceptance review**: passing tests are not enough; every criterion must be MET
+  them, which the skeptic attacks and you approve + **tests first** (below) + edit and verify (a
+  wrong design goes back to exploring) + an **acceptance review**: passing tests are not enough; every criterion must be MET
   with evidence (a test or the code in the diff), and unmet ones go back to editing up to
   `maxReviews` (2) times, else the run ends partial.
 
 ```bash
 npm run cli -- run implement -c request="Add a --json flag to the list command" --provider copilot
 ```
+
+**Tests first** (implement, `src/patterns/phases/testFirst.ts`): the tests are written before the
+code, so they cannot be fitted to the implementation, and the engine proves they test something:
+
+1. The executor writes only the tests in `testsToAdd`; the engine checks (git diff) that the step
+   changed nothing but the files it listed in `testFiles`.
+2. The engine runs the tests: the suite must fail. Tests that pass before any code check nothing new.
+3. An assessor checks each criterion fails for the right reason (the behaviour is missing, not a
+   syntax error or a broken test): `RED`, or `GUARD` for "existing behaviour stays the same", which
+   should pass already. Anything else goes back with the reasons, up to `maxRedAttempts` (2), then
+   you decide whether to implement anyway.
+4. The engine hashes `testFiles` (locked). The executor makes them pass by changing the code; after
+   every green run the hash must still match, or you decide whether the changed tests are acceptable.
 
 **PR review** (`src/patterns/phases/prReview.ts`): once the tests pass (and, for implement,
 every acceptance criterion is met), a reviewer on another model family reads the diff like a pull
