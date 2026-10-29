@@ -347,3 +347,151 @@ export const EVAL_TASKS: readonly EvalTask[] = [
     check: async ({ outcome, state }) => requirementCoverage(outcome, state, [/\btests?\b/i]),
   },
 ];
+
+/** Where the maestro should route a request: any of `pattern`, at a tier in `complexity`. */
+export interface Route {
+  readonly request: string;
+  readonly pattern: readonly string[];
+  readonly complexity: readonly [number, number];
+  /** The pattern chained after it ('' or absent = none). */
+  readonly thenPattern?: string;
+}
+
+/** Judge a maestro composition on its routing only: pattern, complexity band and chain. */
+export function routedAs(
+  outcome: string,
+  state: Readonly<Record<string, unknown>>,
+  route: Route,
+): EvalCheck {
+  const chosen = String(state.chosen ?? '');
+  const complexity = Number(state.complexity);
+  const then = String(state.thenPattern ?? '');
+  const [lo, hi] = route.complexity;
+  const notes = [
+    ...(route.pattern.includes(chosen)
+      ? []
+      : [`fail: routed to '${chosen || 'nothing'}', expected ${route.pattern.join(' or ')}`]),
+    ...(complexity >= lo && complexity <= hi
+      ? []
+      : [`fail: complexity ${state.complexity ?? 'missing'}, expected ${lo}-${hi}`]),
+    ...(then === (route.thenPattern ?? '')
+      ? []
+      : [`fail: then '${then}', expected '${route.thenPattern ?? ''}'`]),
+  ];
+  return {
+    pass: outcome === 'success' && notes.length === 0,
+    notes: [
+      `outcome ${outcome}`,
+      ...(notes.length ? notes : [`${chosen} at ${complexity}${then ? ` then ${then}` : ''}`]),
+    ],
+  };
+}
+
+/**
+ * About twenty requests with the route a careful person would pick. Bands are wide on
+ * purpose: they catch a wrong shape or a wildly wrong tier, not a one-tier judgement call.
+ */
+export const ROUTES: readonly Route[] = [
+  {
+    request: 'Fix the off-by-one in sumTo in src/sum.js: sumTo(4) returns 6, not 10.',
+    pattern: ['fix'],
+    complexity: [1, 2],
+  },
+  {
+    request: 'npm test fails on main since yesterday; make it pass again.',
+    pattern: ['fix'],
+    complexity: [2, 3],
+  },
+  {
+    request: 'The login page crashes with a null pointer after the last deploy. Find and fix it.',
+    pattern: ['fix'],
+    complexity: [2, 3],
+  },
+  {
+    request: 'The dashboard totals are wrong.',
+    pattern: ['fix', 'investigate'],
+    complexity: [2, 4],
+  },
+  {
+    request: 'Why does the server listen on port 8081 instead of 8080?',
+    pattern: ['investigate'],
+    complexity: [1, 2],
+  },
+  {
+    request: 'How does the retry logic in src/http.js work?',
+    pattern: ['investigate'],
+    complexity: [1, 2],
+  },
+  {
+    request: 'Explain the architecture of this repository.',
+    pattern: ['investigate'],
+    complexity: [1, 3],
+  },
+  {
+    request: 'Is our session handling vulnerable to session fixation? Show the evidence.',
+    pattern: ['investigate', 'review'],
+    complexity: [2, 4],
+  },
+  {
+    request: 'Find out why the build is slow, then fix it.',
+    pattern: ['investigate'],
+    complexity: [2, 4],
+    thenPattern: 'fix',
+  },
+  {
+    request: 'Understand src/billing and then clean it up.',
+    pattern: ['investigate'],
+    complexity: [2, 4],
+    thenPattern: 'refactor',
+  },
+  {
+    request: 'Rename the util module to helpers without changing behaviour.',
+    pattern: ['refactor'],
+    complexity: [1, 2],
+  },
+  {
+    request: 'Split the 2,000-line src/server.js into modules without changing behaviour.',
+    pattern: ['refactor'],
+    complexity: [2, 4],
+  },
+  { request: 'Add a --verbose flag to the CLI.', pattern: ['implement'], complexity: [1, 2] },
+  { request: 'Add GitHub OAuth login to the web app.', pattern: ['implement'], complexity: [3, 4] },
+  { request: 'Review my branch before I merge it.', pattern: ['review'], complexity: [1, 3] },
+  {
+    request: 'Review the diff of PR #42 for security risks.',
+    pattern: ['review'],
+    complexity: [2, 3],
+  },
+  {
+    request: 'Which product sold best last quarter in data/sales.csv?',
+    pattern: ['analyze'],
+    complexity: [1, 3],
+  },
+  {
+    request: 'Do support tickets in data/tickets.csv spike after releases?',
+    pattern: ['analyze'],
+    complexity: [2, 3],
+  },
+  {
+    request: 'Go through IMPROVEMENTS.md and do each item as its own change.',
+    pattern: ['backlog'],
+    complexity: [2, 4],
+  },
+  // hangman is a demo game, never a route: a game request has no pattern of its own.
+  { request: "Let's play a game of hangman.", pattern: ['new'], complexity: [1, 4] },
+];
+
+/** Compose-only maestro tasks, judged in code. Not in the default eval: `--task routing`. */
+export const ROUTING_TASKS: readonly EvalTask[] = ROUTES.map((route, i) => ({
+  id: `maestro-route-${String(i + 1).padStart(2, '0')}`,
+  pattern: 'maestro',
+  inputs: { request: route.request },
+  files: {
+    'package.json': PKG,
+    '.gitignore': IGNORE,
+    'README.md': '# fixture\n',
+    'src/sum.js':
+      'export function sumTo(n) {\n  let total = 0;\n  for (let i = 1; i < n; i++) total += i;\n  return total;\n}\n',
+  },
+  check: async ({ outcome, state }) => routedAs(outcome, state, route),
+}));

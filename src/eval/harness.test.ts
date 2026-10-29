@@ -6,7 +6,16 @@ import { describe, expect, it } from 'vitest';
 import type { Pattern } from '../core/types.js';
 import type { Provider } from '../runtime/provider.js';
 import { formatReport, runEval, summarize, worseThan, type EvalReport } from './harness.js';
-import { buildFixture, EVAL_TASKS, requirementCoverage, type EvalTask } from './tasks.js';
+import {
+  buildFixture,
+  EVAL_TASKS,
+  requirementCoverage,
+  ROUTES,
+  ROUTING_TASKS,
+  routedAs,
+  type EvalTask,
+} from './tasks.js';
+import { workPatternNames } from '../patterns/index.js';
 
 /** One executor step that "fixes" the file and reports two findings, one citation wrong. */
 const mini: Pattern = {
@@ -233,8 +242,17 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
   }),
 };
 
+for (const [i, route] of ROUTES.entries())
+  SOLUTIONS[ROUTING_TASKS[i]!.id] = () => ({
+    state: {
+      chosen: route.pattern[0],
+      complexity: route.complexity[1],
+      thenPattern: route.thenPattern ?? '',
+    },
+  });
+
 describe('eval tasks', () => {
-  it.each(EVAL_TASKS.map((t) => [t.id, t] as const))(
+  it.each([...EVAL_TASKS, ...ROUTING_TASKS].map((t) => [t.id, t] as const))(
     '%s: the check fails as given and passes with a right answer',
     async (_id, t) => {
       const solve = SOLUTIONS[t.id];
@@ -289,5 +307,34 @@ describe('requirement coverage judge', () => {
     expect(judge({ ...right, uncovered: ['R3: NOT COVERED — x'] }).pass).toBe(false);
     expect(judge({ ...right, coverage: ['R1: apply — x'] }).pass).toBe(false);
     expect(requirementCoverage('partial', right, []).pass).toBe(false);
+  });
+});
+
+describe('routing judge', () => {
+  const route = ROUTES.find((r) => r.thenPattern === 'fix')!;
+  const ok = { chosen: 'investigate', complexity: 3, thenPattern: 'fix' };
+  it('checks the pattern, the complexity band and the chain', () => {
+    expect(routedAs('success', ok, route).pass).toBe(true);
+    expect(routedAs('success', { ...ok, chosen: 'fix' }, route).notes.join()).toMatch(
+      /routed to 'fix', expected investigate/,
+    );
+    expect(routedAs('success', { ...ok, complexity: 1 }, route).notes.join()).toMatch(
+      /complexity 1, expected 2-4/,
+    );
+    expect(routedAs('success', { ...ok, thenPattern: '' }, route).notes.join()).toMatch(
+      /then '', expected 'fix'/,
+    );
+    expect(routedAs('partial', ok, route).pass).toBe(false);
+  });
+
+  it('every route names a work pattern (or new), never a demo game', () => {
+    const known = new Set([...workPatternNames(), 'new']);
+    expect(ROUTES.length).toBeGreaterThanOrEqual(20);
+    for (const r of ROUTES) {
+      for (const p of [...r.pattern, ...(r.thenPattern ? [r.thenPattern] : [])])
+        expect(known).toContain(p);
+      expect(r.complexity[0]).toBeLessThanOrEqual(r.complexity[1]);
+    }
+    expect(new Set(ROUTING_TASKS.map((t) => t.id)).size).toBe(ROUTES.length);
   });
 });

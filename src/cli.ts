@@ -20,7 +20,7 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
 import { formatReport, runEval, summarize, worseThan, type EvalReport } from './eval/harness.js';
-import { EVAL_TASKS } from './eval/tasks.js';
+import { EVAL_TASKS, ROUTING_TASKS } from './eval/tasks.js';
 import { type ChainStep, followUps, playsAfter, stepContext, stepPattern } from './core/chain.js';
 import { formatUsage, performanceUsage, rejectionUsage } from './core/usage.js';
 import { describeEdits } from './core/edits.js';
@@ -531,9 +531,15 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     return 1;
   }
   const wanted = args.values.task?.split(',').map((t) => t.trim());
-  const tasks = wanted ? EVAL_TASKS.filter((t) => wanted.includes(t.id)) : EVAL_TASKS;
+  // `routing` names every maestro routing task; they are not in the default run.
+  const every = [...EVAL_TASKS, ...ROUTING_TASKS];
+  const tasks = wanted
+    ? every.filter(
+        (t) => wanted.includes(t.id) || (wanted.includes('routing') && ROUTING_TASKS.includes(t)),
+      )
+    : EVAL_TASKS;
   if (tasks.length === 0) {
-    console.error(`no such task; tasks: ${EVAL_TASKS.map((t) => t.id).join(', ')}`);
+    console.error(`no such task; tasks: routing, ${every.map((t) => t.id).join(', ')}`);
     return 1;
   }
   const baseline = args.values.compare
@@ -1004,6 +1010,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
   eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time
+      --task routing           20 maestro requests: right pattern, complexity band and chain (compose only)
   runs --prune [--dry-run]     delete demo runs >7 days, compact runs >30 days (still replayable)
 
 Studio (visual): npm start`);

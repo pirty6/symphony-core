@@ -132,11 +132,6 @@ describe('maestro', () => {
     expect(r.state.state.finalPattern).toMatchObject({ name: 'analyze' });
   });
 
-  const critique = (fit: string, recommended: string) => () => ({
-    updates: { fit, criticReason: `${fit} fit`, recommended },
-    verdict: { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' },
-  });
-
   it('a HYBRID fit keeps the pattern: the conductor reads the critique instead of a reroute', () => {
     const { r } = run('fix the dashboard numbers', {
       classify: classifyAs('fix', 4),
@@ -498,6 +493,12 @@ describe('maestro remembers approved compositions', () => {
     expect(r.state.state.reused).toBe(false);
     expect(r.state.outcome).toBe('success');
   });
+});
+
+/** A template-critic that always answers this fit. */
+const critique = (fit: string, recommended: string) => () => ({
+  updates: { fit, criticReason: `${fit} fit`, recommended },
+  verdict: { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' },
 });
 
 /** A person who asks for another change at every go-gate. */
