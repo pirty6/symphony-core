@@ -7,12 +7,18 @@ import { investigate } from './index.js';
 const demo = investigate.demo!;
 
 /** Run investigate with the plan using exactly `use` (everything else skipped). */
-function runWith(use: string[], approvals: DemoScript['approvals'] = demo.approvals) {
+function runWith(
+  use: string[],
+  approvals: DemoScript['approvals'] = demo.approvals,
+  over: Partial<DemoScript> & { context?: Record<string, unknown> } = {},
+) {
   const script: DemoScript = {
     ...demo,
     ...(approvals ? { approvals } : {}),
+    tools: { ...demo.tools, ...over.tools },
     agents: {
       ...demo.agents,
+      ...over.agents,
       plan: (s) => {
         const names = (s.sourceNames as string[]) ?? [];
         const skip = names.filter((n) => !use.includes(n));
@@ -29,10 +35,18 @@ function runWith(use: string[], approvals: DemoScript['approvals'] = demo.approv
       },
     },
   };
-  const score = compileScore(investigate, { goal: 'g', context: { question: 'q' } });
+  const score = compileScore(investigate, {
+    goal: 'g',
+    context: { question: 'q', ...over.context },
+  });
   const r = runScripted(score, script);
   return { r, ran: r.state.steps.map((s) => s.nodeId) };
 }
+
+const triaged = (r: ReturnType<typeof runWith>['r']) =>
+  r.state.steps
+    .filter((s) => s.nodeId === 'triage')
+    .flatMap((s) => (s.updates?.triaged as string[]) ?? []);
 
 describe('investigate adapts its evidence to the question', () => {
   it('internet question: lists and reads web pages, never touches the workspace', () => {
@@ -54,6 +68,48 @@ describe('investigate adapts its evidence to the question', () => {
     expect(ran).not.toContain('listPages');
     expect(r.state.state.pages).toEqual([]);
     expect(r.state.state.consulted).toEqual(['git-history']);
+  });
+
+  it('big repo: searches first and triages only the located files, never every file', () => {
+    const many = Array.from({ length: 400 }, (_, i) => `src/gen/file${i}.ts`);
+    const core = ['src/core/engine.ts', 'src/core/schema.ts', 'src/core/validate.ts'];
+    const inventory = () => ({ files: [...many, ...core], excluded: [] });
+    const { r, ran } = runWith(['workspace'], demo.approvals, { tools: { inventory } });
+    expect(r.state.outcome).toBe('success');
+    expect(ran).toContain('locate');
+    expect(r.state.state.repoFileCount).toBe(403);
+    expect(triaged(r).toSorted()).toEqual([...(r.state.state.scopeFiles as string[])].toSorted());
+    expect(r.state.state.excludedFiles).toEqual(
+      expect.arrayContaining([expect.stringMatching(/did not locate were not triaged/)]),
+    );
+    // Asked for every file: no search, all 403 triaged.
+    const all = runWith(['workspace'], demo.approvals, {
+      tools: { inventory },
+      context: { exhaustive: true },
+    });
+    expect(all.ran).not.toContain('locate');
+    expect(triaged(all.r)).toHaveLength(403);
+  });
+
+  it('a located file must be a real file of the repository', () => {
+    const many = Array.from({ length: 400 }, (_, i) => `src/gen/file${i}.ts`);
+    let n = 0;
+    const { r } = runWith(['workspace'], demo.approvals, {
+      tools: { inventory: () => ({ files: many, excluded: [] }) },
+      agents: {
+        locate: () => ({
+          updates: {
+            scopeFiles: ++n === 1 ? ['src/gen/', 'src/invented.ts'] : ['src/gen/file1.ts'],
+            scopeReasons: n === 1 ? ['folder', 'guess'] : ['git grep found it'],
+            scopeQueries: ['git grep thing'],
+          },
+          verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+        }),
+      },
+    });
+    const located = r.state.steps.find((s) => s.nodeId === 'locate')!;
+    expect(JSON.stringify(located.attempts)).toMatch(/exactly as `git ls-files` prints them/);
+    expect(r.state.state.scopeFiles).toEqual(['src/gen/file1.ts']);
   });
 
   it('performance question: designs experiments and runs them after approval', () => {

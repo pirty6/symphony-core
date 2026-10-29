@@ -295,7 +295,12 @@ the listing adapts to the question: "is this on the internet?", "does this work 
    distinct explanations (including "none of these"), each with what would confirm or refute it.
    Every later research step looks for evidence for *and against* each one.
 2. **List evidence**: only what the plan chose. *Workspace* lists every file (git-aware; binaries,
-   lockfiles and files over 512 KB are excluded with the reason). *Web* has the AI search and list
+   lockfiles and files over 512 KB are excluded with the reason). A repository with more than
+   `maxTriageFiles` (300) files is not triaged file by file: a **Locate** step searches it first
+   (`git grep` for the names and errors in the question, `git log`/`git show` for the commits and
+   PRs it mentions, then imports, callers and tests one level out) and lists at most 300 files, each
+   with why; the engine rejects any path that is not a real file of the repository. Only those are
+   triaged, and the coverage says the rest were not. Pass `-c exhaustive=true` to triage every file. *Web* has the AI search and list
    the pages worth reading. *Experiment* has the AI design the commands to run (benchmarks, timing,
    profiling).
 3. **Triage files** (loop): every listed file, in batches of `batchSize` (25). An answer that leaves
@@ -548,8 +553,8 @@ solved rate or citation validity.
   (F1, F2…) and answers, root causes and designs must cite existing ids (`refs`, `ids`).
 - **The step's own checks run in-session** too ("at least 3 hypotheses"), so a bad answer is fixed
   while the AI still has its context instead of costing a fresh attempt.
-- **Parallel parts (`fanOut`).** investigate's triage and deep reads take a wave of three batches
-  and play them at once (at most 4 calls); answers are checked per part and merged in part order,
+- **Parallel parts (`fanOut`).** investigate's triage and deep reads take a wave of four batches
+  (100 files to triage, 16 items to read in full) and play them at once (at most 4 calls); answers are checked per part and merged in part order,
   so the result does not depend on timing and replays exactly.
 - **Memory across runs** (`.symphony/memory.json`). Facts that passed the citation check are
   remembered; a **Recall earlier runs** step brings back those that share words with the question
