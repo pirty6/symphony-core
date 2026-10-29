@@ -236,7 +236,9 @@ replayable:
    deterministically; errors go back to the proposer (max 6 rounds).
 5. **Read inputs** from the request (one line per input, not the whole score), then the **go-gate**,
    which shows how the pattern was tailored: approve with empty feedback to perform;
-   write feedback for another round (complexity escalates one tier); reject to stop.
+   write feedback for another round (complexity escalates one tier); reject to stop. Feedback after
+   the last round (`maxRounds`, 6) is never dropped: the run ends partial without performing,
+   keeping the score and your feedback (`unappliedFeedback`, also in the debate notes).
 6. **Perform**: the composed score runs as its own linked, recorded run at the final complexity.
 
 **Memory of compositions.** What you approve at the go-gate is remembered in the workspace's

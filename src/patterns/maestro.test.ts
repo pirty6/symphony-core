@@ -389,3 +389,43 @@ describe('maestro remembers approved compositions', () => {
     expect(r.state.outcome).toBe('success');
   });
 });
+
+/** A person who asks for another change at every go-gate. */
+const asking = (_s: Readonly<Record<string, unknown>>, visit: number) => ({
+  approved: true,
+  updates: { feedback: `round ${visit + 1}: also check the retry logic` },
+});
+
+describe('maestro never drops go-gate feedback', () => {
+  it('feedback at the last round ends partial, keeping the draft and the feedback, and performs nothing', () => {
+    const { score, r } = run('Fix the flaky login test', {}, { approvals: { gate: asking } });
+    expect(r.state.outcome).toBe('partial');
+    expect(r.state.cursor).toBe('feedbackUnapplied');
+    const s = r.state.state;
+    expect(s.round).toBe(s.maxRounds);
+    expect(s.unappliedFeedback).toBe(`round ${s.maxRounds}: also check the retry logic`);
+    expect(String(s.debateNotes)).toMatch(/Not applied, out of rounds \(maxRounds\): round 6/);
+    expect(s.finalPattern).toEqual({});
+    expect(s.normalized).toMatchObject({ name: 'fix' });
+    expect(nodesRun(r)).not.toContain('remember');
+    expect(composedScore(score, s)).toBeUndefined();
+    expect(maestro.result).toEqual(['unappliedFeedback']);
+  });
+
+  it('empty feedback at the last round still performs', () => {
+    const { r } = run(
+      'Fix the flaky login test',
+      {},
+      {
+        approvals: {
+          gate: (s) => ({
+            approved: true,
+            updates: { feedback: s.round === s.maxRounds ? '' : 'more' },
+          }),
+        },
+      },
+    );
+    expect(r.state.outcome).toBe('success');
+    expect(r.state.state.unappliedFeedback).toBe('');
+  });
+});

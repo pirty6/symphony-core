@@ -44,6 +44,8 @@ export const maestro: Pattern = {
   verbTriggers: [],
   requiredContext: ['request'],
   goalFrom: 'request',
+  // Feedback that came after the last round, kept rather than dropped (like unresolvedObjections).
+  result: ['unappliedFeedback'],
   maxSteps: 400,
   state: [
     { name: 'request', type: 'string', description: "The user's problem, verbatim" },
@@ -137,6 +139,12 @@ export const maestro: Pattern = {
       description: 'Your changes for another round (empty = go)',
     },
     { name: 'finalPattern', type: 'object', description: 'The approved score' },
+    {
+      name: 'unappliedFeedback',
+      type: 'string',
+      description:
+        'Go-gate feedback that came after the last round: not applied, the score not performed',
+    },
   ],
   start: 'start',
   nodes: [
@@ -525,6 +533,25 @@ ${SCORE_FORMAT}`,
     { id: 'done', kind: 'end', label: 'Score composed', outcome: 'success' },
     { id: 'gaveUp', kind: 'end', label: 'No valid score', outcome: 'failed' },
     { id: 'stopped', kind: 'end', label: 'Stopped', outcome: 'partial' },
+    {
+      id: 'outOfRounds',
+      kind: 'compute',
+      label: 'Out of rounds',
+      // Never perform a score over a change you asked for: keep the draft and your feedback.
+      assign: [
+        { field: 'unappliedFeedback', expr: 'feedback' },
+        {
+          field: 'debateNotes',
+          expr: 'append(debateNotes, "Not applied, out of rounds (maxRounds): " + feedback)',
+        },
+      ],
+    },
+    {
+      id: 'feedbackUnapplied',
+      kind: 'end',
+      label: 'Out of rounds: feedback not applied',
+      outcome: 'partial',
+    },
   ],
   edges: [
     { id: 'start-library', from: 'start', to: 'library' },
@@ -582,7 +609,16 @@ ${SCORE_FORMAT}`,
       guard: '!empty(feedback) && round < maxRounds',
       label: 'feedback',
     },
+    {
+      id: 'gate-outOfRounds',
+      from: 'gate',
+      to: 'outOfRounds',
+      branch: 'approved',
+      guard: '!empty(feedback)',
+      label: 'feedback, no rounds left',
+    },
     { id: 'gate-finalize', from: 'gate', to: 'finalize', branch: 'approved' },
+    { id: 'outOfRounds-end', from: 'outOfRounds', to: 'feedbackUnapplied' },
     { id: 'gate-stopped', from: 'gate', to: 'stopped', branch: 'rejected' },
     { id: 'escalate-propose', from: 'escalate', to: 'propose', label: 'next round' },
     { id: 'finalize-remember', from: 'finalize', to: 'remember' },
