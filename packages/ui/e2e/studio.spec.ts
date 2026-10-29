@@ -36,6 +36,9 @@ test('step mode halts before and after the AI; the proposed result is visible be
   await page.getByLabel('step mode').check()
   await page.getByRole('button', { name: '▶ Run' }).click()
   const gate = page.getByTestId('gate-card')
+  // First the tool step that recalls earlier runs, then the first AI step.
+  await expect(gate).toContainText('Paused before “recall”')
+  await gate.getByRole('button', { name: '⏭ Step' }).click()
   await expect(gate).toContainText('Paused before “hypothesize”')
   await gate.getByRole('button', { name: '⏭ Step' }).click()
   await expect(gate).toContainText('after AI answered')
@@ -197,7 +200,7 @@ test('several runs play at once on one server; the studio switches between them'
   await page.getByText('auto-approve').click()
   await page.getByLabel('step mode').check()
   await page.getByRole('button', { name: '▶ Run' }).click()
-  await expect(page.getByTestId('gate-card')).toContainText('Paused before “hypothesize”')
+  await expect(page.getByTestId('gate-card')).toContainText('Paused before “recall”')
   const live = page.getByTestId('live-runs')
   await expect(live.getByRole('button', { name: /fix/ }).first()).toContainText('on screen')
   // Newest first: the first hangman is the one started above, still waiting for a guess.
@@ -208,5 +211,5 @@ test('several runs play at once on one server; the studio switches between them'
   // And back to fix, still paused where it was.
   await live.getByRole('button', { name: /fix/ }).first().click()
   await expect(page.locator('.tb-title')).toContainText('fix')
-  await expect(page.getByTestId('gate-card')).toContainText('Paused before “hypothesize”')
+  await expect(page.getByTestId('gate-card')).toContainText('Paused before “recall”')
 })
