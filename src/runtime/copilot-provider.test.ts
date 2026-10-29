@@ -633,6 +633,34 @@ describe('CopilotProvider', () => {
     });
   });
 
+  it('a configured token the sign-in check rejects gives way to the signed-in account', async () => {
+    const auths: { gitHubToken?: string }[] = [];
+    const factory = (auth: { gitHubToken?: string }) => {
+      auths.push(auth);
+      const { client } = fakeClient(async (cfg, emit) => {
+        await callTool(cfg, 'submit_result', { updates: { word: 'cat' } });
+        emit('session.idle');
+      });
+      return { ...client, getAuthStatus: async () => ({ isAuthenticated: !auth.gitHubToken }) };
+    };
+    const events: string[] = [];
+    const p = new CopilotProvider({
+      clientFactory: factory,
+      gitHubToken: 'bad',
+      gitHubTokenSource: 'TOKEN',
+    });
+    const res = await p.runAgent({
+      pause,
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: (e) => e.type === 'info' && events.push(e.text),
+    });
+    expect(res.result).toEqual({ updates: { word: 'cat' } });
+    expect(auths).toEqual([{ gitHubToken: 'bad' }, {}]);
+    expect(events.join('\n')).toMatch(/the token in TOKEN is not signed in to Copilot/);
+  });
+
   it('the signed-in account is used without token variables the CLI would prefer', () => {
     expect(
       withoutTokenVars({

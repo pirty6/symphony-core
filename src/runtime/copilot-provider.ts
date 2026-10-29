@@ -286,7 +286,17 @@ export class CopilotProvider implements Provider {
   ): Promise<{ output: string; toolCalls: ToolCallRecord[]; model?: string; usage?: TokenUsage }> {
     if (run.signal.aborted) throw abortError();
     if (!this.signInChecked) {
-      const status = await this.authStatus().catch(() => undefined);
+      let status = await this.authStatus().catch(() => undefined);
+      // A configured token that is not accepted: try the account signed in on this machine.
+      if (status && !status.signedIn && this.opts.gitHubToken && !this.tokenRejected) {
+        this.tokenRejected = true;
+        run.onEvent({
+          type: 'info',
+          text: `the token in ${this.opts.gitHubTokenSource ?? 'your settings'} is not signed in to Copilot; using the GitHub account signed in on this machine instead`,
+        });
+        await this.dropClient();
+        status = await this.authStatus().catch(() => undefined);
+      }
       if (status && !status.signedIn) throw new SetupError(SIGN_IN_HELP);
       this.signInChecked = status !== undefined;
     }
