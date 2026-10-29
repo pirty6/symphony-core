@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
-import { parseDraft } from '../core/draft.js';
+import { adaptPattern, outlinePattern, parseDraft } from '../core/draft.js';
 import type { Pattern } from '../core/types.js';
 import { PATTERNS, routeMatches } from '../patterns/index.js';
 import { discoverMcpServers, type McpOptions } from './mcp.js';
@@ -287,6 +287,26 @@ export function defaultTools(opts: CatalogOptions = {}): ToolRegistry {
 
 const stripDemo = ({ demo: _demo, ...data }: Pattern) => data;
 
+const isFilled = (x: unknown): boolean =>
+  typeof x === 'object' && x !== null && !Array.isArray(x) && Object.keys(x).length > 0;
+
+/**
+ * An empty draft with a library template: the template as adapted (the maestro
+ * tailors tested patterns instead of rewriting them). A filled draft wins: the
+ * shape had to change. Undefined when there is no template to adapt.
+ */
+function fromTemplate(
+  draft: unknown,
+  template: unknown,
+  adaptation: unknown,
+): { pattern: Pattern } | { errors: string[] } | undefined {
+  if (isFilled(draft) || !isFilled(template)) return undefined;
+  const base = parseDraft(template);
+  if (!base.ok) return { errors: base.errors.map((e) => `template: ${e}`) };
+  const out = adaptPattern(base.value, adaptation ?? {});
+  return out.errors.length > 0 ? { errors: out.errors } : { pattern: out.pattern };
+}
+
 /** Tools the maestro uses: list the library, route by verb triggers, validate and save a drafted score. */
 export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSpec[] {
   const lib = async () => (await library()).filter((p) => p.name !== 'maestro');
@@ -319,13 +339,27 @@ export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSp
     },
     {
       name: 'pattern.validate',
-      description: 'Validate a drafted pattern; returns the normalized pattern or the problems.',
+      description:
+        'Validate a drafted pattern; returns the normalized pattern or the problems. With an empty draft, a library `template` and an `adaptation`, validates the template as adapted.',
       outputs: ['errors', 'valid', 'pattern'],
       run: async (args) => {
-        const parsed = parseDraft(args.pattern);
+        const adapted = fromTemplate(args.pattern, args.template, args.adaptation);
+        if (adapted && 'errors' in adapted)
+          return { errors: adapted.errors, valid: false, pattern: {} };
+        const parsed = parseDraft(adapted ? adapted.pattern : args.pattern);
         return parsed.ok
           ? { errors: [], valid: true, pattern: stripDemo(parsed.value) }
           : { errors: parsed.errors, valid: false, pattern: {} };
+      },
+    },
+    {
+      name: 'pattern.outline',
+      description:
+        'A compact view of a pattern for prompts: its steps (AI steps with the start of their directive) and the settings an adaptation may change: { steps, settings }.',
+      outputs: ['steps', 'settings'],
+      run: async (args) => {
+        const parsed = isFilled(args.pattern) ? parseDraft(args.pattern) : undefined;
+        return parsed?.ok ? outlinePattern(parsed.value) : { steps: [], settings: [] };
       },
     },
     {

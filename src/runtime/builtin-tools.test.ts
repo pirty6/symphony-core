@@ -125,6 +125,7 @@ describe('sources.catalog', () => {
       'patterns.list',
       'patterns.route',
       'pattern.validate',
+      'pattern.outline',
       'pattern.save',
     ]);
     const out = await tools.get('repo.files')!.run({}, ctx(repo('r3')));
@@ -226,6 +227,57 @@ describe('maestro tools', () => {
       .get('pattern.validate')!
       .run({ pattern: (list.catalog as Record<string, unknown>).fix }, c);
     expect(good).toMatchObject({ valid: true, errors: [] });
+  });
+
+  it('validates a library template as adapted; a filled draft wins', async () => {
+    const list = await tools.get('patterns.list')!.run({}, c);
+    const fix = (list.catalog as Record<string, Record<string, unknown>>).fix!;
+    const validate = tools.get('pattern.validate')!;
+    const adapted = await validate.run(
+      {
+        pattern: {},
+        template: fix,
+        adaptation: {
+          directives: { hypothesize: 'Start from PR 1.' },
+          initial: { maxAttempts: 1 },
+        },
+      },
+      c,
+    );
+    expect(adapted).toMatchObject({ valid: true, errors: [] });
+    const p = adapted.pattern as {
+      nodes: { id: string; directive?: string }[];
+      state: { name: string; initial?: unknown }[];
+    };
+    expect(p.nodes.find((n) => n.id === 'hypothesize')!.directive).toMatch(
+      /For this request: Start from PR 1\.$/,
+    );
+    expect(p.state.find((f) => f.name === 'maxAttempts')!.initial).toBe(1);
+    const wrong = await validate.run(
+      { pattern: {}, template: fix, adaptation: { directives: { nope: 'x' } } },
+      c,
+    );
+    expect(wrong).toMatchObject({
+      valid: false,
+      errors: [expect.stringMatching(/no step 'nope'/)],
+    });
+    const review = (list.catalog as Record<string, Record<string, unknown>>).review!;
+    expect(
+      await validate.run(
+        { pattern: review, template: fix, adaptation: { directives: { nope: 'x' } } },
+        c,
+      ),
+    ).toMatchObject({
+      valid: true,
+      pattern: { name: 'review' },
+    });
+    const outline = await tools.get('pattern.outline')!.run({ pattern: fix }, c);
+    expect((outline.steps as string[]).length).toBeGreaterThan(5);
+    expect(JSON.stringify(outline).length).toBeLessThan(JSON.stringify(fix).length / 3);
+    expect(await tools.get('pattern.outline')!.run({ pattern: {} }, c)).toEqual({
+      steps: [],
+      settings: [],
+    });
   });
 
   it('saves a pattern where the studio lists drafts, never over a built-in one', async () => {
