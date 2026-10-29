@@ -296,3 +296,26 @@ for (const lose of ['restarted', 'unreachable'] as const) {
     )
   })
 }
+
+test('deletes one saved run from the list after a second click', async ({ page }) => {
+  await open(page, 'review')
+  await page.getByText('auto-approve').click()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('run-status')).toHaveText('done')
+  const toggle = page.getByTestId('toggle-demo-runs')
+  if ((await toggle.innerText()).startsWith('Show')) await toggle.click()
+  const rows = page.getByTestId('saved-run')
+  const mine = rows.filter({ has: page.locator('b', { hasText: /^review$/ }) }).first()
+  await expect(mine).toBeVisible()
+  const before = await rows.count()
+  const title = await mine.locator('.lib-item').getAttribute('title')
+  const when = await mine.locator('small').innerText()
+  await mine.getByRole('button', { name: 'delete run' }).click()
+  // One click only asks; Keep leaves it.
+  await mine.getByRole('button', { name: 'keep' }).click()
+  await expect(rows).toHaveCount(before)
+  await mine.getByRole('button', { name: 'delete run' }).click()
+  await mine.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(rows).toHaveCount(before - 1)
+  await expect(rows.filter({ hasText: when }).filter({ has: page.locator(`[title="${title}"]`) })).toHaveCount(0)
+})

@@ -565,6 +565,18 @@ export default function Studio() {
     }
   }
 
+  const deleteSaved = async (file: string) => {
+    try {
+      await api.deleteSaved(file)
+      // The run on screen is the one deleted: nothing is left to show or resume.
+      if (view.replay?.file === file) setView(IDLE_VIEW)
+      setError(null)
+    } catch (e) {
+      setError(errorText(e))
+    }
+    refreshSaved()
+  }
+
   // ── render ─────────────────────────────────────────────────────────
 
   const resultBanner =
@@ -667,6 +679,7 @@ export default function Studio() {
           setView(IDLE_VIEW)
         }}
         onOpenSaved={(f) => void openSaved(f)}
+        onDeleteSaved={deleteSaved}
         onRefreshSaved={refreshSaved}
         live={live}
         liveId={view.mode === 'live' ? view.runId : undefined}

@@ -126,6 +126,8 @@ export const api = {
   copilotStatus: () =>
     fetch('/api/copilot/status').then((r) => json<{ signedIn: boolean; login?: string; message: string }>(r)),
   tiers: () => fetch('/api/tiers').then((r) => json<Record<Complexity, { model: string; effort?: string }>>(r)),
+  /** Delete one saved run (refused while it is still playing). */
+  deleteSaved: (file: string) => post('/api/saved/delete', { path: file }).then((r) => json<{ deleted: string }>(r)),
   savedFile: (file: string) =>
     fetch(`/api/saved/file?path=${encodeURIComponent(file)}`).then((r) =>
       json<{ run: SavedRun; issues: string[]; reproduced: boolean; graph: VisualGraph }>(r),
