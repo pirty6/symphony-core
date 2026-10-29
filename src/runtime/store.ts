@@ -304,6 +304,9 @@ export async function deleteRun(dir: string, file: string): Promise<boolean> {
 
 // ── user patterns (TypeScript files) ───────────────────────────────
 
+/** Where saved patterns go in a symphony-core checkout; the studio and CLI list them. */
+export const DRAFTS_DIR = 'src/patterns/drafts';
+
 export async function savePatternFile(
   dir: string,
   pattern: Pattern,

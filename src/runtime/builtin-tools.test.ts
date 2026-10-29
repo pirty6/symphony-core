@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -125,6 +125,7 @@ describe('sources.catalog', () => {
       'patterns.list',
       'patterns.route',
       'pattern.validate',
+      'pattern.save',
     ]);
     const out = await tools.get('repo.files')!.run({}, ctx(repo('r3')));
     expect(out.files).toContain('src/a.ts');
@@ -225,5 +226,24 @@ describe('maestro tools', () => {
       .get('pattern.validate')!
       .run({ pattern: (list.catalog as Record<string, unknown>).fix }, c);
     expect(good).toMatchObject({ valid: true, errors: [] });
+  });
+
+  it('saves a pattern where the studio lists drafts, never over a built-in one', async () => {
+    const repoRoot = join(root, 'save');
+    const list = await tools.get('patterns.list')!.run({}, c);
+    const review = (list.catalog as Record<string, Record<string, unknown>>).review!;
+    const save = tools.get('pattern.save')!;
+    const out = await save.run({ pattern: { ...review, name: 'storm-review' } }, ctx(repoRoot));
+    expect(out).toEqual({
+      file: join('src', 'patterns', 'drafts', 'storm-review.ts'),
+      name: 'storm-review',
+    });
+    expect(readFileSync(join(repoRoot, out.file as string), 'utf8')).toMatch(
+      /name: 'storm-review'/,
+    );
+    await expect(save.run({ pattern: review }, ctx(repoRoot))).rejects.toThrow(/built-in pattern/);
+    await expect(save.run({ pattern: { name: 'x' } }, ctx(repoRoot))).rejects.toThrow(
+      /not a valid pattern/,
+    );
   });
 });
