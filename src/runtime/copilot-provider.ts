@@ -18,6 +18,7 @@ import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
 import { addUsage } from '../core/usage.js';
 import { checkCitations } from './evidence.js';
 import { stepTimeLimitMs } from './limits.js';
+import { modelSettings } from './repertoire.js';
 import type { AgentPause, Complexity, Role, TokenUsage, ToolCallRecord } from '../core/types.js';
 import type {
   AgentRequest,
@@ -642,6 +643,14 @@ export class CopilotProvider implements Provider {
       ...(effort ? { effort } : {}),
       ...(skipped ? { note: `${skipped}using tier ${complexity} '${tier.model}'` } : {}),
     };
+  }
+
+  /** The model and effort this step will ask for: replay reuses only answers recorded with them. */
+  async requested(pause: AgentPause): Promise<string> {
+    const tier = pause.otherModel
+      ? await this.otherFamily(pause.complexity)
+      : await this.modelFor(pause.complexity);
+    return modelSettings(tier.model, tier.effort);
   }
 
   /** The alternate model when it is available and from another family than the tier's. */

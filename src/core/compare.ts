@@ -43,6 +43,27 @@ export interface RunComparison {
   };
   /** Final-state keys whose values differ. */
   readonly differentKeys: readonly string[];
+  /**
+   * The model settings each run asked for, when they differ: identical outputs from
+   * different models are a coincidence, not a reproduction.
+   */
+  readonly models?: { readonly first: readonly string[]; readonly second: readonly string[] };
+}
+
+/** "model/effort" each AI step asked for, in order of first use (models that answered when not recorded). */
+export function modelsOf(run: SavedRun): string[] {
+  const seen = new Set<string>();
+  for (const s of run.performance.steps) {
+    const t = s.transcript;
+    if (!t || t.provider === 'scripted' || t.fromRepertoire) continue;
+    const m = t.musician;
+    seen.add(
+      m
+        ? `${m.requestedModel ?? 'default'}${m.effort ? `/${m.effort}` : ''}`
+        : (t.model ?? 'default'),
+    );
+  }
+  return [...seen];
 }
 
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
@@ -77,13 +98,18 @@ export function compareRuns(a: SavedRun, b: SavedRun): RunComparison {
   const differentKeys = [...new Set([...Object.keys(fa), ...Object.keys(fb)])]
     .filter((k) => !same(fa[k], fb[k]))
     .toSorted();
+  const ma = modelsOf(a);
+  const mb = modelsOf(b);
+  const models = same(ma.toSorted(), mb.toSorted()) ? undefined : { first: ma, second: mb };
   const result = (first?: RunComparison['first']): RunComparison => ({
     identical:
       first === undefined &&
       differentKeys.length === 0 &&
-      a.performance.outcome === b.performance.outcome,
+      a.performance.outcome === b.performance.outcome &&
+      models === undefined,
     ...(first ? { first } : {}),
     differentKeys,
+    ...(models ? { models } : {}),
   });
 
   if (a.score.id !== b.score.id) {

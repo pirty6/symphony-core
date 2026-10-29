@@ -57,6 +57,8 @@ export interface DraftRequest {
 export interface Provider {
   readonly name: string;
   runAgent(req: AgentRequest): Promise<AgentResponse>;
+  /** The model and effort this step would ask for ("model/effort"), for the replay key. */
+  requested?(pause: AgentPause): Promise<string>;
   draft(req: DraftRequest): Promise<AgentResponse>;
   dispose?(): Promise<void>;
 }

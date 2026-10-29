@@ -456,6 +456,58 @@ describe('Run', () => {
     expect(asked).toEqual(['pick', 'pick']);
   });
 
+  it('classical replays only answers recorded with the model settings the step asks for now', async () => {
+    let calls = 0;
+    const musician = (model: string): Provider => ({
+      name: 'copilot',
+      requested: async () => `${model}/high`,
+      runAgent: async (req) => {
+        calls += 1;
+        return {
+          result: {
+            updates: { word: `${model}word` },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+          },
+          transcript: {
+            provider: 'copilot',
+            model,
+            prompt: '',
+            output: '',
+            toolCalls: [],
+            musician: {
+              tier: req.pause.complexity,
+              requestedModel: model,
+              effort: 'high',
+              sampling: 'n/a',
+            },
+          },
+        };
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    });
+    const score = compileScore(hangman, { goal: 'g', improvisation: 0, generatedAt: 't' });
+    const play = (provider: Provider, repertoire?: ReturnType<typeof repertoireFrom>) =>
+      new Run({
+        score,
+        provider,
+        demo: hangman.demo,
+        autoApprove: true,
+        clock,
+        ...(repertoire ? { repertoire } : {}),
+      }).start();
+    const first = await play(musician('sonnet'));
+    const repertoire = repertoireFrom([
+      { run: { schemaVersion: 3, score, performance: first }, file: 'f.json' },
+    ]);
+    expect(calls).toBe(1);
+    // The same settings: replayed. Another model: played again, not passed off as identical.
+    await play(musician('sonnet'), repertoire);
+    expect(calls).toBe(1);
+    const other = await play(musician('opus'), repertoire);
+    expect(calls).toBe(2);
+    expect(other.finalState.word).toBe('opusword');
+  });
+
   it('bebop: plays takes in parallel and lets the bandleader merge them', async () => {
     const calls: { take?: number; integrate?: number }[] = [];
     const band: Provider = {

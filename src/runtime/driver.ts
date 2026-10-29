@@ -304,11 +304,19 @@ export class Run {
   }
 
   /** Classical: the same move of the same song replays the recorded notes. */
-  private fromRepertoire(
+  private async fromRepertoire(
     pause: AgentPause,
-  ): { result: unknown; transcript: AiTranscript } | undefined {
+  ): Promise<{ result: unknown; transcript: AiTranscript } | undefined> {
     if (!playsFromRepertoire(pause.improvisation) || pause.role !== 'assessor') return undefined;
-    const take = this.opts.repertoire?.find(this.score.id, pause.moveKey, this.opts.provider.name);
+    if (!this.opts.repertoire) return undefined;
+    // Only answers recorded with the model settings this step asks for now.
+    const settings = (await this.opts.provider.requested?.(pause)) ?? '';
+    const take = this.opts.repertoire.find(
+      this.score.id,
+      pause.moveKey,
+      this.opts.provider.name,
+      settings,
+    );
     if (!take) return undefined;
     const emit = this.emitFor(pause);
     emit({
@@ -419,7 +427,7 @@ export class Run {
     let transcript: AiTranscript;
     try {
       const res =
-        this.fromRepertoire(pause) ??
+        (await this.fromRepertoire(pause)) ??
         (pause.parts
           ? await this.playParts(pause, signal)
           : pause.takes > 1

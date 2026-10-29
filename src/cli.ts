@@ -902,6 +902,10 @@ async function cmdCompare(files: string[]): Promise<number> {
   }
   if (cmp.differentKeys.length)
     console.log(`final state differs in: ${cmp.differentKeys.join(', ')}`);
+  if (cmp.models)
+    console.log(
+      `played by different models: ${cmp.models.first.join(', ') || 'none'} vs ${cmp.models.second.join(', ') || 'none'}`,
+    );
   return 3;
 }
 
