@@ -5,6 +5,9 @@
  */
 import type { Complexity } from './types.js';
 
+/** Demo games: runnable in the studio and CLI, but never offered as a route for real work. */
+export const DEMO_ONLY: ReadonlySet<string> = new Set(['hangman']);
+
 /** The built-in tools and what each one returns (src/runtime/builtin-tools.ts). */
 export const TOOL_OUTPUTS: Readonly<Record<string, readonly string[]>> = {
   'repo.files': ['files', 'excluded'],

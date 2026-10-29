@@ -4,6 +4,7 @@
  * Copilot Studio over Streamable HTTP. Runs go on in the background; the caller
  * polls get_run and relays approvals and stuck steps to the human in its chat.
  */
+import { DEMO_ONLY } from '../core/catalog.js';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -80,7 +81,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
       const lib = await runs.library();
       return json(
         lib
-          .filter((p) => p.name !== 'hangman')
+          .filter((p) => !DEMO_ONLY.has(p.name))
           .map((p) => ({
             name: p.name,
             description: p.description,

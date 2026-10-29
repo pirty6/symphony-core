@@ -208,8 +208,13 @@ describe('maestro tools', () => {
 
   it('lists the library without demo scripts and routes by verb triggers', async () => {
     const list = await tools.get('patterns.list')!.run({}, c);
-    expect(list.names).toEqual(expect.arrayContaining(['investigate', 'fix', 'review', 'hangman']));
+    expect(list.names).toEqual(expect.arrayContaining(['investigate', 'fix', 'review']));
+    // Neither the maestro nor a demo game is a route: 'play' and 'game' are everyday words.
     expect(list.names).not.toContain('maestro');
+    expect(list.names).not.toContain('hangman');
+    expect(
+      await tools.get('patterns.route')!.run({ request: 'play back the game logs' }, c),
+    ).toMatchObject({ suggested: 'new', matches: [] });
     expect(JSON.stringify(list.catalog)).not.toContain('demo');
     expect((list.summaries as string[]).find((x) => x.startsWith('fix:'))).toMatch(/needs: issue/);
     expect(

@@ -4,6 +4,7 @@
  *   repo.files       every file in the workspace (git-aware), plus what was excluded and why
  *   sources.catalog  every evidence source available to agents right now
  */
+import { DEMO_ONLY } from '../core/catalog.js';
 import { workspaceTools } from './workspace-tools.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -328,7 +329,9 @@ function fromTemplate(
 
 /** Tools the maestro uses: list the library, route by verb triggers, validate and save a drafted score. */
 export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSpec[] {
-  const lib = async () => (await library()).filter((p) => p.name !== 'maestro');
+  // Neither the maestro itself nor a demo game is a route for real work.
+  const lib = async () =>
+    (await library()).filter((p) => p.name !== 'maestro' && !DEMO_ONLY.has(p.name));
   return [
     {
       name: 'patterns.list',
