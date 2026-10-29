@@ -6,7 +6,7 @@
  */
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { resultText } from '../core/chain.js';
+import { type ChainStep, resultText } from '../core/chain.js';
 import { compileScore } from '../core/compile.js';
 import { playsFromRepertoire } from '../core/jazz.js';
 import { zeroValue } from '../core/schema.js';
@@ -216,7 +216,7 @@ export class RunManager {
     score: ExecutableScore,
     pattern: Pattern,
     req: StartRequest,
-    chain: readonly string[],
+    chain: readonly ChainStep[],
   ): Promise<string> {
     const workspace = await this.opts.workspace();
     const runsDir = runsDirFor(workspace, this.opts.env);
@@ -239,7 +239,7 @@ export class RunManager {
     const provider = this.opts.editsAllowed ? base : readOnly(base);
     let managed: Managed | undefined;
     // A hand-off that may not start leaves a note instead of failing the finished run.
-    const handOff = async (s: ExecutableScore, p: Pattern, rest: readonly string[]) => {
+    const handOff = async (s: ExecutableScore, p: Pattern, rest: readonly ChainStep[]) => {
       const refused = this.refuseEdits(p);
       if (refused) {
         if (managed) managed.blocked = refused;

@@ -130,7 +130,7 @@ export interface RunOptions {
     readonly result: AdvanceResult;
     readonly basedOn: NonNullable<Performance['basedOn']>;
   };
-  /** Called after a successful run; may start a follow-up run (the maestro's composed score). */
+  /** Called when the run ends (unless cancelled); may start a follow-up run (maestro's composed score, a chain step). */
   readonly next?: (performance: Performance) => Promise<NextPerformance | undefined>;
   /** Classical (improvisation 0): recorded answers to replay for identical moves. */
   readonly repertoire?: Repertoire;
@@ -624,7 +624,8 @@ export class Run {
     let savedTo: string | undefined;
     if (this.opts.onSave) savedTo = await this.save();
     this.push({ type: 'performance', performance, ...(savedTo ? { savedTo } : {}) });
-    if (this.opts.next && performance.outcome === 'success') {
+    // The hook decides what follows which outcome (a chain stops on failure, backlog items go on).
+    if (this.opts.next && performance.outcome !== 'cancelled') {
       const next = await this.opts.next(performance).catch(() => undefined);
       if (next) this.push({ type: 'next', ...next });
     }

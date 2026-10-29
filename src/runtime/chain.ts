@@ -2,8 +2,16 @@
  * Runtime side of chaining: a `next` hook that, when a run succeeds, compiles
  * the next pattern of the chain with the handed-over inputs and starts it.
  * The started run gets the rest of the chain, so chains of any length work.
+ * A backlog run puts one step per picked item in front of the chain.
  */
-import { handoffContext } from '../core/chain.js';
+import {
+  type ChainStep,
+  followUps,
+  handsOnQueue,
+  playsAfter,
+  stepContext,
+  stepPattern,
+} from '../core/chain.js';
 import { compileScore, CompileError } from '../core/compile.js';
 import type {
   Complexity,
@@ -15,8 +23,8 @@ import type {
 import type { NextPerformance } from './driver.js';
 
 export interface ChainOptions {
-  /** Pattern names to play after this run, in order. */
-  readonly chain: readonly string[];
+  /** Patterns (or backlog items) to play after this run, in order. */
+  readonly chain: readonly ChainStep[];
   readonly score: ExecutableScore;
   readonly library: () => Promise<readonly Pattern[]>;
   /** Inputs given for each next pattern by name (e.g. its test command). */
@@ -27,27 +35,30 @@ export interface ChainOptions {
   readonly start: (
     score: ExecutableScore,
     pattern: Pattern,
-    chain: readonly string[],
+    chain: readonly ChainStep[],
   ) => Promise<string>;
 }
 
 export function chainNext(
   opts: ChainOptions,
 ): ((performance: Performance) => Promise<NextPerformance | undefined>) | undefined {
-  const [name, ...rest] = opts.chain;
-  if (!name) return undefined;
+  if (opts.chain.length === 0 && !handsOnQueue(opts.score)) return undefined;
   return async (performance) => {
+    const [step, ...rest] = [...followUps(opts.score, performance), ...opts.chain];
+    if (!step || !playsAfter(step, performance.outcome)) return undefined;
+    const name = stepPattern(step);
     const pattern = (await opts.library()).find((p) => p.name === name);
     if (!pattern) throw new Error(`chain: unknown pattern '${name}'`);
-    const context = handoffContext(
+    const { goal, context } = stepContext(
       pattern,
+      step,
       { score: opts.score, performance },
       opts.inputs?.[name],
     );
     let score: ExecutableScore;
     try {
       score = compileScore(pattern, {
-        goal: opts.score.goal,
+        goal,
         context,
         ...(opts.complexity ? { complexity: opts.complexity } : {}),
         ...(opts.improvisation !== undefined ? { improvisation: opts.improvisation } : {}),

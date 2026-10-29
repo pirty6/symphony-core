@@ -3,7 +3,54 @@
  * investigate -> refactor). Pure: it only builds the next run's inputs. Each
  * run stays its own score and performance, linked by what was handed over.
  */
-import type { ExecutableScore, Pattern, Performance } from './types.js';
+import type { ExecutableScore, Pattern, Performance, PerformanceOutcome } from './types.js';
+
+/**
+ * One step of a chain: a pattern name (fed by what the previous run found) or
+ * a backlog item (its own request and inputs, independent of the previous run).
+ */
+export type ChainStep =
+  | string
+  | {
+      readonly pattern: string;
+      readonly goal: string;
+      readonly context?: Readonly<Record<string, unknown>>;
+    };
+
+export const stepPattern = (step: ChainStep): string =>
+  typeof step === 'string' ? step : step.pattern;
+
+/** Patterns whose result is a queue of runs to play next. */
+export const handsOnQueue = (score: ExecutableScore): boolean => score.pattern === 'backlog';
+
+/**
+ * Steps a run puts in front of the rest of its chain: a successful backlog run
+ * plays `runPattern` once per entry of `queue`, each with `testCommand` if set.
+ */
+export function followUps(score: ExecutableScore, performance: Performance): ChainStep[] {
+  if (!handsOnQueue(score) || performance.outcome !== 'success') return [];
+  const s = performance.finalState;
+  const pattern = typeof s.runPattern === 'string' && s.runPattern.trim();
+  if (!pattern || !Array.isArray(s.queue)) return [];
+  const test = typeof s.testCommand === 'string' ? s.testCommand.trim() : '';
+  const context = test ? { testCommand: test } : undefined;
+  return s.queue
+    .filter((g): g is string => typeof g === 'string' && g.trim() !== '')
+    .map(
+      (goal): ChainStep =>
+        context ? { pattern, goal: goal.trim(), context } : { pattern, goal: goal.trim() },
+    );
+}
+
+/**
+ * Whether a step plays after a run ended with this outcome. A chain stops when a
+ * run does not succeed (the next one builds on it); backlog items are independent,
+ * so they keep going after a failed item. Stopping a run stops the rest.
+ */
+export function playsAfter(step: ChainStep, outcome: PerformanceOutcome): boolean {
+  if (outcome === 'success') return true;
+  return typeof step !== 'string' && outcome !== 'cancelled' && outcome !== 'in-progress';
+}
 
 function render(value: unknown): string {
   if (typeof value === 'string') return value.trim() || '_empty_';
@@ -51,4 +98,19 @@ export function handoffContext(
       : goal;
   }
   return ctx;
+}
+
+/** Inputs (and goal) for the run a step starts after `prev`. */
+export function stepContext(
+  next: Pattern,
+  step: ChainStep,
+  prev: { readonly score: ExecutableScore; readonly performance: Performance },
+  given: Readonly<Record<string, unknown>> = {},
+): { readonly goal: string; readonly context: Record<string, unknown> } {
+  if (typeof step === 'string') {
+    return { goal: prev.score.goal, context: handoffContext(next, prev, given) };
+  }
+  const context: Record<string, unknown> = { ...step.context, ...given };
+  if (next.goalFrom) context[next.goalFrom] = step.goal;
+  return { goal: step.goal, context };
 }
