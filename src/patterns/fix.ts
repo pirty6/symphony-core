@@ -63,6 +63,7 @@ export const fix: Pattern = {
     'failureKind',
     'failureReason',
     'rulings',
+    'unresolvedObjections',
   ],
   maxSteps: 400,
   state: withState(

@@ -84,6 +84,11 @@ export const DEBATE_STATE: readonly StateField[] = [
     type: 'string[]',
     description: 'Where the two investigators disagree, and how it was settled',
   },
+  {
+    name: 'unresolvedObjections',
+    type: 'string[]',
+    description: 'Objections still open when the debate reached maxDebateRounds',
+  },
 ];
 
 const debateState = (...names: string[]) => DEBATE_STATE.filter((f) => names.includes(f.name));
@@ -167,6 +172,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       'maxDebateRounds',
       'secondOpinion',
       'disagreements',
+      'unresolvedObjections',
     ),
     entry: 'useSkeptic',
     group: {
@@ -177,6 +183,8 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         'useSkeptic',
         'challenge',
         'hasObjections',
+        'atCap',
+        'keepOpen',
         'usePragmatist',
         'triageObjections',
         'keepAll',
@@ -238,6 +246,19 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
             message: 'realObjections must be copied verbatim from objections.',
           },
         ],
+      },
+      {
+        id: 'atCap',
+        kind: 'condition',
+        label: 'Still objecting at the cap?',
+        expression: 'len(objections) > 0',
+      },
+      {
+        id: 'keepOpen',
+        kind: 'compute',
+        label: 'Report open objections',
+        // Out of rounds, not out of objections: say so in the result instead of dropping them.
+        assign: [{ field: 'unresolvedObjections', expr: 'objections' }],
       },
       {
         id: 'keepAll',
@@ -310,7 +331,10 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         to: 'usePragmatist',
         branch: 'then',
       },
-      { id: 'hasObjections-useSecond', from: 'hasObjections', to: 'useSecond', branch: 'else' },
+      { id: 'hasObjections-atCap', from: 'hasObjections', to: 'atCap', branch: 'else' },
+      { id: 'atCap-keepOpen', from: 'atCap', to: 'keepOpen', branch: 'then' },
+      { id: 'atCap-useSecond', from: 'atCap', to: 'useSecond', branch: 'else' },
+      { id: 'keepOpen-useSecond', from: 'keepOpen', to: 'useSecond' },
       {
         id: 'usePragmatist-triage',
         from: 'usePragmatist',

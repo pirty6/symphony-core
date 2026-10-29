@@ -75,6 +75,7 @@ export const implement: Pattern = {
     'failureKind',
     'failureReason',
     'rulings',
+    'unresolvedObjections',
   ],
   maxSteps: 400,
   state: withState(
