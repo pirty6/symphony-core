@@ -44,3 +44,19 @@ jobs:
       - run: npm test
       - run: npm run test:ui
       - run: npm run cli -- run fix --auto-approve --no-save
+
+  # The same fresh-clone path on Windows, where new users have hit problems.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:ui
+      - run: npm run cli -- run fix --auto-approve --no-save
+      - run: npx --prefix packages/ui playwright install chromium
+      - run: npm run test:e2e --prefix packages/ui
