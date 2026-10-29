@@ -98,6 +98,7 @@ export async function saveRun(dir: string, run: SavedRun): Promise<string> {
   const stamp = safe(run.performance.startedAt || new Date().toISOString());
   const file = join(folder, `${stamp}-${run.score.id.slice(0, 12)}.json`);
   await writeFile(file, `${JSON.stringify(run, null, 2)}\n`);
+  await writeFile(summaryFile(file), JSON.stringify(summaryOf(run)));
   return file;
 }
 
@@ -119,6 +120,36 @@ export async function loadRun(
   return { run, issues, migrated: m.migrated };
 }
 
+/**
+ * Each saved run has its summary next to it (`<run>.summary`), so listing runs
+ * reads a few hundred bytes per run instead of parsing every run in full (long
+ * runs reach hundreds of MB, and parsing them all ran the studio out of memory).
+ */
+export const summaryFile = (file: string): string => file.replace(/\.json$/, '.summary');
+
+function summaryOf(run: SavedRun): Omit<RunSummary, 'file'> {
+  return {
+    pattern: run.score.pattern,
+    goal: run.score.goal,
+    scoreId: run.score.id,
+    outcome: run.performance.outcome,
+    startedAt: run.performance.startedAt,
+    steps: run.performance.steps.length,
+    demo: isDemoRun(run.performance),
+  };
+}
+
+/** The run's summary, unless it is missing or older than the run (rewritten since). */
+async function readSummary(file: string): Promise<Omit<RunSummary, 'file'> | undefined> {
+  try {
+    const [run, summary] = await Promise.all([stat(file), stat(summaryFile(file))]);
+    if (summary.mtimeMs < run.mtimeMs) return undefined;
+    return JSON.parse(await readFile(summaryFile(file), 'utf8')) as Omit<RunSummary, 'file'>;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function listRuns(dir: string): Promise<RunSummary[]> {
   const out: RunSummary[] = [];
   let folders: string[] = [];
@@ -136,18 +167,17 @@ export async function listRuns(dir: string): Promise<RunSummary[]> {
     }
     for (const f of files) {
       const file = join(dir, folder, f);
+      const name = relative(resolve(dir), file);
+      const known = await readSummary(file);
+      if (known) {
+        out.push({ file: name, ...known });
+        continue;
+      }
       try {
-        const run = JSON.parse(await readFile(file, 'utf8')) as SavedRun;
-        out.push({
-          file: relative(resolve(dir), file),
-          pattern: run.score.pattern,
-          goal: run.score.goal,
-          scoreId: run.score.id,
-          outcome: run.performance.outcome,
-          startedAt: run.performance.startedAt,
-          steps: run.performance.steps.length,
-          demo: isDemoRun(run.performance),
-        });
+        // Older runs (or ones rewritten since): read once, and keep the summary for next time.
+        const summary = summaryOf(JSON.parse(await readFile(file, 'utf8')) as SavedRun);
+        out.push({ file: name, ...summary });
+        await writeFile(summaryFile(file), JSON.stringify(summary)).catch(() => undefined);
       } catch {
         // skip unreadable files
       }
@@ -235,7 +265,10 @@ export async function pruneRuns(
         if (days < policy.demoDays) continue;
         deleted.push(name);
         freed += f.size;
-        if (!opts.dryRun) await rm(f.path, { force: true });
+        if (!opts.dryRun) {
+          await rm(f.path, { force: true });
+          await rm(summaryFile(f.path), { force: true });
+        }
       } else if (days >= policy.compactDays && !run.performance.compacted) {
         const migrated = migrateRun(run).run;
         const small = migrated && compactPerformance(migrated.score, migrated.performance);
@@ -299,6 +332,7 @@ export async function deleteRun(dir: string, file: string): Promise<boolean> {
     return false;
   }
   await rm(full);
+  await rm(summaryFile(full), { force: true });
   return true;
 }
 

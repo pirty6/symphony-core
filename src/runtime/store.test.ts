@@ -6,6 +6,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,6 +31,7 @@ import {
   runPath,
   savePatternFile,
   saveRun,
+  summaryFile,
 } from './store.js';
 
 const root = mkdtempSync(join(tmpdir(), 'symphony-store-'));
@@ -88,6 +90,38 @@ describe('run store', () => {
     expect(await deleteRun(dir, '../outside.json')).toBe(false);
     expect(await deleteRun(dir, 'review')).toBe(false);
     expect(existsSync(outside)).toBe(true);
+  });
+
+  it('lists runs from their summaries, never parsing whole runs; stale or missing ones are rebuilt', async () => {
+    const dir = join(root, 'summaries');
+    const score = compileScore(review, {
+      goal: 'g',
+      context: review.demo!.context!,
+      generatedAt: 't',
+    });
+    const performance = toPerformance(runScripted(score, review.demo, { at: 't' }).state);
+    const file = await saveRun(dir, { schemaVersion: 3, score, performance });
+    expect(existsSync(summaryFile(file))).toBe(true);
+    // Unparseable run, fresh summary: the summary is what is listed.
+    writeFileSync(file, 'not json');
+    const fresh = JSON.parse(readFileSync(summaryFile(file), 'utf8')) as Record<string, unknown>;
+    writeFileSync(summaryFile(file), JSON.stringify({ ...fresh, goal: 'from the summary' }));
+    expect((await listRuns(dir))[0]).toMatchObject({ goal: 'from the summary', pattern: 'review' });
+    // The run is rewritten after its summary (e.g. compacted): the summary is rebuilt from it.
+    writeFileSync(
+      file,
+      JSON.stringify({ schemaVersion: 3, score: { ...score, goal: 'rewritten' }, performance }),
+    );
+    utimesSync(summaryFile(file), new Date(0), new Date(0));
+    expect((await listRuns(dir))[0]!.goal).toBe('rewritten');
+    expect(JSON.parse(readFileSync(summaryFile(file), 'utf8')).goal).toBe('rewritten');
+    // No summary at all (runs saved before summaries existed): written on first listing.
+    rmSync(summaryFile(file));
+    expect((await listRuns(dir))[0]!.goal).toBe('rewritten');
+    expect(existsSync(summaryFile(file))).toBe(true);
+    // Deleting a run deletes its summary too.
+    expect(await deleteRun(dir, file)).toBe(true);
+    expect(existsSync(summaryFile(file))).toBe(false);
   });
 
   it('returns no runs for a missing directory', async () => {
