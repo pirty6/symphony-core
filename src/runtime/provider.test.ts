@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentPause } from '../core/types.js';
-import { buildAgentPrompt, decidePermission, extractJson, isReadOnlyCommand } from './provider.js';
+import {
+  buildAgentPrompt,
+  decidePermission,
+  extractJson,
+  isReadOnlyCommand,
+  readOnlyRefusal,
+} from './provider.js';
 
 const pause: AgentPause = {
   kind: 'agent',
@@ -33,6 +39,8 @@ describe('buildAgentPrompt', () => {
     expect(p).toContain('"findings": []');
     expect(p).toContain('findings (string[]): evidence');
     expect(p).toContain('READ-ONLY');
+    expect(p).toContain('No interpreters (python, node, bash -c…)');
+    expect(p).toContain("Read JSON with jq, e.g. `jq '.results[] | {task, pass}' file.json`");
     expect(p).toContain('submit_result');
     expect(p).toContain('attempt 2 of 2');
     expect(p).toContain('- updates.findings is required');
@@ -107,7 +115,11 @@ describe('decidePermission', () => {
       kind: 'shell',
       commands: [{ identifier: 'rm', readOnly: false }],
     });
-    expect(rm).toEqual({ allowed: false, reason: 'assessor is read-only; refused: rm' });
+    expect(rm).toEqual({
+      allowed: false,
+      reason:
+        'assessor is read-only; refused: rm. Nothing in this command line ran: run the allowed parts again without it.',
+    });
     expect(decidePermission('assessor', { kind: 'shell', commands: [] }).allowed).toBe(false);
   });
 });
@@ -269,5 +281,64 @@ describe('MCP permissions and prompt sources', () => {
       'no MCP servers are configured',
     );
     expect(buildAgentPrompt(pause)).not.toContain('web_search');
+  });
+});
+
+describe('read-only refusals say which part and why', () => {
+  // The two command lines a live investigate run had refused, verbatim.
+  const python = `cd /w/.symphony/evals && python3 - <<'E'
+import json,glob
+for f in sorted(glob.glob('*.json')):
+    print(f)
+E
+git -C .. log --oneline -1 -- . ; git --no-pager -C /w check-ignore -v .symphony/evals | head -2`;
+  const greps = `cd /w && git ls-files .symphony | head; git check-ignore -v .symphony/evals; grep -n "fanOut" src/runtime/driver.ts | head; grep -n "Order matters for cost" src/runtime/provider.ts`;
+
+  it('names the interpreter, and a line of read-only git and grep now runs', () => {
+    expect(readOnlyRefusal(python)).toBe(
+      '`python3` (interpreters can run any code, including writes)',
+    );
+    expect(readOnlyRefusal(greps)).toBeUndefined();
+  });
+
+  it('allows the read-only git subcommands that were missing', () => {
+    for (const ok of [
+      'git check-ignore -v dist',
+      'git check-attr -a src/a.ts',
+      'git ls-remote origin',
+      'git config --get remote.origin.url',
+      'git config --list',
+    ])
+      expect(readOnlyRefusal(ok), ok).toBeUndefined();
+    expect(readOnlyRefusal('git config user.name x')).toBe(
+      '`git config` (only with --get, --get-all, --get-regexp or --list)',
+    );
+  });
+
+  it('explains each kind of refusal', () => {
+    expect(readOnlyRefusal('ls && rm -rf x')).toBe('`rm` (not on the read-only list)');
+    expect(readOnlyRefusal('git branch -D main')).toBe(
+      '`git branch -D` (can change the repository)',
+    );
+    expect(readOnlyRefusal('cat a > b')).toMatch(/^`>` \(writes a file/);
+    expect(readOnlyRefusal('echo $(node -e 1)')).toBe(
+      '`node` (interpreters can run any code, including writes), inside $(…)',
+    );
+    expect(readOnlyRefusal('find . -delete')).toBe(
+      '`find -delete` (runs commands or writes files)',
+    );
+    expect(readOnlyRefusal('PAGER=x git log')).toMatch(/variables set before a program/);
+  });
+
+  it('the permission decision carries the reason to the AI', () => {
+    const d = decidePermission('assessor', {
+      kind: 'shell',
+      fullCommandText: python,
+      commands: [{ identifier: 'python3', readOnly: false }],
+    });
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe(
+      'assessor is read-only; refused: `python3` (interpreters can run any code, including writes). Nothing in this command line ran: run the allowed parts again without it.',
+    );
   });
 });

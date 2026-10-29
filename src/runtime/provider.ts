@@ -88,7 +88,7 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
     pause.isolated
       ? '- Only the input below. You have no workspace or shell tools for this step: reason from what you were given.'
       : pause.role === 'assessor'
-        ? '- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff, gh issue/pr/run/search view|list, gh api GETs, ls, cat, find).'
+        ? "- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff/ls-files/check-ignore, gh issue/pr/run/search view|list, gh api GETs, ls, cat, find, jq). No interpreters (python, node, bash -c…): they can write files, so they are refused. Read JSON with jq, e.g. `jq '.results[] | {task, pass}' file.json`. A command line runs only if every part is allowed; a refusal names the part, so run the rest again without it."
         : `- Workspace: read, edit and run commands as this step needs. Put scripts, notes and other temporary files only in ${sources.scratchDir ? `the run's scratch folder \`${sources.scratchDir}\` (deleted when the run ends)` : '`.symphony/scratch/`'}, never in the project.`,
     ...(pause.capabilities.includes('web')
       ? [
@@ -263,6 +263,9 @@ const READ_ONLY_GIT: ReadonlySet<string> = new Set([
   'branch',
   'tag',
   'remote',
+  'check-ignore',
+  'check-attr',
+  'ls-remote',
 ]);
 /** git subcommands that only list when given no positional arguments. */
 const LIST_ONLY_GIT: ReadonlySet<string> = new Set(['branch', 'tag', 'remote']);
@@ -351,55 +354,107 @@ function withoutInput(args: readonly string[]): string[] {
   return out;
 }
 
-function segmentIsReadOnly(segment: string): boolean {
+/** Programs that run code they are given: never read-only, whatever the code does. */
+const INTERPRETERS: ReadonlySet<string> = new Set([
+  'python',
+  'python3',
+  'node',
+  'deno',
+  'bun',
+  'ruby',
+  'perl',
+  'php',
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'pwsh',
+  'powershell',
+  'osascript',
+  'npx',
+  'tsx',
+]);
+/** `git config` only when it reads. */
+const GIT_CONFIG_READS: ReadonlySet<string> = new Set([
+  '--get',
+  '--get-all',
+  '--get-regexp',
+  '--list',
+  '-l',
+]);
+
+/** Why one command of a line is not read-only, or undefined when it is. */
+function segmentRefusal(segment: string): string | undefined {
   // Subshell and group brackets around a command change nothing about what it does.
   let t = tokens(segment.replace(/^[(\s]+/, '').replace(/[)\s]+$/, ''));
   while (t[0] !== undefined && LEADING_KEYWORDS.has(t[0])) t = t.slice(1);
   // `done < file`, `fi`, `}`: closers, optionally reading input.
   if (t[0] !== undefined && CLOSING_KEYWORDS.has(t[0]))
-    return withoutInput(t.slice(1)).length === 0;
+    return withoutInput(t.slice(1)).length === 0 ? undefined : `\`${t[0]}\` followed by a command`;
   // `for NAME in WORDS`: the words are data, never run ($(…) is refused for the whole line).
-  if (t[0] === 'for') return /^[A-Za-z_]\w*$/.test(t[1] ?? '') && (t.length === 2 || t[2] === 'in');
+  if (t[0] === 'for')
+    return /^[A-Za-z_]\w*$/.test(t[1] ?? '') && (t.length === 2 || t[2] === 'in')
+      ? undefined
+      : 'only `for NAME in WORDS` loops';
   const cmd = t[0];
-  if (!cmd) return true;
+  if (!cmd) return undefined;
   // NAME=value words: alone they only set shell variables; before a command they
   // become its environment (PAGER, GIT_*, LD_PRELOAD…), so only before safe builtins.
   if (cmd.includes('=')) {
     const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/;
     const first = t.findIndex((w) => !assignment.test(w));
-    if (first === -1) return true;
+    if (first === -1) return undefined;
     const rest = t.slice(first);
-    return ENV_PREFIX_SAFE.has(rest[0]!) && segmentIsReadOnly(rest.join(' '));
+    if (!ENV_PREFIX_SAFE.has(rest[0]!))
+      return `\`${cmd} ${rest[0]}\` (variables set before a program can change what it runs)`;
+    return segmentRefusal(rest.join(' '));
   }
-  if (!READ_ONLY_COMMANDS.has(cmd)) return false;
+  if (INTERPRETERS.has(cmd)) return `\`${cmd}\` (interpreters can run any code, including writes)`;
+  if (!READ_ONLY_COMMANDS.has(cmd)) return `\`${cmd}\` (not on the read-only list)`;
   const args = t.slice(1);
-  if (args.some((a) => a.startsWith('--output'))) return false;
-  if (cmd === 'sort') return !args.some((a) => a === '-o' || a.startsWith('-o'));
-  if (cmd === 'find') return !args.some((a) => FIND_WRITES.test(a));
-  if (cmd === 'gh') return ghIsReadOnly(args);
+  if (args.some((a) => a.startsWith('--output'))) return `\`${cmd} --output\` (writes a file)`;
+  if (cmd === 'sort')
+    return args.some((a) => a === '-o' || a.startsWith('-o'))
+      ? '`sort -o` (writes a file)'
+      : undefined;
+  if (cmd === 'find') {
+    const bad = args.find((a) => FIND_WRITES.test(a));
+    return bad ? `\`find ${bad}\` (runs commands or writes files)` : undefined;
+  }
+  if (cmd === 'gh')
+    return ghIsReadOnly(args)
+      ? undefined
+      : `\`gh ${args.slice(0, 2).join(' ')}\` (only view/list commands and GET requests)`;
   // sed only as a line printer: sed -n 'N,Mp' file (no -i, no w/e commands).
   if (cmd === 'sed')
-    return args[0] === '-n' && /^\d+(,\d+)?p$/.test(args[1] ?? '') && args.length >= 2;
-  if (cmd !== 'git') return true;
+    return args[0] === '-n' && /^\d+(,\d+)?p$/.test(args[1] ?? '') && args.length >= 2
+      ? undefined
+      : "`sed` (only as a line printer: sed -n 'N,Mp' file)";
+  if (cmd !== 'git') return undefined;
   let i = 0;
   while (i < args.length && args[i]!.startsWith('-')) {
     const flag = args[i]!;
     if (flag === '-c' || flag.startsWith('--exec-path') || flag.startsWith('--config'))
-      return false;
+      return `\`git ${flag}\` (can change what git runs)`;
     i += flag === '-C' || flag === '--git-dir' || flag === '--work-tree' ? 2 : 1;
   }
   const sub = args[i];
-  if (!sub || !READ_ONLY_GIT.has(sub)) return false;
   const rest = args.slice(i + 1);
+  if (sub === 'config')
+    return rest.some((a) => GIT_CONFIG_READS.has(a))
+      ? undefined
+      : '`git config` (only with --get, --get-all, --get-regexp or --list)';
+  if (!sub || !READ_ONLY_GIT.has(sub)) return `\`git ${sub ?? ''}\` (not on the read-only list)`;
+  const del = rest.find(
+    (a) => a === '--ext-diff' || a === '-D' || a === '-d' || a === '-m' || a === '--delete',
+  );
+  if (del) return `\`git ${sub} ${del}\` (can change the repository)`;
   if (
-    rest.some(
-      (a) => a === '--ext-diff' || a === '-D' || a === '-d' || a === '-m' || a === '--delete',
-    )
+    LIST_ONLY_GIT.has(sub) &&
+    !rest.every((a) => a.startsWith('-') || (sub === 'remote' && a === 'show'))
   )
-    return false;
-  if (LIST_ONLY_GIT.has(sub))
-    return rest.every((a) => a.startsWith('-') || (sub === 'remote' && a === 'show'));
-  return true;
+    return `\`git ${sub} ${rest.filter((a) => !a.startsWith('-')).join(' ')}\` (only listing is read-only)`;
+  return undefined;
 }
 
 const MAX_SUBSTITUTION_DEPTH = 3;
@@ -408,7 +463,10 @@ const MAX_SUBSTITUTION_DEPTH = 3;
  * Replace each `$(…)` (outside single quotes) by a placeholder after checking
  * the command inside it; undefined when one is not read-only or cannot be parsed.
  */
-function withoutSubstitutions(text: string, depth: number): string | undefined {
+function withoutSubstitutions(
+  text: string,
+  depth: number,
+): { readonly text: string } | { readonly refused: string } {
   let out = '';
   let single = false;
   for (let i = 0; i < text.length; i += 1) {
@@ -433,12 +491,14 @@ function withoutSubstitutions(text: string, depth: number): string | undefined {
         break;
       }
     }
-    if (end < 0 || depth >= MAX_SUBSTITUTION_DEPTH) return undefined;
-    if (!isReadOnlyCommand(text.slice(i + 2, end), depth + 1)) return undefined;
+    if (end < 0 || depth >= MAX_SUBSTITUTION_DEPTH)
+      return { refused: '`$(…)` (unbalanced or nested too deep)' };
+    const inner = readOnlyRefusal(text.slice(i + 2, end), depth + 1);
+    if (inner) return { refused: `${inner}, inside $(…)` };
     out += 'SUBSTITUTION';
     i = end;
   }
-  return out;
+  return { text: out };
 }
 
 /** Builtins that never start another program, so variables set before them cannot change what runs. */
@@ -447,22 +507,33 @@ const ENV_PREFIX_SAFE: ReadonlySet<string> = new Set(['echo', 'printf', 'true', 
 /**
  * Conservative read-only check for a shell command line: every segment between
  * `&&`, `||`, `;` and `|` must be an allowlisted read-only command. Command
- * substitution, process substitution and output redirection are refused.
+ * substitution is checked recursively; process substitution and output
+ * redirection are refused. Returns why the line is refused (naming the first
+ * offending piece), or undefined when it is read-only.
  */
-export function isReadOnlyCommand(text: string, depth = 0): boolean {
+export function readOnlyRefusal(text: string, depth = 0): string | undefined {
   // $(…) runs a command too: allowed only when what it runs is itself read-only.
   const flat = withoutSubstitutions(text, depth);
-  if (flat === undefined) return false;
-  text = flat;
+  if ('refused' in flat) return flat.refused;
+  text = flat.text;
   // Anything left that could run a command: backticks, $( the scanner could not read, <(…), >(…).
-  if (/\$\(|`|<\(|>\(/.test(text.replace(/'[^']*'/g, ''))) return false;
+  if (/\$\(|`|<\(|>\(/.test(text.replace(/'[^']*'/g, '')))
+    return 'backticks or process substitution (they run commands)';
   // Output may only go to another stream (2>&1) or nowhere (/dev/null); any other `>` writes a file.
   const unquoted = text
     .replace(/"[^"]*"|'[^']*'/g, '')
     .replace(/[0-9&]?>>?\s*\/dev\/null(?![\w/.-])/g, '')
     .replace(/[0-9]?>&[0-9]/g, '');
-  if (unquoted.includes('>')) return false;
-  return splitCommands(text).every((seg) => segmentIsReadOnly(seg.trim()));
+  if (unquoted.includes('>')) return '`>` (writes a file; only 2>&1 and > /dev/null are allowed)';
+  for (const seg of splitCommands(text)) {
+    const why = segmentRefusal(seg.trim());
+    if (why) return why;
+  }
+  return undefined;
+}
+
+export function isReadOnlyCommand(text: string, depth = 0): boolean {
+  return readOnlyRefusal(text, depth) === undefined;
 }
 
 /** Assessors may read; executors may do anything their step needs. */
@@ -496,9 +567,14 @@ export function decidePermission(role: Role, req: PermissionLike): PolicyDecisio
       ) {
         return { allowed: true, reason: 'read-only command (allowlist)' };
       }
+      const why = req.hasWriteFileRedirection
+        ? '`>` (writes a file)'
+        : req.fullCommandText
+          ? readOnlyRefusal(req.fullCommandText)
+          : undefined;
       return {
         allowed: false,
-        reason: `assessor is read-only; refused: ${writes.join(', ') || req.fullCommandText || 'shell'}${req.hasWriteFileRedirection ? ' (file redirection)' : ''}`,
+        reason: `assessor is read-only; refused: ${why ?? (writes.join(', ') || 'shell')}. Nothing in this command line ran: run the allowed parts again without it.`,
       };
     }
     default:
