@@ -91,6 +91,7 @@ export interface NextPerformance {
 type Unsequenced<T> = T extends { seq: number } ? Omit<T, 'seq'> : never;
 
 const DEFAULT_PARALLEL = 4;
+const DEFAULT_STEP_TIMEOUT_MS = 15 * 60_000;
 
 export interface RunOptions {
   readonly id?: string;
@@ -117,6 +118,11 @@ export interface RunOptions {
   readonly isolation?: { readonly finish: (outcome: PerformanceOutcome) => Promise<EditsResult> };
   /** fanOut: how many parts of a step play at the same time (default 4). */
   readonly parallel?: number;
+  /**
+   * Longest an AI step may take (default 15 minutes). A step that runs out is
+   * aborted and counts as an attempt with no result: retried, then stuck for a human.
+   */
+  readonly stepTimeoutMs?: number;
   /** Also save (through onSave) after every step, so an interrupted run can be resumed. */
   readonly checkpoint?: boolean;
   /** Continue from a restored engine (restoreEngine) instead of starting fresh. */
@@ -403,6 +409,13 @@ export class Run {
     if (this.stopRequested) return undefined;
     this.abort = new AbortController();
     const signal = this.abort.signal;
+    const fromEnv = Number(process.env.SYMPHONY_STEP_TIMEOUT_S) * 1000;
+    const limit = this.opts.stepTimeoutMs ?? (fromEnv > 0 ? fromEnv : DEFAULT_STEP_TIMEOUT_MS);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      this.abort?.abort();
+    }, limit);
     let result: unknown;
     let transcript: AiTranscript;
     try {
@@ -416,16 +429,19 @@ export class Run {
       result = res.result;
       transcript = res.transcript;
     } catch (e) {
-      if (this.stopRequested || (e as Error).name === 'AbortError') return undefined;
+      if (this.stopRequested || ((e as Error).name === 'AbortError' && !timedOut)) return undefined;
       result = undefined;
       transcript = {
         provider: this.opts.provider.name,
         prompt: pause.directive,
-        output: `provider error: ${(e as Error).message}`,
+        output: timedOut
+          ? `timed out: the step took longer than ${Math.round(limit / 1000)}s and was stopped`
+          : `provider error: ${(e as Error).message}`,
         toolCalls: [],
       };
       this.emitFor(pause)({ type: 'info', text: transcript.output });
     } finally {
+      clearTimeout(timer);
       this.abort = undefined;
     }
     await this.gate(pause.nodeId, 'after', result);

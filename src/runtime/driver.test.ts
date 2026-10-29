@@ -688,3 +688,30 @@ describe('runs in their own worktree', () => {
     expect(perf.edits?.reason).toMatch(/disk full/);
   });
 });
+
+describe('step time limit', () => {
+  it('a step that never answers is stopped, retried, and then waits for a human like any stuck step', async () => {
+    let calls = 0;
+    const hang: Provider = {
+      name: 'hang',
+      runAgent: (req) =>
+        new Promise((_resolve, reject) => {
+          calls += 1;
+          req.signal.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+          );
+        }),
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const run = new Run({ score: hangmanScore, provider: hang, stepTimeoutMs: 20, clock });
+    const done = run.start();
+    await waitFor(run, statusIs('awaiting-approval'));
+    expect(calls).toBe(3);
+    expect(run.engine.pause).toMatchObject({ kind: 'stuck', nodeId: 'pick' });
+    expect(run.engine.pause!.kind === 'stuck' && run.engine.pause!.feedback[0]).toMatch(
+      /timed out: the step took longer than 0s/,
+    );
+    run.stop();
+    expect((await done).outcome).toBe('cancelled');
+  });
+});
