@@ -132,6 +132,43 @@ describe('maestro', () => {
     expect(r.state.state.finalPattern).toMatchObject({ name: 'analyze' });
   });
 
+  const critique = (fit: string, recommended: string) => () => ({
+    updates: { fit, criticReason: `${fit} fit`, recommended },
+    verdict: { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' },
+  });
+
+  it('a HYBRID fit keeps the pattern: the conductor reads the critique instead of a reroute', () => {
+    const { r } = run('fix the dashboard numbers', {
+      classify: classifyAs('fix', 4),
+      critic: critique('HYBRID', 'analyze'),
+    });
+    expect(nodesRun(r)).not.toContain('switch');
+    expect(nodesRun(r).filter((n) => n === 'critic')).toHaveLength(1);
+    const revise = r.state.steps.find((st) => st.nodeId === 'revise')!;
+    expect(revise.input).toMatchObject({ fit: 'HYBRID', criticReason: 'HYBRID fit' });
+    expect(r.state.state).toMatchObject({ chosen: 'fix', rerouted: false });
+    expect(r.state.state.finalPattern).toMatchObject({ name: 'fix' });
+  });
+
+  it('WRONG naming the same pattern does not reroute', () => {
+    const { r } = run('fix the dashboard numbers', {
+      classify: classifyAs('fix', 4),
+      critic: critique('WRONG', 'fix'),
+    });
+    expect(nodesRun(r)).not.toContain('switch');
+    expect(r.state.state.chosen).toBe('fix');
+  });
+
+  it('reroutes at most once, even if the critic keeps saying WRONG', () => {
+    const { r } = run('fix the dashboard numbers', {
+      classify: classifyAs('fix', 4),
+      critic: (s) => critique('WRONG', s.chosen === 'fix' ? 'analyze' : 'fix')(),
+    });
+    expect(nodesRun(r).filter((n) => n === 'switch')).toHaveLength(1);
+    expect(r.state.state).toMatchObject({ chosen: 'analyze', rerouted: true });
+    expect(r.state.outcome).toBe('success');
+  });
+
   it('sends validation errors to the conductor, not the whole debate, and gives up after maxRounds', () => {
     const v = { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' };
     const { r } = run('do something new', {
