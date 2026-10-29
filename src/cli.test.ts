@@ -72,6 +72,22 @@ describe('main', () => {
     expect(existsSync(join(cwd, '.symphony', 'runs', '.last-prune'))).toBe(true);
   });
 
+  it('eval runs a task in its own fixture, saves a report and compares with a baseline', async () => {
+    const args = ['eval', '--provider', 'scripted', '--task', 'investigate-default-port'];
+    expect(await main(args, cwd)).toBe(0);
+    // The offline demo's canned answer is not about this fixture: the check catches it.
+    expect(plain()).toMatch(/✘ investigate-default-port/);
+    expect(plain()).toMatch(/solved 0\/1/);
+    const report = /saved (\S+\.json)/.exec(plain())![1]!;
+    expect(JSON.parse(readFileSync(report, 'utf8')).results[0].notes.join(' ')).toMatch(
+      /missing: 8081/,
+    );
+    out = '';
+    expect(await main([...args, '--compare', report], cwd)).toBe(0);
+    expect(plain()).toMatch(/solved 0\/1 \(baseline 0\/1\)/);
+    expect(await main(['eval', '--task', 'nope'], cwd)).toBe(1);
+  }, 60_000);
+
   it('two offline runs are identical even though the first one changes the runs folder', async () => {
     const saved: string[] = [];
     for (let i = 0; i < 2; i++) {

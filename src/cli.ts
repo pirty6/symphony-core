@@ -13,11 +13,14 @@
  *   runs                                   saved runs
  */
 import 'dotenv/config';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
+import { formatReport, runEval, summarize, worseThan, type EvalReport } from './eval/harness.js';
+import { EVAL_TASKS } from './eval/tasks.js';
 import { handoffContext } from './core/chain.js';
 import { formatUsage, performanceUsage } from './core/usage.js';
 import { describeEdits } from './core/edits.js';
@@ -479,6 +482,61 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
   }
 }
 
+async function cmdEval(argv: string[], cwd: string): Promise<number> {
+  const args = parseArgs({
+    args: argv,
+    options: {
+      provider: { type: 'string', default: 'copilot' },
+      model: { type: 'string' },
+      task: { type: 'string' },
+      repeat: { type: 'string', short: 'n', default: '1' },
+      compare: { type: 'string' },
+      keep: { type: 'boolean', default: false },
+    },
+  });
+  const providerName = args.values.provider;
+  if (!isProviderName(providerName)) {
+    console.error('--provider must be scripted or copilot');
+    return 1;
+  }
+  const wanted = args.values.task?.split(',').map((t) => t.trim());
+  const tasks = wanted ? EVAL_TASKS.filter((t) => wanted.includes(t.id)) : EVAL_TASKS;
+  if (tasks.length === 0) {
+    console.error(`no such task; tasks: ${EVAL_TASKS.map((t) => t.id).join(', ')}`);
+    return 1;
+  }
+  const baseline = args.values.compare
+    ? (JSON.parse(await readFile(args.values.compare, 'utf8')) as EvalReport)
+    : undefined;
+  const library = await allPatterns(cwd);
+  console.log(c.dim(`eval: ${tasks.length} task(s) × ${args.values.repeat} on ${providerName}`));
+  const report = await runEval({
+    tasks,
+    library,
+    providerName,
+    repoRoot: cwd,
+    env: process.env,
+    repeat: Number(args.values.repeat),
+    keep: args.values.keep,
+    provider: (workspace, pattern) =>
+      makeProvider({
+        provider: providerName,
+        pattern,
+        workingDirectory: workspace,
+        ...envConfig(process.env),
+        ...(args.values.model ? { model: args.values.model } : {}),
+      }),
+    onResult: (r) =>
+      console.log(c.dim(`  ${r.pass ? '✔' : '✘'} ${r.task} ${(r.ms / 1000).toFixed(0)}s`)),
+  });
+  const dir = join(cwd, '.symphony', 'evals');
+  await mkdir(dir, { recursive: true });
+  const file = join(dir, `${report.startedAt.replace(/[:.]/g, '-')}.json`);
+  await writeFile(file, `${JSON.stringify(report, null, 2)}\n`);
+  console.log(`\n${formatReport(report, baseline)}\n${c.dim(`saved ${file}`)}`);
+  return baseline && worseThan(summarize(report.results), summarize(baseline.results)) ? 2 : 0;
+}
+
 async function cmdRehearse(argv: string[], cwd: string): Promise<number> {
   const args = parseArgs({
     args: argv,
@@ -845,6 +903,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       return cmdCompare(rest);
     case 'rehearse':
       return cmdRehearse(rest, cwd);
+    case 'eval':
+      return cmdEval(rest, cwd);
     case 'resume':
       return cmdContinue('resumed', rest, cwd);
     case 'fork':
@@ -891,6 +951,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   fork <run.json> --at <step>  keep steps before <step>, play the rest again as a new run
       --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
+  eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time
   runs --prune [--dry-run]     delete demo runs >7 days, compact runs >30 days (still replayable)
 
 Studio (visual): npm start`);
