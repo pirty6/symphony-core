@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { AiTranscript, PerformedStep, TokenUsage } from './types.js';
-import { formatUsage, performanceUsage, rejectionUsage, transcriptUsage } from './usage.js';
+import {
+  costliest,
+  formatUsage,
+  performanceUsage,
+  rejectionUsage,
+  transcriptUsage,
+} from './usage.js';
 
 const u = (input: number, output: number, calls = 1) => ({
   calls,
@@ -77,6 +83,20 @@ describe('token usage', () => {
       attempts: 0,
       textUpdates: 0,
     });
+  });
+
+  it('ranks the costliest steps by premium requests, then input tokens', () => {
+    const top = costliest(
+      {
+        classify: u(5000, 100),
+        propose: { ...u(90_000, 9000), premiumRequests: 3 },
+        skeptic: { ...u(20_000, 900), premiumRequests: 1 },
+        context: u(8000, 50),
+      },
+      3,
+    );
+    expect(top.map((x) => x.node)).toEqual(['propose', 'skeptic', 'context']);
+    expect(top[0]!.text).toMatch(/^90k in · 9k out · 1 calls · 3 premium requests$/);
   });
 
   it('reads well', () => {

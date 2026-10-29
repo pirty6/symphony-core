@@ -105,3 +105,17 @@ export function formatUsage(u: TokenUsage): string {
   const compacted = u.compactions ? ` · compacted ${u.compactions}×` : '';
   return `${k(u.inputTokens)} in${u.cacheReadTokens ? ` (${k(u.cacheReadTokens)} cached)` : ''} · ${k(u.outputTokens)} out · ${u.calls} calls${time}${cost}${compacted}`;
 }
+
+/** The steps that cost most (premium requests, then input tokens), each with its usage. */
+export function costliest(
+  byNode: Readonly<Record<string, TokenUsage>>,
+  limit = 8,
+): Array<{ readonly node: string; readonly usage: TokenUsage; readonly text: string }> {
+  return Object.entries(byNode)
+    .toSorted(
+      ([, a], [, b]) =>
+        (b.premiumRequests ?? 0) - (a.premiumRequests ?? 0) || b.inputTokens - a.inputTokens,
+    )
+    .slice(0, limit)
+    .map(([node, usage]) => ({ node, usage, text: formatUsage(usage) }));
+}

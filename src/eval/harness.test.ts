@@ -101,7 +101,16 @@ describe('eval harness', () => {
       citations: { checked: 2, invalid: 1 },
     });
     expect(r!.tokens).toMatchObject({ calls: 1, inputTokens: 1000, outputTokens: 50 });
-    expect(summarize(report.results)).toMatchObject({ runs: 2, solved: 2, inputTokens: 2000 });
+    expect(r!.byNode).toEqual({ work: r!.tokens });
+    const s = summarize(report.results);
+    expect(s).toMatchObject({ runs: 2, solved: 2, inputTokens: 2000 });
+    // Per step over every run, and composing (maestro) apart from performing.
+    expect(s.byNode['mini work']).toMatchObject({ calls: 2, inputTokens: 2000 });
+    expect(s.perform).toMatchObject({ calls: 2, inputTokens: 2000 });
+    expect(s.compose.calls).toBe(0);
+    expect(formatReport(report)).toMatch(
+      /costliest steps: mini work \(2k in \(800 cached\) · 100 out · 2 calls\)/,
+    );
   });
 
   it('reports failures and flags a run that is worse than its baseline', async () => {
@@ -118,6 +127,20 @@ describe('eval harness', () => {
     // Two runs against a baseline of one: compared per run, not in total.
     const twice = await evaluate(true, 2);
     expect(formatReport(twice, baseline)).toMatch(/tokens 2\.0k in \(\+0%\) per run/);
+  });
+
+  it('a run that errors after playing still reports the tokens it spent', async () => {
+    const report = await runEval({
+      tasks: [{ ...task, check: () => Promise.reject(new Error('check crashed')) }],
+      library: [mini],
+      provider: fakeProvider(true),
+      providerName: 'fake',
+      repoRoot: process.cwd(),
+      env: {},
+    });
+    expect(report.results[0]).toMatchObject({ outcome: 'error', notes: ['error: check crashed'] });
+    expect(report.results[0]!.tokens).toMatchObject({ calls: 1, inputTokens: 1000 });
+    expect(report.results[0]!.byNode).toMatchObject({ work: { calls: 1 } });
   });
 
   it('an unknown pattern is a failed result, not a crash', async () => {

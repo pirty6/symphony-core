@@ -9,7 +9,13 @@ import { join } from 'node:path';
 import { compileScore } from '../core/compile.js';
 import { RUN_SCHEMA_VERSION } from '../core/migrate.js';
 import type { Pattern, SavedRun, TokenUsage } from '../core/types.js';
-import { performanceUsage, rejectionUsage } from '../core/usage.js';
+import {
+  addUsage,
+  costliest,
+  formatUsage,
+  performanceUsage,
+  rejectionUsage,
+} from '../core/usage.js';
 import { Run } from '../runtime/driver.js';
 import { checkCitations } from '../runtime/evidence.js';
 import { runtimeExtras } from '../runtime/factory.js';
@@ -25,6 +31,8 @@ export interface EvalResult {
   readonly ms: number;
   readonly steps: number;
   readonly tokens: TokenUsage;
+  /** Tokens per step of the run (rejected attempts included). */
+  readonly byNode?: Readonly<Record<string, TokenUsage>>;
   readonly models: readonly string[];
   /** Workspace citations among the run's findings: how many were checked, how many held. */
   readonly citations: { readonly checked: number; readonly invalid: number };
@@ -57,7 +65,13 @@ export interface EvalOptions {
   readonly onResult?: (r: EvalResult) => void;
 }
 
-async function runTask(task: EvalTask, o: EvalOptions, take: number): Promise<EvalResult> {
+async function runTask(
+  task: EvalTask,
+  o: EvalOptions,
+  take: number,
+  /** Told the run as soon as it exists, so an error later still reports what it spent. */
+  onRun: (run: Run) => void = () => undefined,
+): Promise<EvalResult> {
   const pattern = o.library.find((p) => p.name === task.pattern);
   if (!pattern) throw new Error(`eval task '${task.id}': no pattern '${task.pattern}'`);
   const workspace = await mkdtemp(join(tmpdir(), `symphony-eval-${task.id}-`));
@@ -70,21 +84,23 @@ async function runTask(task: EvalTask, o: EvalOptions, take: number): Promise<Ev
       ...(pattern.goalFrom ? {} : { goal: task.goal ?? task.id }),
     });
     const started = Date.now();
-    const perf = await new Run({
+    const run = new Run({
       score,
       provider: o.provider(workspace, pattern),
       tools: extras.tools,
       toolContext: extras.toolContext,
       autoApprove: true,
-    }).start();
+    });
+    onRun(run);
+    const perf = await run.start();
     const ms = Date.now() - started;
     const state = perf.finalState;
     let saved: string | undefined;
     if (o.runsDir) {
       await mkdir(o.runsDir, { recursive: true });
       saved = join(o.runsDir, `${task.id}-${take}.json`);
-      const run: SavedRun = { schemaVersion: RUN_SCHEMA_VERSION, score, performance: perf };
-      await writeFile(saved, `${JSON.stringify(run, null, 2)}\n`);
+      const record: SavedRun = { schemaVersion: RUN_SCHEMA_VERSION, score, performance: perf };
+      await writeFile(saved, `${JSON.stringify(record, null, 2)}\n`);
     }
     const verdict = await task.check({ workspace, outcome: perf.outcome, state });
     const findings = Array.isArray(state.findings)
@@ -112,6 +128,7 @@ async function runTask(task: EvalTask, o: EvalOptions, take: number): Promise<Ev
       ms,
       steps: perf.steps.length,
       tokens: performanceUsage(perf).total,
+      byNode: performanceUsage(perf).byNode,
       rejected: (({ attempts, attemptUsage, textUpdates }) => ({
         attempts,
         premiumRequests: attemptUsage.premiumRequests ?? 0,
@@ -130,7 +147,8 @@ export async function runEval(o: EvalOptions): Promise<EvalReport> {
   const results: EvalResult[] = [];
   for (const task of o.tasks) {
     for (let i = 0; i < (o.repeat ?? 1); i += 1) {
-      const r = await runTask(task, o, i + 1).catch(
+      let played: Run | undefined;
+      const r = await runTask(task, o, i + 1, (run) => (played = run)).catch(
         (e: Error): EvalResult => ({
           task: task.id,
           pattern: task.pattern,
@@ -138,14 +156,21 @@ export async function runEval(o: EvalOptions): Promise<EvalReport> {
           notes: [`error: ${e.message}`],
           outcome: 'error',
           ms: 0,
-          steps: 0,
-          tokens: {
-            calls: 0,
-            inputTokens: 0,
-            outputTokens: 0,
-            cacheReadTokens: 0,
-            reasoningTokens: 0,
-          },
+          // Whatever threw, the steps the run played were paid for.
+          steps: played?.engine.steps.length ?? 0,
+          ...(played
+            ? (({ total, byNode }) => ({ tokens: total, byNode }))(
+                performanceUsage({ steps: played.engine.steps }),
+              )
+            : {
+                tokens: {
+                  calls: 0,
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  cacheReadTokens: 0,
+                  reasoningTokens: 0,
+                },
+              }),
           models: [],
           citations: { checked: 0, invalid: 0 },
         }),
@@ -172,7 +197,22 @@ export interface EvalSummary {
   readonly rejectedAttempts: number;
   readonly rejectedPremiumRequests: number;
   readonly textUpdates: number;
+  /** Composing (maestro runs) vs performing (every other pattern). */
+  readonly compose: TokenUsage;
+  readonly perform: TokenUsage;
+  /** Tokens per "<pattern> <step>", over every run. */
+  readonly byNode: Readonly<Record<string, TokenUsage>>;
 }
+
+const NO_TOKENS: TokenUsage = {
+  calls: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  reasoningTokens: 0,
+};
+const total = (rs: readonly EvalResult[]): TokenUsage =>
+  rs.reduce((acc, r) => addUsage(acc, r.tokens), NO_TOKENS);
 
 export function summarize(results: readonly EvalResult[]): EvalSummary {
   const sum = (f: (r: EvalResult) => number) => results.reduce((a, r) => a + f(r), 0);
@@ -191,6 +231,13 @@ export function summarize(results: readonly EvalResult[]): EvalSummary {
     rejectedAttempts: sum((r) => r.rejected?.attempts ?? 0),
     rejectedPremiumRequests: sum((r) => r.rejected?.premiumRequests ?? 0),
     textUpdates: sum((r) => r.rejected?.textUpdates ?? 0),
+    compose: total(results.filter((r) => r.pattern === 'maestro')),
+    perform: total(results.filter((r) => r.pattern !== 'maestro')),
+    byNode: results.reduce<Record<string, TokenUsage>>((acc, r) => {
+      for (const [node, u] of Object.entries(r.byNode ?? {}))
+        acc[`${r.pattern} ${node}`] = addUsage(acc[`${r.pattern} ${node}`] ?? NO_TOKENS, u);
+      return acc;
+    }, {}),
   };
 }
 
@@ -230,6 +277,11 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
     lines.push(
       `rejected ${s.rejectedAttempts} attempts${delta((x) => x.rejectedAttempts)} (${+s.rejectedPremiumRequests.toFixed(2)} premium requests) · ${s.textUpdates} answers sent updates as text`,
     );
+  if (s.compose.calls > 0 && s.perform.calls > 0)
+    lines.push(`compose ${formatUsage(s.compose)} · perform ${formatUsage(s.perform)}`);
+  const top = costliest(s.byNode, 5);
+  if (top.length > 0)
+    lines.push(`costliest steps: ${top.map((t) => `${t.node} (${t.text})`).join('; ')}`);
   if (b && worseThan(s, b)) lines.push('⚠ worse than the baseline on correctness');
   return lines.join('\n');
 }
