@@ -17,6 +17,7 @@ import { acceptance, isProviderBlock } from '../core/engine.js';
 import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
 import { addUsage } from '../core/usage.js';
 import { checkCitations } from './evidence.js';
+import { stepTimeLimitMs } from './limits.js';
 import type { AgentPause, Complexity, Role, TokenUsage, ToolCallRecord } from '../core/types.js';
 import type {
   AgentRequest,
@@ -122,7 +123,7 @@ export interface CopilotProviderOptions {
   readonly gitHubToken?: string;
   /** Where the token was set (e.g. TOKEN), named in messages when Copilot refuses it. */
   readonly gitHubTokenSource?: string;
-  /** Per-node timeout. Default 10 minutes. */
+  /** Safety net per call; default a minute after the step limit the driver enforces (limits.ts). */
   readonly timeoutMs?: number;
   /** Builds the SDK client; `gitHubToken` is undefined when using the signed-in GitHub user. */
   readonly clientFactory?: (auth: { readonly gitHubToken?: string }) => ClientLike;
@@ -428,7 +429,7 @@ export class CopilotProvider implements Provider {
       await session.disconnect().catch(() => {});
       throw abortError();
     }
-    const timeoutMs = this.opts.timeoutMs ?? 10 * 60_000;
+    const timeoutMs = this.opts.timeoutMs ?? stepTimeLimitMs() + 60_000;
     const timer = setTimeout(() => {
       failure = `timed out after ${timeoutMs} ms`;
       void session.abort().catch(() => {});

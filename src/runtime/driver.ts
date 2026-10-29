@@ -8,6 +8,7 @@
  * user can look at the node input and the AI's proposed output before the
  * engine applies it. stop() aborts the live AI call and cancels the run.
  */
+import { stepTimeLimitMs } from './limits.js';
 import {
   advance,
   createEngine,
@@ -91,10 +92,6 @@ export interface NextPerformance {
 type Unsequenced<T> = T extends { seq: number } ? Omit<T, 'seq'> : never;
 
 const DEFAULT_PARALLEL = 4;
-const DEFAULT_STEP_TIMEOUT_MS = 15 * 60_000;
-/** The studio type-checks this file for the browser too, without Node's types. */
-const envVar = (name: string): string | undefined =>
-  (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[name];
 
 export interface RunOptions {
   readonly id?: string;
@@ -412,8 +409,7 @@ export class Run {
     if (this.stopRequested) return undefined;
     this.abort = new AbortController();
     const signal = this.abort.signal;
-    const fromEnv = Number(envVar('SYMPHONY_STEP_TIMEOUT_S')) * 1000;
-    const limit = this.opts.stepTimeoutMs ?? (fromEnv > 0 ? fromEnv : DEFAULT_STEP_TIMEOUT_MS);
+    const limit = this.opts.stepTimeoutMs ?? stepTimeLimitMs();
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
