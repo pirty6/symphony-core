@@ -25,9 +25,13 @@ function workspace() {
   return ws;
 }
 
-const many = (n: number, from = 0) =>
-  Array.from({ length: n }, (_, i) => `src/config.js:${i + from + 1} — line \`DEFAULTS.port + 1\``);
+const many = (count: number, from = 0) =>
+  Array.from(
+    { length: count },
+    (_, i) => `src/config.js:${i + from + 1} — line \`DEFAULTS.port + 1\``,
+  );
 const old = (text: string) => ({ text, at: '2026-01-01T00:00:00Z' });
+const day = (ago: number) => new Date(Date.now() - ago * 86_400_000).toISOString();
 
 describe('memory across runs', () => {
   it('keeps checked facts that quote the file, and recalls the ones about the question', async () => {
@@ -56,7 +60,6 @@ describe('memory across runs', () => {
   it('recalls lessons from earlier runs by shared words; gone files or old lessons are not recalled', async () => {
     const ws = workspace();
     writeFileSync(join(ws, 'src', 'paginate.ts'), 'export {};\n');
-    const day = (ago: number) => new Date(Date.now() - ago * 86_400_000).toISOString();
     await rememberLesson(
       ws,
       'Fixed "page 2 repeats an item": slice(start - 1)',
