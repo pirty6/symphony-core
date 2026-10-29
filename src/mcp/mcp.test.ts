@@ -8,7 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { mcpHttpHandler } from './http.js';
-import { RunManager, type RunView } from './runs.js';
+import { RunManager, usageOf, type RunView } from './runs.js';
 import { createSymphonyServer } from './server.js';
 
 const workspace = mkdtempSync(join(tmpdir(), 'symphony-mcp-'));
@@ -118,11 +118,19 @@ describe('Symphony MCP server', () => {
     expect(
       (go.waitingFor as unknown as { shows: { composed: { pattern: string; steps: string[] } } })
         .shows.composed,
-    ).toMatchObject({ pattern: 'fix', steps: expect.arrayContaining(['apply: Edit']) });
+    ).toMatchObject({
+      pattern: 'fix',
+      steps: expect.arrayContaining(['apply: Edit']),
+      adaptation: { initial: { maxAttempts: 2 } },
+      requirements: [expect.stringMatching(/^R1: \w+ — /)],
+    });
     await call(client, 'answer_approval', { run_id: body.run_id, approved: true });
     const next = await settle(client, body.run_id);
     expect(next.chain).toHaveLength(2);
     expect(next.pattern).toBe('fix');
+    // Stopping by the maestro's id stops the composed run, and says so once it has ended.
+    const stopped = await call(client, 'stop_run', { run_id: body.run_id });
+    expect(stopped.body).toMatchObject({ pattern: 'fix', status: 'cancelled' });
   });
 
   it('remote callers may not run patterns that edit files', async () => {
@@ -203,5 +211,67 @@ describe('Symphony MCP over HTTP (Copilot Studio)', () => {
       await client.close();
     }
     expect(() => mcpHttpHandler({ runs: manager(), apiKey: 'short' })).toThrow(/16 characters/);
+  });
+});
+
+const usage = (input: number, premium: number, calls = 1) => ({
+  calls,
+  inputTokens: input,
+  outputTokens: input / 10,
+  cacheReadTokens: 0,
+  reasoningTokens: 0,
+  premiumRequests: premium,
+});
+const step = (nodeId: string, input: number, premium: number, extra: object = {}) =>
+  ({
+    nodeId,
+    kind: 'agent',
+    transcript: {
+      provider: 'copilot',
+      prompt: '',
+      output: '',
+      toolCalls: [],
+      usage: usage(input, premium),
+    },
+    ...extra,
+  }) as never;
+
+describe('get_run usage', () => {
+  it('shows the costliest steps, rejected answers, and compose vs perform for a chain', () => {
+    const maestroRun = {
+      pattern: 'maestro',
+      steps: [step('propose', 90_000, 3), step('classify', 5000, 1)],
+    };
+    const rejectedAttempt = {
+      errors: ['updates arrived as text'],
+      transcript: {
+        provider: 'copilot',
+        prompt: '',
+        output: '',
+        toolCalls: [{ name: 'submit_result', args: { updates: '{"a":1' }, ok: false }],
+        usage: usage(20_000, 2),
+      },
+    };
+    const fixRun = {
+      pattern: 'fix',
+      steps: [
+        step('diagnose', 40_000, 2, { attempts: [rejectedAttempt] }),
+        step('apply', 10_000, 1),
+      ],
+    };
+    const u = usageOf(fixRun, [maestroRun, fixRun]);
+    expect(u.premiumRequests).toBe(5);
+    expect(Object.keys(u.byStep)).toEqual(['diagnose', 'apply']);
+    expect(u.byStep.diagnose).toMatch(/^60k in .* 2 calls · 4 premium requests$/);
+    expect(u.rejected).toMatch(
+      /^1 attempts \(20k in .* 2 premium requests\) · 1 answers sent updates as text$/,
+    );
+    expect(u.chain).toEqual({
+      compose: expect.stringMatching(/^95k in .* 4 premium requests$/),
+      perform: expect.stringMatching(/^70k in .* 5 premium requests$/),
+      premiumRequests: 9,
+    });
+    // A run on its own: no chain split.
+    expect(usageOf(maestroRun, [maestroRun]).chain).toBeUndefined();
   });
 });

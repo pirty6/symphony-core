@@ -15,6 +15,7 @@ import {
   fromFlow,
   IDLE_VIEW,
   metaOf,
+  minimapStyle,
   newNode,
   phaseDisplay,
   replayView,
@@ -247,5 +248,15 @@ describe('endLocally', () => {
     expect(ended).toMatchObject({ runId: 'r', status: 'cancelled', reason: 'gone' })
     expect(ended.gate).toBeUndefined()
     expect(ended.pause).toBeUndefined()
+  })
+})
+
+describe('minimapStyle', () => {
+  it('lights up where the run is, as the diagram does; idle nodes stay dim', () => {
+    expect(minimapStyle(undefined)).toEqual({ fill: '#2a3156', stroke: '#2a3156', className: '' })
+    expect(minimapStyle('active')).toMatchObject({ fill: '#fbbf24', className: 'minimap-active' })
+    expect(minimapStyle('paused')).toMatchObject({ fill: '#34d399', className: 'minimap-paused' })
+    expect(minimapStyle('failed').fill).toBe('#ef4444')
+    expect(minimapStyle('done').className).toBe('minimap-done')
   })
 })

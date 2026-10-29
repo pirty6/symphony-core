@@ -6,7 +6,16 @@ import { describe, expect, it } from 'vitest';
 import type { Pattern } from '../core/types.js';
 import type { Provider } from '../runtime/provider.js';
 import { formatReport, runEval, summarize, worseThan, type EvalReport } from './harness.js';
-import { buildFixture, EVAL_TASKS, type EvalTask } from './tasks.js';
+import {
+  buildFixture,
+  EVAL_TASKS,
+  requirementCoverage,
+  ROUTES,
+  ROUTING_TASKS,
+  routedAs,
+  type EvalTask,
+} from './tasks.js';
+import { workPatternNames } from '../patterns/index.js';
 
 /** One executor step that "fixes" the file and reports two findings, one citation wrong. */
 const mini: Pattern = {
@@ -101,7 +110,16 @@ describe('eval harness', () => {
       citations: { checked: 2, invalid: 1 },
     });
     expect(r!.tokens).toMatchObject({ calls: 1, inputTokens: 1000, outputTokens: 50 });
-    expect(summarize(report.results)).toMatchObject({ runs: 2, solved: 2, inputTokens: 2000 });
+    expect(r!.byNode).toEqual({ work: r!.tokens });
+    const s = summarize(report.results);
+    expect(s).toMatchObject({ runs: 2, solved: 2, inputTokens: 2000 });
+    // Per step over every run, and composing (maestro) apart from performing.
+    expect(s.byNode['mini work']).toMatchObject({ calls: 2, inputTokens: 2000 });
+    expect(s.perform).toMatchObject({ calls: 2, inputTokens: 2000 });
+    expect(s.compose.calls).toBe(0);
+    expect(formatReport(report)).toMatch(
+      /costliest steps: mini work \(2k in \(800 cached\) · 100 out · 2 calls\)/,
+    );
   });
 
   it('reports failures and flags a run that is worse than its baseline', async () => {
@@ -118,6 +136,20 @@ describe('eval harness', () => {
     // Two runs against a baseline of one: compared per run, not in total.
     const twice = await evaluate(true, 2);
     expect(formatReport(twice, baseline)).toMatch(/tokens 2\.0k in \(\+0%\) per run/);
+  });
+
+  it('a run that errors after playing still reports the tokens it spent', async () => {
+    const report = await runEval({
+      tasks: [{ ...task, check: () => Promise.reject(new Error('check crashed')) }],
+      library: [mini],
+      provider: fakeProvider(true),
+      providerName: 'fake',
+      repoRoot: process.cwd(),
+      env: {},
+    });
+    expect(report.results[0]).toMatchObject({ outcome: 'error', notes: ['error: check crashed'] });
+    expect(report.results[0]!.tokens).toMatchObject({ calls: 1, inputTokens: 1000 });
+    expect(report.results[0]!.byNode).toMatchObject({ work: { calls: 1 } });
   });
 
   it('an unknown pattern is a failed result, not a crash', async () => {
@@ -180,13 +212,47 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
       answer: 'It does not retry at all: fetchUser calls http.get once and throws on failure.',
     },
   }),
+  'maestro-requirements': () => ({
+    state: {
+      requirements: [
+        'Fix sumTo so it includes n',
+        'Run the existing tests before changing anything',
+        'Change only src/sum.js',
+      ],
+      coverage: [
+        'R1: apply — edits sumTo to include n',
+        'R2: baseline — runs the tests first',
+        'R3: apply — guidance: edit only src/sum.js',
+      ],
+      uncovered: [],
+      finalPattern: {
+        nodes: [
+          { id: 'baseline', label: 'Run tests first', tool: 'tests.run' },
+          {
+            id: 'apply',
+            label: 'Edit',
+            directive: 'Implement the plan. For this request: edit only src/sum.js.',
+          },
+        ],
+      },
+    },
+  }),
   'investigate-default-port': () => ({
     state: { answer: 'It listens on 8081: loadConfig in src/config.js uses DEFAULTS.port + 1.' },
   }),
 };
 
+for (const [i, route] of ROUTES.entries())
+  SOLUTIONS[ROUTING_TASKS[i]!.id] = () => ({
+    state: {
+      chosen: route.pattern[0],
+      complexity: route.complexity[1],
+      thenPattern: route.thenPattern ?? '',
+    },
+  });
+
 describe('eval tasks', () => {
-  it.each(EVAL_TASKS.map((t) => [t.id, t] as const))(
+  it.each([...EVAL_TASKS, ...ROUTING_TASKS].map((t) => [t.id, t] as const))(
     '%s: the check fails as given and passes with a right answer',
     async (_id, t) => {
       const solve = SOLUTIONS[t.id];
@@ -217,4 +283,58 @@ describe('eval tasks', () => {
     },
     30_000,
   );
+});
+
+const right = SOLUTIONS['maestro-requirements']!('').state;
+const judge = (state: Record<string, unknown>) =>
+  requirementCoverage('success', state, [/\btests?\b/i]);
+
+describe('requirement coverage judge', () => {
+  it('fails form without substance: a step that does not exist, or one not about the requirement', () => {
+    expect(judge(right).pass).toBe(true);
+    const ghost = judge({
+      ...right,
+      coverage: ['R1: apply — x', 'R2: runTests — x', 'R3: apply — x'],
+    });
+    expect(ghost.notes.join()).toMatch(/R2 names no step of the score/);
+    const anyStep = judge({
+      ...right,
+      coverage: ['R1: apply — x', 'R2: apply — runs tests', 'R3: apply — x'],
+    });
+    expect(anyStep.notes.join()).toMatch(
+      /R2 \(\\btests\?\\b\) maps to 'apply', a step not about it/,
+    );
+    expect(judge({ ...right, uncovered: ['R3: NOT COVERED — x'] }).pass).toBe(false);
+    expect(judge({ ...right, coverage: ['R1: apply — x'] }).pass).toBe(false);
+    expect(requirementCoverage('partial', right, []).pass).toBe(false);
+  });
+});
+
+describe('routing judge', () => {
+  const route = ROUTES.find((r) => r.thenPattern === 'fix')!;
+  const ok = { chosen: 'investigate', complexity: 3, thenPattern: 'fix' };
+  it('checks the pattern, the complexity band and the chain', () => {
+    expect(routedAs('success', ok, route).pass).toBe(true);
+    expect(routedAs('success', { ...ok, chosen: 'fix' }, route).notes.join()).toMatch(
+      /routed to 'fix', expected investigate/,
+    );
+    expect(routedAs('success', { ...ok, complexity: 1 }, route).notes.join()).toMatch(
+      /complexity 1, expected 2-4/,
+    );
+    expect(routedAs('success', { ...ok, thenPattern: '' }, route).notes.join()).toMatch(
+      /then '', expected 'fix'/,
+    );
+    expect(routedAs('partial', ok, route).pass).toBe(false);
+  });
+
+  it('every route names a work pattern (or new), never a demo game', () => {
+    const known = new Set([...workPatternNames(), 'new']);
+    expect(ROUTES.length).toBeGreaterThanOrEqual(20);
+    for (const r of ROUTES) {
+      for (const p of [...r.pattern, ...(r.thenPattern ? [r.thenPattern] : [])])
+        expect(known).toContain(p);
+      expect(r.complexity[0]).toBeLessThanOrEqual(r.complexity[1]);
+    }
+    expect(new Set(ROUTING_TASKS.map((t) => t.id)).size).toBe(ROUTES.length);
+  });
 });

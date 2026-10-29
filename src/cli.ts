@@ -20,9 +20,9 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
 import { formatReport, runEval, summarize, worseThan, type EvalReport } from './eval/harness.js';
-import { EVAL_TASKS } from './eval/tasks.js';
+import { EVAL_TASKS, ROUTING_TASKS } from './eval/tasks.js';
 import { type ChainStep, followUps, playsAfter, stepContext, stepPattern } from './core/chain.js';
-import { formatUsage, performanceUsage } from './core/usage.js';
+import { formatUsage, performanceUsage, rejectionUsage } from './core/usage.js';
 import { describeEdits } from './core/edits.js';
 import { agreement, compareRuns } from './core/compare.js';
 import { engineNote, RUN_SCHEMA_VERSION } from './core/migrate.js';
@@ -312,6 +312,17 @@ async function play(
   if (!o.quiet) console.log(c.dim(`final state ${JSON.stringify(perf.finalState).slice(0, 2000)}`));
   const used = performanceUsage(perf).total;
   if (used.calls > 0) console.log(c.dim(`tokens: ${formatUsage(used)}`));
+  const rejected = rejectionUsage(perf);
+  if (rejected.attempts > 0 || rejected.textUpdates > 0) {
+    const text = rejected.textUpdates
+      ? ` · ${rejected.textUpdates} answers sent updates as text`
+      : '';
+    console.log(
+      c.dim(
+        `rejected: ${rejected.attempts} attempts (${formatUsage(rejected.attemptUsage)})${text}`,
+      ),
+    );
+  }
   if (perf.edits) console.log(describeEdits(perf.edits));
   return perf;
 }
@@ -520,9 +531,15 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     return 1;
   }
   const wanted = args.values.task?.split(',').map((t) => t.trim());
-  const tasks = wanted ? EVAL_TASKS.filter((t) => wanted.includes(t.id)) : EVAL_TASKS;
+  // `routing` names every maestro routing task; they are not in the default run.
+  const every = [...EVAL_TASKS, ...ROUTING_TASKS];
+  const tasks = wanted
+    ? every.filter(
+        (t) => wanted.includes(t.id) || (wanted.includes('routing') && ROUTING_TASKS.includes(t)),
+      )
+    : EVAL_TASKS;
   if (tasks.length === 0) {
-    console.error(`no such task; tasks: ${EVAL_TASKS.map((t) => t.id).join(', ')}`);
+    console.error(`no such task; tasks: routing, ${every.map((t) => t.id).join(', ')}`);
     return 1;
   }
   const baseline = args.values.compare
@@ -567,9 +584,17 @@ async function cmdRehearse(argv: string[], cwd: string): Promise<number> {
   const args = parseArgs({
     args: argv,
     allowPositionals: true,
-    options: { ...SCORE_OPTIONS, times: { type: 'string', short: 'n', default: '3' } },
+    options: {
+      ...SCORE_OPTIONS,
+      times: { type: 'string', short: 'n', default: '3' },
+      fields: { type: 'string' },
+    },
   });
   const times = Number(args.values.times);
+  const fields = (args.values.fields ?? '')
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean);
   if (!Number.isInteger(times) || times < 2 || times > 20) {
     console.error('--times must be a whole number from 2 to 20');
     return 1;
@@ -592,7 +617,7 @@ async function cmdRehearse(argv: string[], cwd: string): Promise<number> {
     });
     runs.push({ schemaVersion: RUN_SCHEMA_VERSION, score, performance });
   }
-  const rows = agreement(runs);
+  const rows = agreement(runs, fields);
   const width = Math.max(4, ...rows.map((r) => r.nodeId.length));
   console.log(
     `\n${c.bold('rehearsal')} ${c.dim(`${times} performances of ${pattern.name} · score ${score.id.slice(0, 12)} · fresh answers (no recorded ones)`)}`,
@@ -731,15 +756,18 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
   const request = positionals.join(' ').trim();
   if (!request || !isProviderName(values.provider)) {
     console.error(
-      'usage: symphony maestro "<what you want done>" [--provider copilot] [-i classical|cool|swing|bebop|free]',
+      'usage: symphony maestro "<what you want done>" [--provider copilot] [--complexity 1-4] [-i classical|cool|swing|bebop|free]',
     );
     return 1;
   }
   const improvisation = levelOf(values.improvisation);
+  // A preset tier wins over the maestro's own rating (cost control), on every surface.
+  const complexity = complexityOf(values.complexity);
   const score = compileScore(maestro, {
     goal: 'Compose the score for the request',
     context: { request },
     ...(improvisation !== undefined ? { improvisation } : {}),
+    ...(complexity ? { complexity } : {}),
   });
   const rl = process.stdin.isTTY
     ? createInterface({ input: process.stdin, output: process.stdout })
@@ -888,6 +916,10 @@ async function cmdCompare(files: string[]): Promise<number> {
   }
   if (cmp.differentKeys.length)
     console.log(`final state differs in: ${cmp.differentKeys.join(', ')}`);
+  if (cmp.models)
+    console.log(
+      `played by different models: ${cmp.models.first.join(', ') || 'none'} vs ${cmp.models.second.join(', ') || 'none'}`,
+    );
   return 3;
 }
 
@@ -971,12 +1003,14 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   verify <run.json>            integrity + deterministic replay check
   compare <a.json> <b.json>    where two runs diverge and why (plan, environment, AI, human, engine)
   rehearse <pattern> -n 3      play the same score N times with fresh answers; per-node agreement
+      --fields a,b               compare only these fields (maestro: --fields chosen,complexity)
       (takes the same options as run; approvals are auto-approved)
   resume <run.json>            continue an interrupted or stopped run from its last checkpoint
   fork <run.json> --at <step>  keep steps before <step>, play the rest again as a new run
       --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
   eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time
+      --task routing           20 maestro requests: right pattern, complexity band and chain (compose only)
   runs --prune [--dry-run]     delete demo runs >7 days, compact runs >30 days (still replayable)
 
 Studio (visual): npm start`);

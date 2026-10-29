@@ -4,10 +4,12 @@
  * Copilot Studio over Streamable HTTP. Runs go on in the background; the caller
  * polls get_run and relays approvals and stuck steps to the human in its chat.
  */
+import { DEMO_ONLY } from '../core/catalog.js';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { Complexity, Improvisation } from '../core/types.js';
+import { DEBATE_ROLES } from '../patterns/maestro.js';
 import { editsFiles, type RunManager, type RunView } from './runs.js';
 
 export const SERVER_INFO = { name: 'symphony', version: '1.0.0' } as const;
@@ -79,7 +81,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
       const lib = await runs.library();
       return json(
         lib
-          .filter((p) => p.name !== 'hangman')
+          .filter((p) => !DEMO_ONLY.has(p.name))
           .map((p) => ({
             name: p.name,
             description: p.description,
@@ -95,7 +97,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
     'maestro',
     {
       title: 'Ask the maestro',
-      description: `Run the maestro meta-pipeline on a request: it routes to the right pattern, debates the algorithm (proposer, skeptic, pragmatist, template-critic by complexity), validates it, asks for a go, then performs the composed score (and a follow-up pattern when the request asks for two shapes). Returns a run_id. ${NEXT}`,
+      description: `Run the maestro meta-pipeline on a request: it routes to the right pattern, debates the algorithm (${DEBATE_ROLES.join(', ')} by complexity), validates it, asks for a go, then performs the composed score (and a follow-up pattern when the request asks for two shapes). Returns a run_id. ${NEXT}`,
       inputSchema: {
         request: z.string().min(1).describe("The user's problem, verbatim"),
         complexity,
@@ -245,12 +247,12 @@ export function createSymphonyServer(runs: RunManager): McpServer {
     {
       title: 'Stop a run',
       description:
-        'Stop a run (it is saved and can be resumed or forked later from the studio or CLI).',
+        'Stop a run: any run id of a chain stops the run playing now (maestro -> composed -> chained). Waits for its current step to end; status "stopping" means it is still winding down. It is saved and can be resumed or forked later from the studio or CLI.',
       inputSchema: { run_id: z.string() },
     },
     async (a) => {
       try {
-        return json(runs.stop(a.run_id));
+        return json(await runs.stop(a.run_id));
       } catch (e) {
         return failure(e);
       }

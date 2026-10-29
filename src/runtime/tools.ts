@@ -10,6 +10,8 @@ export interface ToolContext {
   /** Repository root of symphony-core (for saved runs). */
   readonly repoRoot: string;
   readonly signal: AbortSignal;
+  /** The run calling the tool (memory caps what one run may add). */
+  readonly runId?: string;
 }
 
 export interface ToolSpec {

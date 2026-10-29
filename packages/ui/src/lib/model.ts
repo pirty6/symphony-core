@@ -221,7 +221,8 @@ export interface RunView {
   readonly performance?: Performance
   readonly savedTo?: string
   readonly reason?: string
-  readonly replay?: { readonly reproduced: boolean; readonly issues: readonly string[]; readonly file?: string }
+  /** reproduced: undefined while the replay is still being checked. */
+  readonly replay?: { readonly reproduced?: boolean; readonly issues: readonly string[]; readonly file?: string }
   /** The maestro handed on a composed score. */
   readonly next?: NextPerformance
 }
@@ -359,7 +360,7 @@ export function musicianLines(t: AiTranscript): string[] {
   return [[`tier ${m.tier}`, asked, m.account, m.sdk].filter(Boolean).join(' · '), `sampling: ${m.sampling}`]
 }
 
-export function replayView(run: SavedRun, check: { reproduced: boolean; issues: readonly string[]; file?: string }): RunView {
+export function replayView(run: SavedRun, check: { reproduced?: boolean | undefined; issues: readonly string[]; file?: string }): RunView {
   const perf = run.performance
   const frames = framesOf(perf.events)
   const streams: AiStream[] = []
@@ -414,7 +415,11 @@ export function replayView(run: SavedRun, check: { reproduced: boolean; issues: 
     streams,
     performance: perf,
     ...(perf.reason ? { reason: perf.reason } : {}),
-    replay: { reproduced: check.reproduced, issues: check.issues, ...(check.file ? { file: check.file } : {}) },
+    replay: {
+      ...(check.reproduced !== undefined ? { reproduced: check.reproduced } : {}),
+      issues: check.issues,
+      ...(check.file ? { file: check.file } : {}),
+    },
   }
 }
 
@@ -560,6 +565,8 @@ export function originSummary(perf: Performance): string {
 export interface StoredSettings {
   provider: 'scripted' | 'copilot'
   model: string
+  /** Optional patterns shown in the library (unset: as the server's SYMPHONY_EXTRAS says). */
+  extras: boolean
 }
 
 /** The AI choice kept between visits, so a reload never silently switches to the offline demo. */
@@ -569,6 +576,7 @@ export function parseStoredSettings(raw: string | null): Partial<StoredSettings>
     return {
       ...(v.provider === 'scripted' || v.provider === 'copilot' ? { provider: v.provider } : {}),
       ...(typeof v.model === 'string' ? { model: v.model } : {}),
+      ...(typeof v.extras === 'boolean' ? { extras: v.extras } : {}),
     }
   } catch {
     return {}
@@ -709,4 +717,21 @@ export const KIND_LABEL: Record<NodeKind, string> = {
   approval: 'Approval',
   tool: 'Tool',
   end: 'End',
+}
+
+// ── minimap ──────────────────────────────────────────────────────────
+
+/** Minimap colours per node status, the same as the diagram's (studio.css --active, --approval…). */
+const MINIMAP: Record<NodeStatus | 'idle', { readonly fill: string; readonly stroke: string }> = {
+  idle: { fill: '#2a3156', stroke: '#2a3156' },
+  done: { fill: '#1f4d33', stroke: '#2f6b45' },
+  active: { fill: '#fbbf24', stroke: '#fde68a' },
+  paused: { fill: '#34d399', stroke: '#a7f3d0' },
+  failed: { fill: '#ef4444', stroke: '#fca5a5' },
+}
+
+/** How a node shows on the minimap: where the run is lights up as it does on the diagram. */
+export function minimapStyle(status: NodeStatus | undefined): { fill: string; stroke: string; className: string } {
+  const colours = MINIMAP[status ?? 'idle']
+  return { ...colours, className: status ? `minimap-${status}` : '' }
 }

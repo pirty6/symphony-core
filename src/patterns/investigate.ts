@@ -42,9 +42,11 @@ const RELEVANT = /engine|schema|validate/;
  *
  *   Plan research    list the evidence sources available; the AI splits the question and
  *                    decides, with a reason for every skip, which sources it needs
- *   List evidence    only what the plan needs: every workspace file (repo questions), the web
+ *   List evidence    only what the plan needs: workspace files (repo questions), the web
  *                    pages worth reading (internet questions), experiments to run (behaviour
- *                    or performance questions)
+ *                    or performance questions). A repository with more than maxTriageFiles
+ *                    files is searched first (locate) and only the files found are listed,
+ *                    unless `exhaustive` asks for every file
  *   Triage files     every listed file, in batches; an answer that skips a file is rejected
  *   Deep read        every relevant file and every listed page, read completely
  *   Run experiments  after your approval, each experiment is run and measured
@@ -55,7 +57,7 @@ const RELEVANT = /engine|schema|validate/;
 export const investigate: Pattern = {
   name: 'investigate',
   description:
-    'Answer a question exhaustively with the evidence it needs: repo files, web pages, experiments, history, GitHub, dependencies, MCP. Nothing listed is skipped; every claim is cited.',
+    'Answer a question thoroughly with the evidence it needs: repo files (big repos are searched first), web pages, experiments, history, GitHub, dependencies, MCP. Nothing listed is skipped; every claim is cited.',
   verbTriggers: ['investigate', 'explain', 'why', 'how does', 'find out', 'research'],
   requiredContext: ['question'],
   result: ['answer', 'rulings', 'openQuestions', 'disagreements', 'unresolvedObjections'],
@@ -74,6 +76,22 @@ export const investigate: Pattern = {
       { name: 'skipReasons', type: 'string[]', description: 'Why each skipped source was skipped' },
       { name: 'repoFiles', type: 'string[]', description: 'Every file in the workspace' },
       { name: 'excludedFiles', type: 'string[]', description: 'Files not triaged, with reasons' },
+      { name: 'repoFileCount', type: 'number' },
+      {
+        name: 'maxTriageFiles',
+        type: 'number',
+        initial: 300,
+        description:
+          'Repositories with more files are searched first; only what is found is triaged',
+      },
+      {
+        name: 'exhaustive',
+        type: 'boolean',
+        description: 'Triage every file even in a big repository (slow and costly)',
+      },
+      { name: 'scopeFiles', type: 'string[]', description: 'Files the search located' },
+      { name: 'scopeReasons', type: 'string[]', description: 'Why, per located file' },
+      { name: 'scopeQueries', type: 'string[]', description: 'Every search made to locate them' },
       { name: 'pages', type: 'string[]', description: 'Web pages to read in full (URLs)' },
       {
         name: 'experiments',
@@ -84,7 +102,8 @@ export const investigate: Pattern = {
       {
         name: 'batchWave',
         type: 'number',
-        initial: 75,
+        // batchSize × the parallel calls a step runs at once (4): no slot sits idle.
+        initial: 100,
         description: 'Files per triage round, split into parallel calls of batchSize',
       },
       { name: 'pendingFiles', type: 'string[]' },
@@ -96,7 +115,7 @@ export const investigate: Pattern = {
       {
         name: 'deepWave',
         type: 'number',
-        initial: 12,
+        initial: 16,
         description: 'Items per deep-read round, split into parallel calls of deepBatchSize',
       },
       { name: 'pendingDeep', type: 'string[]' },
@@ -170,11 +189,16 @@ export const investigate: Pattern = {
     {
       id: 'listPhase',
       label: 'List evidence',
-      description: 'Only what the plan needs: workspace files, web pages, experiments',
+      description:
+        'Only what the plan needs: workspace files (a big repo is searched first), web pages, experiments',
       nodes: [
         'needFiles',
         'inventory',
+        'countFiles',
+        'smallRepo',
         'queueFiles',
+        'locate',
+        'queueScope',
         'needWeb',
         'listPages',
         'needExperiments',
@@ -311,10 +335,71 @@ export const investigate: Pattern = {
       output: { files: 'repoFiles', excluded: 'excludedFiles' },
     },
     {
+      id: 'countFiles',
+      kind: 'compute',
+      label: 'Count files',
+      assign: [{ field: 'repoFileCount', expr: 'len(repoFiles)' }],
+    },
+    {
+      id: 'smallRepo',
+      kind: 'condition',
+      label: 'Triage every file?',
+      expression: 'repoFileCount <= maxTriageFiles || exhaustive',
+    },
+    {
       id: 'queueFiles',
       kind: 'compute',
       label: 'Queue files',
       assign: [{ field: 'pendingFiles', expr: 'repoFiles' }],
+    },
+    {
+      id: 'locate',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Locate files',
+      directive:
+        'This repository has too many files (`repoFileCount`) to triage each one, so first locate where the evidence can be. Search the workspace (read-only): `git grep` or ripgrep for the names, identifiers, error messages, test names and paths in `question`, `hint` and `searchTerms`; `git log` and `git show` for the commits, pull requests, branches or dates it mentions (the files a change touched come first); then follow imports, callers and tests one level out from what you find. List in `scopeFiles` the files that could hold evidence for or against any entry of `hypotheses`, most likely first, at most `maxTriageFiles`, as paths relative to the repository root exactly as `git ls-files` prints them (files, not folders). At the same position in `scopeReasons`, say why: which search found it. Record every search you ran in `scopeQueries`.',
+      reads: [
+        'question',
+        'hint',
+        'subQuestions',
+        'searchTerms',
+        'hypotheses',
+        'repoFileCount',
+        'maxTriageFiles',
+        'knownFacts',
+      ],
+      writes: ['scopeFiles', 'scopeReasons', 'scopeQueries'],
+      retries: 2,
+      checks: [
+        { expr: 'len(scopeFiles) > 0', message: 'Locate at least one file.' },
+        {
+          expr: 'len(scopeFiles) <= maxTriageFiles',
+          message: 'List at most maxTriageFiles files: the most likely ones.',
+        },
+        {
+          expr: 'subset(scopeFiles, repoFiles)',
+          message:
+            'scopeFiles may only list files of this repository, relative to its root exactly as `git ls-files` prints them (no folders, no globs).',
+        },
+        {
+          expr: 'len(scopeReasons) == len(scopeFiles)',
+          message: 'Give one reason in scopeReasons per entry of scopeFiles, in the same order.',
+        },
+        { expr: 'len(scopeQueries) > 0', message: 'Record the searches you ran in scopeQueries.' },
+      ],
+    },
+    {
+      id: 'queueScope',
+      kind: 'compute',
+      label: 'Queue located files',
+      assign: [
+        { field: 'pendingFiles', expr: 'unique(scopeFiles)' },
+        {
+          field: 'excludedFiles',
+          expr: 'append(excludedFiles, "files the search did not locate were not triaged (the repository has more than maxTriageFiles files; set exhaustive to triage every file)")',
+        },
+      ],
     },
     { id: 'needWeb', kind: 'condition', label: 'Web?', expression: 'includes(useSources, "web")' },
     {
@@ -746,8 +831,13 @@ export const investigate: Pattern = {
     { id: 'rating-needFiles', from: hypotheses.exit!, to: 'needFiles' },
     { id: 'needFiles-inventory', from: 'needFiles', to: 'inventory', branch: 'then' },
     { id: 'needFiles-needWeb', from: 'needFiles', to: 'needWeb', branch: 'else' },
-    { id: 'inventory-queueFiles', from: 'inventory', to: 'queueFiles' },
+    { id: 'inventory-count', from: 'inventory', to: 'countFiles' },
+    { id: 'count-small', from: 'countFiles', to: 'smallRepo' },
+    { id: 'small-queueFiles', from: 'smallRepo', to: 'queueFiles', branch: 'then' },
+    { id: 'small-locate', from: 'smallRepo', to: 'locate', branch: 'else', label: 'big repo' },
+    { id: 'locate-queueScope', from: 'locate', to: 'queueScope' },
     { id: 'queueFiles-needWeb', from: 'queueFiles', to: 'needWeb' },
+    { id: 'queueScope-needWeb', from: 'queueScope', to: 'needWeb' },
     { id: 'needWeb-listPages', from: 'needWeb', to: 'listPages', branch: 'then' },
     { id: 'needWeb-needExperiments', from: 'needWeb', to: 'needExperiments', branch: 'else' },
     { id: 'listPages-needExperiments', from: 'listPages', to: 'needExperiments' },
@@ -861,6 +951,18 @@ export const investigate: Pattern = {
       }),
     },
     agents: {
+      locate: () => ({
+        updates: {
+          scopeFiles: ['src/core/engine.ts', 'src/core/schema.ts', 'src/core/validate.ts'],
+          scopeReasons: [
+            'git grep "validat" found the engine checking moves',
+            'git grep "validat" found the answer schema',
+            'git grep "validat" found the pattern validator',
+          ],
+          scopeQueries: ['git grep -n "validat"', 'git log --oneline -- src/core'],
+        },
+        verdict: v('located'),
+      }),
       plan: (s) => {
         const names = (s.sourceNames as string[]) ?? [];
         const skip = names.filter(

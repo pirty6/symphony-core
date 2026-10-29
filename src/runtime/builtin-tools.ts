@@ -4,15 +4,18 @@
  *   repo.files       every file in the workspace (git-aware), plus what was excluded and why
  *   sources.catalog  every evidence source available to agents right now
  */
+import { DEMO_ONLY } from '../core/catalog.js';
 import { workspaceTools } from './workspace-tools.js';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
-import { parseDraft } from '../core/draft.js';
+import { adaptPattern, outlinePattern, parseDraft } from '../core/draft.js';
 import type { Pattern } from '../core/types.js';
 import { PATTERNS, routeMatches } from '../patterns/index.js';
 import { discoverMcpServers, type McpOptions } from './mcp.js';
+import { recallCompositions, rememberComposition } from './memory.js';
 import { DRAFTS_DIR, listRuns, savePatternFile } from './store.js';
 import { registry, type ToolContext, type ToolRegistry, type ToolSpec } from './tools.js';
 
@@ -287,9 +290,48 @@ export function defaultTools(opts: CatalogOptions = {}): ToolRegistry {
 
 const stripDemo = ({ demo: _demo, ...data }: Pattern) => data;
 
+/** The inputs a pattern needs, one line each: what reading them from a request takes. */
+export const inputsOf = (p: Pattern): string[] =>
+  p.requiredContext.map((name) => {
+    const f = p.state.find((x) => x.name === name);
+    return `${name} (${f?.type ?? 'string'})${f?.description ? `: ${f.description}` : ''}`;
+  });
+
+/** A library pattern's fingerprint: a remembered adaptation is reused only on the same pattern. */
+export const patternFingerprint = (p: Pattern): string =>
+  createHash('sha256')
+    .update(JSON.stringify(stripDemo(p)))
+    .digest('hex')
+    .slice(0, 16);
+
+const asObject = (x: unknown): Record<string, unknown> =>
+  typeof x === 'object' && x !== null && !Array.isArray(x) ? (x as Record<string, unknown>) : {};
+
+const isFilled = (x: unknown): boolean =>
+  typeof x === 'object' && x !== null && !Array.isArray(x) && Object.keys(x).length > 0;
+
+/**
+ * An empty draft with a library template: the template as adapted (the maestro
+ * tailors tested patterns instead of rewriting them). A filled draft wins: the
+ * shape had to change. Undefined when there is no template to adapt.
+ */
+function fromTemplate(
+  draft: unknown,
+  template: unknown,
+  adaptation: unknown,
+): { pattern: Pattern } | { errors: string[] } | undefined {
+  if (isFilled(draft) || !isFilled(template)) return undefined;
+  const base = parseDraft(template);
+  if (!base.ok) return { errors: base.errors.map((e) => `template: ${e}`) };
+  const out = adaptPattern(base.value, adaptation ?? {});
+  return out.errors.length > 0 ? { errors: out.errors } : { pattern: out.pattern };
+}
+
 /** Tools the maestro uses: list the library, route by verb triggers, validate and save a drafted score. */
 export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSpec[] {
-  const lib = async () => (await library()).filter((p) => p.name !== 'maestro');
+  // Neither the maestro itself nor a demo game is a route for real work.
+  const lib = async () =>
+    (await library()).filter((p) => p.name !== 'maestro' && !DEMO_ONLY.has(p.name));
   return [
     {
       name: 'patterns.list',
@@ -319,13 +361,69 @@ export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSp
     },
     {
       name: 'pattern.validate',
-      description: 'Validate a drafted pattern; returns the normalized pattern or the problems.',
-      outputs: ['errors', 'valid', 'pattern'],
+      description:
+        'Validate a drafted pattern; returns the normalized pattern or the problems. With an empty draft, a library `template` and an `adaptation`, validates the template as adapted.',
+      outputs: ['errors', 'valid', 'pattern', 'inputs'],
       run: async (args) => {
-        const parsed = parseDraft(args.pattern);
+        const adapted = fromTemplate(args.pattern, args.template, args.adaptation);
+        if (adapted && 'errors' in adapted)
+          return { errors: adapted.errors, valid: false, pattern: {}, inputs: [] };
+        const parsed = parseDraft(adapted ? adapted.pattern : args.pattern);
         return parsed.ok
-          ? { errors: [], valid: true, pattern: stripDemo(parsed.value) }
-          : { errors: parsed.errors, valid: false, pattern: {} };
+          ? {
+              errors: [],
+              valid: true,
+              pattern: stripDemo(parsed.value),
+              inputs: inputsOf(parsed.value),
+            }
+          : { errors: parsed.errors, valid: false, pattern: {}, inputs: [] };
+      },
+    },
+    {
+      name: 'compositions.recall',
+      description:
+        'Approved maestro compositions in this workspace: `exact` is one for the same request on an unchanged pattern, to reuse without a debate ({} if none); `similar` are the closest others, as precedent.',
+      outputs: ['exact', 'similar'],
+      run: async (args, ctx) => {
+        const all = await lib();
+        const fingerprint = (name: string) => {
+          const p = all.find((x) => x.name === name);
+          return p ? patternFingerprint(p) : undefined;
+        };
+        const r = await recallCompositions(ctx.workspace, String(args.request ?? ''), fingerprint);
+        return { exact: r.exact ?? {}, similar: r.similar };
+      },
+    },
+    {
+      name: 'compositions.remember',
+      description:
+        'Remember an approved composition (request, chosen pattern, complexity, then-pattern, and its adaptation or full pattern). Returns { saved }.',
+      outputs: ['saved'],
+      run: async (args, ctx) => {
+        const chosen = String(args.chosen ?? '');
+        const known = (await lib()).find((p) => p.name === chosen);
+        // A drafted (new or reshaped) score is remembered whole; an adapted one by its adaptation.
+        const whole = chosen === 'new' || isFilled(args.draft);
+        await rememberComposition(ctx.workspace, {
+          request: String(args.request ?? ''),
+          chosen,
+          complexity: typeof args.complexity === 'number' ? args.complexity : 2,
+          thenPattern: typeof args.thenPattern === 'string' ? args.thenPattern : '',
+          adaptation: whole ? {} : asObject(args.adaptation),
+          pattern: whole ? asObject(args.pattern) : {},
+          template: known ? patternFingerprint(known) : '',
+        });
+        return { saved: true };
+      },
+    },
+    {
+      name: 'pattern.outline',
+      description:
+        'A compact view of a pattern for prompts: its steps (AI steps with the start of their directive) and the settings an adaptation may change: { steps, settings }.',
+      outputs: ['steps', 'settings'],
+      run: async (args) => {
+        const parsed = isFilled(args.pattern) ? parseDraft(args.pattern) : undefined;
+        return parsed?.ok ? outlinePattern(parsed.value) : { steps: [], settings: [] };
       },
     },
     {

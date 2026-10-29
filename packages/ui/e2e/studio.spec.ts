@@ -26,7 +26,7 @@ test('plays hangman live: AI picks, human guesses, engine scores', async ({ page
   }
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await expect(page.getByTestId('node-win')).toHaveAttribute('data-status', 'done')
-  await page.getByRole('button', { name: 'State' }).click()
+  await page.getByRole('button', { name: 'State', exact: true }).click()
   await expect(page.getByTestId('state-won')).toContainText('true')
 })
 
@@ -54,7 +54,8 @@ test('saved runs replay and verify deterministically', async ({ page }) => {
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await page.getByTestId('toggle-demo-runs').click()
-  await page.locator('.lib-item.saved').first().click()
+  // A saved run, not a live one ("Running now" items look the same).
+  await page.getByTestId('saved-run').first().locator('.lib-item').click()
   await expect(page.getByTestId('replay-check')).toContainText('reproduces this run exactly')
   await page.getByLabel('timeline').fill('5')
   await expect(page.getByTestId('timeline-events').locator('li.current')).toBeVisible()
@@ -66,6 +67,11 @@ test('the maestro composes a score, then the orchestra performs it', async ({ pa
   await page.getByRole('button', { name: '🎼 Compose & perform' }).click()
   await expect(page.locator('.tb-title')).toContainText('maestro')
   await expect(page.getByTestId('composed-score')).toContainText('fix · complexity 3')
+  // The tested fix pattern, tailored: the gate shows what was changed for this request.
+  await expect(page.getByTestId('tailoring')).toContainText('hypothesize: It fails about once in ten CI runs')
+  await expect(page.getByTestId('tailoring')).toContainText('maxAttempts = 2')
+  // How each requirement is met, before the go.
+  await expect(page.getByTestId('approval-card')).toContainText(/R1: \w+ — /)
   await page.getByTestId('approval-card').getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(page.getByTestId('notice')).toContainText("composed 'fix' (complexity 3)")
   await expect(page.locator('.tb-title')).toContainText('fix')
@@ -127,7 +133,8 @@ test('a saved run can be forked from the step shown on the timeline', async ({ p
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await page.getByTestId('toggle-demo-runs').click()
-  await page.locator('.lib-item.saved').first().click()
+  // A saved run, not a live one ("Running now" items look the same).
+  await page.getByTestId('saved-run').first().locator('.lib-item').click()
   await expect(page.getByTestId('replay-check')).toContainText('reproduces this run exactly')
   await page.getByLabel('timeline').fill('6')
   const fork = page.getByTestId('fork')
@@ -186,7 +193,7 @@ test('then run: a successful run hands its result to the next pattern, and the s
   await expect(page.locator('.tb-title')).toContainText('fix')
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await expect(page.getByTestId('run-result')).toContainText("reached end 'fixed'")
-  await page.getByRole('button', { name: 'State' }).click()
+  await page.getByRole('button', { name: 'State', exact: true }).click()
   await expect(page.getByTestId('state-issue')).toContainText('What the investigate run found')
 })
 
@@ -327,4 +334,31 @@ test('deletes one saved run from the list after a second click', async ({ page }
   await trash.click()
   await mine.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(mine).toHaveCount(0)
+})
+
+test('the extras toggle shows optional patterns, and is remembered', async ({ page }) => {
+  await open(page, 'hangman')
+  const metaphorItem = page.locator('button.lib-item:not(.saved)').filter({ has: page.locator('b', { hasText: /^metaphor$/ }) })
+  const toggle = page.getByLabel('extra patterns')
+  await expect(toggle).not.toBeChecked()
+  await expect(metaphorItem).toHaveCount(0)
+  await toggle.check()
+  await expect(metaphorItem).toHaveCount(1)
+  await expect(metaphorItem).toContainText('extra')
+  await page.reload()
+  await expect(page.getByLabel('extra patterns')).toBeChecked()
+  await expect(metaphorItem).toHaveCount(1)
+  await page.getByLabel('extra patterns').uncheck()
+  await expect(metaphorItem).toHaveCount(0)
+})
+
+test('the minimap lights up where the run is, as the diagram does', async ({ page }) => {
+  await open(page, 'hangman')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('approval-card')).toBeVisible()
+  await expect(page.getByTestId('node-ask')).toHaveAttribute('data-status', 'paused')
+  const minimap = page.locator('.react-flow__minimap')
+  await expect(minimap.locator('.react-flow__minimap-node.minimap-paused')).toHaveCount(1)
+  await expect(minimap.locator('.react-flow__minimap-node.minimap-paused')).toHaveCSS('fill', 'rgb(52, 211, 153)')
+  await expect(minimap.locator('.react-flow__minimap-node.minimap-done').first()).toBeAttached()
 })

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { TOOL_OUTPUTS } from '@core/catalog'
 import type { Frame } from '@core/replay'
 import { parseFieldInput } from '@core/schema'
 import type { ScoreEdge, ScoreNode, StateField } from '@core/types'
@@ -12,11 +13,6 @@ const list = (s: string) =>
 
 const json = (v: unknown) => JSON.stringify(v, null, 2)
 
-/** Built-in tools and their outputs (mirrors src/runtime/builtin-tools.ts). */
-const TOOL_OUTPUTS: Record<string, string[]> = {
-  'repo.files': ['files', 'excluded'],
-  'sources.catalog': ['names', 'descriptions'],
-}
 
 // ── cards shown while a run waits for the user ─────────────────────
 
@@ -181,7 +177,18 @@ export function ApprovalCard({
           {f}
         </div>
       ))}
-      {pause.outputSchema.map((f) => (
+      {pause.outputSchema.map((f) =>
+        f.type === 'boolean' ? (
+          <label key={f.name} className="field checkbox" title={f.description ?? ''}>
+            <input
+              type="checkbox"
+              checked={values[f.name] === 'true'}
+              onChange={(e) => setValues({ ...values, [f.name]: String(e.target.checked) })}
+              aria-label={f.name}
+            />{' '}
+            {f.name} <small>{f.description ?? ''}</small>
+          </label>
+        ) : (
         <label key={f.name} className="field">
           {f.name} <small>({f.type})</small>
           <input
@@ -192,7 +199,8 @@ export function ApprovalCard({
             aria-label={f.name}
           />
         </label>
-      ))}
+        ),
+      )}
       <div className="row">
         <button type="submit" className="primary">
           Approve
@@ -309,6 +317,31 @@ function Shown({ keys, state }: { keys: readonly string[]; state: Readonly<Recor
   )
 }
 
+/** How the maestro tailored a tested library pattern: guidance per step, changed settings. */
+function Tailoring({ adaptation }: { adaptation: unknown }) {
+  const a = (adaptation ?? {}) as { directives?: Record<string, string>; initial?: Record<string, unknown> }
+  const guidance = Object.entries(a.directives ?? {})
+  const settings = Object.entries(a.initial ?? {})
+  if (guidance.length === 0 && settings.length === 0) return null
+  return (
+    <div className="tailoring" data-testid="tailoring">
+      <div className="muted">Tailored for this request (the steps above are the tested pattern):</div>
+      <ul>
+        {guidance.map(([step, text]) => (
+          <li key={step}>
+            <b>{step}</b>: {text}
+          </li>
+        ))}
+        {settings.map(([k, x]) => (
+          <li key={k}>
+            <code>{k}</code> = {JSON.stringify(x)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function ComposedScore({ state }: { state: Readonly<Record<string, unknown>> }) {
   const p = state.normalized as { name?: string; description?: string; nodes?: { id: string; label: string; kind: string; role?: string }[] } | undefined
   if (!p?.nodes) return null
@@ -330,6 +363,7 @@ function ComposedScore({ state }: { state: Readonly<Record<string, unknown>> }) 
             </li>
           ))}
       </ol>
+      <Tailoring adaptation={state.adaptation} />
       {notes.length > 0 && (
         <ul className="debate-notes">
           {notes.map((n, i) => (

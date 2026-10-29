@@ -31,6 +31,37 @@ describe('compareRuns', () => {
     });
   });
 
+  it('the same outputs from different models are not called identical', () => {
+    const playedBy = (model: string): SavedRun => {
+      const run = play(hangman);
+      const steps = run.performance.steps.map((s) =>
+        s.kind === 'agent'
+          ? {
+              ...s,
+              transcript: {
+                provider: 'copilot',
+                prompt: '',
+                output: '',
+                toolCalls: [],
+                musician: {
+                  tier: 2 as const,
+                  requestedModel: model,
+                  effort: 'high',
+                  sampling: 'n/a',
+                },
+              },
+            }
+          : s,
+      );
+      return { ...run, performance: { ...run.performance, steps } };
+    };
+    expect(compareRuns(playedBy('sonnet'), playedBy('sonnet')).identical).toBe(true);
+    const c = compareRuns(playedBy('sonnet'), playedBy('opus'));
+    expect(c.identical).toBe(false);
+    expect(c.differentKeys).toEqual([]);
+    expect(c.models).toEqual({ first: ['sonnet/high'], second: ['opus/high'] });
+  });
+
   it('blames the plan when the scores differ', () => {
     const c = compareRuns(play(hangman), play(hangman, hangman.demo, 'other goal'));
     expect(c.first).toEqual({ step: 0, cause: 'plan', detail: 'different scores: goal differ' });
@@ -94,5 +125,17 @@ describe('originOf and agreement', () => {
       agreement: 2 / 3,
     });
     expect(rows.find((r) => r.nodeId === 'start')).toMatchObject({ variants: 1, agreement: 1 });
+  });
+
+  it('compares only the named fields, listing only the nodes that wrote them', () => {
+    const runs = [play(hangman), play(hangman), play(hangman, pick('rocket'))];
+    const rows = agreement(runs, ['word']);
+    expect(rows.map((r) => r.nodeId)).toEqual(['pick']);
+    expect(rows[0]).toMatchObject({ reached: 3, variants: 2 });
+    // A field nobody disagrees on: every take agrees, whatever else differed.
+    expect(agreement([runs[0]!, runs[1]!], ['word'])[0]).toMatchObject({
+      variants: 1,
+      agreement: 1,
+    });
   });
 });

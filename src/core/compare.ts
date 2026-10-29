@@ -43,6 +43,27 @@ export interface RunComparison {
   };
   /** Final-state keys whose values differ. */
   readonly differentKeys: readonly string[];
+  /**
+   * The model settings each run asked for, when they differ: identical outputs from
+   * different models are a coincidence, not a reproduction.
+   */
+  readonly models?: { readonly first: readonly string[]; readonly second: readonly string[] };
+}
+
+/** "model/effort" each AI step asked for, in order of first use (models that answered when not recorded). */
+export function modelsOf(run: SavedRun): string[] {
+  const seen = new Set<string>();
+  for (const s of run.performance.steps) {
+    const t = s.transcript;
+    if (!t || t.provider === 'scripted' || t.fromRepertoire) continue;
+    const m = t.musician;
+    seen.add(
+      m
+        ? `${m.requestedModel ?? 'default'}${m.effort ? `/${m.effort}` : ''}`
+        : (t.model ?? 'default'),
+    );
+  }
+  return [...seen];
 }
 
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
@@ -77,13 +98,18 @@ export function compareRuns(a: SavedRun, b: SavedRun): RunComparison {
   const differentKeys = [...new Set([...Object.keys(fa), ...Object.keys(fb)])]
     .filter((k) => !same(fa[k], fb[k]))
     .toSorted();
+  const ma = modelsOf(a);
+  const mb = modelsOf(b);
+  const models = same(ma.toSorted(), mb.toSorted()) ? undefined : { first: ma, second: mb };
   const result = (first?: RunComparison['first']): RunComparison => ({
     identical:
       first === undefined &&
       differentKeys.length === 0 &&
-      a.performance.outcome === b.performance.outcome,
+      a.performance.outcome === b.performance.outcome &&
+      models === undefined,
     ...(first ? { first } : {}),
     differentKeys,
+    ...(models ? { models } : {}),
   });
 
   if (a.score.id !== b.score.id) {
@@ -150,8 +176,14 @@ export interface NodeAgreement {
   readonly agreement: number;
 }
 
-/** Per node, how often several performances of one score produced the same output. */
-export function agreement(runs: readonly SavedRun[]): NodeAgreement[] {
+/**
+ * Per node, how often several performances of one score produced the same output.
+ * With `fields`, only those state fields count (e.g. a router's `chosen` and `complexity`,
+ * not its free-text reason), and only nodes that wrote one of them are listed.
+ */
+export function agreement(runs: readonly SavedRun[], fields?: readonly string[]): NodeAgreement[] {
+  const only = fields && fields.length > 0 ? new Set(fields) : undefined;
+  const writers = new Set<string>();
   const order: string[] = [];
   const kinds = new Map<string, PerformedStep['kind']>();
   const outputs = new Map<string, string[]>();
@@ -162,23 +194,29 @@ export function agreement(runs: readonly SavedRun[]): NodeAgreement[] {
         kinds.set(s.nodeId, s.kind);
         order.push(s.nodeId);
       }
-      const out = s.changes.map((c) => [c.key, c.after]);
-      perNode.set(s.nodeId, [...(perNode.get(s.nodeId) ?? []), { out, next: s.next ?? null }]);
+      const changes = only ? s.changes.filter((c) => only.has(c.key)) : s.changes;
+      if (changes.length > 0) writers.add(s.nodeId);
+      const out = changes.map((c) => [c.key, c.after]);
+      // With fields, where a node went next is not what is being compared.
+      const visit = only ? { out } : { out, next: s.next ?? null };
+      perNode.set(s.nodeId, [...(perNode.get(s.nodeId) ?? []), visit]);
     }
     for (const [id, visits] of perNode)
       outputs.set(id, [...(outputs.get(id) ?? []), canonicalJson(visits)]);
   }
-  return order.map((nodeId) => {
-    const outs = outputs.get(nodeId) ?? [];
-    const counts = new Map<string, number>();
-    for (const o of outs) counts.set(o, (counts.get(o) ?? 0) + 1);
-    const top = Math.max(0, ...counts.values());
-    return {
-      nodeId,
-      kind: kinds.get(nodeId)!,
-      reached: outs.length,
-      variants: counts.size,
-      agreement: outs.length > 0 ? top / outs.length : 0,
-    };
-  });
+  return order
+    .filter((nodeId) => !only || writers.has(nodeId))
+    .map((nodeId) => {
+      const outs = outputs.get(nodeId) ?? [];
+      const counts = new Map<string, number>();
+      for (const o of outs) counts.set(o, (counts.get(o) ?? 0) + 1);
+      const top = Math.max(0, ...counts.values());
+      return {
+        nodeId,
+        kind: kinds.get(nodeId)!,
+        reached: outs.length,
+        variants: counts.size,
+        agreement: outs.length > 0 ? top / outs.length : 0,
+      };
+    });
 }

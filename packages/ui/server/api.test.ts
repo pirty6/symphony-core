@@ -80,8 +80,14 @@ describe('studio api', () => {
     expect(msgs.at(-1)).toMatchObject({ type: 'status', status: 'done' })
     const saved = (await (await fetch(`${base}/api/saved`)).json()) as { file: string }[]
     expect(saved).toHaveLength(1)
-    const file = (await (await fetch(`${base}/api/saved/file?path=${encodeURIComponent(saved[0]!.file)}`)).json()) as { reproduced: boolean; issues: string[] }
-    expect(file).toMatchObject({ reproduced: true, issues: [] })
+    const path = encodeURIComponent(saved[0]!.file)
+    const open = async () => (await (await fetch(`${base}/api/saved/file?path=${path}`)).json()) as { reproduced: boolean | null; issues: string[] }
+    // Opening answers at once; the replay verdict is in already (checked when the run ended) or on its way.
+    expect([true, null]).toContain((await open()).reproduced)
+    expect(await (await fetch(`${base}/api/saved/check?path=${path}`)).json()).toEqual({ reproduced: true, issues: [] })
+    // Once checked, every open has the verdict.
+    expect(await open()).toMatchObject({ reproduced: true, issues: [] })
+    expect((await fetch(`${base}/api/saved/check?path=..%2F..%2Fpackage.json`)).status).toBe(400)
   })
 
   it('cleans up saved runs on request (today\'s runs are kept)', async () => {
@@ -104,7 +110,7 @@ describe('studio api', () => {
     expect(done.performance).toMatchObject({ outcome: 'success', basedOn: { kind: 'forked', from: first!.file, throughStep: 1 } })
     const saved = (await (await fetch(`${base}/api/saved`)).json()) as { file: string }[]
     const forked = saved.find((r) => r.file !== first!.file)!
-    const check = (await (await fetch(`${base}/api/saved/file?path=${encodeURIComponent(forked.file)}`)).json()) as { reproduced: boolean }
+    const check = (await (await fetch(`${base}/api/saved/check?path=${encodeURIComponent(forked.file)}`)).json()) as { reproduced: boolean }
     expect(check.reproduced).toBe(true)
   })
 
@@ -224,6 +230,15 @@ describe('studio api', () => {
       id = next.runId
     }
     expect(played).toEqual(items)
+  })
+
+  it('lists optional patterns only when asked (default: SYMPHONY_EXTRAS, off here)', async () => {
+    const names = async (q: string) =>
+      ((await (await fetch(`${base}/api/patterns${q}`)).json()) as { name: string; source: string }[])
+    expect((await names('')).some((p) => p.name === 'metaphor')).toBe(false)
+    const on = await names('?extras=on')
+    expect(on.filter((p) => p.source === 'extra').map((p) => p.name)).toEqual(['metaphor', 'storm-in-between'])
+    expect((await names('?extras=off')).some((p) => p.source === 'extra')).toBe(false)
   })
 
   it('refuses cross-site and non-JSON POSTs', async () => {

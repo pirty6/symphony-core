@@ -64,6 +64,34 @@ export function performanceUsage(perf: Pick<Performance, 'steps'>): {
   return { total, byNode };
 }
 
+/**
+ * What rejected answers cost a run: engine-level attempts that were thrown away
+ * (with their usage), and submit_result calls whose updates arrived as text
+ * (each one either repaired or sent back for a correction).
+ */
+export function rejectionUsage(perf: Pick<Performance, 'steps'>): {
+  readonly attempts: number;
+  readonly attemptUsage: TokenUsage;
+  readonly textUpdates: number;
+} {
+  let attempts = 0;
+  let attemptUsage = NO_USAGE;
+  let textUpdates = 0;
+  for (const s of perf.steps) {
+    for (const a of s.attempts ?? []) {
+      attempts += 1;
+      attemptUsage = addUsage(attemptUsage, transcriptUsage(a.transcript));
+    }
+    for (const t of [...(s.attempts ?? []).map((a) => a.transcript), s.transcript]) {
+      for (const c of t?.toolCalls ?? []) {
+        const args = c.args as { updates?: unknown } | undefined;
+        if (c.name === 'submit_result' && typeof args?.updates === 'string') textUpdates += 1;
+      }
+    }
+  }
+  return { attempts, attemptUsage, textUpdates };
+}
+
 const k = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
 
@@ -76,4 +104,18 @@ export function formatUsage(u: TokenUsage): string {
   const cost = u.premiumRequests ? ` · ${+u.premiumRequests.toFixed(2)} premium requests` : '';
   const compacted = u.compactions ? ` · compacted ${u.compactions}×` : '';
   return `${k(u.inputTokens)} in${u.cacheReadTokens ? ` (${k(u.cacheReadTokens)} cached)` : ''} · ${k(u.outputTokens)} out · ${u.calls} calls${time}${cost}${compacted}`;
+}
+
+/** The steps that cost most (premium requests, then input tokens), each with its usage. */
+export function costliest(
+  byNode: Readonly<Record<string, TokenUsage>>,
+  limit = 8,
+): Array<{ readonly node: string; readonly usage: TokenUsage; readonly text: string }> {
+  return Object.entries(byNode)
+    .toSorted(
+      ([, a], [, b]) =>
+        (b.premiumRequests ?? 0) - (a.premiumRequests ?? 0) || b.inputTokens - a.inputTokens,
+    )
+    .slice(0, limit)
+    .map(([node, usage]) => ({ node, usage, text: formatUsage(usage) }));
 }

@@ -17,6 +17,7 @@ import {
 } from '@xyflow/react'
 import { patternToGraph, writesOf } from '@core/graph'
 import { formatFieldInput, parseFieldInput } from '@core/schema'
+import type { NodeStatus } from '@core/replay'
 import type { Branch, ScoreEdge, ScoreNode } from '@core/types'
 import { validatePattern } from '@core/validate'
 import { formatUsage, performanceUsage } from '@core/usage'
@@ -38,6 +39,7 @@ import {
   newNode,
   parseStoredSettings,
   endLocally,
+  minimapStyle,
   originSummary,
   originsByNode,
   phaseDisplay,
@@ -69,6 +71,9 @@ const BLANK: PatternMeta = { name: 'my-flow', description: 'A new flow', require
 const ACTIVE = new Set(['running', 'paused', 'awaiting-approval'])
 const READABLE_ZOOM = 0.55
 const SETTINGS_KEY = 'symphony.settings'
+/** A diagram node's run status (steps and phase boxes both carry it in their data). */
+const statusOf = (n: { data?: unknown }): NodeStatus | undefined => (n.data as { status?: NodeStatus } | undefined)?.status
+
 /** Results longer than this (characters of Markdown) open in the reader when a live run ends. */
 const LONG_RESULT = 600
 type Tab = 'node' | 'ai' | 'state'
@@ -107,9 +112,16 @@ export default function Studio() {
     complexity: 0,
     improvisation: 0,
   }))
+  /** Optional patterns in the library: the toggle's choice, or unset for the server's default. */
+  const [extras, setExtras] = useState<boolean | undefined>(() => parseStoredSettings(localStorage.getItem(SETTINGS_KEY)).extras)
+  const extrasRef = useRef(extras)
+  extrasRef.current = extras
   useEffect(() => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ provider: settings.provider, model: settings.model }))
-  }, [settings.provider, settings.model])
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ provider: settings.provider, model: settings.model, ...(extras === undefined ? {} : { extras }) }),
+    )
+  }, [settings.provider, settings.model, extras])
   // Choosing Copilot on a machine with no GitHub account signed in: say how to fix it before a run fails.
   useEffect(() => {
     if (settings.provider !== 'copilot') return
@@ -199,7 +211,7 @@ export default function Studio() {
   loadPatternRef.current = loadPattern
   useEffect(() => {
     let cancelled = false
-    api.patterns().then(
+    api.patterns(extrasRef.current).then(
       (items) => {
         if (cancelled) return
         setLibrary(items)
@@ -224,8 +236,13 @@ export default function Studio() {
     if (view.mode !== 'live' || ACTIVE.has(view.status)) return
     refreshSaved()
     // A run may have saved a new pattern (metaphor, maestro --save): list it right away.
-    void api.patterns().then(setLibrary, () => undefined)
+    void api.patterns(extrasRef.current).then(setLibrary, () => undefined)
   }, [view.mode, view.status, refreshSaved])
+
+  const toggleExtras = (on: boolean) => {
+    setExtras(on)
+    void api.patterns(on).then(setLibrary, (e: Error) => setError(errorText(e)))
+  }
 
   // ── derived ────────────────────────────────────────────────────────
 
@@ -561,7 +578,17 @@ export default function Studio() {
       showGraph(scoreMeta(res.run.score), res.graph)
       setGoal(res.run.score.goal)
       setContext(contextStrings(res.run.score.context as Record<string, unknown>))
-      setView(replayView(res.run, { reproduced: res.reproduced, issues: res.issues, file }))
+      setView(replayView(res.run, { reproduced: res.reproduced ?? undefined, issues: res.issues, file }))
+      // Long runs take seconds to replay: show the run now, the verdict when it is in.
+      if (res.reproduced === null) {
+        void api.savedCheck(file).then(
+          (c) =>
+            setView((v) =>
+              v.replay?.file === file ? { ...v, replay: { ...v.replay, reproduced: c.reproduced, issues: [...v.replay.issues, ...c.issues] } } : v,
+            ),
+          (e: Error) => setError(errorText(e)),
+        )
+      }
       setTab('state')
     } catch (e) {
       setError(errorText(e))
@@ -588,8 +615,12 @@ export default function Studio() {
         <b>{view.performance?.outcome ?? view.status}</b> {view.reason}
         {view.savedTo && <div className="muted">saved {view.savedTo.split('/.symphony/')[1] ?? view.savedTo}</div>}
         {view.replay && (
-          <div className={view.replay.reproduced ? 'ok' : 'issue'} data-testid="replay-check">
-            {view.replay.reproduced ? '✓ verified: replaying recorded answers reproduces this run exactly' : `✘ not reproducible ${view.replay.issues.join('; ')}`}
+          <div className={view.replay.reproduced === undefined ? 'muted' : view.replay.reproduced ? 'ok' : 'issue'} data-testid="replay-check">
+            {view.replay.reproduced === undefined
+              ? '⏳ checking that replaying the recorded answers reproduces this run…'
+              : view.replay.reproduced
+                ? '✓ verified: replaying recorded answers reproduces this run exactly'
+                : `✘ not reproducible ${view.replay.issues.join('; ')}`}
           </div>
         )}
         {offline && (
@@ -683,6 +714,8 @@ export default function Studio() {
         }}
         onOpenSaved={(f) => void openSaved(f)}
         onDeleteSaved={deleteSaved}
+        extras={extras ?? library.some((i) => i.source === 'extra')}
+        onExtras={toggleExtras}
         onRefreshSaved={refreshSaved}
         live={live}
         liveId={view.mode === 'live' ? view.runId : undefined}
@@ -741,7 +774,16 @@ export default function Studio() {
           )}
           <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#2c3354" />
           <Controls />
-          <MiniMap pannable zoomable style={{ width: 150, height: 100 }} maskColor="rgba(15, 18, 34, 0.75)" nodeColor="#2a3156" nodeStrokeWidth={2} />
+          <MiniMap
+            pannable
+            zoomable
+            style={{ width: 150, height: 100 }}
+            maskColor="rgba(15, 18, 34, 0.75)"
+            nodeColor={(n) => minimapStyle(statusOf(n)).fill}
+            nodeStrokeColor={(n) => minimapStyle(statusOf(n)).stroke}
+            nodeClassName={(n) => minimapStyle(statusOf(n)).className}
+            nodeStrokeWidth={3}
+          />
         </ReactFlow>
       </main>
       <aside className="inspector">
@@ -829,7 +871,7 @@ export default function Studio() {
                 onExport={() => api.typescript(pattern).then((r) => r.source)}
                 onSave={() =>
                   api.savePattern(pattern).then((r) => {
-                    void api.patterns().then(setLibrary)
+                    void api.patterns(extrasRef.current).then(setLibrary)
                     return r.file
                   })
                 }

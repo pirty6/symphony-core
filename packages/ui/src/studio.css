@@ -1214,3 +1214,23 @@ pre {
   font-size: 11px;
   padding: 2px 6px;
 }
+
+.extras-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+/* The minimap lights up where the run is, as the diagram does. */
+.react-flow__minimap-node.minimap-active,
+.react-flow__minimap-node.minimap-paused {
+  animation: minimap-pulse 1.4s ease-in-out infinite;
+}
+@keyframes minimap-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}

@@ -29,6 +29,9 @@ interface Props {
   onOpenSaved: (file: string) => void
   onRefreshSaved: () => void
   onPrune: () => void
+  /** Optional patterns (src/patterns/extras) are listed. */
+  extras?: boolean
+  onExtras?: (on: boolean) => void
   /** Delete one saved run; resolves once it is gone. */
   onDeleteSaved?: (file: string) => Promise<void>
   onAsk: (request: string) => void
@@ -65,7 +68,15 @@ export function Library(p: Props) {
       </section>
 
       <section>
-        <h2>Patterns</h2>
+        <h2>
+          Patterns
+          {p.onExtras && (
+            <label className="extras-toggle" title="Show optional patterns (src/patterns/extras), e.g. metaphor">
+              <input type="checkbox" checked={p.extras ?? false} onChange={(e) => p.onExtras!(e.target.checked)} aria-label="extra patterns" />
+              extras
+            </label>
+          )}
+        </h2>
         {p.library.filter((item) => item.name !== 'maestro').map((item) => (
           <button
             type="button"

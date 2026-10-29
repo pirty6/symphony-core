@@ -57,6 +57,8 @@ export interface DraftRequest {
 export interface Provider {
   readonly name: string;
   runAgent(req: AgentRequest): Promise<AgentResponse>;
+  /** The model and effort this step would ask for ("model/effort"), for the replay key. */
+  requested?(pause: AgentPause): Promise<string>;
   draft(req: DraftRequest): Promise<AgentResponse>;
   dispose?(): Promise<void>;
 }
@@ -70,6 +72,7 @@ export interface PromptSources {
   readonly scratchDir?: string;
 }
 
+/** Inputs and context are compact JSON: pretty-printing made them about 1.5x longer. */
 export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {}): string {
   // Say each thing once: the goal is often a run input too (investigate's question).
   const goalKey = Object.keys(pause.input).find((k) => pause.input[k] === pause.goal);
@@ -150,11 +153,11 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
     '',
     '## Input (current workflow state you may use)',
     '```json',
-    JSON.stringify(pause.input, null, 2),
+    JSON.stringify(pause.input),
     '```',
   );
   if (Object.keys(context).length > 0) {
-    lines.push('', '## Context', '```json', JSON.stringify(context, null, 2), '```');
+    lines.push('', '## Context', '```json', JSON.stringify(context), '```');
   }
   if (pause.feedback && pause.feedback.length > 0) {
     lines.push(
@@ -598,16 +601,10 @@ export function buildIntegrationPrompt(pause: AgentPause, takes: readonly unknow
     '',
     '## Input the takes were given',
     '```json',
-    JSON.stringify(pause.input, null, 2),
+    JSON.stringify(pause.input),
     '```',
     '',
-    ...takes.flatMap((t, i) => [
-      `## Take ${i + 1}`,
-      '```json',
-      JSON.stringify(t, null, 2),
-      '```',
-      '',
-    ]),
+    ...takes.flatMap((t, i) => [`## Take ${i + 1}`, '```json', JSON.stringify(t), '```', '']),
     '## Rules',
     `- Call the \`${SUBMIT_TOOL}\` tool exactly once with { updates, verdict${pause.choices ? ', next' : ''} }, then stop.`,
     '- `updates` must contain exactly these keys:',

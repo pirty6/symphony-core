@@ -5,7 +5,7 @@
  * nothing runs until a human approves it, and an approved draft is
  * persisted as a TypeScript module via `patternToTypeScript`.
  */
-import { isFieldType } from './schema.js';
+import { checkValue, isFieldType } from './schema.js';
 import type { Checked } from './schema.js';
 import { isImprovisation } from './jazz.js';
 import type { Capability, Complexity, Pattern, ScoreEdge, ScoreNode, StateField } from './types.js';
@@ -205,6 +205,101 @@ export function parseDraft(raw: unknown): Checked<Pattern> {
   };
   errors.push(...validatePattern(pattern).errors.map((e) => e.message));
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: pattern };
+}
+
+// ── adapting a library pattern ─────────────────────────────────────
+
+/**
+ * How the maestro tailors a library pattern to a request without rewriting it:
+ * guidance appended to some AI steps, and different initial values for some
+ * settings. The pattern's shape (steps, edges, checks) stays as tested.
+ */
+export interface Adaptation {
+  /** Agent step id -> guidance for this request, appended to its directive. */
+  readonly directives?: Readonly<Record<string, string>>;
+  /** State key -> initial value (loop bounds, batch sizes, flags). */
+  readonly initial?: Readonly<Record<string, unknown>>;
+}
+
+const MAX_GUIDANCE = 2000;
+
+/** Apply an adaptation; any part that does not fit the pattern is an error, nothing is guessed. */
+export function adaptPattern(
+  pattern: Pattern,
+  adaptation: unknown,
+): { readonly pattern: Pattern; readonly errors: string[] } {
+  const errors: string[] = [];
+  const a = (adaptation ?? {}) as Record<string, unknown>;
+  if (typeof adaptation !== 'object' || Array.isArray(adaptation)) {
+    return { pattern, errors: ['adaptation must be an object: { directives?, initial? }'] };
+  }
+  for (const k of Object.keys(a)) {
+    if (k !== 'directives' && k !== 'initial')
+      errors.push(`adaptation.${k}: only "directives" and "initial" can be adapted`);
+  }
+  const directives = (a.directives ?? {}) as Record<string, unknown>;
+  const initial = (a.initial ?? {}) as Record<string, unknown>;
+  const nodes = pattern.nodes.map((n) => {
+    if (!(n.id in directives)) return n;
+    const text = directives[n.id];
+    if (n.kind !== 'agent') {
+      errors.push(
+        `adaptation.directives.${n.id}: '${n.id}' is a ${n.kind} step; only agent steps take guidance`,
+      );
+      return n;
+    }
+    if (typeof text !== 'string' || !text.trim()) {
+      errors.push(`adaptation.directives.${n.id}: guidance must be non-empty text`);
+      return n;
+    }
+    return {
+      ...n,
+      directive: `${n.directive}\n\nFor this request: ${text.trim().slice(0, MAX_GUIDANCE)}`,
+    };
+  });
+  for (const id of Object.keys(directives)) {
+    if (!pattern.nodes.some((n) => n.id === id))
+      errors.push(`adaptation.directives.${id}: no step '${id}' in ${pattern.name}`);
+  }
+  const state = pattern.state.map((f) => {
+    if (!(f.name in initial)) return f;
+    const problem = checkValue(f.type, initial[f.name]);
+    if (problem) {
+      errors.push(`adaptation.initial.${f.name}: ${problem}`);
+      return f;
+    }
+    return { ...f, initial: initial[f.name] };
+  });
+  for (const key of Object.keys(initial)) {
+    if (!pattern.state.some((f) => f.name === key))
+      errors.push(`adaptation.initial.${key}: no state key '${key}' in ${pattern.name}`);
+  }
+  return { pattern: { ...pattern, nodes, state }, errors };
+}
+
+/**
+ * A compact view of a pattern for prompts: every step in order of definition
+ * (AI steps with the start of their directive), and the settings an adaptation
+ * may change. A fraction of the size of the pattern itself.
+ */
+export function outlinePattern(pattern: Pattern): { steps: string[]; settings: string[] } {
+  const steps = pattern.nodes.map((n) =>
+    n.kind === 'agent'
+      ? `${n.id} (agent, ${n.role}): ${n.label} — ${n.directive.slice(0, 180)}${n.directive.length > 180 ? '…' : ''}`
+      : `${n.id} (${n.kind}): ${n.label}`,
+  );
+  const settings = pattern.state
+    // Tunable settings: numbers with a default (bounds, sizes) and documented flags.
+    .filter(
+      (f) =>
+        (f.type === 'number' && f.initial !== undefined) ||
+        (f.type === 'boolean' && (f.initial !== undefined || f.description !== undefined)),
+    )
+    .map(
+      (f) =>
+        `${f.name} = ${JSON.stringify(f.initial ?? false)}${f.description ? ` — ${f.description}` : ''}`,
+    );
+  return { steps, settings };
 }
 
 export function draftInstructions(): string {

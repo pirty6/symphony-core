@@ -1,3 +1,4 @@
+import { DEMO_ONLY } from '../core/catalog.js';
 import type { Pattern } from '../core/types.js';
 import { backlog } from './backlog.js';
 import { fix } from './fix.js';
@@ -34,6 +35,11 @@ export function libraryPatterns(
 ): Pattern[] {
   const known = [...PATTERNS, ...enabledExtras(env)];
   return [...known, ...drafts.filter((d) => !known.some((p) => p.name === d.name))];
+}
+
+/** Core patterns that do work (hangman is a demo game): what integrations list. */
+export function workPatternNames(): string[] {
+  return PATTERNS.filter((p) => !DEMO_ONLY.has(p.name)).map((p) => p.name);
 }
 
 export function findPattern(name: string): Pattern | undefined {

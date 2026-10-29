@@ -109,6 +109,7 @@ npm run cli -- draft "triage a flaky test" --provider copilot --save
 npm run cli -- verify .symphony/runs/fix/<file>.json # integrity + deterministic replay check
 npm run cli -- compare <a.json> <b.json>             # where two runs diverge, and why
 npm run cli -- rehearse analyze -n 5 --provider copilot -i swing   # how deterministic is the AI here?
+npm run cli -- rehearse maestro -n 5 --provider copilot -c "request=..." --fields chosen,complexity  # does routing agree?
 npm run cli -- resume .symphony/runs/fix/<file>.json # continue an interrupted or stopped run
 npm run cli -- fork .symphony/runs/fix/<file>.json --at 4   # keep steps 1-3, play the rest again
 npm run cli -- runs [--all]                          # saved runs (in-progress = resumable); --all adds demo runs
@@ -220,14 +221,57 @@ replayable:
    | 3 | proposer + skeptic + pragmatist |
    | 4 | + template-critic, who can reroute to another pattern once |
 
+   A complexity you choose (`--complexity 1-4` in the CLI, the toolbar in the studio, `complexity`
+   over MCP) wins over the classifier's rating, which is kept as `ratedComplexity`: you control
+   the cost tier on every surface. The go-gate remains the backstop if you under-rate a request.
+
    Their contracts are enforced, not requested: the pragmatist must triage **every** skeptic concern,
    the critic's verdict must be CORRECT, WRONG or HYBRID and may only recommend real patterns.
+
+   **Library patterns are adapted, not rewritten.** The debate reads a compact outline of the chosen
+   pattern (6-7x smaller than its definition) and writes an `adaptation`: guidance appended to
+   specific AI steps (`directives`) and new values for its settings (`initial`: loop bounds, batch
+   sizes, flags like `exhaustive`). The engine applies it to the tested pattern, whose steps, edges
+   and checks stay as they are. Rewriting the whole pattern cost up to 138k output tokens and 15-24
+   minutes per run, and sometimes silently dropped tested steps. A full draft is still written for
+   `new` patterns, or when the shape truly has to change (the proposer must say why).
 3. **Conductor**: folds the debate into one score (applies REAL concerns, ignores THEORETICAL ones).
-4. **Validate** (tool): the draft is checked deterministically; errors go back to the proposer
+   Skipped when the skeptic found nothing to change (below tier 4).
+4. **Validate** (tool): the adaptation applied to the template (or the draft) is checked
+   deterministically; errors go back to the conductor (revise) to fix, without a new debate
    (max 6 rounds).
-5. **Read inputs** from the request, then the **go-gate**: approve with empty feedback to perform;
-   write feedback for another round (complexity escalates one tier); reject to stop.
+5. **Read inputs** from the request (one line per input, not the whole score), then the **go-gate**,
+   which shows how the pattern was tailored: approve with empty feedback to perform;
+   write feedback for another round, at the same complexity unless you tick `smarter` (one tier up:
+   a deeper debate on a stronger model); reject to stop. Feedback after
+   the last round (`maxRounds`, 6) is never dropped: the run ends partial without performing,
+   keeping the score and your feedback (`unappliedFeedback`, also in the debate notes).
 6. **Perform**: the composed score runs as its own linked, recorded run at the final complexity.
+   The goal stays your verbatim request. When the pattern takes a `hint` (fix, implement,
+   investigate, refactor), the debate's open doubts and any uncovered requirement are handed over
+   there as a short brief, after your own hint.
+
+**Requirement ledger: substance, not only form.** The classifier lists the request's explicit
+requirements, and every piece of go-gate feedback is appended (`requirements`), so later rounds must
+still meet it instead of reading it once. The debaters read the ledger (the conductor may not drop
+a step that meets one), and a **Check requirements** step maps each requirement to the step that
+meets it (`coverage`: "R2: baseline — runs the tests first", or NOT COVERED). Uncovered ones go
+back to the proposer while rounds remain; after that they are shown at the go-gate, which shows
+the mapping in the studio and over MCP. The `maestro-requirements` eval task judges it by code:
+every requirement maps to a step that exists in the approved score, and a requirement about
+tests maps to a step that is about tests. (One entry per requirement is still partly a form check;
+the go-gate remains the backstop.)
+
+**Memory of compositions.** What you approve at the go-gate is remembered in the workspace's
+`.symphony/memory.json`: the request, the pattern, complexity, then-pattern and its adaptation (or
+the whole pattern for new ones), with a fingerprint of the library pattern it adapted.
+
+- **The same request again** (ignoring case and spacing), on an unchanged pattern, skips
+  classification and the debate: the approved composition is validated and shown at the go-gate,
+  marked as reused. Feedback there composes it afresh; if the pattern changed meanwhile, the old
+  adaptation goes to the proposer with what no longer fits.
+- **Similar requests** get the three closest approved compositions as precedent for the classifier
+  and the proposer, so a familiar kind of request usually composes in one round.
 
 ### Complexity → model
 
@@ -295,7 +339,12 @@ the listing adapts to the question: "is this on the internet?", "does this work 
    distinct explanations (including "none of these"), each with what would confirm or refute it.
    Every later research step looks for evidence for *and against* each one.
 2. **List evidence**: only what the plan chose. *Workspace* lists every file (git-aware; binaries,
-   lockfiles and files over 512 KB are excluded with the reason). *Web* has the AI search and list
+   lockfiles and files over 512 KB are excluded with the reason). A repository with more than
+   `maxTriageFiles` (300) files is not triaged file by file: a **Locate** step searches it first
+   (`git grep` for the names and errors in the question, `git log`/`git show` for the commits and
+   PRs it mentions, then imports, callers and tests one level out) and lists at most 300 files, each
+   with why; the engine rejects any path that is not a real file of the repository. Only those are
+   triaged, and the coverage says the rest were not. Pass `-c exhaustive=true` to triage every file. *Web* has the AI search and list
    the pages worth reading. *Experiment* has the AI design the commands to run (benchmarks, timing,
    profiling).
 3. **Triage files** (loop): every listed file, in batches of `batchSize` (25). An answer that leaves
@@ -540,7 +589,9 @@ solved rate or citation validity.
   implement and a refactor checked by hidden tests the AI never saw, and an investigate whose
   docs say 8080 while the code says 8081. It records solved, citations valid, tokens, time and
   models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline on
-  correctness.
+  correctness. `--task routing` adds 20 maestro requests (compose only) judged in code on the
+  pattern chosen, a complexity band and the chained pattern; `rehearse maestro --fields
+  chosen,complexity` measures how often routing agrees with itself.
 - **Checked evidence.** Findings are written `path:line — fact \`quote\``. A **Check citations**
   step (`evidence.check`) after every research step keeps only findings whose file, line and
   quote are real (the rest go to `unverified`); the Copilot provider also sends wrong citations
@@ -548,13 +599,28 @@ solved rate or citation validity.
   (F1, F2…) and answers, root causes and designs must cite existing ids (`refs`, `ids`).
 - **The step's own checks run in-session** too ("at least 3 hypotheses"), so a bad answer is fixed
   while the AI still has its context instead of costing a fresh attempt.
-- **Parallel parts (`fanOut`).** investigate's triage and deep reads take a wave of three batches
-  and play them at once (at most 4 calls); answers are checked per part and merged in part order,
+- **Malformed answers are repaired before they are judged.** Claude models sometimes send
+  `updates` as text: the whole result with its `{"updates":` cut off (sometimes its last `}` too),
+  an object never closed with its other fields sent beside it, trailing commas, a `verdict` inside
+  `updates`, or tool-call markup (`<parameter name="…">`). Each shape is repaired deterministically
+  and then checked like any answer; on 150 recorded payloads, 115 now pass instead of 0 (the rest
+  lack a verdict or fields, and are sent back for a correction). Rejected attempts cost up to 48%
+  of a maestro run before; the CLI and `eval` report them (`rejected: N attempts …`).
+- **The last valid answer wins, but an empty one never replaces one with content**: a skeptic's
+  eight real concerns were once lost to an empty second call. The AI is told, and the run notes it.
+- **Parallel parts (`fanOut`).** investigate's triage and deep reads take a wave of four batches
+  (100 files to triage, 16 items to read in full) and play them at once (at most 4 calls); answers are checked per part and merged in part order,
   so the result does not depend on timing and replays exactly.
 - **Memory across runs** (`.symphony/memory.json`). Facts that passed the citation check are
   remembered; a **Recall earlier runs** step brings back those that share words with the question
   *and still match the files today* (re-checked at recall), plus lessons from earlier fix and
-  implement runs. They are leads to check, never evidence.
+  implement runs. They are leads to check, never evidence. The store stays clean: run tags such
+  as `[H2 against]` are stripped, only the newest fact per `path:line` is kept, one run writes at
+  most 200 facts (so a few runs cannot replace the whole store), lessons expire after 90 days or
+  when their files are gone, and recall weights rare words above common ones.
+- **Replays know who played.** A recorded answer is reused only for the same move *and* the same
+  model settings (tier, requested model, effort); `compare` names "played by different models"
+  as a cause instead of calling two runs identical.
 - **Low confidence is re-checked** (`verifyBelow`, 0.6 on answers, diagnoses and designs): once,
   one tier smarter. **Second opinions use another model family** (`otherModel`; set
   `SYMPHONY_ALT_MODEL`, default `gpt-6.1-sol`).
@@ -564,6 +630,24 @@ solved rate or citation validity.
 - **Time limit per step** (15 min, `SYMPHONY_STEP_TIMEOUT_S`): a hung call is retried, then waits
   for a human like any stuck step. Mechanical steps already play a tier lower (smaller model,
   lower reasoning effort) through `complexityShift`.
+- **Compact JSON in prompts.** Inputs are sent unindented: about 3-4% fewer prompt characters
+  (measured on 549 recorded Copilot prompts), less than the 1.5x a pretty-printing estimate
+  suggests, because most of a prompt's JSON is long strings.
+
+**Decided, and left alone (until the eval says otherwise):**
+
+- **Debate depth.** Raising the debate thresholds saved 16% of prompt characters but its effect
+  on quality is unknown, and the maestro's confidences are not calibrated enough to gate on.
+  It stays as is until `eval --task routing` and `maestro-requirements` can measure it.
+- **The goal is the verbatim request.** Every step reads it; the debate's open doubts travel in
+  `hint` instead (see the maestro's Perform step).
+- **Debate history does not pile up**: each debater reads the current draft and the latest
+  critique, not a transcript, so there is nothing to summarise. The lossy point was rejected
+  answers, now repaired before they are judged.
+- **`runs --prune`** (`compact.ts`) only deals with old saved runs, not with prompt context.
+- **Drift in the composed score** is what the requirement ledger addresses.
+- **Past compositions for the classifier** are the composition memory: only approved ones are
+  stored, and they are precedent, not a cache.
 
 ## Library API
 

@@ -1,8 +1,7 @@
 import { IMPROVISATION_LEVELS } from '@core/jazz'
+import { TIER_NAMES } from '@core/catalog'
 import type { Complexity, Improvisation } from '@core/types'
 import type { RunStatus } from '../lib/model'
-
-const TIER_NAMES: Record<Complexity, string> = { 1: 'routine', 2: 'some judgement', 3: 'risky', 4: 'novel' }
 
 function tierHint(tiers?: Tiers): string {
   const lines = ([1, 2, 3, 4] as const).map(

@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { defaultTools, listRepoFiles, sourceCatalog } from './builtin-tools.js';
+import { builtinTools, defaultTools, listRepoFiles, sourceCatalog } from './builtin-tools.js';
+import { TOOL_OUTPUTS } from '../core/catalog.js';
 import { compileScore } from '../core/compile.js';
 import { toPerformance } from '../core/engine.js';
 import { runScripted } from '../core/scripted.js';
@@ -125,6 +126,9 @@ describe('sources.catalog', () => {
       'patterns.list',
       'patterns.route',
       'pattern.validate',
+      'compositions.recall',
+      'compositions.remember',
+      'pattern.outline',
       'pattern.save',
     ]);
     const out = await tools.get('repo.files')!.run({}, ctx(repo('r3')));
@@ -204,8 +208,13 @@ describe('maestro tools', () => {
 
   it('lists the library without demo scripts and routes by verb triggers', async () => {
     const list = await tools.get('patterns.list')!.run({}, c);
-    expect(list.names).toEqual(expect.arrayContaining(['investigate', 'fix', 'review', 'hangman']));
+    expect(list.names).toEqual(expect.arrayContaining(['investigate', 'fix', 'review']));
+    // Neither the maestro nor a demo game is a route: 'play' and 'game' are everyday words.
     expect(list.names).not.toContain('maestro');
+    expect(list.names).not.toContain('hangman');
+    expect(
+      await tools.get('patterns.route')!.run({ request: 'play back the game logs' }, c),
+    ).toMatchObject({ suggested: 'new', matches: [] });
     expect(JSON.stringify(list.catalog)).not.toContain('demo');
     expect((list.summaries as string[]).find((x) => x.startsWith('fix:'))).toMatch(/needs: issue/);
     expect(
@@ -228,6 +237,98 @@ describe('maestro tools', () => {
     expect(good).toMatchObject({ valid: true, errors: [] });
   });
 
+  it('validates a library template as adapted; a filled draft wins', async () => {
+    const list = await tools.get('patterns.list')!.run({}, c);
+    const fixT = (list.catalog as Record<string, Record<string, unknown>>).fix!;
+    const validate = tools.get('pattern.validate')!;
+    const adapted = await validate.run(
+      {
+        pattern: {},
+        template: fix,
+        adaptation: {
+          directives: { hypothesize: 'Start from PR 1.' },
+          initial: { maxAttempts: 1 },
+        },
+      },
+      c,
+    );
+    expect(adapted).toMatchObject({ valid: true, errors: [] });
+    // Just what reading the inputs from a request takes, not the whole pattern.
+    expect(adapted.inputs).toEqual([expect.stringMatching(/^issue \(string\)/)]);
+    const p = adapted.pattern as {
+      nodes: { id: string; directive?: string }[];
+      state: { name: string; initial?: unknown }[];
+    };
+    expect(p.nodes.find((n) => n.id === 'hypothesize')!.directive).toMatch(
+      /For this request: Start from PR 1\.$/,
+    );
+    expect(p.state.find((f) => f.name === 'maxAttempts')!.initial).toBe(1);
+    const wrong = await validate.run(
+      { pattern: {}, template: fixT, adaptation: { directives: { nope: 'x' } } },
+      c,
+    );
+    expect(wrong).toMatchObject({
+      valid: false,
+      errors: [expect.stringMatching(/no step 'nope'/)],
+    });
+    const review = (list.catalog as Record<string, Record<string, unknown>>).review!;
+    expect(
+      await validate.run(
+        { pattern: review, template: fixT, adaptation: { directives: { nope: 'x' } } },
+        c,
+      ),
+    ).toMatchObject({
+      valid: true,
+      pattern: { name: 'review' },
+    });
+    const outline = await tools.get('pattern.outline')!.run({ pattern: fixT }, c);
+    expect((outline.steps as string[]).length).toBeGreaterThan(5);
+    expect(JSON.stringify(outline).length).toBeLessThan(JSON.stringify(fixT).length / 3);
+    expect(await tools.get('pattern.outline')!.run({ pattern: {} }, c)).toEqual({
+      steps: [],
+      settings: [],
+    });
+  });
+
+  it('remembers approved compositions per workspace and recalls them for the same or similar requests', async () => {
+    const ws = ctx(join(root, 'compositions'));
+    mkdirSync(ws.workspace, { recursive: true });
+    const remember = tools.get('compositions.remember')!;
+    const recall = tools.get('compositions.recall')!;
+    expect(await recall.run({ request: 'Fix the flaky login test' }, ws)).toEqual({
+      exact: {},
+      similar: [],
+    });
+    const adaptation = { directives: { hypothesize: 'timing races first' } };
+    await remember.run(
+      {
+        request: 'Fix the flaky login test',
+        chosen: 'fix',
+        complexity: 3,
+        thenPattern: '',
+        adaptation,
+        draft: {},
+        pattern: { name: 'fix' },
+      },
+      ws,
+    );
+    const same = await recall.run({ request: 'fix the flaky  login test' }, ws);
+    expect(same.exact).toMatchObject({ chosen: 'fix', complexity: 3, adaptation, pattern: {} });
+    const near = await recall.run({ request: 'Fix the flaky signup test' }, ws);
+    expect(near.exact).toEqual({});
+    expect(near.similar).toEqual([expect.stringMatching(/→ fix \(complexity 3\); adaptation/)]);
+    // A changed library pattern: the adaptation is precedent, no longer reused as is.
+    const changed = defaultTools({
+      probeGitHub: false,
+      mcp: { includeUser: false },
+      library: async () => [{ ...fix, description: 'changed' }],
+    });
+    expect(
+      (await changed.get('compositions.recall')!.run({ request: 'Fix the flaky login test' }, ws))
+        .exact,
+    ).toEqual({});
+  });
+
   it('saves a pattern where the studio lists drafts, never over a built-in one', async () => {
     const repoRoot = join(root, 'save');
     const list = await tools.get('patterns.list')!.run({}, c);
@@ -245,5 +346,14 @@ describe('maestro tools', () => {
     await expect(save.run({ pattern: { name: 'x' } }, ctx(repoRoot))).rejects.toThrow(
       /not a valid pattern/,
     );
+  });
+});
+
+describe('one source for tool names', () => {
+  it('the registry and the shared catalog (studio, docs) list the same tools and outputs', () => {
+    const registry = Object.fromEntries(
+      builtinTools({ probeGitHub: false }).map((t) => [t.name, [...t.outputs]]),
+    );
+    expect(registry).toEqual(TOOL_OUTPUTS);
   });
 });

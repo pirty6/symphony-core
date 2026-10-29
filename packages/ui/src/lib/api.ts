@@ -98,7 +98,9 @@ const post = (path: string, body: unknown) =>
   fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
 export const api = {
-  patterns: () => fetch('/api/patterns').then((r) => json<LibraryItem[]>(r)),
+  /** The library; `extras` turns the optional patterns on or off (unset: the server's SYMPHONY_EXTRAS). */
+  patterns: (extras?: boolean) =>
+    fetch(`/api/patterns${extras === undefined ? '' : `?extras=${extras ? 'on' : 'off'}`}`).then((r) => json<LibraryItem[]>(r)),
   validate: (pattern: PatternData) => post('/api/validate', { pattern }).then((r) => json<ValidationReport>(r)),
   typescript: (pattern: PatternData) => post('/api/typescript', { pattern }).then((r) => json<{ source: string }>(r)),
   savePattern: (pattern: PatternData) => post('/api/patterns', { pattern }).then((r) => json<{ file: string }>(r)),
@@ -128,10 +130,14 @@ export const api = {
   tiers: () => fetch('/api/tiers').then((r) => json<Record<Complexity, { model: string; effort?: string }>>(r)),
   /** Delete one saved run (refused while it is still playing). */
   deleteSaved: (file: string) => post('/api/saved/delete', { path: file }).then((r) => json<{ deleted: string }>(r)),
+  /** A saved run; `reproduced` is null while its replay is still being checked (see savedCheck). */
   savedFile: (file: string) =>
     fetch(`/api/saved/file?path=${encodeURIComponent(file)}`).then((r) =>
-      json<{ run: SavedRun; issues: string[]; reproduced: boolean; graph: VisualGraph }>(r),
+      json<{ run: SavedRun; issues: string[]; reproduced: boolean | null; graph: VisualGraph }>(r),
     ),
+  /** Waits for a saved run's replay verdict. */
+  savedCheck: (file: string) =>
+    fetch(`/api/saved/check?path=${encodeURIComponent(file)}`).then((r) => json<{ reproduced: boolean; issues: string[] }>(r)),
 }
 
 export const TERMINAL = new Set(['done', 'failed', 'cancelled'])

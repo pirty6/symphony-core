@@ -4,7 +4,15 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { fix, hangman } from '../patterns/index.js';
-import { camelName, draftInstructions, parseDraft, patternToTypeScript } from './draft.js';
+import {
+  adaptPattern,
+  camelName,
+  draftInstructions,
+  genericDraft,
+  outlinePattern,
+  parseDraft,
+  patternToTypeScript,
+} from './draft.js';
 import type { Pattern } from './types.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'symphony-draft-'));
@@ -45,6 +53,68 @@ describe('parseDraft', () => {
     const text = draftInstructions();
     for (const k of ['start', 'agent', 'compute', 'condition', 'approval', 'end'])
       expect(text).toContain(`kind:"${k}"`);
+  });
+});
+
+describe('adaptPattern', () => {
+  const base = parseDraft(genericDraft('find the flaky test'));
+  if (!base.ok) throw new Error(base.errors.join());
+  const p = {
+    ...base.value,
+    state: [
+      ...base.value.state,
+      { name: 'maxRounds', type: 'number' as const, initial: 3 },
+      { name: 'deep', type: 'boolean' as const, description: 'Read everything' },
+    ],
+  };
+  const agent = p.nodes.find((n) => n.kind === 'agent')!;
+  const other = p.nodes.find((n) => n.kind !== 'agent')!;
+
+  it('appends guidance to agent steps and sets initial values; the shape stays as it was', () => {
+    const { pattern, errors } = adaptPattern(p, {
+      directives: { [agent.id]: 'Start from PR 5923334.' },
+      initial: { maxRounds: 1, deep: true },
+    });
+    expect(errors).toEqual([]);
+    const adapted = pattern.nodes.find((n) => n.id === agent.id) as { directive: string };
+    expect(adapted.directive).toBe(
+      `${(agent as { directive: string }).directive}\n\nFor this request: Start from PR 5923334.`,
+    );
+    expect(pattern.state.find((f) => f.name === 'maxRounds')!.initial).toBe(1);
+    expect(pattern.nodes.map((n) => n.id)).toEqual(p.nodes.map((n) => n.id));
+    expect(pattern.edges).toBe(p.edges);
+    expect(parseDraft(pattern).ok).toBe(true);
+  });
+
+  it('rejects what does not fit instead of guessing', () => {
+    const { errors } = adaptPattern(p, {
+      directives: { nope: 'x', [other.id]: 'x', [agent.id]: '  ' },
+      initial: { maxRounds: 'two', missing: 1 },
+      nodes: [],
+    });
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/adaptation\.nodes: only "directives" and "initial"/),
+        expect.stringMatching(/no step 'nope'/),
+        expect.stringMatching(new RegExp(`'${other.id}' is a ${other.kind} step`)),
+        expect.stringMatching(/guidance must be non-empty/),
+        expect.stringMatching(/adaptation\.initial\.maxRounds:/),
+        expect.stringMatching(/no state key 'missing'/),
+      ]),
+    );
+    expect(adaptPattern(p, 'rewrite it').errors).toEqual([
+      expect.stringMatching(/must be an object/),
+    ]);
+    expect(adaptPattern(p, {}).errors).toEqual([]);
+  });
+
+  it('outlines a pattern in a fraction of its size, with its tunable settings', () => {
+    const { steps, settings } = outlinePattern(p);
+    expect(steps).toHaveLength(p.nodes.length);
+    expect(steps.find((s) => s.startsWith(`${agent.id} (agent`))).toBeDefined();
+    expect(settings).toEqual(
+      expect.arrayContaining(['maxRounds = 3', 'deep = false — Read everything']),
+    );
   });
 });
 

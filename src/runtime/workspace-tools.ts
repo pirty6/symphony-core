@@ -282,7 +282,7 @@ export function workspaceTools(): ToolSpec[] {
           : [];
         const r = await checkCitations(ctx.workspace, findings);
         // What held is remembered for later runs (re-checked whenever it is recalled).
-        await rememberFacts(ctx.workspace, r.valid).catch(() => 0);
+        await rememberFacts(ctx.workspace, r.valid, undefined, ctx.runId).catch(() => 0);
         return { valid: r.valid, invalid: r.invalid.map((i) => `${i.finding} ✗ ${i.reason}`) };
       },
     },

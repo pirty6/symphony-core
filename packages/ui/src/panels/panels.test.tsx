@@ -44,6 +44,25 @@ describe('ApprovalCard', () => {
     expect(onAnswer).toHaveBeenLastCalledWith({ approved: true, scripted: true })
   })
 
+  it('asks a yes/no field with a checkbox', () => {
+    const onAnswer = vi.fn()
+    const pause: ApprovalPause = {
+      ...approvalPause,
+      feedback: [],
+      outputSchema: [
+        { name: 'feedback', type: 'string' },
+        { name: 'smarter', type: 'boolean', description: 'one tier higher' },
+      ],
+    }
+    render(<ApprovalCard view={{ ...startLive('r'), status: 'awaiting-approval', pause }} onAnswer={onAnswer} />)
+    const box = screen.getByLabelText('smarter')
+    expect(box).toHaveAttribute('type', 'checkbox')
+    fireEvent.change(screen.getByLabelText('feedback'), { target: { value: 'more tests' } })
+    fireEvent.click(box)
+    fireEvent.click(screen.getByText('Approve'))
+    expect(onAnswer).toHaveBeenCalledWith({ approved: true, updates: { feedback: 'more tests', smarter: true } })
+  })
+
   it('is hidden unless a human is needed', () => {
     const { container } = render(<ApprovalCard view={startLive('r')} onAnswer={() => {}} />)
     expect(container).toBeEmptyDOMElement()
