@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { Pattern } from '../core/types.js';
 import type { Provider } from '../runtime/provider.js';
 import { formatReport, runEval, summarize, worseThan, type EvalReport } from './harness.js';
-import { buildFixture, EVAL_TASKS, type EvalTask } from './tasks.js';
+import { buildFixture, EVAL_TASKS, requirementCoverage, type EvalTask } from './tasks.js';
 
 /** One executor step that "fixes" the file and reports two findings, one citation wrong. */
 const mini: Pattern = {
@@ -180,6 +180,31 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
       answer: 'It does not retry at all: fetchUser calls http.get once and throws on failure.',
     },
   }),
+  'maestro-requirements': () => ({
+    state: {
+      requirements: [
+        'Fix sumTo so it includes n',
+        'Run the existing tests before changing anything',
+        'Change only src/sum.js',
+      ],
+      coverage: [
+        'R1: apply — edits sumTo to include n',
+        'R2: baseline — runs the tests first',
+        'R3: apply — guidance: edit only src/sum.js',
+      ],
+      uncovered: [],
+      finalPattern: {
+        nodes: [
+          { id: 'baseline', label: 'Run tests first', tool: 'tests.run' },
+          {
+            id: 'apply',
+            label: 'Edit',
+            directive: 'Implement the plan. For this request: edit only src/sum.js.',
+          },
+        ],
+      },
+    },
+  }),
   'investigate-default-port': () => ({
     state: { answer: 'It listens on 8081: loadConfig in src/config.js uses DEFAULTS.port + 1.' },
   }),
@@ -217,4 +242,29 @@ describe('eval tasks', () => {
     },
     30_000,
   );
+});
+
+const right = SOLUTIONS['maestro-requirements']!('').state;
+const judge = (state: Record<string, unknown>) =>
+  requirementCoverage('success', state, [/\btests?\b/i]);
+
+describe('requirement coverage judge', () => {
+  it('fails form without substance: a step that does not exist, or one not about the requirement', () => {
+    expect(judge(right).pass).toBe(true);
+    const ghost = judge({
+      ...right,
+      coverage: ['R1: apply — x', 'R2: runTests — x', 'R3: apply — x'],
+    });
+    expect(ghost.notes.join()).toMatch(/R2 names no step of the score/);
+    const anyStep = judge({
+      ...right,
+      coverage: ['R1: apply — x', 'R2: apply — runs tests', 'R3: apply — x'],
+    });
+    expect(anyStep.notes.join()).toMatch(
+      /R2 \(\\btests\?\\b\) maps to 'apply', a step not about it/,
+    );
+    expect(judge({ ...right, uncovered: ['R3: NOT COVERED — x'] }).pass).toBe(false);
+    expect(judge({ ...right, coverage: ['R1: apply — x'] }).pass).toBe(false);
+    expect(requirementCoverage('partial', right, []).pass).toBe(false);
+  });
 });

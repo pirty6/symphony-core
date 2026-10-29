@@ -82,6 +82,61 @@ const succeeded = (outcome: string): EvalCheck => ({
   notes: [`outcome ${outcome}`],
 });
 
+interface ScoreNodeLike {
+  readonly id: string;
+  readonly label?: string;
+  readonly directive?: string;
+  readonly tool?: string;
+}
+
+/**
+ * Requirement coverage of a maestro composition, judged by code: every requirement
+ * in the ledger maps to a step that exists in the approved score, none is uncovered,
+ * and each requirement matching one of `must` maps to a step that is about it (its
+ * label, directive or tool matches too), not to just any step.
+ */
+export function requirementCoverage(
+  outcome: string,
+  state: Readonly<Record<string, unknown>>,
+  must: readonly RegExp[],
+): EvalCheck {
+  const nodes = (
+    (state.finalPattern as { nodes?: ScoreNodeLike[] } | undefined)?.nodes ?? []
+  ).filter(Boolean);
+  const requirements = (state.requirements as string[] | undefined) ?? [];
+  const coverage = (state.coverage as string[] | undefined) ?? [];
+  const uncovered = (state.uncovered as string[] | undefined) ?? [];
+  const notes: string[] = [];
+  if (nodes.length === 0) notes.push('missing: no composed score');
+  if (requirements.length === 0) notes.push('missing: no requirements listed');
+  if (coverage.length !== requirements.length)
+    notes.push(`fail: ${coverage.length} coverage entries for ${requirements.length} requirements`);
+  if (uncovered.length > 0) notes.push(`fail: not covered: ${uncovered.join('; ')}`);
+  const stepOf = (entry: string | undefined) =>
+    nodes.find((n) => n.id === /^R\d+:\s*([\w-]+)/.exec(entry ?? '')?.[1]);
+  coverage.forEach((c, i) => {
+    if (!stepOf(c)) notes.push(`fail: R${i + 1} names no step of the score: ${c.slice(0, 120)}`);
+  });
+  for (const re of must) {
+    const i = requirements.findIndex((r) => re.test(r));
+    if (i < 0) {
+      notes.push(`missing: a requirement about ${re.source}`);
+      continue;
+    }
+    const step = stepOf(coverage[i]);
+    if (step && !re.test(`${step.label ?? ''} ${step.directive ?? ''} ${step.tool ?? ''}`))
+      notes.push(`fail: R${i + 1} (${re.source}) maps to '${step.id}', a step not about it`);
+  }
+  const pass = outcome === 'success' && notes.length === 0;
+  return {
+    pass,
+    notes: [
+      `outcome ${outcome}`,
+      ...(notes.length ? notes : [`${requirements.length} requirements, each met by a step`]),
+    ],
+  };
+}
+
 const PKG = '{ "name": "fixture", "type": "module", "scripts": { "test": "node --test" } }\n';
 const IGNORE = '.symphony/\nnode_modules/\n';
 const TEST_HEAD = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n";
@@ -273,5 +328,22 @@ export const EVAL_TASKS: readonly EvalTask[] = [
         ],
       };
     },
+  },
+  {
+    // The maestro, judged on what it composed: every requirement met by a real step.
+    id: 'maestro-requirements',
+    pattern: 'maestro',
+    inputs: {
+      request:
+        'Fix sumTo in src/sum.js: sumTo(4) returns 6 instead of 10. Requirements: run the existing tests before changing anything, and change only src/sum.js.',
+    },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/sum.js':
+        '/** Sum of the numbers from 1 to n. */\nexport function sumTo(n) {\n  let total = 0;\n  for (let i = 1; i < n; i++) total += i;\n  return total;\n}\n',
+      'test/sum.test.js': `${TEST_HEAD}import { sumTo } from '../src/sum.js';\ntest('sumTo includes n', () => assert.equal(sumTo(4), 10));\n`,
+    },
+    check: async ({ outcome, state }) => requirementCoverage(outcome, state, [/\btests?\b/i]),
   },
 ];
