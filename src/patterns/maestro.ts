@@ -472,12 +472,13 @@ ${SCORE_FORMAT}`,
       label: 'Conductor',
       // Keep the notes' wording neutral: first-person, emotional phrasing ("how I got
       // here", "unsure, cut") made a provider content filter block every answer here.
-      directive: `You are the CONDUCTOR: fold the debate into ONE final score. For a library pattern (\`outline\`), the final score is \`adaptation\` (guidance per agent step, settings in initial; keep \`draft\` as {} unless the proposer rewrote it for a reason the debate upheld); for 'new' it is \`draft\`. Start from what the proposer wrote. Apply every concern the pragmatist marked REAL (if no pragmatist ran, every concrete skeptic concern), the skeptic's sound \`edits\`, and the pragmatist's \`cuts\`/\`leaner\` where they do not drop a load-bearing step. Ignore THEORETICAL concerns. Do not add steps nobody argued for, and never drop a step that meets an entry of \`requirements\`. Put the final score in \`adaptation\` or \`draft\` and summarize in \`debateNotes\` (short entries, omit empty ones): 'Approach: ...', 'Debated: ...', 'Open doubts: ...', 'Removed steps: ...'. Refer to agents by what they did.
+      directive: `You are the CONDUCTOR: fold the debate into ONE final score. For a library pattern (\`outline\`), the final score is \`adaptation\` (guidance per agent step, settings in initial; keep \`draft\` as {} unless the proposer rewrote it for a reason the debate upheld); for 'new' it is \`draft\`. If \`draftErrors\` is set, your last score did not validate: fix every error it names and change nothing else. Otherwise start from what the proposer wrote. Apply every concern the pragmatist marked REAL (if no pragmatist ran, every concrete skeptic concern), the skeptic's sound \`edits\`, and the pragmatist's \`cuts\`/\`leaner\` where they do not drop a load-bearing step. Ignore THEORETICAL concerns. Do not add steps nobody argued for, and never drop a step that meets an entry of \`requirements\`. Put the final score in \`adaptation\` or \`draft\` and summarize in \`debateNotes\` (short entries, omit empty ones): 'Approach: ...', 'Debated: ...', 'Open doubts: ...', 'Removed steps: ...'. Refer to agents by what they did.
 
 Pattern format (for \`draft\`):
 ${SCORE_FORMAT}`,
       reads: [
         'request',
+        'draftErrors',
         'requirements',
         'chosen',
         'draft',
@@ -522,7 +523,7 @@ ${SCORE_FORMAT}`,
     {
       id: 'retry',
       kind: 'compute',
-      label: 'Next round (fix errors)',
+      label: 'Fix errors (conductor)',
       assign: [{ field: 'round', expr: 'round + 1' }],
     },
     {
@@ -726,7 +727,8 @@ ${SCORE_FORMAT}`,
     { id: 'valid-roundsLeft', from: 'valid', to: 'roundsLeft', branch: 'else' },
     { id: 'roundsLeft-retry', from: 'roundsLeft', to: 'retry', branch: 'then' },
     { id: 'roundsLeft-gaveUp', from: 'roundsLeft', to: 'gaveUp', branch: 'else' },
-    { id: 'retry-propose', from: 'retry', to: 'propose', label: 'fix errors' },
+    // Structural errors are the conductor's to fix: no need to debate the whole score again.
+    { id: 'retry-revise', from: 'retry', to: 'revise', label: 'fix errors' },
     { id: 'context-gate', from: 'context', to: 'gate' },
     {
       id: 'gate-escalate',

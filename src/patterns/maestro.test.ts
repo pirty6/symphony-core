@@ -22,6 +22,21 @@ function run(
   return { score, r: runScripted(score, script, { at: 't' }) };
 }
 
+/** A conductor that fixes what the validator named: guidance only for steps the pattern has. */
+const fixingRevise = (s: Readonly<Record<string, unknown>>) => {
+  const steps = new Set(((s.outline as string[]) ?? []).map((l) => l.split(' ')[0]));
+  const a = (s.adaptation ?? {}) as { directives?: Record<string, string> };
+  const directives = Object.fromEntries(
+    Object.entries(a.directives ?? {}).filter(
+      ([id]) => !(s.draftErrors as string[])?.length || steps.has(id),
+    ),
+  );
+  return {
+    updates: { draft: s.draft, adaptation: { ...a, directives }, debateNotes: [] },
+    verdict: { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' },
+  };
+};
+
 const classifyAs =
   (chosen: string, complexity: number, thenPattern = '') =>
   () => ({
@@ -117,23 +132,29 @@ describe('maestro', () => {
     expect(r.state.state.finalPattern).toMatchObject({ name: 'analyze' });
   });
 
-  it('loops back to the proposer with validation errors, and gives up after maxRounds', () => {
-    let proposals = 0;
+  it('sends validation errors to the conductor, not the whole debate, and gives up after maxRounds', () => {
+    const v = { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' };
     const { r } = run('do something new', {
       classify: classifyAs('new', 2),
-      propose: (s) => ({
+      propose: () => ({
+        updates: { draft: { name: 'broken' }, adaptation: {}, assumptions: ['a'] },
+        verdict: v,
+      }),
+      // The conductor fixes what the validator named.
+      revise: (s) => ({
         updates: {
-          draft:
-            proposals++ === 0
-              ? { name: 'broken' }
-              : (demo.agents!.propose!(s, 0).updates.draft as object),
+          draft: (s.draftErrors as string[]).length
+            ? (demo.agents!.propose!({ ...s, chosen: 'new' }, 0).updates.draft as object)
+            : s.draft,
           adaptation: {},
-          assumptions: ['a'],
+          debateNotes: [],
         },
-        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+        verdict: v,
       }),
     });
-    expect(nodesRun(r).filter((n) => n === 'propose')).toHaveLength(2);
+    expect(nodesRun(r).filter((n) => n === 'propose')).toHaveLength(1);
+    expect(nodesRun(r).filter((n) => n === 'skeptic')).toHaveLength(1);
+    expect(nodesRun(r).filter((n) => n === 'revise')).toHaveLength(2);
     expect(r.state.state.round).toBe(2);
     expect(r.state.outcome).toBe('success');
 
@@ -252,22 +273,23 @@ describe('maestro adapts library patterns instead of rewriting them', () => {
     );
   });
 
-  it('an adaptation that does not fit goes back to the proposer with the errors', () => {
+  it('an adaptation that does not fit goes to the conductor with the errors, not a new debate', () => {
     const { r } = run('fix it', {
       classify: classifyAs('fix', 2),
-      propose: proposing(
-        { adaptation: { directives: { diagnoseEverything: 'x' } } },
-        { adaptation: { directives: { hypothesize: 'Look at the session cookie first.' } } },
-      ),
-      revise: (s) => ({
-        updates: { draft: s.draft, adaptation: s.adaptation, debateNotes: [] },
-        verdict: v,
+      propose: proposing({
+        adaptation: {
+          directives: { diagnoseEverything: 'x', hypothesize: 'Look at the session cookie first.' },
+        },
       }),
+      revise: fixingRevise,
     });
-    expect(nodesRun(r).filter((n) => n === 'propose')).toHaveLength(2);
-    const second = r.state.steps.filter((st) => st.nodeId === 'propose')[1]!.input!;
+    expect(nodesRun(r).filter((n) => n === 'propose')).toHaveLength(1);
+    const second = r.state.steps.filter((st) => st.nodeId === 'revise')[1]!.input!;
     expect(String(second.draftErrors)).toMatch(/no step 'diagnoseEverything' in fix/);
     expect(r.state.outcome).toBe('success');
+    expect(r.state.state.adaptation).toEqual({
+      directives: { hypothesize: 'Look at the session cookie first.' },
+    });
   });
 
   it('a full rewrite is still possible when the shape must change', () => {
@@ -358,16 +380,17 @@ describe('maestro remembers approved compositions', () => {
       );
   });
 
-  it('a remembered adaptation that no longer fits goes to the proposer with the errors', () => {
+  it('a remembered adaptation that no longer fits goes to the conductor with the errors', () => {
     const { r } = run(
       'Fix the flaky login test',
-      {},
+      { revise: fixingRevise },
       {
         tools: { ...demo.tools, ...remembered({ adaptation: { directives: { gone: 'x' } } }) },
       },
     );
-    const propose = r.state.steps.find((st) => st.nodeId === 'propose')!;
-    expect(String(propose.input!.draftErrors)).toMatch(/no step 'gone'/);
+    const revise = r.state.steps.find((st) => st.nodeId === 'revise')!;
+    expect(String(revise.input!.draftErrors)).toMatch(/no step 'gone'/);
+    expect(nodesRun(r)).not.toContain('propose');
     expect(r.state.outcome).toBe('success');
   });
 
@@ -633,5 +656,65 @@ describe('maestro shares its names with the other surfaces', () => {
     const classify = maestro.nodes.find((n) => n.id === 'classify') as { directive: string };
     for (const [tier, name] of Object.entries(TIER_NAMES))
       expect(classify.directive).toMatch(new RegExp(`${tier} [^;]*\\b${name}\\b`));
+  });
+});
+
+describe('maestro fixes structural errors in the conductor (replaying 05-02-16)', () => {
+  it('an empty draft and a broken expression cost a conductor call each, not a new debate', () => {
+    const v = { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' };
+    const good = scoreOf(FIRST);
+    const brokenCheck = {
+      ...good,
+      nodes: good.nodes.map((n) =>
+        n.id === 'clarify'
+          ? { ...n, checks: [{ expr: "(includes(lower(subject),'2d')", message: 'x' }] }
+          : n,
+      ),
+    };
+    // As recorded: after the feedback, the conductor's draft was empty, then had a bad check.
+    const drafts = [good, {}, brokenCheck, good];
+    let revisions = 0;
+    const { r } = run(
+      'I have a vision of the double helix model',
+      {
+        classify: () => ({
+          updates: {
+            chosen: 'new',
+            complexity: 4,
+            classifyReason: 'novel',
+            thenPattern: '',
+            requirements: ['model it'],
+          },
+          verdict: v,
+        }),
+        propose: () => ({
+          updates: { draft: good, adaptation: {}, assumptions: ['a'] },
+          verdict: v,
+        }),
+        revise: () => ({
+          updates: { draft: drafts[revisions++] ?? good, adaptation: {}, debateNotes: [] },
+          verdict: v,
+        }),
+      },
+      {
+        approvals: {
+          gate: (_s, visit) => ({
+            approved: true,
+            updates: { feedback: visit === 0 ? ASKED : '' },
+          }),
+        },
+      },
+    );
+    expect(r.state.outcome).toBe('success');
+    const count = (id: string) => nodesRun(r).filter((n) => n === id).length;
+    // Two debates (the first round and the feedback round); the errors never restart one.
+    expect(count('propose')).toBe(2);
+    expect(count('skeptic')).toBe(2);
+    // The empty draft is caught by the conductor's own check and re-asked in the same step;
+    // the broken check is caught by validation and costs one more conductor call.
+    const revises = r.state.steps.filter((st) => st.nodeId === 'revise');
+    expect(revises).toHaveLength(3);
+    expect(JSON.stringify(revises[1]!.attempts)).toMatch(/put the final pattern object in draft/);
+    expect(String(revises[2]!.input?.draftErrors)).toMatch(/is invalid/);
   });
 });
