@@ -309,6 +309,31 @@ function Shown({ keys, state }: { keys: readonly string[]; state: Readonly<Recor
   )
 }
 
+/** How the maestro tailored a tested library pattern: guidance per step, changed settings. */
+function Tailoring({ adaptation }: { adaptation: unknown }) {
+  const a = (adaptation ?? {}) as { directives?: Record<string, string>; initial?: Record<string, unknown> }
+  const guidance = Object.entries(a.directives ?? {})
+  const settings = Object.entries(a.initial ?? {})
+  if (guidance.length === 0 && settings.length === 0) return null
+  return (
+    <div className="tailoring" data-testid="tailoring">
+      <div className="muted">Tailored for this request (the steps above are the tested pattern):</div>
+      <ul>
+        {guidance.map(([step, text]) => (
+          <li key={step}>
+            <b>{step}</b>: {text}
+          </li>
+        ))}
+        {settings.map(([k, x]) => (
+          <li key={k}>
+            <code>{k}</code> = {JSON.stringify(x)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function ComposedScore({ state }: { state: Readonly<Record<string, unknown>> }) {
   const p = state.normalized as { name?: string; description?: string; nodes?: { id: string; label: string; kind: string; role?: string }[] } | undefined
   if (!p?.nodes) return null
@@ -330,6 +355,7 @@ function ComposedScore({ state }: { state: Readonly<Record<string, unknown>> }) 
             </li>
           ))}
       </ol>
+      <Tailoring adaptation={state.adaptation} />
       {notes.length > 0 && (
         <ul className="debate-notes">
           {notes.map((n, i) => (

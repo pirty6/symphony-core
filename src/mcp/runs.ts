@@ -50,6 +50,11 @@ export function readOnly(provider: Provider): Provider {
   };
 }
 
+const tailored = (a: unknown): boolean =>
+  typeof a === 'object' &&
+  a !== null &&
+  Object.values(a).some((x) => Object.keys(x ?? {}).length > 0);
+
 /** What the maestro composed, compact enough to show in a chat at its go-gate. */
 function composedSummary(state: Readonly<Record<string, unknown>>) {
   const p = state.normalized as
@@ -60,6 +65,8 @@ function composedSummary(state: Readonly<Record<string, unknown>>) {
     pattern: p.name,
     description: p.description,
     steps: p.nodes.filter((n) => n.kind !== 'start').map((n) => `${n.id}: ${n.label}`),
+    // How the tested library pattern was tailored (empty for new or rewritten scores).
+    ...(tailored(state.adaptation) ? { adaptation: state.adaptation } : {}),
     inputs: state.childContext,
     debateNotes: state.debateNotes,
     missingInputs: state.contextNotes,

@@ -26,7 +26,7 @@ test('plays hangman live: AI picks, human guesses, engine scores', async ({ page
   }
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await expect(page.getByTestId('node-win')).toHaveAttribute('data-status', 'done')
-  await page.getByRole('button', { name: 'State' }).click()
+  await page.getByRole('button', { name: 'State', exact: true }).click()
   await expect(page.getByTestId('state-won')).toContainText('true')
 })
 
@@ -54,7 +54,8 @@ test('saved runs replay and verify deterministically', async ({ page }) => {
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await page.getByTestId('toggle-demo-runs').click()
-  await page.locator('.lib-item.saved').first().click()
+  // A saved run, not a live one ("Running now" items look the same).
+  await page.getByTestId('saved-run').first().locator('.lib-item').click()
   await expect(page.getByTestId('replay-check')).toContainText('reproduces this run exactly')
   await page.getByLabel('timeline').fill('5')
   await expect(page.getByTestId('timeline-events').locator('li.current')).toBeVisible()
@@ -66,6 +67,9 @@ test('the maestro composes a score, then the orchestra performs it', async ({ pa
   await page.getByRole('button', { name: '🎼 Compose & perform' }).click()
   await expect(page.locator('.tb-title')).toContainText('maestro')
   await expect(page.getByTestId('composed-score')).toContainText('fix · complexity 3')
+  // The tested fix pattern, tailored: the gate shows what was changed for this request.
+  await expect(page.getByTestId('tailoring')).toContainText('hypothesize: It fails about once in ten CI runs')
+  await expect(page.getByTestId('tailoring')).toContainText('maxAttempts = 2')
   await page.getByTestId('approval-card').getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(page.getByTestId('notice')).toContainText("composed 'fix' (complexity 3)")
   await expect(page.locator('.tb-title')).toContainText('fix')
@@ -127,7 +131,8 @@ test('a saved run can be forked from the step shown on the timeline', async ({ p
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await page.getByTestId('toggle-demo-runs').click()
-  await page.locator('.lib-item.saved').first().click()
+  // A saved run, not a live one ("Running now" items look the same).
+  await page.getByTestId('saved-run').first().locator('.lib-item').click()
   await expect(page.getByTestId('replay-check')).toContainText('reproduces this run exactly')
   await page.getByLabel('timeline').fill('6')
   const fork = page.getByTestId('fork')
@@ -186,7 +191,7 @@ test('then run: a successful run hands its result to the next pattern, and the s
   await expect(page.locator('.tb-title')).toContainText('fix')
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await expect(page.getByTestId('run-result')).toContainText("reached end 'fixed'")
-  await page.getByRole('button', { name: 'State' }).click()
+  await page.getByRole('button', { name: 'State', exact: true }).click()
   await expect(page.getByTestId('state-issue')).toContainText('What the investigate run found')
 })
 

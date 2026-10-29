@@ -118,7 +118,11 @@ describe('Symphony MCP server', () => {
     expect(
       (go.waitingFor as unknown as { shows: { composed: { pattern: string; steps: string[] } } })
         .shows.composed,
-    ).toMatchObject({ pattern: 'fix', steps: expect.arrayContaining(['apply: Edit']) });
+    ).toMatchObject({
+      pattern: 'fix',
+      steps: expect.arrayContaining(['apply: Edit']),
+      adaptation: { initial: { maxAttempts: 2 } },
+    });
     await call(client, 'answer_approval', { run_id: body.run_id, approved: true });
     const next = await settle(client, body.run_id);
     expect(next.chain).toHaveLength(2);
