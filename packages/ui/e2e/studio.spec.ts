@@ -70,6 +70,8 @@ test('the maestro composes a score, then the orchestra performs it', async ({ pa
   // The tested fix pattern, tailored: the gate shows what was changed for this request.
   await expect(page.getByTestId('tailoring')).toContainText('hypothesize: It fails about once in ten CI runs')
   await expect(page.getByTestId('tailoring')).toContainText('maxAttempts = 2')
+  // How each requirement is met, before the go.
+  await expect(page.getByTestId('approval-card')).toContainText(/R1: \w+ — /)
   await page.getByTestId('approval-card').getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(page.getByTestId('notice')).toContainText("composed 'fix' (complexity 3)")
   await expect(page.locator('.tb-title')).toContainText('fix')

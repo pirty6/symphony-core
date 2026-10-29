@@ -122,6 +122,7 @@ describe('Symphony MCP server', () => {
       pattern: 'fix',
       steps: expect.arrayContaining(['apply: Edit']),
       adaptation: { initial: { maxAttempts: 2 } },
+      requirements: [expect.stringMatching(/^R1: \w+ — /)],
     });
     await call(client, 'answer_approval', { run_id: body.run_id, approved: true });
     const next = await settle(client, body.run_id);

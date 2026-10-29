@@ -264,7 +264,7 @@ describe('main', () => {
     const one = await compose('1');
     expect(one.text).toMatch(/maestro score .* complexity 1/);
     expect(one.text).toMatch(/♪ composed 'fix' complexity 1/);
-    expect(one.steps).toEqual(['classify', 'context']);
+    expect(one.steps).toEqual(['classify', 'cover', 'context']);
     const four = await compose('4');
     expect(four.text).toMatch(/♪ composed 'fix' complexity 4/);
     expect(four.steps).toEqual([
@@ -274,6 +274,7 @@ describe('main', () => {
       'pragmatist',
       'critic',
       'revise',
+      'cover',
       'context',
     ]);
     await expect(main(['maestro', 'x', '--complexity', '5', '--no-save'], cwd)).rejects.toThrow(

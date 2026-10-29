@@ -245,6 +245,17 @@ replayable:
    keeping the score and your feedback (`unappliedFeedback`, also in the debate notes).
 6. **Perform**: the composed score runs as its own linked, recorded run at the final complexity.
 
+**Requirement ledger: substance, not only form.** The classifier lists the request's explicit
+requirements, and every piece of go-gate feedback is appended (`requirements`), so later rounds must
+still meet it instead of reading it once. The debaters read the ledger (the conductor may not drop
+a step that meets one), and a **Check requirements** step maps each requirement to the step that
+meets it (`coverage`: "R2: baseline — runs the tests first", or NOT COVERED). Uncovered ones go
+back to the proposer while rounds remain; after that they are shown at the go-gate, which shows
+the mapping in the studio and over MCP. The `maestro-requirements` eval task judges it by code:
+every requirement maps to a step that exists in the approved score, and a requirement about
+tests maps to a step that is about tests. (One entry per requirement is still partly a form check;
+the go-gate remains the backstop.)
+
 **Memory of compositions.** What you approve at the go-gate is remembered in the workspace's
 `.symphony/memory.json`: the request, the pattern, complexity, then-pattern and its adaptation (or
 the whole pattern for new ones), with a fingerprint of the library pattern it adapted.

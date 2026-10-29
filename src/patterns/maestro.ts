@@ -73,6 +73,19 @@ export const maestro: Pattern = {
     },
     { name: 'classifyReason', type: 'string' },
     {
+      name: 'requirements',
+      type: 'string[]',
+      description:
+        "The request's explicit requirements, then every go-gate feedback: a ledger that only grows",
+    },
+    {
+      name: 'coverage',
+      type: 'string[]',
+      description:
+        'One per requirement: "R<n>: <step id> — how it is met" or "R<n>: NOT COVERED — why"',
+    },
+    { name: 'uncovered', type: 'string[]', description: 'Requirements the score does not meet' },
+    {
       name: 'presetComplexity',
       type: 'number',
       description: 'The complexity you chose for the run (0 = let the maestro classify)',
@@ -224,9 +237,9 @@ export const maestro: Pattern = {
       complexity: 2,
       label: 'Route and classify',
       directive:
-        "Decide which pattern from `summaries` fits `request`, or 'new' if none has the right shape. `suggested` is the verb-trigger match: keep it unless the request clearly signals another shape (e.g. 'fix' but architectural -> not fix; 'investigate' but the cause is already known -> fix). Then classify complexity, picking the LOWEST tier that covers the risk: 1 routine and well understood; 2 some judgement or several steps; 3 cross-cutting, risky or ambiguous; 4 novel, where the pattern fit itself is in question. Explain both choices in one or two sentences in `classifyReason`. If the request asks for two shapes in sequence (e.g. 'find out why X, then fix it' -> chosen investigate, then fix; 'understand this module and clean it up' -> investigate, then refactor), set `thenPattern` to the second pattern from `names`: it plays after the first with what the first found. Otherwise set `thenPattern` to ''. Do not chain when one pattern already covers both (fix diagnoses before it edits). `pastCompositions` are approved compositions of similar earlier requests in this workspace: follow their choice of pattern, complexity and thenPattern when this request is the same kind, unless it signals otherwise.",
+        "Decide which pattern from `summaries` fits `request`, or 'new' if none has the right shape. `suggested` is the verb-trigger match: keep it unless the request clearly signals another shape (e.g. 'fix' but architectural -> not fix; 'investigate' but the cause is already known -> fix). Then classify complexity, picking the LOWEST tier that covers the risk: 1 routine and well understood; 2 some judgement or several steps; 3 cross-cutting, risky or ambiguous; 4 novel, where the pattern fit itself is in question. Explain both choices in one or two sentences in `classifyReason`. If the request asks for two shapes in sequence (e.g. 'find out why X, then fix it' -> chosen investigate, then fix; 'understand this module and clean it up' -> investigate, then refactor), set `thenPattern` to the second pattern from `names`: it plays after the first with what the first found. Otherwise set `thenPattern` to ''. Do not chain when one pattern already covers both (fix diagnoses before it edits). `pastCompositions` are approved compositions of similar earlier requests in this workspace: follow their choice of pattern, complexity and thenPattern when this request is the same kind, unless it signals otherwise. List in `requirements` every explicit requirement of the request, one per entry, in the user's words where possible (what must be done, produced, included, avoided or kept), starting with its main goal; never invent requirements.",
       reads: ['request', 'summaries', 'suggested', 'pastCompositions'],
-      writes: ['chosen', 'complexity', 'classifyReason', 'thenPattern'],
+      writes: ['chosen', 'complexity', 'classifyReason', 'thenPattern', 'requirements'],
       retries: 2,
       checks: [
         {
@@ -234,6 +247,10 @@ export const maestro: Pattern = {
           message: "chosen must be a name from the library or 'new'.",
         },
         { expr: 'includes([1, 2, 3, 4], complexity)', message: 'complexity must be 1, 2, 3 or 4.' },
+        {
+          expr: 'len(requirements) > 0',
+          message: "List the request's requirements, its main goal first.",
+        },
         {
           expr: 'empty(thenPattern) || (includes(names, thenPattern) && thenPattern != chosen && thenPattern != "maestro")',
           message:
@@ -286,6 +303,7 @@ export const maestro: Pattern = {
 - If \`chosen\` is a library pattern (its steps are in \`outline\`, its settings in \`settings\`), it is tested: do NOT rewrite it. Tailor it in \`adaptation\` = { "directives": { "<agent step id>": "guidance for this request" }, "initial": { "<setting>": value } }: guidance is appended to that step's directive (what to look at first, which files, PRs, tests or errors the request names, what to ignore); initial values change settings (loop bounds, batch sizes, flags such as exhaustive). Only steps that need something specific; {} is fine. Leave \`draft\` as {}. Only if the request truly needs a different shape (steps added, removed or reordered) write the whole pattern in \`draft\` instead, and say why in \`assumptions\`.
 - If \`chosen\` is 'new', draft a fresh pattern in \`draft\` and leave \`adaptation\` as {}.
 - \`pastCompositions\` are approved compositions of similar earlier requests: when one used the same pattern, start from its adaptation and change only what this request needs.
+- Every entry of \`requirements\` (the request's requirements, then each piece of go-gate feedback, which outranks earlier rounds) must be met by some step. \`draftErrors\` may name requirements a check found not covered.
 - Revise rather than restart when \`adaptation\` or \`draft\` already holds a previous round: address \`draftErrors\`, \`feedback\`, and REAL concerns in \`failureModes\`/\`triage\`, and follow the template-critic's \`fit\`/\`criticReason\`.
 - Start with grounding (observe, reproduce, define) and end with verification (test, confirm). Prefer compute/condition/tool nodes for anything mechanical: AI only where judgement is needed. Bound every loop.
 - Do not investigate the codebase: you plan, you do not diagnose.
@@ -295,6 +313,7 @@ Pattern format (for \`draft\`):
 ${SCORE_FORMAT}`,
       reads: [
         'request',
+        'requirements',
         'chosen',
         'outline',
         'settings',
@@ -327,8 +346,16 @@ ${SCORE_FORMAT}`,
       isolated: true,
       label: 'Skeptic',
       directive:
-        "You are the SKEPTIC: hunt for CONCRETE failure modes of the score applied to `request`: `draft` when it is not empty, otherwise the library pattern in `outline` tailored by `adaptation`. You are not a contrarian. Each `failureModes` entry must name a specific scenario where this score produces a wrong result (bad: 'step 3 might miss cases'; good: 'diagnose assumes the bug is deterministic; on a race it passes verification without fixing it'). `contested`: which of `assumptions` are most likely false for this request. `edits`: concrete Add/Remove/Reword/Reorder edits, one reason each. Empty lists are fine and better than invented concerns. No style comments, no full alternative algorithm. If the shape is wrong, say 'template mismatch' in one entry.",
-      reads: ['request', 'draft', 'outline', 'adaptation', 'assumptions', 'complexity'],
+        "You are the SKEPTIC: hunt for CONCRETE failure modes of the score applied to `request`: `draft` when it is not empty, otherwise the library pattern in `outline` tailored by `adaptation`. You are not a contrarian. Each `failureModes` entry must name a specific scenario where this score produces a wrong result (bad: 'step 3 might miss cases'; good: 'diagnose assumes the bug is deterministic; on a race it passes verification without fixing it'). `contested`: which of `assumptions` are most likely false for this request. `edits`: concrete Add/Remove/Reword/Reorder edits, one reason each. Empty lists are fine and better than invented concerns. No style comments, no full alternative algorithm. If the shape is wrong, say 'template mismatch' in one entry. Any entry of `requirements` the score does not meet is a failure mode.",
+      reads: [
+        'request',
+        'requirements',
+        'draft',
+        'outline',
+        'adaptation',
+        'assumptions',
+        'complexity',
+      ],
       writes: ['failureModes', 'contested', 'edits'],
       retries: 2,
     },
@@ -356,6 +383,7 @@ ${SCORE_FORMAT}`,
         "You are the PRAGMATIST: enforce the minimum viable score. For EVERY entry of `failureModes` write one `triage` entry, in the same order: '<concern, abbreviated>: REAL | THEORETICAL | WRONG TEMPLATE — <one-sentence reason>'. REAL means the score must change; THEORETICAL means addressing it costs more than ignoring it; WRONG TEMPLATE means the problem does not fit the pattern's shape. `cuts`: steps that add cost without reducing risk here (empty if every step earns its keep; user attention is a cost); for a library pattern (`outline`), cut by lowering its loop bounds in `adaptation.initial`, not by removing steps. `leaner`: a full leaner pattern ONLY if `draft` is a full pattern and it meaningfully tightens it, else {}. You never add steps.",
       reads: [
         'request',
+        'requirements',
         'draft',
         'outline',
         'adaptation',
@@ -390,6 +418,7 @@ ${SCORE_FORMAT}`,
         "You are the TEMPLATE-CRITIC: the dissent on pattern fit. Is `chosen` the right shape for `request`, given `summaries`? Default to CORRECT; overturn only with a specific quote or signal from the request ('fix' but mentions several systems -> refactor/feature; 'investigate' but the cause is known -> fix; 'while we are at it' -> hybrid). `fit` (your verdict): exactly CORRECT, WRONG or HYBRID. `criticReason`: 1-3 sentences specific to this request. `recommended`: if WRONG, a pattern name from `names` or 'new' (never invent a name); if HYBRID, the pattern that should drive; if CORRECT, ''.",
       reads: [
         'request',
+        'requirements',
         'chosen',
         'summaries',
         'names',
@@ -443,12 +472,13 @@ ${SCORE_FORMAT}`,
       label: 'Conductor',
       // Keep the notes' wording neutral: first-person, emotional phrasing ("how I got
       // here", "unsure, cut") made a provider content filter block every answer here.
-      directive: `You are the CONDUCTOR: fold the debate into ONE final score. For a library pattern (\`outline\`), the final score is \`adaptation\` (guidance per agent step, settings in initial; keep \`draft\` as {} unless the proposer rewrote it for a reason the debate upheld); for 'new' it is \`draft\`. Start from what the proposer wrote. Apply every concern the pragmatist marked REAL (if no pragmatist ran, every concrete skeptic concern), the skeptic's sound \`edits\`, and the pragmatist's \`cuts\`/\`leaner\` where they do not drop a load-bearing step. Ignore THEORETICAL concerns. Do not add steps nobody argued for. Put the final score in \`adaptation\` or \`draft\` and summarize in \`debateNotes\` (short entries, omit empty ones): 'Approach: ...', 'Debated: ...', 'Open doubts: ...', 'Removed steps: ...'. Refer to agents by what they did.
+      directive: `You are the CONDUCTOR: fold the debate into ONE final score. For a library pattern (\`outline\`), the final score is \`adaptation\` (guidance per agent step, settings in initial; keep \`draft\` as {} unless the proposer rewrote it for a reason the debate upheld); for 'new' it is \`draft\`. Start from what the proposer wrote. Apply every concern the pragmatist marked REAL (if no pragmatist ran, every concrete skeptic concern), the skeptic's sound \`edits\`, and the pragmatist's \`cuts\`/\`leaner\` where they do not drop a load-bearing step. Ignore THEORETICAL concerns. Do not add steps nobody argued for, and never drop a step that meets an entry of \`requirements\`. Put the final score in \`adaptation\` or \`draft\` and summarize in \`debateNotes\` (short entries, omit empty ones): 'Approach: ...', 'Debated: ...', 'Open doubts: ...', 'Removed steps: ...'. Refer to agents by what they did.
 
 Pattern format (for \`draft\`):
 ${SCORE_FORMAT}`,
       reads: [
         'request',
+        'requirements',
         'chosen',
         'draft',
         'outline',
@@ -496,6 +526,51 @@ ${SCORE_FORMAT}`,
       assign: [{ field: 'round', expr: 'round + 1' }],
     },
     {
+      id: 'hasRequirements',
+      kind: 'condition',
+      label: 'Requirements to check?',
+      expression: 'len(requirements) > 0',
+    },
+    {
+      id: 'cover',
+      kind: 'agent',
+      role: 'assessor',
+      isolated: true,
+      label: 'Check requirements',
+      // Substance, not only form: every requirement maps to the step that meets it.
+      directive:
+        "For EVERY entry of `requirements`, in order, write one `coverage` entry: 'R<n>: <step id> — how that step meets it', naming a step of the score (the steps in `outline` as tailored by `adaptation`, or the steps of `draft` when it is not empty), or 'R<n>: NOT COVERED — what is missing'. A requirement is covered only by a step that actually does it, not by one that merely mentions it; a requirement to keep or add a step is met only if that step is there. Copy every NOT COVERED entry into `uncovered` (empty when all are met).",
+      reads: ['requirements', 'chosen', 'outline', 'adaptation', 'draft'],
+      writes: ['coverage', 'uncovered'],
+      retries: 2,
+      checks: [
+        {
+          expr: 'len(coverage) == len(requirements)',
+          message: 'Give exactly one coverage entry per requirement, in order.',
+        },
+        {
+          expr: 'subset(uncovered, coverage)',
+          message: 'uncovered must copy entries of coverage.',
+        },
+      ],
+    },
+    { id: 'covered', kind: 'condition', label: 'All covered?', expression: 'len(uncovered) == 0' },
+    {
+      id: 'coverRoundsLeft',
+      kind: 'condition',
+      label: 'Rounds left?',
+      expression: 'round < maxRounds',
+    },
+    {
+      id: 'requeue',
+      kind: 'compute',
+      label: 'Back to the proposer',
+      assign: [
+        { field: 'round', expr: 'round + 1' },
+        { field: 'draftErrors', expr: 'uncovered' },
+      ],
+    },
+    {
       id: 'context',
       kind: 'agent',
       role: 'assessor',
@@ -521,6 +596,8 @@ ${SCORE_FORMAT}`,
       message:
         'The maestro composed this score. Approve with empty feedback to perform it. Write feedback to send it back for another round (complexity escalates one tier). Reject to stop.',
       writes: ['feedback'],
+      // How each requirement is met, and any that are not (out of rounds): shown before the go.
+      shows: ['coverage', 'uncovered'],
       maxVisits: 6,
     },
     {
@@ -530,6 +607,8 @@ ${SCORE_FORMAT}`,
       assign: [
         { field: 'round', expr: 'round + 1' },
         { field: 'complexity', expr: 'if(complexity < 4, complexity + 1, 4)' },
+        // Feedback joins the ledger: later rounds must still meet it, not just read it once.
+        { field: 'requirements', expr: 'append(requirements, "From your feedback: " + feedback)' },
         // Feedback on a reused composition composes it afresh.
         { field: 'reused', expr: 'false' },
       ],
@@ -623,7 +702,27 @@ ${SCORE_FORMAT}`,
     { id: 'switch-outline', from: 'switch', to: 'outline', label: 'rerouted' },
     { id: 'revise-validate', from: 'revise', to: 'validate' },
     { id: 'validate-valid', from: 'validate', to: 'valid' },
-    { id: 'valid-context', from: 'valid', to: 'context', branch: 'then' },
+    { id: 'valid-hasRequirements', from: 'valid', to: 'hasRequirements', branch: 'then' },
+    { id: 'hasRequirements-cover', from: 'hasRequirements', to: 'cover', branch: 'then' },
+    { id: 'hasRequirements-context', from: 'hasRequirements', to: 'context', branch: 'else' },
+    { id: 'cover-covered', from: 'cover', to: 'covered' },
+    { id: 'covered-context', from: 'covered', to: 'context', branch: 'then' },
+    { id: 'covered-left', from: 'covered', to: 'coverRoundsLeft', branch: 'else' },
+    {
+      id: 'coverLeft-requeue',
+      from: 'coverRoundsLeft',
+      to: 'requeue',
+      branch: 'then',
+      label: 'requirements not met',
+    },
+    {
+      id: 'coverLeft-context',
+      from: 'coverRoundsLeft',
+      to: 'context',
+      branch: 'else',
+      label: 'out of rounds: shown at the go-gate',
+    },
+    { id: 'requeue-propose', from: 'requeue', to: 'propose', label: 'meet the requirements' },
     { id: 'valid-roundsLeft', from: 'valid', to: 'roundsLeft', branch: 'else' },
     { id: 'roundsLeft-retry', from: 'roundsLeft', to: 'retry', branch: 'then' },
     { id: 'roundsLeft-gaveUp', from: 'roundsLeft', to: 'gaveUp', branch: 'else' },
@@ -697,6 +796,7 @@ ${SCORE_FORMAT}`,
           complexity: s.suggested === 'new' ? 2 : 3,
           classifyReason: `Verb match '${String(s.suggested)}'; flaky behaviour makes it riskier than routine.`,
           thenPattern: '',
+          requirements: [String(s.request)],
         },
         verdict: v('routed'),
       }),
@@ -763,6 +863,24 @@ ${SCORE_FORMAT}`,
         },
         verdict: v('conducted'),
       }),
+      // Offline, each requirement maps to the AI step it names, else the first AI step.
+      cover: (s) => {
+        const reqs = (s.requirements as string[]) ?? [];
+        const draft = s.draft as Pattern | undefined;
+        const ids = draft?.nodes?.length
+          ? draft.nodes.filter((n) => n.kind === 'agent').map((n) => n.id)
+          : ((s.outline as string[]) ?? [])
+              .filter((l) => l.includes('(agent'))
+              .map((l) => l.split(' ')[0]!);
+        const coverage = reqs.map((r, i) => {
+          const named = ids.find((id) => r.toLowerCase().includes(id.toLowerCase()));
+          return `R${i + 1}: ${named ?? ids[0] ?? 'start'} — does it`;
+        });
+        return {
+          updates: { coverage, uncovered: [] },
+          verdict: v('requirements checked'),
+        };
+      },
       context: (s) => {
         const required = ((s.normalized as Pattern | undefined)?.requiredContext ?? []) as string[];
         return {

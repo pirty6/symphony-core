@@ -24,7 +24,7 @@ function run(
 const classifyAs =
   (chosen: string, complexity: number, thenPattern = '') =>
   () => ({
-    updates: { chosen, complexity, classifyReason: 'test', thenPattern },
+    updates: { chosen, complexity, classifyReason: 'test', thenPattern, requirements: ['fix it'] },
     verdict: { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' },
   });
 
@@ -475,5 +475,154 @@ describe('maestro keeps a preset complexity', () => {
       },
     });
     expect(remembered.state.state.complexity).toBe(1);
+  });
+});
+
+/** A runnable score whose AI steps are `ids`, in order. */
+const scoreOf = (ids: string[]) => ({
+  name: 'double-helix',
+  description: 'Model the abstract and the concrete as the two strands of a double helix.',
+  verbTriggers: [],
+  requiredContext: ['subject'],
+  goalFrom: 'subject',
+  state: [{ name: 'subject', type: 'string' }, ...ids.map((id) => ({ name: id, type: 'string' }))],
+  start: 'start',
+  nodes: [
+    { id: 'start', kind: 'start', label: 'Start' },
+    ...ids.map((id) => ({
+      id,
+      kind: 'agent',
+      role: 'assessor',
+      label: id,
+      directive: id,
+      reads: ['subject'],
+      writes: [id],
+    })),
+    { id: 'done', kind: 'end', label: 'Done', outcome: 'success' },
+  ],
+  edges: ['start', ...ids, 'done']
+    .slice(1)
+    .map((to, i, all) => ({ id: `e${i}`, from: i === 0 ? 'start' : all[i - 1]!, to })),
+});
+const FIRST = ['clarify', 'ground', 'map', 'verify'];
+const ASKED = 'Add an extra step of a proposed algorithm that can be implemented in symphony';
+
+/** A judge that checks substance: the step a requirement asks for must be there. */
+const strictCover = (s: Readonly<Record<string, unknown>>) => {
+  const ids = ((s.draft as { nodes?: { id: string }[] }).nodes ?? []).map((n) => n.id);
+  const coverage = (s.requirements as string[]).map((r, i) => {
+    const missing = /algorithm/i.test(r)
+      ? !ids.some((id) => /algorithm/i.test(id))
+      : /keep the removed steps/i.test(r)
+        ? !FIRST.every((id) => ids.includes(id))
+        : ids.length === 0;
+    return missing ? `R${i + 1}: NOT COVERED — ${r}` : `R${i + 1}: ${ids[0]} — met`;
+  });
+  return {
+    updates: { coverage, uncovered: coverage.filter((c) => c.includes('NOT COVERED')) },
+    verdict: { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' },
+  };
+};
+
+describe('maestro keeps a requirement ledger (replaying run 05-02-16)', () => {
+  const v = { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' };
+  const feedbacks = [ASKED, 'I want to keep the removed steps', ''];
+  let reviseVisits = 0;
+  const replay = () =>
+    run(
+      'I have a vision of the double helix model as a model of the abstract and the concrete',
+      {
+        classify: () => ({
+          updates: {
+            chosen: 'new',
+            complexity: 2,
+            classifyReason: 'novel',
+            thenPattern: '',
+            requirements: [
+              'Model the abstract and the concrete as the two strands of a double helix',
+            ],
+          },
+          verdict: v,
+        }),
+        // The proposer adds what feedback asks for...
+        propose: (s) => ({
+          updates: {
+            draft: scoreOf(
+              (s.requirements as string[]).length > 1
+                ? [...FIRST.slice(0, 3), 'algorithmize', 'verify']
+                : FIRST,
+            ),
+            adaptation: {},
+            assumptions: ['a'],
+          },
+          verdict: v,
+        }),
+        // ...and, as recorded, the conductor right after the feedback drops steps.
+        revise: (s) => {
+          reviseVisits += 1;
+          const ids = ((s.draft as { nodes: { id: string; kind: string }[] }).nodes ?? [])
+            .filter((n) => n.kind === 'agent')
+            .map((n) => n.id);
+          return {
+            updates: {
+              draft: scoreOf(reviseVisits === 2 ? ['clarify', 'ground', 'verify'] : ids),
+              adaptation: {},
+              debateNotes: [],
+            },
+            verdict: v,
+          };
+        },
+        cover: strictCover,
+      },
+      {
+        approvals: {
+          gate: (_s, visit) => ({ approved: true, updates: { feedback: feedbacks[visit] ?? '' } }),
+        },
+      },
+    );
+
+  it('every feedback joins the ledger; a dropped step is caught and sent back, so the score keeps it', () => {
+    reviseVisits = 0;
+    const { r } = replay();
+    expect(r.state.outcome).toBe('success');
+    const s = r.state.state;
+    expect(s.requirements).toEqual([
+      'Model the abstract and the concrete as the two strands of a double helix',
+      `From your feedback: ${ASKED}`,
+      'From your feedback: I want to keep the removed steps',
+    ]);
+    // The conductor's drop was caught and sent back with what was missing.
+    expect(nodesRun(r)).toContain('requeue');
+    const resent = r.state.steps.find(
+      (st) => st.nodeId === 'propose' && String(st.input?.draftErrors).includes('NOT COVERED'),
+    );
+    expect(String(resent?.input?.draftErrors)).toMatch(/proposed algorithm/);
+    const final = (s.finalPattern as Pattern).nodes.map((n) => n.id);
+    expect(final).toEqual(
+      expect.arrayContaining(['algorithmize', ...FIRST.filter((id) => id !== 'map')]),
+    );
+    expect(s.uncovered).toEqual([]);
+    expect(s.coverage).toHaveLength(3);
+    // The go-gate showed how each requirement is met.
+    expect(maestro.nodes.find((n) => n.id === 'gate')).toMatchObject({
+      shows: ['coverage', 'uncovered'],
+    });
+  });
+
+  it('out of rounds, an uncovered requirement is shown at the go-gate instead of silently dropped', () => {
+    const { r } = run('fix it', {
+      classify: classifyAs('fix', 2),
+      cover: (s) => ({
+        ...strictCover(s),
+        updates: { coverage: ['R1: NOT COVERED — x'], uncovered: ['R1: NOT COVERED — x'] },
+      }),
+    });
+    // Re-proposed until the rounds ran out, then the go-gate (which shows `uncovered`) was asked.
+    expect(r.state.state.round).toBe(r.state.state.maxRounds);
+    expect(nodesRun(r).filter((id) => id === 'requeue')).toHaveLength(
+      Number(r.state.state.maxRounds) - 1,
+    );
+    expect(nodesRun(r)).toContain('gate');
+    expect(r.state.state.uncovered).toEqual(['R1: NOT COVERED — x']);
   });
 });

@@ -68,6 +68,9 @@ function composedSummary(state: Readonly<Record<string, unknown>>) {
     // How the tested library pattern was tailored (empty for new or rewritten scores).
     ...(tailored(state.adaptation) ? { adaptation: state.adaptation } : {}),
     inputs: state.childContext,
+    // How each requirement (the request's, then every feedback) is met, and any that are not.
+    requirements: state.coverage,
+    ...((state.uncovered as unknown[] | undefined)?.length ? { notCovered: state.uncovered } : {}),
     debateNotes: state.debateNotes,
     missingInputs: state.contextNotes,
     thenPattern: state.thenPattern || undefined,
