@@ -192,6 +192,24 @@ describe('main', () => {
     expect(second.performance.outcome).toBe('success');
   });
 
+  it('plays a backlog: one run per item, with a summary of how each went', async () => {
+    expect(
+      await main(
+        ['run', 'backlog', '-c', 'source=doc.md', '-c', 'testCommand=npm test', '--auto-approve'],
+        cwd,
+      ),
+    ).toBe(0);
+    expect(plain()).toMatch(/♪ implement: Add a --json flag.*\(1 more queued\)/);
+    expect(plain()).toMatch(
+      /♪ backlog\n {2}✓ success +Add a --json flag[^\n]*\n {2}✓ success +Show the premium/,
+    );
+    const saved = [...plain().matchAll(/saved (\S+\.json)/g)].map((m) => m[1]!);
+    expect(saved).toHaveLength(3);
+    const item = JSON.parse(readFileSync(saved[2]!, 'utf8'));
+    expect(item.score.goal).toMatch(/^Show the premium requests/);
+    expect(item.score.context.testCommand).toBe('npm test');
+  });
+
   it('reports compile errors for missing context', async () => {
     expect(await main(['run', 'review', '-c', 'target=', '--no-save'], cwd)).toBe(1);
     expect(out).toMatch(/missing required context 'target'/);

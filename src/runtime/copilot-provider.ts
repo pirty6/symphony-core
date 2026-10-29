@@ -17,6 +17,7 @@ import { acceptance, isProviderBlock } from '../core/engine.js';
 import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
 import { addUsage } from '../core/usage.js';
 import { checkCitations } from './evidence.js';
+import { stepTimeLimitMs } from './limits.js';
 import type { AgentPause, Complexity, Role, TokenUsage, ToolCallRecord } from '../core/types.js';
 import type {
   AgentRequest,
@@ -63,6 +64,15 @@ const NOT_SIGNED_IN =
   /No GitHub OAuth token|Copilot HMAC key|not authenticated|authentication required/i;
 /** Signed in, but Copilot refuses the credential (no Copilot access, or a token that cannot use it). */
 const REFUSED = /Authorization error|you may need to run \/login|\b401\b|Unauthorized/i;
+
+/** The account's Copilot quota is used up: every model refuses until it resets. */
+const QUOTA =
+  /exceeded your (monthly )?quota|quota (has been |was )?exceeded|out of premium requests/i;
+
+/** What to do when the Copilot quota is used up. */
+export function quotaHelp(said: string): string {
+  return `Your Copilot quota is used up, so no model will answer (Copilot said: ${said.replace(/^\[|\]$/g, '').trim()}). Wait for it to reset, or raise your premium-request budget in your GitHub Copilot settings (https://github.com/settings/copilot). Retrying cannot help. The offline demo (AI: Scripted) still works.`;
+}
 
 /** Copilot token variables, which the CLI would otherwise prefer over the signed-in account. */
 export function withoutTokenVars(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
@@ -122,7 +132,7 @@ export interface CopilotProviderOptions {
   readonly gitHubToken?: string;
   /** Where the token was set (e.g. TOKEN), named in messages when Copilot refuses it. */
   readonly gitHubTokenSource?: string;
-  /** Per-node timeout. Default 10 minutes. */
+  /** Safety net per call; default a minute after the step limit the driver enforces (limits.ts). */
   readonly timeoutMs?: number;
   /** Builds the SDK client; `gitHubToken` is undefined when using the signed-in GitHub user. */
   readonly clientFactory?: (auth: { readonly gitHubToken?: string }) => ClientLike;
@@ -181,6 +191,39 @@ export const ISOLATED_SYSTEM = [
 
 const checkErrors = (c: { ok: boolean; errors?: readonly string[] }) =>
   c.ok ? [] : [...(c.errors ?? [])];
+
+/**
+ * Repair the commonest malformed submission before judging it: `updates` (or the
+ * whole result) sent as a JSON string instead of an object.
+ */
+function parseObject(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  try {
+    const o = JSON.parse(v) as unknown;
+    return o && typeof o === 'object' && !Array.isArray(o) ? o : v;
+  } catch {
+    return v;
+  }
+}
+
+export function normalizeSubmission(raw: unknown): unknown {
+  const r = parseObject(raw);
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return r;
+  const o = r as Record<string, unknown>;
+  return 'updates' in o ? { ...o, updates: parseObject(o.updates) } : o;
+}
+
+/** Keep the record small: optional measurements the provider never reported are left out. */
+function withoutZeros(u: TokenUsage): TokenUsage {
+  const out: Record<string, number> = {};
+  for (const [key, v] of Object.entries(u))
+    if (
+      v !== 0 ||
+      ['calls', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'reasoningTokens'].includes(key)
+    )
+      out[key] = v as number;
+  return out as unknown as TokenUsage;
+}
 
 /** In-session retries of a malformed submit_result before the engine judges it. */
 const MAX_SUBMIT_CORRECTIONS = 2;
@@ -252,7 +295,17 @@ export class CopilotProvider implements Provider {
   ): Promise<{ output: string; toolCalls: ToolCallRecord[]; model?: string; usage?: TokenUsage }> {
     if (run.signal.aborted) throw abortError();
     if (!this.signInChecked) {
-      const status = await this.authStatus().catch(() => undefined);
+      let status = await this.authStatus().catch(() => undefined);
+      // A configured token that is not accepted: try the account signed in on this machine.
+      if (status && !status.signedIn && this.opts.gitHubToken && !this.tokenRejected) {
+        this.tokenRejected = true;
+        run.onEvent({
+          type: 'info',
+          text: `the token in ${this.opts.gitHubTokenSource ?? 'your settings'} is not signed in to Copilot; using the GitHub account signed in on this machine instead`,
+        });
+        await this.dropClient();
+        status = await this.authStatus().catch(() => undefined);
+      }
       if (status && !status.signedIn) throw new SetupError(SIGN_IN_HELP);
       this.signInChecked = status !== undefined;
     }
@@ -336,6 +389,12 @@ export class CopilotProvider implements Provider {
       outputTokens: 0,
       cacheReadTokens: 0,
       reasoningTokens: 0,
+      cacheWriteTokens: 0,
+      apiMs: 0,
+      firstTokenMs: 0,
+      premiumRequests: 0,
+      nanoAiu: 0,
+      compactions: 0,
     };
     const names = new Map<string, string>();
     let settle!: () => void;
@@ -383,8 +442,19 @@ export class CopilotProvider implements Provider {
           usage.outputTokens += n('outputTokens');
           usage.cacheReadTokens += n('cacheReadTokens');
           usage.reasoningTokens += n('reasoningTokens');
+          usage.cacheWriteTokens += n('cacheWriteTokens');
+          usage.apiMs += n('duration');
+          usage.firstTokenMs += n('timeToFirstTokenMs');
+          usage.premiumRequests += n('cost');
+          usage.nanoAiu += Number(
+            (d.copilotUsage as { totalNanoAiu?: unknown } | undefined)?.totalNanoAiu ?? 0,
+          );
           break;
         }
+        case 'session.compaction_complete':
+          usage.compactions += 1;
+          run.onEvent({ type: 'info', text: 'the conversation was compacted to fit the context' });
+          break;
         case 'session.error':
           failure = String(d.message ?? 'session error');
           run.onEvent({ type: 'info', text: `error: ${failure}` });
@@ -407,7 +477,7 @@ export class CopilotProvider implements Provider {
       await session.disconnect().catch(() => {});
       throw abortError();
     }
-    const timeoutMs = this.opts.timeoutMs ?? 10 * 60_000;
+    const timeoutMs = this.opts.timeoutMs ?? stepTimeLimitMs() + 60_000;
     const timer = setTimeout(() => {
       failure = `timed out after ${timeoutMs} ms`;
       void session.abort().catch(() => {});
@@ -427,7 +497,13 @@ export class CopilotProvider implements Provider {
     // Without a GitHub account the CLI answers with an error message, not a model reply.
     if (toolCalls.length === 0 && NOT_SIGNED_IN.test(output)) throw new SetupError(SIGN_IN_HELP);
     if (toolCalls.length === 0 && REFUSED.test(output)) return this.refused(run, output);
-    return { output, toolCalls, ...(model ? { model } : {}), ...(usage.calls ? { usage } : {}) };
+    if (toolCalls.length === 0 && QUOTA.test(output)) throw new SetupError(quotaHelp(output));
+    return {
+      output,
+      toolCalls,
+      ...(model ? { model } : {}),
+      ...(usage.calls ? { usage: withoutZeros(usage) } : {}),
+    };
   }
 
   /** Resolve the model and reasoning effort for a tier, checked against the models available. */
@@ -558,14 +634,18 @@ export class CopilotProvider implements Provider {
       type: 'info',
       text: `${integrating ? 'integrating takes' : req.take ? `take ${req.take}` : 'playing'} · tier ${pause.complexity} · ${tier.model ?? 'default model'}${tier.effort ? ` (${tier.effort})` : ''}`,
     });
-    let submitted: unknown;
+    // The last VALID answer wins (the AI may revise on purpose); an invalid one never
+    // replaces it, even from a parallel call, and is kept only so the engine can say why.
+    let valid: unknown;
+    let invalid: unknown;
+    const submitted = () => valid ?? invalid;
     let corrections = 0;
     const tool = defineTool(SUBMIT_TOOL, {
       description: `Submit the result of step '${pause.label}'. Call exactly once when done.`,
       parameters: resultJsonSchema(pause.outputSchema, pause.choices),
       skipPermission: true,
-      handler: async (args: unknown) => {
-        submitted = args;
+      handler: async (raw: unknown) => {
+        const args = normalizeSubmission(raw);
         // Catch a malformed answer while the AI still has its context, instead of
         // a fresh attempt that redoes all the reading. The engine re-checks anyway.
         const checked = checkAgentResult(args, pause.outputSchema, pause.choices);
@@ -576,8 +656,15 @@ export class CopilotProvider implements Provider {
               ...checkErrors(acceptance(pause.checks ?? [], req.state, checked.value)),
             ]
           : checked.errors;
-        if (errors.length === 0 || corrections >= MAX_SUBMIT_CORRECTIONS) {
+        if (errors.length === 0) {
+          valid = args;
           return 'Result recorded. Your step is complete: stop now.';
+        }
+        invalid = args;
+        if (corrections >= MAX_SUBMIT_CORRECTIONS) {
+          return valid === undefined
+            ? 'Result recorded. Your step is complete: stop now.'
+            : 'Not recorded: your earlier valid result is kept. Your step is complete: stop now.';
         }
         corrections += 1;
         req.onEvent({
@@ -616,7 +703,7 @@ export class CopilotProvider implements Provider {
     const blockedOn: string[] = [];
     // A content filter blocks the same prompt on the same model every time, so the
     // engine's retries cannot help: let another model (the nearest tiers') answer.
-    if (submitted === undefined && isProviderBlock(out.output)) {
+    if (submitted() === undefined && isProviderBlock(out.output)) {
       for (const alt of await this.otherModels(pause.complexity, tier.model)) {
         blockedOn.push(out.model ?? played.model ?? 'default model');
         req.onEvent({
@@ -626,12 +713,12 @@ export class CopilotProvider implements Provider {
         out = await play(alt);
         played = alt;
         usage = usage && out.usage ? addUsage(usage, out.usage) : (out.usage ?? usage);
-        if (submitted !== undefined || !isProviderBlock(out.output)) break;
+        if (submitted() !== undefined || !isProviderBlock(out.output)) break;
       }
     }
     const model = out.model ?? played.model;
     return {
-      result: submitted ?? extractJson(out.output),
+      result: submitted() ?? extractJson(out.output),
       transcript: {
         provider: this.name,
         ...(model ? { model } : {}),

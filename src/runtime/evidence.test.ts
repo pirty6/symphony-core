@@ -8,6 +8,10 @@ const ws = mkdtempSync(join(tmpdir(), 'symphony-evidence-'));
 afterAll(() => rmSync(ws, { recursive: true, force: true }));
 mkdirSync(join(ws, 'src'));
 writeFileSync(
+  join(ws, 'README.md'),
+  ['# demo', '', 'Run `npm start` to open the **studio** on port 5173.', ''].join('\n'),
+);
+writeFileSync(
   join(ws, 'src', 'config.js'),
   ['// config', 'export const config = {', '  port: Number(process.env.PORT ?? 8080),', '};'].join(
     '\n',
@@ -15,10 +19,10 @@ writeFileSync(
 );
 
 describe('checkCitations', () => {
-  it('keeps real citations, with or without a quote, and passes other sources through', async () => {
+  it('keeps real quoted citations and passes other sources through', async () => {
     const r = await checkCitations(ws, [
       'src/config.js:3 — the default port is 8080 `port: Number(process.env.PORT ?? 8080)`',
-      'F7 src/config.js:2-3 — config is a plain object',
+      'F7 src/config.js:2-3 — config is a plain object `export const config = {`',
       'web | https://nodejs.org/api/process.html — env values are strings',
       'git | a1b2c3 — port default added',
     ]);
@@ -45,6 +49,39 @@ describe('checkCitations', () => {
 
   it('allows a quote a few lines off and ignores whitespace differences', async () => {
     const r = await checkCitations(ws, ['src/config.js:1 — `port:   Number(process.env.PORT`']);
+    expect(r.invalid).toEqual([]);
+  });
+
+  it('requires a quote for a file citation', async () => {
+    const r = await checkCitations(ws, ['src/config.js:3 — reads PORT']);
+    expect(r.invalid[0]?.reason).toBe(
+      'no quote: add a short verbatim quote from src/config.js:3 in backticks',
+    );
+  });
+
+  it('checks findings behind hypothesis or topic tags instead of letting them through', async () => {
+    const r = await checkCitations(ws, [
+      '[H2 against] src/config.js:3 — default is 8080 `process.env.PORT ?? 8080`',
+      'F4 [H5 for, H1 against] [TOKENS] src/config.js:3 — `process.env.PORT ?? 3000`',
+    ]);
+    expect(r.checked).toBe(2);
+    expect(r.valid).toHaveLength(1);
+    expect(r.invalid[0]?.reason).toMatch(/is not at src\/config.js:3/);
+  });
+
+  it('matches markdown lines: emphasis, inline code and a quote that contains backticks', async () => {
+    const r = await checkCitations(ws, [
+      'README.md:3 — the studio port `Run npm start to open the studio on port 5173`',
+      'README.md:3 — how to start it `Run `npm start` to open`',
+      'README.md:3 — bold is kept or dropped `the **studio** on port`',
+    ]);
+    expect(r.invalid).toEqual([]);
+  });
+
+  it('accepts the quote at the cited line even when another backtick span comes first', async () => {
+    const r = await checkCitations(ws, [
+      'src/config.js:3 — `loadEnv` is not used; the port falls back to `process.env.PORT ?? 8080`',
+    ]);
     expect(r.invalid).toEqual([]);
   });
 });

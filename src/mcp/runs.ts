@@ -6,7 +6,7 @@
  */
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { resultText } from '../core/chain.js';
+import { type ChainStep, resultText } from '../core/chain.js';
 import { compileScore } from '../core/compile.js';
 import { playsFromRepertoire } from '../core/jazz.js';
 import { zeroValue } from '../core/schema.js';
@@ -19,7 +19,7 @@ import type {
   Improvisation,
   Pattern,
 } from '../core/types.js';
-import { PATTERNS } from '../patterns/index.js';
+import { libraryPatterns } from '../patterns/index.js';
 import { chainNext } from '../runtime/chain.js';
 import { concertNext } from '../runtime/concert.js';
 import { Run } from '../runtime/driver.js';
@@ -177,7 +177,7 @@ export class RunManager {
       join(this.opts.repoRoot, DRAFTS_DIR),
       (f) => import(pathToFileURL(f).href),
     ).catch(() => [] as Pattern[]);
-    return [...PATTERNS, ...drafts.filter((d) => !PATTERNS.some((p) => p.name === d.name))];
+    return libraryPatterns(this.opts.env, drafts);
   }
 
   get editsAllowed(): boolean {
@@ -216,7 +216,7 @@ export class RunManager {
     score: ExecutableScore,
     pattern: Pattern,
     req: StartRequest,
-    chain: readonly string[],
+    chain: readonly ChainStep[],
   ): Promise<string> {
     const workspace = await this.opts.workspace();
     const runsDir = runsDirFor(workspace, this.opts.env);
@@ -239,7 +239,7 @@ export class RunManager {
     const provider = this.opts.editsAllowed ? base : readOnly(base);
     let managed: Managed | undefined;
     // A hand-off that may not start leaves a note instead of failing the finished run.
-    const handOff = async (s: ExecutableScore, p: Pattern, rest: readonly string[]) => {
+    const handOff = async (s: ExecutableScore, p: Pattern, rest: readonly ChainStep[]) => {
       const refused = this.refuseEdits(p);
       if (refused) {
         if (managed) managed.blocked = refused;

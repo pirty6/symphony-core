@@ -8,6 +8,7 @@
  * user can look at the node input and the AI's proposed output before the
  * engine applies it. stop() aborts the live AI call and cancels the run.
  */
+import { stepTimeLimitMs } from './limits.js';
 import {
   advance,
   createEngine,
@@ -91,10 +92,6 @@ export interface NextPerformance {
 type Unsequenced<T> = T extends { seq: number } ? Omit<T, 'seq'> : never;
 
 const DEFAULT_PARALLEL = 4;
-const DEFAULT_STEP_TIMEOUT_MS = 15 * 60_000;
-/** The studio type-checks this file for the browser too, without Node's types. */
-const envVar = (name: string): string | undefined =>
-  (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[name];
 
 export interface RunOptions {
   readonly id?: string;
@@ -133,7 +130,7 @@ export interface RunOptions {
     readonly result: AdvanceResult;
     readonly basedOn: NonNullable<Performance['basedOn']>;
   };
-  /** Called after a successful run; may start a follow-up run (the maestro's composed score). */
+  /** Called when the run ends (unless cancelled); may start a follow-up run (maestro's composed score, a chain step). */
   readonly next?: (performance: Performance) => Promise<NextPerformance | undefined>;
   /** Classical (improvisation 0): recorded answers to replay for identical moves. */
   readonly repertoire?: Repertoire;
@@ -412,8 +409,7 @@ export class Run {
     if (this.stopRequested) return undefined;
     this.abort = new AbortController();
     const signal = this.abort.signal;
-    const fromEnv = Number(envVar('SYMPHONY_STEP_TIMEOUT_S')) * 1000;
-    const limit = this.opts.stepTimeoutMs ?? (fromEnv > 0 ? fromEnv : DEFAULT_STEP_TIMEOUT_MS);
+    const limit = this.opts.stepTimeoutMs ?? stepTimeLimitMs();
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -628,7 +624,8 @@ export class Run {
     let savedTo: string | undefined;
     if (this.opts.onSave) savedTo = await this.save();
     this.push({ type: 'performance', performance, ...(savedTo ? { savedTo } : {}) });
-    if (this.opts.next && performance.outcome === 'success') {
+    // The hook decides what follows which outcome (a chain stops on failure, backlog items go on).
+    if (this.opts.next && performance.outcome !== 'cancelled') {
       const next = await this.opts.next(performance).catch(() => undefined);
       if (next) this.push({ type: 'next', ...next });
     }

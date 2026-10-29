@@ -11,6 +11,7 @@ import {
   applyMessage,
   currentFrame,
   decorate,
+  endLocally,
   fromFlow,
   IDLE_VIEW,
   metaOf,
@@ -231,5 +232,20 @@ describe('replay view and decoration', () => {
   it('starts idle', () => {
     expect(currentFrame(IDLE_VIEW).index).toBe(-1)
     expect(hangman.name).toBe('hangman')
+  })
+})
+
+describe('endLocally', () => {
+  it('ends a paused run on screen so no gate or approval waits for an answer nobody receives', () => {
+    const paused: RunView = {
+      ...startLive('r', 'g'),
+      status: 'paused',
+      gate: { nodeId: 'recall', phase: 'before' },
+      pause: { kind: 'approval' } as RunView['pause'],
+    }
+    const ended = endLocally(paused, 'gone')
+    expect(ended).toMatchObject({ runId: 'r', status: 'cancelled', reason: 'gone' })
+    expect(ended.gate).toBeUndefined()
+    expect(ended.pause).toBeUndefined()
   })
 })

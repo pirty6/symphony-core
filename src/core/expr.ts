@@ -13,6 +13,7 @@
  *   append(list, v), if(cond, a, b), chars(s), subset(listA, listB),
  *   take(list, n), drop(list, n), first(list), unique(list), without(listA, listB),
  *   numbered(list, start) ("F<n> " ids), unnumbered(list), ids(list), refs(textOrList),
+ *   pick(list, positions) (1-based, e.g. ["1", "3"]),
  *   get(objectOrList, keyOrIndex) (null when missing), keys(object).
  */
 
@@ -44,7 +45,8 @@ type FnName =
   | 'numbered'
   | 'unnumbered'
   | 'ids'
-  | 'refs';
+  | 'refs'
+  | 'pick';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -66,6 +68,7 @@ const FNS: Record<FnName, number> = {
   unnumbered: 1,
   ids: 1,
   refs: 1,
+  pick: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -362,6 +365,15 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           if (!x || typeof x !== 'object' || Array.isArray(x))
             throw new ExprError('keys() needs an object');
           return Object.keys(x).toSorted();
+        case 'pick': {
+          // pick(list, ["1", "3"]): the entries at those 1-based positions, in that order.
+          if (!Array.isArray(x) || !Array.isArray(args[1]))
+            throw new ExprError('pick() needs a list and a list of positions');
+          return (args[1] as unknown[]).flatMap((p) => {
+            const i = Number(String(p).trim());
+            return Number.isInteger(i) && i >= 1 && i <= x.length ? [x[i - 1]] : [];
+          });
+        }
         case 'numbered': {
           const start = args[1];
           if (typeof start !== 'number' || !Number.isInteger(start))

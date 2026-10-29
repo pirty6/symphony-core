@@ -265,6 +265,16 @@ function updateStream(
   return streams
 }
 
+/**
+ * End the run on screen when the server can no longer tell us about it (it
+ * restarted and lost the run, or cannot be reached to stop it): no gate or
+ * approval stays waiting for an answer nobody can receive.
+ */
+export function endLocally(v: RunView, reason: string): RunView {
+  const { gate: _g, pause: _p, ...rest } = v
+  return { ...rest, status: 'cancelled', reason }
+}
+
 export function applyMessage(v: RunView, m: RunMessage): RunView {
   switch (m.type) {
     case 'engine': {
@@ -573,7 +583,11 @@ export function isOfflineDemo(perf: Performance | undefined): boolean {
 
 /** Inputs the user typed that the demo's canned answers were not written for. */
 export function changedFromDemo(context: Readonly<Record<string, string>>, demo: Readonly<Record<string, string>>): string[] {
-  return Object.keys(demo).filter((k) => (context[k] ?? '').trim() !== (demo[k] ?? '').trim())
+  // Only what you typed counts: an empty field plays the demo's value.
+  return Object.keys(demo).filter((k) => {
+    const mine = (context[k] ?? '').trim()
+    return mine !== '' && mine !== (demo[k] ?? '').trim()
+  })
 }
 
 // ── phases ──────────────────────────────────────────────────────────

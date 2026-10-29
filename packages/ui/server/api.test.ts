@@ -108,6 +108,32 @@ describe('studio api', () => {
     expect(check.reproduced).toBe(true)
   })
 
+  it('deletes one saved run, but not one still playing or outside the store', async () => {
+    const start = (await (await post('/api/runs', { pattern: data(hangman), provider: 'scripted' })).json()) as { runId: string }
+    const wait = async (ok: (runs: { file: string; pattern: string; outcome: string }[]) => boolean) => {
+      for (;;) {
+        const runs = (await (await fetch(`${base}/api/saved`)).json()) as { file: string; pattern: string; outcome: string }[]
+        if (ok(runs)) return runs
+        await new Promise((r) => setTimeout(r, 20))
+      }
+    }
+    // It waits for a guess, with a checkpoint saved.
+    const playing = (await wait((rs) => rs.some((r) => r.pattern === 'hangman'))).find((r) => r.pattern === 'hangman')!
+    const busy = await post('/api/saved/delete', { path: playing.file })
+    expect(busy.status).toBe(409)
+    expect(((await busy.json()) as { error: string }).error).toMatch(/still playing/)
+    expect((await post('/api/saved/delete', { path: '../../package.json' })).status).toBe(400)
+    await post(`/api/runs/${start.runId}/control`, { action: 'stop' })
+    await wait((rs) => rs.some((r) => r.file === playing.file && r.outcome === 'cancelled'))
+    const before = ((await (await fetch(`${base}/api/saved`)).json()) as unknown[]).length
+    const done = await post('/api/saved/delete', { path: playing.file })
+    expect(done.status).toBe(200)
+    const after = (await (await fetch(`${base}/api/saved`)).json()) as { file: string }[]
+    expect(after).toHaveLength(before - 1)
+    expect(after.some((r) => r.file === playing.file)).toBe(false)
+    expect((await post('/api/saved/delete', { path: playing.file })).status).toBe(404)
+  })
+
   it('pauses in step mode and accepts human approvals', async () => {
     const start = (await (await post('/api/runs', { pattern: data(hangman), provider: 'scripted', stepMode: true })).json()) as { runId: string }
     const id = start.runId
@@ -177,6 +203,27 @@ describe('studio api', () => {
     const second = await readSse(await fetch(`${base}/api/runs/${next.runId}/events`))
     expect(second.at(-1)).toMatchObject({ type: 'status', status: 'done' })
     expect(second.some((m) => m.type === 'next')).toBe(false)
+  })
+
+  it('plays each picked backlog item as its own run, one after another', async () => {
+    const { backlog } = await import('../../../src/patterns/index.js')
+    const items = backlog.demo!.agents!.extract!({}, 1).updates!.items as string[]
+    const start = (await (
+      await post('/api/runs', { pattern: data(backlog), goal: 'g', context: { source: 'doc.md', testCommand: 'npm test' }, provider: 'scripted', autoApprove: true })
+    ).json()) as { runId: string }
+    let id = start.runId
+    const played: string[] = []
+    for (;;) {
+      const next = (await readSse(await fetch(`${base}/api/runs/${id}/events`))).find((m) => m.type === 'next') as
+        | { runId: string; pattern: { name: string }; context: { request: string; testCommand: string } }
+        | undefined
+      if (!next) break
+      expect(next.pattern.name).toBe('implement')
+      expect(next.context.testCommand).toBe('npm test')
+      played.push(next.context.request)
+      id = next.runId
+    }
+    expect(played).toEqual(items)
   })
 
   it('refuses cross-site and non-JSON POSTs', async () => {

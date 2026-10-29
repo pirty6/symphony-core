@@ -60,7 +60,7 @@ export interface RecoveryAnswer {
 }
 
 /** A stuck AI step (out of attempts): what went wrong, then retry it or stop the run. */
-export function RecoveryCard({ view, onAnswer }: { view: RunView; onAnswer: (a: RecoveryAnswer) => void }) {
+export function RecoveryCard({ view, onAnswer }: { view: RunView; onAnswer: (a: RecoveryAnswer) => Promise<unknown> | void }) {
   const pause = view.pause
   const [hint, setHint] = useState('')
   const [tier, setTier] = useState(0)
@@ -74,7 +74,8 @@ export function RecoveryCard({ view, onAnswer }: { view: RunView; onAnswer: (a: 
   const sent = sentFor === pause.pauseId
   const answer = (a: RecoveryAnswer) => {
     setSentFor(pause.pauseId)
-    onAnswer(a)
+    // If the answer does not get through, open the card again so it can be sent again.
+    void Promise.resolve(onAnswer(a)).catch(() => setSentFor(undefined))
   }
   return (
     <form
@@ -138,7 +139,7 @@ export function ApprovalCard({
   onAnswer,
 }: {
   view: RunView
-  onAnswer: (a: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) => void
+  onAnswer: (a: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) => Promise<unknown> | void
 }) {
   const pause = view.pause
   const [values, setValues] = useState<Record<string, string>>({})
@@ -149,7 +150,8 @@ export function ApprovalCard({
   const sent = sentFor === pause.pauseId
   const answer = (a: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) => {
     setSentFor(pause.pauseId)
-    onAnswer(a)
+    // If the answer does not get through, open the card again so it can be sent again.
+    void Promise.resolve(onAnswer(a)).catch(() => setSentFor(undefined))
   }
   const submit = (approved: boolean) => {
     try {

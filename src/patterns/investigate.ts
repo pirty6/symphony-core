@@ -58,7 +58,7 @@ export const investigate: Pattern = {
     'Answer a question exhaustively with the evidence it needs: repo files, web pages, experiments, history, GitHub, dependencies, MCP. Nothing listed is skipped; every claim is cited.',
   verbTriggers: ['investigate', 'explain', 'why', 'how does', 'find out', 'research'],
   requiredContext: ['question'],
-  result: ['answer', 'rulings', 'openQuestions', 'disagreements'],
+  result: ['answer', 'rulings', 'openQuestions', 'disagreements', 'unresolvedObjections'],
   goalFrom: 'question',
   maxSteps: 5000,
   state: withState(

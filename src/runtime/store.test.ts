@@ -22,6 +22,7 @@ import {
   runsDirFor,
   runScratch,
   autoPrune,
+  deleteRun,
   listRuns,
   pruneRuns,
   loadPatternFiles,
@@ -62,6 +63,31 @@ describe('run store', () => {
     expect(runPath(root, 'fix/a.json')).toBe(join(root, 'fix/a.json'));
     expect(runPath(root, '../etc/passwd.json')).toBeUndefined();
     expect(runPath(root, 'fix/a.txt')).toBeUndefined();
+  });
+
+  it('deletes one saved run, never anything outside the store', async () => {
+    const dir = join(root, 'del');
+    const score = compileScore(review, {
+      goal: 'g',
+      context: review.demo!.context!,
+      generatedAt: 't',
+    });
+    const performance = toPerformance(runScripted(score, review.demo, { at: 't' }).state);
+    const keep = await saveRun(dir, { schemaVersion: 3, score, performance });
+    const gone = await saveRun(dir, {
+      schemaVersion: 3,
+      score,
+      performance: { ...performance, startedAt: '2026-02-02T00:00:00Z' },
+    });
+    const outside = join(root, 'outside.json');
+    writeFileSync(outside, '{}');
+    expect(await deleteRun(dir, gone.slice(dir.length + 1))).toBe(true);
+    expect(existsSync(gone)).toBe(false);
+    expect(existsSync(keep)).toBe(true);
+    expect(await deleteRun(dir, gone.slice(dir.length + 1))).toBe(false);
+    expect(await deleteRun(dir, '../outside.json')).toBe(false);
+    expect(await deleteRun(dir, 'review')).toBe(false);
+    expect(existsSync(outside)).toBe(true);
   });
 
   it('returns no runs for a missing directory', async () => {

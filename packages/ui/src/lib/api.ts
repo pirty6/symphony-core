@@ -7,7 +7,7 @@ import type { ProviderEvent } from '../../../../src/runtime/provider'
 export type PatternData = Omit<Pattern, 'demo'>
 
 export interface LibraryItem extends PatternData {
-  readonly source: 'builtin' | 'draft'
+  readonly source: 'builtin' | 'extra' | 'draft'
   readonly graph: VisualGraph
   readonly demo?: { readonly goal: string; readonly context: Record<string, unknown> }
 }
@@ -71,6 +71,23 @@ export class ApiError extends Error {
   }
 }
 
+/** The browser could not reach the studio server at all (stopped, or restarting). */
+export function isNetworkError(e: unknown): boolean {
+  return e instanceof TypeError && /fetch|network|load failed/i.test(e.message)
+}
+
+export const SERVER_UNREACHABLE =
+  "Could not reach the studio server, so that did not happen. If it restarted (e.g. after a code change), the runs it was playing stopped; open a saved run to resume it."
+
+export const isRunGone = (e: unknown): boolean => e instanceof ApiError && e.message === 'run not found'
+
+/** What to tell the user about a failed request. */
+export function errorText(e: unknown): string {
+  if (isNetworkError(e)) return SERVER_UNREACHABLE
+  if (isRunGone(e)) return RUN_GONE
+  return e instanceof Error ? e.message : String(e)
+}
+
 async function json<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => ({}))) as T & { error?: string; issues?: Issue[] }
   if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, body.issues ?? [])
@@ -109,6 +126,8 @@ export const api = {
   copilotStatus: () =>
     fetch('/api/copilot/status').then((r) => json<{ signedIn: boolean; login?: string; message: string }>(r)),
   tiers: () => fetch('/api/tiers').then((r) => json<Record<Complexity, { model: string; effort?: string }>>(r)),
+  /** Delete one saved run (refused while it is still playing). */
+  deleteSaved: (file: string) => post('/api/saved/delete', { path: file }).then((r) => json<{ deleted: string }>(r)),
   savedFile: (file: string) =>
     fetch(`/api/saved/file?path=${encodeURIComponent(file)}`).then((r) =>
       json<{ run: SavedRun; issues: string[]; reproduced: boolean; graph: VisualGraph }>(r),
@@ -117,13 +136,30 @@ export const api = {
 
 export const TERMINAL = new Set(['done', 'failed', 'cancelled'])
 
-/** Subscribe to a run. EventSource resumes from the last seq on reconnect; closes at the end. */
-export function subscribeRun(runId: string, onMessage: (m: RunMessage) => void): () => void {
+export const RUN_GONE = 'That run is no longer on the server (it restarted). Open its saved run to resume it.'
+
+/**
+ * Subscribe to a run. EventSource resumes from the last seq on reconnect; closes
+ * at the end. When the connection drops and the server no longer has the run
+ * (it restarted), onLost is called once and the subscription closes.
+ */
+export function subscribeRun(runId: string, onMessage: (m: RunMessage) => void, onLost?: () => void): () => void {
   const source = new EventSource(`/api/runs/${runId}/events`)
   source.onmessage = (e: MessageEvent<string>) => {
     const m = JSON.parse(e.data) as RunMessage
     onMessage(m)
     if (m.type === 'status' && TERMINAL.has(m.status)) source.close()
+  }
+  source.onerror = () => {
+    if (source.readyState === EventSource.CLOSED || !onLost) return
+    void fetch(`/api/runs/${runId}`).then(
+      (r) => {
+        if (r.status !== 404 || source.readyState === EventSource.CLOSED) return
+        source.close()
+        onLost()
+      },
+      () => undefined, // Unreachable: EventSource keeps retrying.
+    )
   }
   return () => source.close()
 }

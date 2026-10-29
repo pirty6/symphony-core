@@ -155,6 +155,9 @@ export interface EvalSummary {
   readonly outputTokens: number;
   readonly cachedTokens: number;
   readonly ms: number;
+  /** Time inside the model and billing units, when the provider reports them. */
+  readonly apiMs: number;
+  readonly premiumRequests: number;
 }
 
 export function summarize(results: readonly EvalResult[]): EvalSummary {
@@ -168,6 +171,8 @@ export function summarize(results: readonly EvalResult[]): EvalSummary {
     outputTokens: sum((r) => r.tokens.outputTokens),
     cachedTokens: sum((r) => r.tokens.cacheReadTokens),
     ms: sum((r) => r.ms),
+    apiMs: sum((r) => r.tokens.apiMs ?? 0),
+    premiumRequests: sum((r) => r.tokens.premiumRequests ?? 0),
   };
 }
 
@@ -201,7 +206,7 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   lines.push(
     '',
     `solved ${s.solved}/${s.runs}${b ? ` (baseline ${b.solved}/${b.runs})` : ''} · citations valid ${s.citationsChecked - s.citationsInvalid}/${s.citationsChecked}${b ? ` (baseline ${b.citationsChecked - b.citationsInvalid}/${b.citationsChecked})` : ''}`,
-    `tokens ${k(s.inputTokens)} in${delta((x) => x.inputTokens)} (${k(s.cachedTokens)} cached) · ${k(s.outputTokens)} out${delta((x) => x.outputTokens)} · time ${(s.ms / 1000).toFixed(0)}s${delta((x) => x.ms)}`,
+    `tokens ${k(s.inputTokens)} in${delta((x) => x.inputTokens)} (${k(s.cachedTokens)} cached) · ${k(s.outputTokens)} out${delta((x) => x.outputTokens)} · time ${(s.ms / 1000).toFixed(0)}s${delta((x) => x.ms)}${s.apiMs ? ` · ${(s.apiMs / 1000).toFixed(0)}s in the model` : ''}${s.premiumRequests ? ` · ${+s.premiumRequests.toFixed(2)} premium requests${delta((x) => x.premiumRequests)}` : ''}`,
   );
   if (b && worseThan(s, b)) lines.push('⚠ worse than the baseline on correctness');
   return lines.join('\n');

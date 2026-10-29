@@ -20,6 +20,7 @@ export function concertNext(opts: {
 }): ((performance: Performance) => Promise<NextPerformance | undefined>) | undefined {
   if (opts.maestroScore.pattern !== 'maestro') return undefined;
   return async (performance) => {
+    if (performance.outcome !== 'success') return undefined;
     const state = performance.finalState;
     let composed: ReturnType<typeof composedScore>;
     try {

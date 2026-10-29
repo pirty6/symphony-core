@@ -148,6 +148,11 @@ describe('pattern library', () => {
     // A bug fix that adds a test is still a fix; "address" is not "add".
     expect(routePrompt('fix the crash and add a test')?.name).toBe('fix');
     expect(routePrompt('address the review comments')?.name).toBe('review');
+    // Whole words with verb endings: no more "add" inside "address", "play" inside "display".
+    expect(routePrompt('fixing the crashes in login')?.name).toBe('fix');
+    expect(routePrompt('adding support for YAML')?.name).toBe('implement');
+    expect(routePrompt('display the address book')).toBeUndefined();
+    expect(routePrompt('update the database schema docs')).toBeUndefined();
     expect(routePrompt('hello')).toBeUndefined();
   });
 });

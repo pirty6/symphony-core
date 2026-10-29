@@ -1,6 +1,7 @@
 import { useState, type DragEvent } from 'react'
 import { TERMINAL, type LibraryItem, type LiveRun, type SavedSummary } from '../lib/api'
 import type { PaletteKind } from '../lib/model'
+import { PromptBox } from './PromptBox'
 
 const PALETTE: { kind: PaletteKind; icon: string; label: string; hint: string }[] = [
   { kind: 'assessor', icon: '🔍', label: 'Assessor', hint: 'AI, read-only' },
@@ -28,12 +29,16 @@ interface Props {
   onOpenSaved: (file: string) => void
   onRefreshSaved: () => void
   onPrune: () => void
+  /** Delete one saved run; resolves once it is gone. */
+  onDeleteSaved?: (file: string) => Promise<void>
   onAsk: (request: string) => void
 }
 
 export function Library(p: Props) {
   const [request, setRequest] = useState('')
   const [showDemo, setShowDemo] = useState(false)
+  /** The saved run whose delete is waiting for a second click. */
+  const [confirming, setConfirming] = useState<string | null>(null)
   const demoCount = p.saved.filter((r) => r.demo).length
   const saved = showDemo ? p.saved : p.saved.filter((r) => !r.demo)
   const running = (p.live ?? []).filter((r) => !TERMINAL.has(r.status))
@@ -43,6 +48,22 @@ export function Library(p: Props) {
   }
   return (
     <aside className="library">
+      <section className="maestro-box">
+        <h2>🎼 Ask the maestro</h2>
+        <PromptBox
+          className="draft-input"
+          title="Ask the maestro"
+          placeholder="Describe what you want done, e.g. “find out why checkout got slower this week”. The maestro picks or drafts the score, debates it by complexity, then you approve and it plays."
+          value={request}
+          onChange={setRequest}
+          ariaLabel="maestro request"
+          rows={3}
+        />
+        <button type="button" className="primary" disabled={p.asking || !request.trim()} onClick={() => p.onAsk(request.trim())}>
+          {p.asking ? 'Composing…' : '🎼 Compose & perform'}
+        </button>
+      </section>
+
       <section>
         <h2>Patterns</h2>
         {p.library.filter((item) => item.name !== 'maestro').map((item) => (
@@ -54,26 +75,12 @@ export function Library(p: Props) {
             title={item.description}
           >
             <b>{item.name}</b>
-            {item.source === 'draft' && <span className="tag">draft</span>}
+            {item.source !== 'builtin' && <span className="tag">{item.source}</span>}
             <small>{item.description}</small>
           </button>
         ))}
         <button type="button" className="lib-new" onClick={p.onNew}>
           + Blank pattern
-        </button>
-      </section>
-
-      <section className="maestro-box">
-        <h2>🎼 Ask the maestro</h2>
-        <textarea
-          className="draft-input"
-          placeholder="Describe what you want done, e.g. “find out why checkout got slower this week”. The maestro picks or drafts the score, debates it by complexity, then you approve and it plays."
-          value={request}
-          onChange={(e) => setRequest(e.target.value)}
-          aria-label="maestro request"
-        />
-        <button type="button" className="primary" disabled={p.asking || !request.trim()} onClick={() => p.onAsk(request.trim())}>
-          {p.asking ? 'Composing…' : '🎼 Compose & perform'}
         </button>
       </section>
 
@@ -137,13 +144,34 @@ export function Library(p: Props) {
           <small className="muted">{demoCount > 0 ? 'No runs with a real AI yet.' : 'Runs are saved to .symphony/runs'}</small>
         )}
         {saved.slice(0, 30).map((r) => (
-          <button type="button" key={r.file} className="lib-item saved" onClick={() => p.onOpenSaved(r.file)} title={r.goal}>
-            <b>{r.pattern}</b> <span className={`tag outcome-${r.outcome}`}>{r.outcome}</span>
-            {r.demo && <span className="tag demo">demo</span>}
-            <small>
-              {new Date(r.startedAt).toLocaleString()} · {r.steps} steps
-            </small>
-          </button>
+          <div key={r.file} className="saved-row" data-testid="saved-run" data-file={r.file}>
+            <button type="button" className="lib-item saved" onClick={() => p.onOpenSaved(r.file)} title={r.goal}>
+              <b>{r.pattern}</b> <span className={`tag outcome-${r.outcome}`}>{r.outcome}</span>
+              {r.demo && <span className="tag demo">demo</span>}
+              <small>
+                {new Date(r.startedAt).toLocaleString()} · {r.steps} steps
+              </small>
+            </button>
+            {p.onDeleteSaved &&
+              (confirming === r.file ? (
+                <span className="saved-confirm">
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => void p.onDeleteSaved!(r.file).finally(() => setConfirming(null))}
+                  >
+                    Delete
+                  </button>
+                  <button type="button" className="link" onClick={() => setConfirming(null)} aria-label="keep">
+                    Keep
+                  </button>
+                </span>
+              ) : (
+                <button type="button" className="link saved-delete" onClick={() => setConfirming(r.file)} aria-label="delete run" title="Delete this saved run">
+                  🗑
+                </button>
+              ))}
+          </div>
         ))}
         {demoCount > 0 && (
           <button type="button" className="link show-demo" onClick={() => setShowDemo(!showDemo)} data-testid="toggle-demo-runs">

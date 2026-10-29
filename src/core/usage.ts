@@ -12,14 +12,29 @@ export const NO_USAGE: TokenUsage = {
   reasoningTokens: 0,
 };
 
+/** The optional measurements, summed only when a provider reported them. */
+const EXTRA = [
+  'cacheWriteTokens',
+  'apiMs',
+  'firstTokenMs',
+  'premiumRequests',
+  'nanoAiu',
+  'compactions',
+] as const;
+
 export function addUsage(a: TokenUsage, b: TokenUsage | undefined): TokenUsage {
   if (!b) return a;
+  const extra: Partial<Record<(typeof EXTRA)[number], number>> = {};
+  for (const key of EXTRA) {
+    if (a[key] !== undefined || b[key] !== undefined) extra[key] = (a[key] ?? 0) + (b[key] ?? 0);
+  }
   return {
     calls: a.calls + b.calls,
     inputTokens: a.inputTokens + b.inputTokens,
     outputTokens: a.outputTokens + b.outputTokens,
     cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
     reasoningTokens: a.reasoningTokens + b.reasoningTokens,
+    ...extra,
   };
 }
 
@@ -55,5 +70,10 @@ const k = (n: number) =>
 /** e.g. "1.2M in (800k cached) · 45k out · 37 calls" */
 export function formatUsage(u: TokenUsage): string {
   if (u.calls === 0) return 'no AI tokens';
-  return `${k(u.inputTokens)} in${u.cacheReadTokens ? ` (${k(u.cacheReadTokens)} cached)` : ''} · ${k(u.outputTokens)} out · ${u.calls} calls`;
+  const time = u.apiMs
+    ? ` · ${(u.apiMs / 1000).toFixed(1)}s in the model${u.firstTokenMs ? `, first token ${(u.firstTokenMs / u.calls / 1000).toFixed(1)}s avg` : ''}`
+    : '';
+  const cost = u.premiumRequests ? ` · ${+u.premiumRequests.toFixed(2)} premium requests` : '';
+  const compacted = u.compactions ? ` · compacted ${u.compactions}×` : '';
+  return `${k(u.inputTokens)} in${u.cacheReadTokens ? ` (${k(u.cacheReadTokens)} cached)` : ''} · ${k(u.outputTokens)} out · ${u.calls} calls${time}${cost}${compacted}`;
 }

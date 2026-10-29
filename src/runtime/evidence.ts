@@ -19,11 +19,28 @@ export interface CitationCheck {
 
 /** "F12 src/a.ts:3-5 — fact `quote`": optional id, path with an extension, line or range. */
 const FILE_CITATION = /^(?:F\d+\s+)?\[?([\w@./-]+\.[A-Za-z0-9]+)\]?:(\d+)(?:-(\d+))?\b/;
-const QUOTE = /`([^`]{4,})`/;
+/** Tags before the citation, e.g. "[H5 against]" or "[TOKENS]" (no path characters). */
+const LEADING_TAGS = /^(F\d+\s+)?(?:\[[^\]/.:]*\]\s*)+/;
+/** A quote needs at least this many characters to prove anything. */
+const MIN_QUOTE = 4;
 /** How far from the cited line a quote may be (models are often off by a few lines). */
 const SLACK = 3;
 
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
+/** Compare without markdown that models drop or double: backticks and ** / __ emphasis. */
+const plain = (s: string) => squash(s.replace(/`/g, '').replace(/\*\*|__/g, ''));
+
+/**
+ * The quotes a finding offers: every backtick span, and everything between the
+ * first and last backtick (a quoted line that itself contains backticks).
+ */
+function quotesOf(text: string): string[] {
+  const spans = [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+  const first = text.indexOf('`');
+  const last = text.lastIndexOf('`');
+  if (first >= 0 && last > first) spans.push(text.slice(first + 1, last));
+  return [...new Set(spans.map(plain))].filter((q) => q.length >= MIN_QUOTE);
+}
 
 export async function checkCitations(
   workspace: string,
@@ -34,7 +51,7 @@ export async function checkCitations(
   const files = new Map<string, string[] | undefined>();
   let checked = 0;
   for (const finding of findings) {
-    const m = FILE_CITATION.exec(finding.trim());
+    const m = FILE_CITATION.exec(finding.trim().replace(LEADING_TAGS, '$1'));
     if (!m || m[1]!.includes('://')) {
       valid.push(finding);
       continue;
@@ -65,18 +82,24 @@ export async function checkCitations(
       invalid.push({ finding, reason: `${path} has ${lines.length} lines, not line ${from}` });
       continue;
     }
-    const quote = QUOTE.exec(finding.slice(m[0].length))?.[1];
-    if (quote) {
-      const near = squash(
-        lines.slice(Math.max(0, from - 1 - SLACK), Math.min(lines.length, to + SLACK)).join(' '),
-      );
-      if (!near.includes(squash(quote))) {
-        invalid.push({
-          finding,
-          reason: `the quote \`${quote.slice(0, 60)}\` is not at ${path}:${from}`,
-        });
-        continue;
-      }
+    // A quote is required: without one only the line's existence could be checked.
+    const quotes = quotesOf(finding.slice(finding.indexOf(m[0]) + m[0].length));
+    if (quotes.length === 0) {
+      invalid.push({
+        finding,
+        reason: `no quote: add a short verbatim quote from ${path}:${from} in backticks`,
+      });
+      continue;
+    }
+    const near = plain(
+      lines.slice(Math.max(0, from - 1 - SLACK), Math.min(lines.length, to + SLACK)).join(' '),
+    );
+    if (!quotes.some((q) => near.includes(q))) {
+      invalid.push({
+        finding,
+        reason: `the quote \`${quotes[0]!.slice(0, 60)}\` is not at ${path}:${from}`,
+      });
+      continue;
     }
     valid.push(finding);
   }

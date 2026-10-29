@@ -164,6 +164,22 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
     );
     return { state: {} };
   },
+  'fix-cause-elsewhere': (dir) => {
+    const f = join(dir, 'src/money.js');
+    writeFileSync(f, readFileSync(f, 'utf8').replace('(line.qty ? 1 : 0)', 'line.qty'));
+    return { state: {} };
+  },
+  'investigate-multi-hop': () => ({
+    state: {
+      answer:
+        'It waits 45 seconds: src/defaults.js sets 30, src/overrides.js doubles it to 60, and src/client.js subtracts 15.',
+    },
+  }),
+  'investigate-false-premise': () => ({
+    state: {
+      answer: 'It does not retry at all: fetchUser calls http.get once and throws on failure.',
+    },
+  }),
   'investigate-default-port': () => ({
     state: { answer: 'It listens on 8081: loadConfig in src/config.js uses DEFAULTS.port + 1.' },
   }),
@@ -178,10 +194,12 @@ describe('eval tasks', () => {
       const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
       try {
         await buildFixture(dir, t.files);
-        const wrong =
-          t.pattern === 'investigate'
-            ? { answer: 'The docs say it listens on 8080.' }
-            : ({} as Record<string, unknown>);
+        const wrong: Record<string, unknown> =
+          t.pattern !== 'investigate'
+            ? {}
+            : t.id === 'investigate-false-premise'
+              ? { answer: 'It retries three times because the network is flaky.' }
+              : { answer: 'The README says 30 seconds; the docs say port 8080.' };
         expect((await t.check({ workspace: dir, outcome: 'success', state: wrong })).pass).toBe(
           false,
         );

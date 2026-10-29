@@ -1,6 +1,7 @@
 import type { Pattern } from '../core/types.js';
 import { withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
+import { prReviewPhase } from './phases/prReview.js';
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -12,11 +13,18 @@ const v = (reason: string, confidence = 0.9) => ({
 const edit = editVerifyPhase({
   applyDirective:
     'Restructure `files` as `plan` says WITHOUT changing behaviour: every entry of `invariants` must still hold, public APIs keep their names and signatures unless the plan says otherwise, and tests are not weakened. If you notice a bug, do NOT fix it here (that would change behaviour): list it in `noticedBugs` as "path:line — bug" for a separate fix.',
-  applyReads: ['target', 'files', 'plan', 'invariants'],
+  applyReads: ['target', 'files', 'plan', 'invariants', 'reviewComments'],
   applyWrites: ['noticedBugs'],
   triageReads: ['target', 'plan', 'invariants'],
-  success: 'refactored',
+  success: 'prReview',
   giveUp: 'gaveUp',
+});
+const prReview = prReviewPhase({
+  subject: 'target',
+  against: ['plan', 'invariants'],
+  edit: 'apply',
+  approved: 'refactored',
+  stopped: 'reviewStopped',
 });
 
 /**
@@ -32,6 +40,8 @@ export const refactor: Pattern = {
   requiredContext: ['target'],
   goalFrom: 'target',
   result: [
+    'reviewDecision',
+    'reviewComments',
     'plan',
     'invariants',
     'changedFiles',
@@ -65,6 +75,7 @@ export const refactor: Pattern = {
       },
     ],
     edit,
+    prReview,
   ),
   start: 'start',
   groups: [
@@ -81,6 +92,7 @@ export const refactor: Pattern = {
       nodes: ['plan', 'approve'],
     },
     edit.group,
+    prReview.group,
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
@@ -131,6 +143,8 @@ export const refactor: Pattern = {
       shows: ['files', 'plan', 'invariants', 'noticedBugs'],
     },
     ...edit.nodes,
+    ...prReview.nodes,
+    { id: 'reviewStopped', kind: 'end', label: 'Stopped at review', outcome: 'partial' },
     { id: 'refactored', kind: 'end', label: 'Refactored', outcome: 'success' },
     { id: 'gaveUp', kind: 'end', label: 'Gave up', outcome: 'failed' },
     { id: 'notGreen', kind: 'end', label: 'Tests failing before', outcome: 'failed' },
@@ -152,10 +166,19 @@ export const refactor: Pattern = {
     { id: 'approve-apply', from: 'approve', to: edit.entry, branch: 'approved' },
     { id: 'approve-rejected', from: 'approve', to: 'rejected', branch: 'rejected' },
     ...edit.edges,
+    ...prReview.edges,
   ],
   demo: {
     context: { target: 'Extract the page-boundary arithmetic in src/paginate.ts into pageRange()' },
     agents: {
+      prReview: () => ({
+        updates: {
+          reviewDecision: 'APPROVE',
+          reviewComments: [],
+          reviewSummary: 'The change fixes the cause and the test covers it.',
+        },
+        verdict: v('approved'),
+      }),
       plan: () => ({
         updates: {
           files: ['src/paginate.ts'],

@@ -13,7 +13,7 @@ import { parseDraft } from '../core/draft.js';
 import type { Pattern } from '../core/types.js';
 import { PATTERNS, routeMatches } from '../patterns/index.js';
 import { discoverMcpServers, type McpOptions } from './mcp.js';
-import { listRuns } from './store.js';
+import { DRAFTS_DIR, listRuns, savePatternFile } from './store.js';
 import { registry, type ToolContext, type ToolRegistry, type ToolSpec } from './tools.js';
 
 const exec = promisify(execFile);
@@ -287,7 +287,7 @@ export function defaultTools(opts: CatalogOptions = {}): ToolRegistry {
 
 const stripDemo = ({ demo: _demo, ...data }: Pattern) => data;
 
-/** Tools the maestro uses: list the library, route by verb triggers, validate a drafted score. */
+/** Tools the maestro uses: list the library, route by verb triggers, validate and save a drafted score. */
 export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSpec[] {
   const lib = async () => (await library()).filter((p) => p.name !== 'maestro');
   return [
@@ -326,6 +326,24 @@ export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSp
         return parsed.ok
           ? { errors: [], valid: true, pattern: stripDemo(parsed.value) }
           : { errors: parsed.errors, valid: false, pattern: {} };
+      },
+    },
+    {
+      name: 'pattern.save',
+      description: `Save a pattern as ${DRAFTS_DIR}/<name>.ts in symphony-core, so the studio and the CLI list it. Validates it again; refuses the names of built-in patterns.`,
+      outputs: ['file', 'name'],
+      run: async (args, ctx) => {
+        const parsed = parseDraft(args.pattern);
+        if (!parsed.ok) throw new Error(`not a valid pattern: ${parsed.errors.join('; ')}`);
+        const p = stripDemo(parsed.value);
+        if (p.name === 'maestro' || PATTERNS.some((b) => b.name === p.name))
+          throw new Error(`'${p.name}' is a built-in pattern: pick another name`);
+        const file = await savePatternFile(
+          join(ctx.repoRoot, DRAFTS_DIR),
+          p,
+          '../../core/types.js',
+        );
+        return { file: relative(ctx.repoRoot, file), name: p.name };
       },
     },
   ];

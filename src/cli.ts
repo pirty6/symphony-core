@@ -21,7 +21,7 @@ import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
 import { formatReport, runEval, summarize, worseThan, type EvalReport } from './eval/harness.js';
 import { EVAL_TASKS } from './eval/tasks.js';
-import { handoffContext } from './core/chain.js';
+import { type ChainStep, followUps, playsAfter, stepContext, stepPattern } from './core/chain.js';
 import { formatUsage, performanceUsage } from './core/usage.js';
 import { describeEdits } from './core/edits.js';
 import { agreement, compareRuns } from './core/compare.js';
@@ -37,7 +37,7 @@ import type {
   Performance,
   SavedRun,
 } from './core/types.js';
-import { maestro, maestroThen, PATTERNS } from './patterns/index.js';
+import { libraryPatterns, maestro, maestroThen } from './patterns/index.js';
 import { concertNext } from './runtime/concert.js';
 import { loadRepertoire, runsDirFor } from './runtime/store.js';
 import { editsFiles, isolate } from './runtime/worktree.js';
@@ -96,7 +96,7 @@ async function allPatterns(cwd: string): Promise<Pattern[]> {
     join(cwd, DRAFTS_DIR),
     (f) => import(pathToFileURL(f).href),
   );
-  return [...PATTERNS, ...drafts.filter((d) => !PATTERNS.some((p) => p.name === d.name))];
+  return libraryPatterns(process.env, drafts);
 }
 
 function printMessage(m: RunMessage, write: (s: string) => void): void {
@@ -377,36 +377,57 @@ const thenList = (raw: readonly string[] | undefined) =>
 
 /**
  * Play a score, then each chained pattern while runs succeed: the next one's
- * goal input gets what the previous run delivered (core handoffContext).
+ * goal input gets what the previous run delivered (core handoffContext). A
+ * backlog run adds one run per picked item; items go on after a failed item.
+ * Exit code 2 when any run failed.
  */
 async function playChain(
   first: { score: ExecutableScore; pattern: Pattern },
-  then: readonly string[],
+  then: readonly ChainStep[],
   cwd: string,
   o: PlayOptions,
   chained: ReadonlyMap<string, string[]> = new Map(),
-): Promise<Performance> {
+): Promise<number> {
   let current = first;
   let perf = await play(current.score, current.pattern, cwd, o);
-  for (const name of then) {
-    if (perf.outcome !== 'success') break;
+  let failed = perf.outcome === 'failed';
+  const queue: ChainStep[] = [...then];
+  const items: { goal: string; outcome: string }[] = [];
+  for (;;) {
+    queue.unshift(...followUps(current.score, perf));
+    const step = queue.shift();
+    if (!step || !playsAfter(step, perf.outcome)) break;
+    const name = stepPattern(step);
     const pattern = (await allPatterns(cwd)).find((p) => p.name === name);
     if (!pattern) throw new Error(`--then: unknown pattern '${name}'`);
     const given = parseContext(chained.get(name) ?? [], pattern);
-    const context = handoffContext(pattern, { score: current.score, performance: perf }, given);
+    const prev = { score: current.score, performance: perf };
+    const { goal, context } = stepContext(pattern, step, prev, given);
     const score = compileScore(pattern, {
-      goal: current.score.goal,
+      goal,
       context,
       complexity: current.score.complexity,
       improvisation: current.score.improvisation,
     });
+    const left = queue.filter((s) => typeof s !== 'string').length;
     console.log(
-      `\n${c.bold(`♪ then ${name}`)} ${c.dim(`with what ${current.pattern.name} found`)}`,
+      typeof step === 'string'
+        ? `\n${c.bold(`♪ then ${name}`)} ${c.dim(`with what ${current.pattern.name} found`)}`
+        : `\n${c.bold(`♪ ${name}: ${goal}`)} ${c.dim(`(${left} more queued)`)}`,
     );
     current = { score, pattern };
     perf = await play(score, pattern, cwd, o);
+    failed ||= perf.outcome === 'failed';
+    if (typeof step !== 'string') items.push({ goal, outcome: perf.outcome });
   }
-  return perf;
+  if (items.length > 0) {
+    console.log(`\n${c.bold('♪ backlog')}`);
+    for (const i of items) {
+      const mark = i.outcome === 'success' ? c.green('✓') : c.red('✗');
+      console.log(`  ${mark} ${i.outcome.padEnd(9)} ${i.goal}`);
+    }
+  }
+  return failed ? 2 : 0;
 }
 
 type ScoreArgs = ReturnType<
@@ -461,7 +482,7 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
     : undefined;
   try {
     const then = thenList(values.then);
-    const perf = await playChain(
+    return await playChain(
       { score, pattern },
       then,
       cwd,
@@ -476,7 +497,6 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
       },
       splitContext(values.context, then).chained,
     );
-    return perf.outcome === 'failed' ? 2 : 0;
   } finally {
     rl?.close();
   }
@@ -767,8 +787,7 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
     console.log(
       `\n${c.bold('♪ performing the composed score')}${then.length ? c.dim(`, then ${then.join(', ')}`) : ''}`,
     );
-    const childPerf = await playChain(child, then, cwd, o);
-    return childPerf.outcome === 'failed' ? 2 : 0;
+    return await playChain(child, then, cwd, o);
   } finally {
     rl?.close();
   }

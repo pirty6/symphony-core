@@ -213,3 +213,118 @@ test('several runs play at once on one server; the studio switches between them'
   await expect(page.locator('.tb-title')).toContainText('fix')
   await expect(page.getByTestId('gate-card')).toContainText('Paused before “recall”')
 })
+
+test('inputs start empty with the demo as a hint, the large editor writes into them, and offline runs still work', async ({ page }) => {
+  await open(page, 'fix')
+  const issue = page.getByLabel('context issue', { exact: true })
+  await expect(issue).toHaveValue('')
+  await expect(issue).toHaveAttribute('placeholder', /^e\.g\. Page 2 repeats the last item of page 1/)
+  await page.locator('.prompt-box').filter({ has: issue }).getByLabel('large editor').click()
+  // The editor's text area sits inside the dialog's card, filling most of it.
+  const card = (await page.locator('.prompt-editor').boundingBox())!
+  const text = (await page.getByLabel('large editor text').boundingBox())!
+  expect(text.x).toBeGreaterThanOrEqual(card.x)
+  expect(text.y).toBeGreaterThanOrEqual(card.y)
+  expect(text.x + text.width).toBeLessThanOrEqual(card.x + card.width)
+  expect(text.y + text.height).toBeLessThanOrEqual(card.y + card.height)
+  expect(text.height).toBeGreaterThan(card.height / 2)
+  await page.getByLabel('large editor text').fill('Totals are wrong\nwhen a coupon applies')
+  await page.getByRole('dialog').getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(issue).toHaveValue('Totals are wrong\nwhen a coupon applies')
+  // Blank again: the offline demo plays its own example.
+  await issue.fill('')
+  await page.getByText('auto-approve').click()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('run-status')).toHaveText('done')
+})
+
+test('a lost server says so and reconnects; request errors close with ✕ and clear when switching runs', async ({ page }) => {
+  await open(page, 'hangman')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('approval-card')).toBeVisible()
+  // The server goes away: the poll shows it, and it clears itself when the server answers again.
+  await page.route('**/api/runs', (r) => r.abort())
+  await expect(page.getByTestId('server-down')).toBeVisible()
+  const alert = page.getByRole('alert')
+  await page.locator('button.lib-item:not(.saved)').filter({ has: page.locator('b', { hasText: /^fix$/ }) }).click()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(alert).toContainText('Could not reach the studio server')
+  await expect(alert).not.toContainText('Failed to fetch')
+  await alert.getByRole('button', { name: 'dismiss' }).click()
+  await expect(alert).toBeHidden()
+  await page.unroute('**/api/runs')
+  await expect(page.getByTestId('server-down')).toBeHidden()
+  // An error, then another run is opened: the error was about the last action, so it goes.
+  await page.route('**/api/runs', (r) => (r.request().method() === 'POST' ? r.abort() : r.continue()))
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(alert).toBeVisible()
+  await page.getByTestId('live-runs').getByRole('button', { name: /hangman/ }).first().click()
+  await expect(page.locator('.tb-title')).toContainText('hangman')
+  await expect(alert).toBeHidden()
+})
+
+test('an answer that does not get through can be sent again', async ({ page }) => {
+  await open(page, 'hangman')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  const card = page.getByTestId('approval-card')
+  await card.getByLabel('letter', { exact: true }).fill('e')
+  await page.route('**/api/runs/*/approval', (r) => r.abort())
+  await card.getByRole('button', { name: 'Approve', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Could not reach the studio server')
+  // Not stuck disabled: the same answer goes through once the server answers again.
+  await page.unroute('**/api/runs/*/approval')
+  await expect(card.getByLabel('letter', { exact: true })).toBeEnabled()
+  await guess(page, 'e')
+})
+
+for (const lose of ['restarted', 'unreachable'] as const) {
+  test(`stop always ends a paused run: server ${lose}`, async ({ page }) => {
+    await open(page, 'fix')
+    await page.getByText('auto-approve').click()
+    await page.getByLabel('step mode').check()
+    await page.getByRole('button', { name: '▶ Run' }).click()
+    const gate = page.getByTestId('gate-card')
+    await expect(gate).toBeVisible()
+    await page.route('**/api/runs/*/control', (r) =>
+      lose === 'restarted' ? r.fulfill({ status: 404, json: { error: 'run not found' } }) : r.abort(),
+    )
+    await gate.getByRole('button', { name: '⏹ Stop' }).click()
+    await expect(gate).toBeHidden()
+    await expect(page.getByTestId('run-status')).toHaveText('cancelled')
+    await expect(page.getByTestId('run-result')).toContainText(
+      lose === 'restarted' ? 'no longer on the server' : 'could not be reached to stop it',
+    )
+  })
+}
+
+test('deletes one saved run from the list after a second click', async ({ page }) => {
+  await open(page, 'review')
+  await page.getByText('auto-approve').click()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('run-status')).toHaveText('done')
+  const toggle = page.getByTestId('toggle-demo-runs')
+  if ((await toggle.innerText()).startsWith('Show')) await toggle.click()
+  const newest = page.getByTestId('saved-run').filter({ has: page.locator('b', { hasText: /^review$/ }) }).first()
+  await expect(newest).toBeVisible()
+  // Other tests' runs may still be saving: follow this run by its file, not by position or count.
+  const file = (await newest.getAttribute('data-file'))!
+  // Windows paths have backslashes, which CSS selectors read as escapes.
+  const mine = page.locator(`[data-testid="saved-run"][data-file="${file.replaceAll('\\', '\\\\')}"]`)
+  const trash = mine.getByRole('button', { name: 'delete run' })
+  // The trash can shows only while hovering the run.
+  await page.locator('.tb-title').hover()
+  await expect(trash).toHaveCSS('opacity', '0')
+  // The list refreshes when the run ends and rows can move under the mouse: hover again until it shows.
+  await expect(async () => {
+    await mine.hover()
+    await expect(trash).toHaveCSS('opacity', '1', { timeout: 500 })
+  }).toPass()
+  await trash.click()
+  // One click only asks; Keep leaves it.
+  await mine.getByRole('button', { name: 'keep' }).click()
+  await expect(mine).toHaveCount(1)
+  await mine.hover()
+  await trash.click()
+  await mine.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(mine).toHaveCount(0)
+})

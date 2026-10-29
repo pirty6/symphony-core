@@ -24,7 +24,7 @@ import { describeEdits } from '@core/edits'
 import { DataEdge } from './canvas/DataEdge'
 import { FlowNode } from './canvas/FlowNode'
 import { FrameNode, PhaseNode } from './canvas/PhaseNode'
-import { ApiError, api, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
+import { api, errorText, isNetworkError, isRunGone, RUN_GONE, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
 import {
   IDLE_VIEW,
   applyMessage,
@@ -37,6 +37,7 @@ import {
   isOfflineDemo,
   newNode,
   parseStoredSettings,
+  endLocally,
   originSummary,
   originsByNode,
   phaseDisplay,
@@ -76,6 +77,10 @@ function contextStrings(ctx: Record<string, unknown> | undefined): Record<string
   return Object.fromEntries(Object.entries(ctx ?? {}).map(([k, v]) => [k, formatFieldInput(v)]))
 }
 
+/** The fields that have something typed in them. */
+const nonBlank = (c: Readonly<Record<string, string>>) =>
+  Object.fromEntries(Object.entries(c).filter(([, v]) => v.trim() !== ''))
+
 export default function Studio() {
   const { screenToFlowPosition, fitView, getZoom, setCenter, getNode } = useReactFlow()
   const [follow, setFollow] = useState(true)
@@ -86,6 +91,8 @@ export default function Studio() {
   const [library, setLibrary] = useState<LibraryItem[]>([])
   const [saved, setSaved] = useState<SavedSummary[]>([])
   const [live, setLive] = useState<LiveRun[]>([])
+  /** The last poll could not reach the server (stopped or restarting); clears when it answers. */
+  const [serverDown, setServerDown] = useState(false)
   const [meta, setMeta] = useState<PatternMeta>(BLANK)
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeType>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([])
@@ -158,9 +165,10 @@ export default function Studio() {
     (item: LibraryItem) => {
       unsubscribe.current?.()
       showGraph(metaOf(item), item.graph)
-      setGoal(item.demo?.goal ?? item.description)
+      // Start empty: the demo's inputs are shown as examples, and fill blanks only for offline runs.
+      setGoal('')
       setThenPattern('')
-      setContext(contextStrings(item.demo?.context))
+      setContext({})
       setBreakpoints(new Set())
       setView(IDLE_VIEW)
       setTab('node')
@@ -173,7 +181,14 @@ export default function Studio() {
   const refreshSaved = useCallback(() => void api.saved().then(setSaved, () => setSaved([])), [])
   // Several runs can play at once on this server; poll so the list stays current.
   useEffect(() => {
-    const poll = () => void api.liveRuns().then(setLive, () => undefined)
+    const poll = () =>
+      void api.liveRuns().then(
+        (runs) => {
+          setLive(runs)
+          setServerDown(false)
+        },
+        (e: unknown) => isNetworkError(e) && setServerDown(true),
+      )
     poll()
     const timer = setInterval(poll, 2000)
     return () => clearInterval(timer)
@@ -192,7 +207,7 @@ export default function Studio() {
         const first = items.find((i) => i.name === wanted) ?? items[0]
         if (first) loadPatternRef.current(first)
       },
-      (e: Error) => !cancelled && setError(`Could not load patterns: ${e.message}`),
+      (e: Error) => !cancelled && setError(`Could not load patterns: ${errorText(e)}`),
     )
     refreshSaved()
     api.tiers().then(
@@ -206,7 +221,10 @@ export default function Studio() {
   }, [refreshSaved])
 
   useEffect(() => {
-    if (view.mode === 'live' && !ACTIVE.has(view.status)) refreshSaved()
+    if (view.mode !== 'live' || ACTIVE.has(view.status)) return
+    refreshSaved()
+    // A run may have saved a new pattern (metaphor, maestro --save): list it right away.
+    void api.patterns().then(setLibrary, () => undefined)
   }, [view.mode, view.status, refreshSaved])
 
   // ── derived ────────────────────────────────────────────────────────
@@ -293,6 +311,7 @@ export default function Studio() {
   const offline = isOfflineDemo(view.performance)
   // The offline demo plays answers written for the demo inputs; warn before it ignores the user's own.
   const demoInputs = useMemo(() => contextStrings(library.find((l) => l.name === meta.name)?.demo?.context), [library, meta.name])
+  const demoGoal = library.find((l) => l.name === meta.name)?.demo?.goal ?? ''
   const ignoredInputs = editable && settings.provider === 'scripted' ? changedFromDemo(context, demoInputs) : []
   const goalText = view.goal ?? ''
 
@@ -354,24 +373,56 @@ export default function Studio() {
 
   const run = async () => {
     setError(null)
+    // The offline demo answers the demo's question: blanks take the demo's value there.
+    // A real AI uses only what you wrote.
+    const offline = settings.provider === 'scripted'
+    const filled = offline ? { ...demoInputs, ...nonBlank(context) } : context
     let ctx: Record<string, unknown>
     try {
       ctx = Object.fromEntries(
-        meta.state.filter((f) => (context[f.name] ?? '').trim() !== '').map((f) => [f.name, parseFieldInput(f.type, context[f.name]!)]),
+        meta.state.filter((f) => (filled[f.name] ?? '').trim() !== '').map((f) => [f.name, parseFieldInput(f.type, filled[f.name]!)]),
       )
     } catch (e) {
       setError(`Invalid run input: ${(e as Error).message}`)
       return
     }
-    await start({ pattern, goal, context: ctx }, breakpoints)
+    const runGoal = goal.trim() || (offline ? demoGoal || meta.description : '')
+    await start({ pattern, goal: runGoal, context: ctx }, breakpoints)
   }
 
   const followRun = (runId: string, score?: { goal: string; result?: readonly string[] }) => {
     unsubscribe.current?.()
+    // Another run: an error about the last one no longer applies.
+    setError(null)
     setView(startLive(runId, score?.goal, score?.result))
     setSelected(null)
     setTab('ai')
-    unsubscribe.current = subscribeRun(runId, (m) => setView((v) => (v.runId === runId ? applyMessage(v, m) : v)))
+    unsubscribe.current = subscribeRun(
+      runId,
+      (m) => setView((v) => (v.runId === runId ? applyMessage(v, m) : v)),
+      () => endRun(runId, RUN_GONE),
+    )
+  }
+
+  /** The server cannot tell us more about this run: end it on screen so nothing waits forever. */
+  const endRun = (runId: string, reason: string) => {
+    setView((v) => (v.runId === runId ? endLocally(v, reason) : v))
+  }
+
+  /** A request about the open run failed: end it here if the server lost it, else say why. */
+  const runRequestFailed = (runId: string, e: unknown) => {
+    if (isRunGone(e)) endRun(runId, RUN_GONE)
+    else setError(errorText(e))
+  }
+
+  /** Send an approval or recovery answer; rejects when it fails, so its card can be sent again. */
+  const sendAnswer = (send: (runId: string) => Promise<unknown>) => {
+    const runId = view.runId
+    if (!runId) return
+    return send(runId).catch((e: unknown) => {
+      runRequestFailed(runId, e)
+      throw e
+    })
   }
 
   const start = async (
@@ -392,7 +443,7 @@ export default function Studio() {
       })
       followRun(runId, score)
     } catch (e) {
-      setError(e instanceof ApiError && e.issues.length ? `${e.message}` : (e as Error).message)
+      setError(errorText(e))
     }
   }
 
@@ -433,7 +484,7 @@ export default function Studio() {
           )
           followRun(childId, r.score)
         },
-        (e: Error) => setError(e.message),
+        (e: Error) => setError(errorText(e)),
       )
     } else {
       unsubscribe.current?.()
@@ -447,7 +498,14 @@ export default function Studio() {
   }, [handedOn])
 
   const control = (action: string, extra?: Record<string, unknown>) => {
-    if (view.runId) void api.control(view.runId, action, extra).catch((e: Error) => setError(e.message))
+    const runId = view.runId
+    if (!runId) return
+    void api.control(runId, action, extra).catch((e: unknown) => {
+      // Stop must always get you out, even when the server cannot be reached to hear it.
+      if (action === 'stop' && isNetworkError(e))
+        endRun(runId, 'Stopped here, but the server could not be reached to stop it. If it is still playing, it is listed under Live runs.')
+      else runRequestFailed(runId, e)
+    })
   }
 
   const changeSettings = (s: RunSettings) => {
@@ -477,7 +535,7 @@ export default function Studio() {
       )
       followRun(runId, score)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : (e as Error).message)
+      setError(errorText(e))
     }
   }
 
@@ -491,7 +549,7 @@ export default function Studio() {
       setNotice(null)
       followRun(runId, r.score)
     } catch (e) {
-      setError((e as Error).message)
+      setError(errorText(e))
     }
   }
 
@@ -499,14 +557,27 @@ export default function Studio() {
     try {
       const res = await api.savedFile(file)
       unsubscribe.current?.()
+      setError(null)
       showGraph(scoreMeta(res.run.score), res.graph)
       setGoal(res.run.score.goal)
       setContext(contextStrings(res.run.score.context as Record<string, unknown>))
       setView(replayView(res.run, { reproduced: res.reproduced, issues: res.issues, file }))
       setTab('state')
     } catch (e) {
-      setError((e as Error).message)
+      setError(errorText(e))
     }
+  }
+
+  const deleteSaved = async (file: string) => {
+    try {
+      await api.deleteSaved(file)
+      // The run on screen is the one deleted: nothing is left to show or resume.
+      if (view.replay?.file === file) setView(IDLE_VIEW)
+      setError(null)
+    } catch (e) {
+      setError(errorText(e))
+    }
+    refreshSaved()
   }
 
   // ── render ─────────────────────────────────────────────────────────
@@ -611,6 +682,7 @@ export default function Studio() {
           setView(IDLE_VIEW)
         }}
         onOpenSaved={(f) => void openSaved(f)}
+        onDeleteSaved={deleteSaved}
         onRefreshSaved={refreshSaved}
         live={live}
         liveId={view.mode === 'live' ? view.runId : undefined}
@@ -630,7 +702,7 @@ export default function Studio() {
               setNotice(`Cleaned up ${done.deleted.length + done.compacted.length + done.scratch.length} item(s), ${(done.freed / 1e6).toFixed(1)} MB freed.`)
               refreshSaved()
             })
-            .catch((e: Error) => setError(`Clean up failed: ${e.message}`))
+            .catch((e: Error) => setError(`Clean up failed: ${errorText(e)}`))
         }
         onAsk={(r) => void ask(r)}
       />
@@ -673,10 +745,15 @@ export default function Studio() {
         </ReactFlow>
       </main>
       <aside className="inspector">
+        {serverDown && (
+          <div className="card issue warning" role="status" data-testid="server-down">
+            ⚠ Can't reach the studio server (stopped, or restarting after a code change). Reconnecting…
+          </div>
+        )}
         {error && (
-          <div className="card issue" role="alert">
-            {error}
-            <button type="button" className="link" onClick={() => setError(null)} aria-label="dismiss">
+          <div className="card issue dismissable" role="alert">
+            <span>{error}</span>
+            <button type="button" className="link dismiss" onClick={() => setError(null)} aria-label="dismiss" title="Dismiss">
               ✕
             </button>
           </div>
@@ -699,8 +776,8 @@ export default function Studio() {
           </div>
         )}
         <GateCard view={view} onResume={() => control('resume')} onStep={() => control('step')} onStop={() => control('stop')} />
-        <ApprovalCard view={view} onAnswer={(a) => view.runId && void api.approve(view.runId, a).catch((e: Error) => setError(e.message))} />
-        <RecoveryCard view={view} onAnswer={(a) => view.runId && void api.recover(view.runId, a).catch((e: Error) => setError(e.message))} />
+        <ApprovalCard view={view} onAnswer={(a) => sendAnswer((id) => api.approve(id, a))} />
+        <RecoveryCard view={view} onAnswer={(a) => sendAnswer((id) => api.recover(id, a))} />
         {resultBanner}
         <nav className="tabs">
           {(['node', 'ai', 'state'] as const).map((t) => (
@@ -738,6 +815,8 @@ export default function Studio() {
                 editable={editable}
                 goal={goal}
                 context={context}
+                examples={demoInputs}
+                exampleGoal={demoGoal}
                 errors={report.errors}
                 warnings={report.warnings}
                 onMeta={setMeta}

@@ -248,3 +248,44 @@ describe('investigate only records evidence that holds', () => {
     expect(JSON.stringify(rejected[0])).toMatch(/using only ids that exist in findings/);
   });
 });
+
+describe('investigate always ends: research rounds are bounded', () => {
+  it('worst case (gaps never close, the skeptic always objects, a hint is given): bounded chases', () => {
+    const v = { outcome: 'applied' as const, confidence: 0.2, shouldTerminate: false, reason: 'r' };
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        assess: (s) => ({
+          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          verdict: v,
+        }),
+        challenge: () => ({ updates: { objections: ['src/x.ts was never read'] }, verdict: v }),
+      },
+      approvals: {
+        ...demo.approvals,
+        clarify: () => ({ approved: true, updates: { hint: 'look harder' } }),
+      },
+    };
+    const score = compileScore(investigate, {
+      goal: 'g',
+      context: { ...demo.context!, complexity: 2 },
+    });
+    const r = runScripted(score, script);
+    expect(r.state.kind).toBe('done');
+    const s = r.state.state;
+    const chases = r.state.steps.filter((x) => x.nodeId === 'chase').length;
+    // Gap rounds, twice (a human hint grants one more batch), plus one per debate round.
+    expect(chases).toBeLessThanOrEqual(
+      2 * (s.maxGapRounds as number) + (s.maxDebateRounds as number),
+    );
+    expect(s.debateRounds).toBe(s.maxDebateRounds);
+    // Out of rounds, not out of objections: they are reported, not dropped.
+    expect(s.unresolvedObjections).toEqual(['src/x.ts was never read']);
+    const normal = runScripted(
+      compileScore(investigate, { goal: 'g', context: demo.context! }),
+      demo,
+    );
+    expect(normal.state.state.unresolvedObjections).toEqual([]);
+  });
+});

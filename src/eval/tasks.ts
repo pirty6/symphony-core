@@ -202,4 +202,76 @@ export const EVAL_TASKS: readonly EvalTask[] = [
     check: async ({ state }) =>
       mentions(String(state.answer ?? ''), ['8081', 'src/config.js', 'loadConfig']),
   },
+  withHiddenTest(
+    {
+      id: 'fix-cause-elsewhere',
+      pattern: 'fix',
+      inputs: {
+        issue:
+          'cartTotal([{ price: 10, qty: 3 }]) returns 10 instead of 30 (see test/cart.test.js)',
+        testCommand: 'node --test test/cart.test.js',
+      },
+      files: {
+        'package.json': PKG,
+        '.gitignore': IGNORE,
+        'src/cart.js':
+          "import { lineTotal } from './money.js';\n\nexport function cartTotal(lines) {\n  return lines.reduce((sum, l) => sum + lineTotal(l), 0);\n}\n",
+        // The symptom is in cart.js; the cause is here.
+        'src/money.js':
+          'export function lineTotal(line) {\n  return line.price * (line.qty ? 1 : 0);\n}\n',
+        'test/cart.test.js': `${TEST_HEAD}import { cartTotal } from '../src/cart.js';\ntest('sums price x qty', () => assert.equal(cartTotal([{ price: 10, qty: 3 }]), 30));\n`,
+      },
+    },
+    'test/cart.test.js',
+    "import { lineTotal } from '../src/money.js';\ntest('lineTotal', () => { assert.equal(lineTotal({ price: 2, qty: 5 }), 10); assert.equal(lineTotal({ price: 7, qty: 0 }), 0); });\n",
+  ),
+  {
+    id: 'investigate-multi-hop',
+    pattern: 'investigate',
+    inputs: {
+      question:
+        'With no environment variables set, how many seconds does a request wait before it times out, and which files decide it?',
+    },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/defaults.js': 'export const DEFAULTS = { timeoutSeconds: 30, retries: 0 };\n',
+      'src/overrides.js':
+        "import { DEFAULTS } from './defaults.js';\n\n// Production profile: double the default.\nexport const PROFILE = { ...DEFAULTS, timeoutSeconds: DEFAULTS.timeoutSeconds * 2 };\n",
+      'src/client.js':
+        "import { PROFILE } from './overrides.js';\n\nexport function timeoutMs(env = process.env) {\n  const seconds = env.TIMEOUT ? Number(env.TIMEOUT) : PROFILE.timeoutSeconds - 15;\n  return seconds * 1000;\n}\n",
+      'README.md': '# client\n\nRequests time out after 30 seconds by default.\n',
+    },
+    // defaults 30 -> overrides x2 = 60 -> client - 15 = 45; the README's 30 is stale.
+    check: async ({ state }) =>
+      mentions(String(state.answer ?? ''), ['45', 'src/client.js', 'src/overrides.js']),
+  },
+  {
+    id: 'investigate-false-premise',
+    pattern: 'investigate',
+    inputs: {
+      question: 'Why does fetchUser retry failed requests three times before giving up?',
+    },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/users.js':
+        'export async function fetchUser(id, http) {\n  const res = await http.get(`/users/${id}`);\n  if (!res.ok) throw new Error(`user ${id}: ${res.status}`);\n  return res.json();\n}\n',
+      'src/http.js':
+        'export const http = {\n  get: (path) => fetch(`https://api.example.com${path}`),\n};\n',
+    },
+    // There is no retry at all: the right answer says so instead of explaining one.
+    check: async ({ state }) => {
+      const answer = String(state.answer ?? '');
+      const denies = /\b(no|not|never|doesn't|does not|without)\b[^.]{0,60}\bretr/i.test(answer);
+      const invents = /retr\w*[^.]{0,40}\b(three|3) times\b[^.]{0,40}\bbecause\b/i.test(answer);
+      return {
+        pass: denies && !invents,
+        notes: [
+          denies ? 'says there is no retry' : 'does not say there is no retry',
+          ...(invents ? ['explains a retry that does not exist'] : []),
+        ],
+      };
+    },
+  },
 ];

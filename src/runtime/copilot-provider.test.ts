@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { formatUsage } from '../core/usage.js';
 import type { SessionConfig } from '@github/copilot-sdk';
 import { compileScore } from '../core/compile.js';
 import { replayPerformance } from '../core/replay.js';
@@ -10,6 +11,7 @@ import {
   CopilotProvider,
   ISOLATED_SYSTEM,
   SIGN_IN_HELP,
+  normalizeSubmission,
   withoutTokenVars,
   parseTiers,
   type ClientLike,
@@ -360,6 +362,111 @@ describe('CopilotProvider', () => {
     await expect(
       new CopilotProvider({ clientFactory: () => cli.client }).runAgent(req),
     ).rejects.toMatchObject({ name: 'SetupError' });
+
+    // A used-up quota stops the run at once: every retry would be refused the same way.
+    const broke = fakeClient(async (_cfg, emit) => {
+      emit('session.error', {
+        message: 'You have exceeded your monthly quota (Request ID: 3BAB:F09)',
+      });
+      emit('session.idle');
+    });
+    await expect(
+      new CopilotProvider({ clientFactory: () => broke.client }).runAgent(req),
+    ).rejects.toMatchObject({
+      name: 'SetupError',
+      message: expect.stringMatching(
+        /quota is used up.*exceeded your monthly quota.*Retrying cannot help/,
+      ),
+    });
+  });
+
+  it('keeps the last valid answer: a later bad or parallel call never replaces it', async () => {
+    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+    const play = async (calls: unknown[]) => {
+      const replies: string[] = [];
+      const { client } = fakeClient(async (cfg, emit) => {
+        for (const c of calls) replies.push(String(await callTool(cfg, 'submit_result', c)));
+        emit('session.idle');
+      });
+      const res = await new CopilotProvider({ clientFactory: () => client }).runAgent({
+        pause,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      });
+      return { result: res.result, replies };
+    };
+    const good = { updates: { word: 'cat' }, verdict };
+    // A garbled parallel call after a good one: the good one stays.
+    expect((await play([good, { updates: 'oops' }])).result).toEqual(good);
+    // A deliberate correction (both valid): the later one wins.
+    const better = { updates: { word: 'dog' }, verdict };
+    expect((await play([good, better])).result).toEqual(better);
+    // updates sent as a JSON string is repaired, not rejected.
+    const text = await play([{ updates: '{"word":"owl"}', verdict }]);
+    expect(text.replies[0]).toMatch(/^Result recorded/);
+    expect(text.result).toEqual({ updates: { word: 'owl' }, verdict });
+    // Never valid: the last bad answer reaches the engine, which says why.
+    const bad = await play([{ updates: {} }, { updates: {} }, { updates: {} }]);
+    expect(bad.replies.map((r) => r.split('\n')[0])).toEqual([
+      'REJECTED: the result was not recorded.',
+      'REJECTED: the result was not recorded.',
+      'Result recorded. Your step is complete: stop now.',
+    ]);
+    expect(bad.result).toEqual({ updates: {} });
+  });
+
+  it('normalizeSubmission parses string-encoded JSON only where it is an object', () => {
+    expect(normalizeSubmission('{"updates":{"a":1}}')).toEqual({ updates: { a: 1 } });
+    expect(normalizeSubmission({ updates: '{"a":1}' })).toEqual({ updates: { a: 1 } });
+    expect(normalizeSubmission({ updates: '[1]' })).toEqual({ updates: '[1]' });
+    expect(normalizeSubmission({ updates: 'not json' })).toEqual({ updates: 'not json' });
+  });
+
+  it('records what the provider reports beyond tokens: time, cost, cache writes, compactions', async () => {
+    const { client } = fakeClient(async (cfg, emit) => {
+      await callTool(cfg, 'submit_result', {
+        updates: { word: 'cat' },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+      });
+      const call = {
+        inputTokens: 100,
+        outputTokens: 5,
+        cacheWriteTokens: 40,
+        duration: 1500,
+        timeToFirstTokenMs: 400,
+        cost: 1,
+        copilotUsage: { totalNanoAiu: 2000 },
+      };
+      emit('assistant.usage', { model: 'm', ...call });
+      emit('session.compaction_complete', { success: true });
+      emit('assistant.usage', { model: 'm', ...call });
+      emit('session.idle');
+    });
+    const res = await new CopilotProvider({ clientFactory: () => client }).runAgent({
+      pause,
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    expect(res.transcript.usage).toEqual({
+      calls: 2,
+      inputTokens: 200,
+      outputTokens: 10,
+      cacheReadTokens: 0,
+      reasoningTokens: 0,
+      cacheWriteTokens: 80,
+      apiMs: 3000,
+      firstTokenMs: 800,
+      premiumRequests: 2,
+      nanoAiu: 4000,
+      compactions: 1,
+    });
+    expect(formatUsage(res.transcript.usage!)).toBe(
+      '200 in · 10 out · 2 calls · 3.0s in the model, first token 0.4s avg · 2 premium requests · compacted 1×',
+    );
   });
 
   it('falls back to JSON in the final message', async () => {
@@ -540,6 +647,34 @@ describe('CopilotProvider', () => {
         'Copilot refused the GitHub account signed in on this machine',
       ),
     });
+  });
+
+  it('a configured token the sign-in check rejects gives way to the signed-in account', async () => {
+    const auths: { gitHubToken?: string }[] = [];
+    const factory = (auth: { gitHubToken?: string }) => {
+      auths.push(auth);
+      const { client } = fakeClient(async (cfg, emit) => {
+        await callTool(cfg, 'submit_result', { updates: { word: 'cat' } });
+        emit('session.idle');
+      });
+      return { ...client, getAuthStatus: async () => ({ isAuthenticated: !auth.gitHubToken }) };
+    };
+    const events: string[] = [];
+    const p = new CopilotProvider({
+      clientFactory: factory,
+      gitHubToken: 'bad',
+      gitHubTokenSource: 'TOKEN',
+    });
+    const res = await p.runAgent({
+      pause,
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: (e) => e.type === 'info' && events.push(e.text),
+    });
+    expect(res.result).toEqual({ updates: { word: 'cat' } });
+    expect(auths).toEqual([{ gitHubToken: 'bad' }, {}]);
+    expect(events.join('\n')).toMatch(/the token in TOKEN is not signed in to Copilot/);
   });
 
   it('the signed-in account is used without token variables the CLI would prefer', () => {

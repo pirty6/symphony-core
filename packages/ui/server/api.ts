@@ -16,6 +16,7 @@
  *   GET  /api/copilot/status               { signedIn, login?, message }: can Copilot run here
  *   GET  /api/saved                        saved runs
  *   POST /api/saved/prune {dryRun?}        retention: delete old demo runs, compact old runs
+ *   POST /api/saved/delete {path}           delete one saved run (not one still playing)
  *   GET  /api/saved/file?path=             saved run + integrity + replay check
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -28,9 +29,11 @@ import { replayPerformance, restoreEngine } from '../../../src/core/replay.js'
 import { isImprovisation, playsFromRepertoire } from '../../../src/core/jazz.js'
 import type { Complexity, ExecutableScore, Pattern } from '../../../src/core/types.js'
 import { chainNext } from '../../../src/runtime/chain.js'
+import type { ChainStep } from '../../../src/core/chain.js'
 import { concertNext } from '../../../src/runtime/concert.js'
 import { validatePattern } from '../../../src/core/validate.js'
-import { PATTERNS } from '../../../src/patterns/index.js'
+import { libraryPatterns, PATTERNS } from '../../../src/patterns/index.js'
+import { enabledExtras } from '../../../src/patterns/extras/index.js'
 import { draftPattern } from '../../../src/runtime/drafting.js'
 import { Run, type RunOptions } from '../../../src/runtime/driver.js'
 import {
@@ -42,7 +45,7 @@ import {
   type RuntimeExtras,
 } from '../../../src/runtime/factory.js'
 import { isolate, editsFiles } from '../../../src/runtime/worktree.js'
-import { autoPrune, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
+import { autoPrune, deleteRun, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
 
 export interface ApiOptions {
   /** Repository root (where src/patterns lives). */
@@ -118,6 +121,8 @@ function asPattern(raw: unknown): Pattern {
 
 export function createApi(opts: ApiOptions) {
   const runs = opts.runs ?? new Map<string, Run>()
+  /** The file each run saves its checkpoints to, so a run still playing is not deleted. */
+  const savedFiles = new Map<string, string>()
   const env = opts.env ?? process.env
   const workspace = opts.workspace ?? opts.repoRoot
   const runsDir = runsDirFor(opts.repoRoot, env)
@@ -125,14 +130,13 @@ export function createApi(opts: ApiOptions) {
   const scratchDir = join(workspace, '.symphony', 'scratch')
   void autoPrune(workspace, runsDir, env)
 
-  async function library(): Promise<{ pattern: Pattern; source: 'builtin' | 'draft' }[]> {
+  async function library(): Promise<{ pattern: Pattern; source: 'builtin' | 'extra' | 'draft' }[]> {
     const drafts = await loadPatternFiles(draftsDir, opts.importer)
-    return [
-      ...PATTERNS.map((pattern) => ({ pattern, source: 'builtin' as const })),
-      ...drafts
-        .filter((d) => !PATTERNS.some((p) => p.name === d.name))
-        .map((pattern) => ({ pattern, source: 'draft' as const })),
-    ]
+    const extras = new Set(enabledExtras(env).map((p) => p.name))
+    return libraryPatterns(env, drafts).map((pattern) => ({
+      pattern,
+      source: PATTERNS.includes(pattern) ? ('builtin' as const) : extras.has(pattern.name) ? ('extra' as const) : ('draft' as const),
+    }))
   }
 
   async function demoFor(name: string) {
@@ -162,8 +166,8 @@ export function createApi(opts: ApiOptions) {
     readonly stepMode: boolean
     readonly breakpoints: string[]
     readonly restore?: RunOptions['restore']
-    /** Patterns to play after this one, each with what the previous found. */
-    readonly chain?: readonly string[]
+    /** Patterns (or backlog items) to play after this one. */
+    readonly chain?: readonly ChainStep[]
   }
 
   async function launch(score: ExecutableScore, pattern: Pattern, settings: Settings): Promise<Run> {
@@ -203,7 +207,11 @@ export function createApi(opts: ApiOptions) {
         ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
         : {}),
       ...(isolation ? { isolation } : {}),
-      onSave: (r) => saveRun(runsDir, r),
+      onSave: async (r) => {
+        const file = await saveRun(runsDir, r)
+        savedFiles.set(id, file)
+        return file
+      },
       checkpoint: true,
       ...(settings.restore ? { restore: settings.restore } : {}),
       ...(next ? { next } : {}),
@@ -483,6 +491,25 @@ export function createApi(opts: ApiOptions) {
       if (method === 'POST' && path === '/api/saved/prune') {
         const body = await readJson(req)
         send(res, 200, await pruneRuns(runsDir, { scratchDir, dryRun: body.dryRun === true }))
+        return true
+      }
+      if (method === 'POST' && path === '/api/saved/delete') {
+        const body = await readJson(req)
+        const file = runPath(runsDir, typeof body.path === 'string' ? body.path : '')
+        if (!file) {
+          send(res, 400, { error: 'invalid path' })
+          return true
+        }
+        const playing = [...savedFiles].find(([id, f]) => f === file && !TERMINAL.has(runs.get(id)?.status ?? 'done'))
+        if (playing) {
+          send(res, 409, { error: 'this run is still playing: stop it first' })
+          return true
+        }
+        if (!(await deleteRun(runsDir, file))) {
+          send(res, 404, { error: 'no such saved run' })
+          return true
+        }
+        send(res, 200, { deleted: file })
         return true
       }
       if (method === 'GET' && path === '/api/saved/file') {

@@ -37,7 +37,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: npm install
+      # Exactly the versions in package-lock.json (fails if it is out of date).
+      - run: npm ci
       - name: npm debug log
         if: failure()
         run: tail -n 120 ~/.npm/_logs/*-debug-0.log
@@ -53,7 +54,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      # Exactly the versions in package-lock.json (fails if it is out of date).
+      - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:ui

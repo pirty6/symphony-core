@@ -104,6 +104,7 @@ npm run cli -- run investigate -c question="Where is auth handled?" --provider c
 npm run cli -- run fix --step --break apply          # pause at gates
 npm run cli -- run investigate -c question="Why do logins fail on CI?" --then fix --provider copilot
 #   chain: fix starts with what investigate found; inputs for it: -c fix.testCommand="npm test"
+npm run cli -- run backlog -c source=docs/improvements.md --provider copilot   # one implement run per picked item
 npm run cli -- draft "triage a flaky test" --provider copilot --save
 npm run cli -- verify .symphony/runs/fix/<file>.json # integrity + deterministic replay check
 npm run cli -- compare <a.json> <b.json>             # where two runs diverge, and why
@@ -160,7 +161,7 @@ Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the V
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
 state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + -`,
-`len empty includes lower append if chars subset take drop first unique without`, and
+`len empty includes lower append if chars subset take drop first unique without pick`, and
 `verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
@@ -385,7 +386,9 @@ npm run install:vscode      # once; add -- --insiders for VS Code Insiders, -- -
 ```
 
 This installs, for every workspace:
-- the `/maestrov2` prompt and the `maestro-v2` agent, in your user prompts folder;
+- the `/maestrov2` prompt and the `maestro-v2` agent, in your user prompts folder (Copilot Chat);
+- the `maestrov2` skill, in `~/.agents/skills/maestrov2`, for chats that load skills rather than
+  prompt files (Copilot CLI, the VS Code agent host). Same instructions as the agent;
 - the `symphony` MCP server, in your user `mcp.json`. Your other servers and comments are kept,
   and a `.bak` copy is written.
 
@@ -447,8 +450,8 @@ hash identically. A failure is triaged before retrying:
   the way go to `noticedBugs` instead of being fixed (that would change behaviour).
 - **implement** = a green baseline + competing approaches (including "it already exists") +
   evidence from the code + a **design with acceptance criteria** and the tests that will prove
-  them, which the skeptic attacks and you approve + edit and verify (a wrong design goes back to
-  exploring) + an **acceptance review**: passing tests are not enough; every criterion must be MET
+  them, which the skeptic attacks and you approve + **tests first** (below) + edit and verify (a
+  wrong design goes back to exploring) + an **acceptance review**: passing tests are not enough; every criterion must be MET
   with evidence (a test or the code in the diff), and unmet ones go back to editing up to
   `maxReviews` (2) times, else the run ends partial.
 
@@ -456,9 +459,77 @@ hash identically. A failure is triaged before retrying:
 npm run cli -- run implement -c request="Add a --json flag to the list command" --provider copilot
 ```
 
+**Tests first** (implement, `src/patterns/phases/testFirst.ts`): the tests are written before the
+code, so they cannot be fitted to the implementation, and the engine proves they test something:
+
+1. The executor writes only the tests in `testsToAdd`; the engine checks (git diff) that the step
+   changed nothing but the files it listed in `testFiles`.
+2. The engine runs the tests: the suite must fail. Tests that pass before any code check nothing new.
+3. An assessor checks each criterion fails for the right reason (the behaviour is missing, not a
+   syntax error or a broken test): `RED`, or `GUARD` for "existing behaviour stays the same", which
+   should pass already. Anything else goes back with the reasons, up to `maxRedAttempts` (2), then
+   you decide whether to implement anyway.
+4. The engine hashes `testFiles` (locked). The executor makes them pass by changing the code; after
+   every green run the hash must still match, or you decide whether the changed tests are acceptable.
+
+**PR review** (`src/patterns/phases/prReview.ts`): once the tests pass (and, for implement,
+every acceptance criterion is met), a reviewer on another model family reads the diff like a pull
+request. Blocking comments (`BLOCKING path:line — what and why`) go back to the edit step, the
+engine re-runs the tests, and the review runs again until it approves. After `maxReviewRounds`
+(2) you decide: accept the change as it is (the comments stay in the result) or stop.
+
 **Chaining**: one pattern's result feeds the next pattern's goal input (`core/chain.ts`):
 `--then` in the CLI, **Then run** in the studio, or the maestro when a request asks for two shapes
 ("find out why X, then fix it"). Each run is still its own score and performance.
+
+**Backlog**: turn a document of improvements (or a pasted investigate result) into one run per
+item (`src/patterns/backlog.ts`). An assessor reads `source` (a workspace file or the text
+itself) and writes at most 10 self-contained requests, skipping what the code already does; you
+pick the item numbers (`1, 3`; empty = all; reject = none). The runtime then plays `runPattern`
+(`implement` by default, or `fix` / `refactor`) once per pick, in order, each in its own run with
+its own worktree, approvals and PR review; `testCommand` goes to every item. A failed item does not
+stop the rest (a plain chain does); stopping a run stops them all. The CLI ends with a table of how
+each item went; the studio follows each run as it starts.
+
+```bash
+npm run cli -- run backlog -c source=docs/improvements.md -c testCommand="npm test" --provider copilot
+```
+
+## Optional patterns: metaphor to model
+
+Optional patterns live in `src/patterns/extras/` and are not part of the core library. Turn them on
+with `SYMPHONY_EXTRAS` (names, comma-separated, or `all`); the studio tags them `extra`:
+
+```bash
+SYMPHONY_EXTRAS=metaphor,storm-in-between npm start
+SYMPHONY_EXTRAS=all npm run cli -- list
+```
+
+`metaphor` (`src/patterns/extras/metaphor.ts`) turns a metaphor into a pattern you can run. It reads the
+metaphor's frames, tensions, movements and what must stay true, then maps it to a model by fixed
+rules (`METAPHOR_RULES`), so any metaphor maps the same way:
+
+| Part of the metaphor | Becomes |
+|---|---|
+| a voice or perspective | an agent node writing its own field |
+| a tension (A vs B) | a condition, or a loop between them with a bound |
+| a pulse, listening over time | a loop with a round counter |
+| a filter | agent checks or a condition |
+| coexistence | a compute node that keeps every field |
+| ground, stillness | an early step that reads the input |
+| feeling, judgement | an approval |
+| resolution | end nodes; `result` lists every voice |
+
+The AI drafts the pattern, the engine validates it (errors go back to the draft, up to 3 rounds),
+you approve it or write feedback for another draft, and the engine saves it to
+`src/patterns/drafts/<name>.ts`, where the studio and the CLI list it. Built-in names are never
+overwritten. `src/patterns/extras/storm-in-between.ts` is an example: a storm read as an edge, a
+center, a filter, a forecast and the beat between them.
+
+```bash
+SYMPHONY_EXTRAS=all npm run cli -- run metaphor -c metaphor="Chaos is a storm..." -c name=my-storm --provider copilot
+SYMPHONY_EXTRAS=all npm run cli -- run storm-in-between -c subject="this week's sales data" --provider copilot
+```
 
 ## Quality, cost and speed
 

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import { PromptBox } from './PromptBox'
 import { describe, expect, it, vi } from 'vitest'
 import { EMPTY_FRAME, reduceFrame } from '@core/replay'
 import type { ApprovalPause, StuckPause } from '@core/types'
@@ -296,5 +297,25 @@ describe('Library saved runs', () => {
     render(<Library {...props} saved={[]} onPrune={() => (pruned += 1)} />)
     fireEvent.click(screen.getByTestId('prune-runs'))
     expect(pruned).toBe(1)
+  })
+})
+
+describe('PromptBox', () => {
+  it('shows the example as a hint, opens a large editor, and Esc closes it', () => {
+    let value = ''
+    const { rerender } = render(
+      <PromptBox value={value} onChange={(v) => (value = v)} title="fix: issue" placeholder="e.g. Page 2 repeats" ariaLabel="context issue" />,
+    )
+    const box = screen.getByLabelText('context issue') as HTMLTextAreaElement
+    expect(box.value).toBe('')
+    expect(box.placeholder).toBe('e.g. Page 2 repeats')
+    fireEvent.click(screen.getByLabelText('large editor'))
+    const big = screen.getByLabelText('large editor text')
+    fireEvent.change(big, { target: { value: 'Checkout total is wrong\nwhen a coupon applies' } })
+    expect(value).toBe('Checkout total is wrong\nwhen a coupon applies')
+    rerender(<PromptBox value={value} onChange={(v) => (value = v)} title="fix: issue" ariaLabel="context issue" />)
+    expect((screen.getByLabelText('context issue') as HTMLTextAreaElement).value).toBe(value)
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
