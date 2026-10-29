@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AiTranscript, PerformedStep } from './types.js';
-import { formatUsage, performanceUsage, transcriptUsage } from './usage.js';
+import type { AiTranscript, PerformedStep, TokenUsage } from './types.js';
+import { formatUsage, performanceUsage, rejectionUsage, transcriptUsage } from './usage.js';
 
 const u = (input: number, output: number, calls = 1) => ({
   calls,
@@ -9,7 +9,7 @@ const u = (input: number, output: number, calls = 1) => ({
   cacheReadTokens: 0,
   reasoningTokens: 0,
 });
-const t = (usage = u(100, 10), extra: Partial<AiTranscript> = {}): AiTranscript => ({
+const t = (usage: TokenUsage = u(100, 10), extra: Partial<AiTranscript> = {}): AiTranscript => ({
   provider: 'copilot',
   prompt: '',
   output: '',
@@ -29,6 +29,8 @@ const step = (nodeId: string, extra: Partial<PerformedStep>): PerformedStep =>
     ...extra,
   }) as PerformedStep;
 
+const call = (updates: unknown) => ({ name: 'submit_result', args: { updates }, ok: true });
+
 describe('token usage', () => {
   it('counts every answer: rejected attempts and jazz takes too', () => {
     const steps = [
@@ -45,6 +47,36 @@ describe('token usage', () => {
   it('answers replayed from the repertoire cost nothing this run', () => {
     expect(transcriptUsage(t(u(500, 50), { fromRepertoire: 'r.json' }))).toEqual(u(0, 0, 0));
     expect(transcriptUsage(undefined).calls).toBe(0);
+  });
+
+  it('separates what rejected answers cost, and counts answers that sent updates as text', () => {
+    const steps = [
+      step('skeptic', {
+        transcript: t(u(100, 10), { toolCalls: [call({ failureModes: [] })] }),
+        attempts: [
+          {
+            errors: ['updates arrived as text'],
+            transcript: t(
+              { ...u(400, 40), premiumRequests: 2 },
+              { toolCalls: [call('{"failureModes":["f"]')] },
+            ),
+          },
+        ],
+      }),
+      step('plan', {
+        transcript: t(u(50, 5), {
+          toolCalls: [call('{"subQuestions":["q"]'), call({ subQuestions: ['q'] })],
+        }),
+      }),
+    ];
+    const r = rejectionUsage({ steps });
+    expect(r.attempts).toBe(1);
+    expect(r.attemptUsage).toMatchObject({ inputTokens: 400, premiumRequests: 2, calls: 1 });
+    expect(r.textUpdates).toBe(2);
+    expect(rejectionUsage({ steps: [step('a', { transcript: t() })] })).toMatchObject({
+      attempts: 0,
+      textUpdates: 0,
+    });
   });
 
   it('reads well', () => {

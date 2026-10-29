@@ -22,7 +22,7 @@ import { compileScore, CompileError } from './core/compile.js';
 import { formatReport, runEval, summarize, worseThan, type EvalReport } from './eval/harness.js';
 import { EVAL_TASKS } from './eval/tasks.js';
 import { type ChainStep, followUps, playsAfter, stepContext, stepPattern } from './core/chain.js';
-import { formatUsage, performanceUsage } from './core/usage.js';
+import { formatUsage, performanceUsage, rejectionUsage } from './core/usage.js';
 import { describeEdits } from './core/edits.js';
 import { agreement, compareRuns } from './core/compare.js';
 import { engineNote, RUN_SCHEMA_VERSION } from './core/migrate.js';
@@ -312,6 +312,17 @@ async function play(
   if (!o.quiet) console.log(c.dim(`final state ${JSON.stringify(perf.finalState).slice(0, 2000)}`));
   const used = performanceUsage(perf).total;
   if (used.calls > 0) console.log(c.dim(`tokens: ${formatUsage(used)}`));
+  const rejected = rejectionUsage(perf);
+  if (rejected.attempts > 0 || rejected.textUpdates > 0) {
+    const text = rejected.textUpdates
+      ? ` · ${rejected.textUpdates} answers sent updates as text`
+      : '';
+    console.log(
+      c.dim(
+        `rejected: ${rejected.attempts} attempts (${formatUsage(rejected.attemptUsage)})${text}`,
+      ),
+    );
+  }
   if (perf.edits) console.log(describeEdits(perf.edits));
   return perf;
 }
