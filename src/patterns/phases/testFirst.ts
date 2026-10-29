@@ -3,7 +3,8 @@
  * prove the acceptance criteria, and the engine proves they fail:
  *
  * 1. The test step may change only the files it lists in `testFiles` (git diff).
- * 2. The engine runs the tests: they must fail (passing tests check nothing new).
+ * 2. The engine runs the tests: the suite must fail (passing tests check nothing new;
+ *    tests that existing behaviour stays the same are guards and may pass).
  * 3. An assessor checks they fail for the right reason (the behaviour is
  *    missing), not a syntax error or a broken test.
  * 4. The engine hashes `testFiles` (locked). Once the implementation is green,
@@ -39,7 +40,7 @@ export const TEST_FIRST_STATE: readonly StateField[] = [
   {
     name: 'redReport',
     type: 'string[]',
-    description: 'One per criterion: "C<n>: RED — test — why it fails"',
+    description: 'One per criterion: "C<n>: RED | GUARD | NOT RED — test — why"',
   },
   {
     name: 'wrongRed',
@@ -77,7 +78,7 @@ export function testFirstPhase(cfg: TestFirstConfig): Fragment {
       label: 'Write tests first',
       maxVisits: RED_VISITS,
       retries: 2,
-      directive: `Write ONLY the tests in \`testsToAdd\`, so that every entry of \`acceptanceCriteria\` is checked by a test, following the project's test conventions. Do NOT implement \`${cfg.subject}\` and do not change any non-test file: the tests must fail now, because the behaviour does not exist yet, and the engine checks that they do. Test the behaviour the criteria describe (inputs and observable output), not implementation details, so any correct implementation passes. List every file you changed in \`testFiles\`. If \`redFeedback\` is set, your last tests were not accepted: fix what it says (see \`wrongRed\` and \`redOutput\`).`,
+      directive: `Write ONLY the tests in \`testsToAdd\`, so that every entry of \`acceptanceCriteria\` is checked by a test, following the project's test conventions. Do NOT implement \`${cfg.subject}\` and do not change any non-test file: the tests for new behaviour must fail now, because it does not exist yet, and the engine checks that the suite fails. A criterion that existing behaviour stays the same is a guard: its test passes now, and that is right. Test the behaviour the criteria describe (inputs and observable output), not implementation details, so any correct implementation passes. List every file you changed in \`testFiles\`. If \`redFeedback\` is set, your last tests were not accepted: fix what it says (see \`wrongRed\` and \`redOutput\`).`,
       reads: [
         cfg.subject,
         ...cfg.from,
@@ -132,7 +133,7 @@ export function testFirstPhase(cfg: TestFirstConfig): Fragment {
       maxVisits: RED_VISITS,
       retries: 2,
       directive:
-        'The tests in `testFiles` were written before the implementation and the suite fails (`redOutput`). For EVERY entry of `acceptanceCriteria`, in order, write one `redReport` entry "C<n>: RED | NOT RED — test name — why it fails". The right reason is that the behaviour is missing (wrong or no output, an unknown option, a function or module that does not exist yet). Wrong reasons: a syntax or type error in the test itself, a broken import of a test helper, a typo, a test that would pass with a wrong implementation, other tests that were already failing, or a criterion no failing test checks. Copy each wrong reason or uncovered criterion into `wrongRed` (empty when every test fails for the right reason).',
+        'The tests in `testFiles` were written before the implementation and the suite fails (`redOutput`). For EVERY entry of `acceptanceCriteria`, in order, write one `redReport` entry "C<n>: RED | GUARD | NOT RED — test name — why". RED: a test for new behaviour fails for the right reason, the behaviour is missing (wrong or no output, an unknown option, a function or module that does not exist yet). GUARD: the criterion is that existing behaviour stays the same, and its test passes now (that is right, it guards the change). NOT RED: anything else. Wrong reasons: a syntax or type error in the test itself, a broken import of a test helper, a typo, a test for new behaviour that passes now or would pass with a wrong implementation, other tests that were already failing, or a criterion no test checks. Copy every NOT RED entry, with what is wrong, into `wrongRed` (empty when every criterion is RED or GUARD).',
       reads: ['acceptanceCriteria', 'testsToAdd', 'testFiles', 'redOutput', 'diff'],
       writes: ['redReport', 'wrongRed'],
       checks: [
