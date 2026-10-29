@@ -4,7 +4,7 @@
  */
 import { execFile } from 'node:child_process';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { compactPerformance, expandPerformance } from '../core/compact.js';
 import { verifyScore } from '../core/compile.js';
@@ -282,7 +282,11 @@ export async function autoPrune(
 /** Resolve a run file inside `dir`, refusing paths that escape it. */
 export function runPath(dir: string, file: string): string | undefined {
   const full = resolve(dir, file);
-  return full.startsWith(resolve(dir) + '/') && full.endsWith('.json') ? full : undefined;
+  // relative() works with either separator (a '/' prefix check refused every run on Windows).
+  const inside = relative(resolve(dir), full);
+  return inside && !inside.startsWith('..') && !isAbsolute(inside) && full.endsWith('.json')
+    ? full
+    : undefined;
 }
 
 // ── user patterns (TypeScript files) ───────────────────────────────

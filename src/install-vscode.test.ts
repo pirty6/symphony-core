@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { serverEntry, withServer, withoutServer } from './install-vscode.js';
 import { stripJsonc } from './runtime/mcp.js';
@@ -10,7 +11,7 @@ describe('install:vscode', () => {
     expect(entry).toEqual({
       type: 'stdio',
       command: '/usr/bin/node',
-      args: ['/repo/node_modules/tsx/dist/cli.mjs', '/repo/src/mcp-server.ts'],
+      args: [join('/repo', 'node_modules/tsx/dist/cli.mjs'), join('/repo', 'src/mcp-server.ts')],
     });
   });
 

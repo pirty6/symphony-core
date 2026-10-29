@@ -12,7 +12,8 @@ import {
 } from './workspace-tools.js';
 
 const root = mkdtempSync(join(tmpdir(), 'symphony-ws-'));
-afterAll(() => rmSync(root, { recursive: true, force: true }));
+// Windows can hold a folder a just-finished test command ran in for a moment.
+afterAll(() => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
 let n = 0;
 const dir = () => {
   const d = join(root, `w${n++}`);

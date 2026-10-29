@@ -39,6 +39,9 @@ function repo(name: string): string {
   return dir;
 }
 
+/** File text with line endings normalized: Windows git checks files out with CRLF. */
+const read = (file: string, _enc?: string) => readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+
 const status = (dir: string) => sh(dir, 'status', '--porcelain', '--untracked-files=all');
 
 describe('editing runs play in their own worktree', () => {
@@ -50,15 +53,15 @@ describe('editing runs play in their own worktree', () => {
   it('starts from the workspace as it is, and its diff shows only the run’s edits', async () => {
     const ws = repo('snapshot');
     const iso = (await isolateRun(ws, { label: 'fix', env, root }))!;
-    expect(readFileSync(join(iso.dir, 'a.txt'), 'utf8')).toBe('one\nwork in progress\n');
-    expect(readFileSync(join(iso.dir, 'new.txt'), 'utf8')).toBe('untracked\n');
+    expect(read(join(iso.dir, 'a.txt'), 'utf8')).toBe('one\nwork in progress\n');
+    expect(read(join(iso.dir, 'new.txt'), 'utf8')).toBe('untracked\n');
     expect(lstatSync(join(iso.dir, 'node_modules')).isSymbolicLink()).toBe(true);
     expect(existsSync(join(iso.dir, 'node_modules', 'dep', 'index.js'))).toBe(true);
     expect(status(iso.dir)).toBe('');
     writeFileSync(join(iso.dir, 'b.txt'), 'b fixed\n');
     expect(status(iso.dir).trim()).toBe('M b.txt');
     // The workspace does not see the run's edit while it plays.
-    expect(readFileSync(join(ws, 'b.txt'), 'utf8')).toBe('b\n');
+    expect(read(join(ws, 'b.txt'), 'utf8')).toBe('b\n');
     await iso.finish('cancelled');
   });
 
@@ -69,10 +72,10 @@ describe('editing runs play in their own worktree', () => {
     writeFileSync(join(iso.dir, 'c.txt'), 'created\n');
     const result = await iso.finish('success');
     expect(result).toEqual({ kind: 'applied', files: ['b.txt', 'c.txt'] });
-    expect(readFileSync(join(ws, 'b.txt'), 'utf8')).toBe('b fixed\n');
-    expect(readFileSync(join(ws, 'c.txt'), 'utf8')).toBe('created\n');
+    expect(read(join(ws, 'b.txt'), 'utf8')).toBe('b fixed\n');
+    expect(read(join(ws, 'c.txt'), 'utf8')).toBe('created\n');
     // Your own uncommitted work is untouched.
-    expect(readFileSync(join(ws, 'a.txt'), 'utf8')).toBe('one\nwork in progress\n');
+    expect(read(join(ws, 'a.txt'), 'utf8')).toBe('one\nwork in progress\n');
     expect(existsSync(iso.dir)).toBe(false);
     expect(sh(ws, 'worktree', 'list').trim().split('\n')).toHaveLength(1);
   });
@@ -87,8 +90,8 @@ describe('editing runs play in their own worktree', () => {
     expect(status(two.dir).trim()).toBe('?? d.txt');
     expect((await one.finish('success')).kind).toBe('applied');
     expect((await two.finish('success')).kind).toBe('applied');
-    expect(readFileSync(join(ws, 'b.txt'), 'utf8')).toBe('b fixed\n');
-    expect(readFileSync(join(ws, 'd.txt'), 'utf8')).toBe('feature\n');
+    expect(read(join(ws, 'b.txt'), 'utf8')).toBe('b fixed\n');
+    expect(read(join(ws, 'd.txt'), 'utf8')).toBe('feature\n');
   });
 
   it('keeps a patch instead when the run failed or the workspace changed in the same place', async () => {
@@ -97,8 +100,8 @@ describe('editing runs play in their own worktree', () => {
     writeFileSync(join(failed.dir, 'b.txt'), 'half done\n');
     const r1 = await failed.finish('failed');
     expect(r1).toMatchObject({ kind: 'patch', files: ['b.txt'], reason: 'the run ended failed' });
-    expect(readFileSync(join(ws, 'b.txt'), 'utf8')).toBe('b\n');
-    expect(readFileSync(r1.patch!, 'utf8')).toMatch(/\+half done/);
+    expect(read(join(ws, 'b.txt'), 'utf8')).toBe('b\n');
+    expect(read(r1.patch!, 'utf8')).toMatch(/\+half done/);
 
     const clash = (await isolateRun(ws, { label: 'fix', env, root }))!;
     writeFileSync(join(clash.dir, 'b.txt'), 'from the run\n');
@@ -106,7 +109,7 @@ describe('editing runs play in their own worktree', () => {
     const r2 = await clash.finish('success');
     expect(r2.kind).toBe('patch');
     expect(r2.reason).toMatch(/changed in the same places/);
-    expect(readFileSync(join(ws, 'b.txt'), 'utf8')).toBe('edited by you meanwhile\n');
+    expect(read(join(ws, 'b.txt'), 'utf8')).toBe('edited by you meanwhile\n');
   });
 
   it('nothing changed: nothing to apply; and it can be turned off or skipped outside git', async () => {

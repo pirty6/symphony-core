@@ -105,7 +105,10 @@ async function walk(root: string, dir = root, out: string[] = []): Promise<strin
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (!WALK_SKIP.has(entry.name)) await walk(root, join(dir, entry.name), out);
-    } else if (entry.isFile()) out.push(relative(root, join(dir, entry.name)));
+    } else if (entry.isFile()) {
+      // Same '/' paths as git ls-files, whatever the platform.
+      out.push(relative(root, join(dir, entry.name)).replaceAll('\\', '/'));
+    }
   }
   return out;
 }
