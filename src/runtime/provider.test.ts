@@ -55,6 +55,7 @@ describe('buildAgentPrompt', () => {
     expect(cut).toBeGreaterThan(0);
     expect(b.slice(0, cut)).toBe(a.slice(0, cut));
     // Rules, output keys and the step's instructions are all in that shared part.
+    expect(a).toContain('Your step serves this goal: stay on it.');
     for (const part of ['## Rules', 'findings (string[])', '## Your step', '## Overall goal'])
       expect(a.indexOf(part)).toBeLessThan(cut);
   });

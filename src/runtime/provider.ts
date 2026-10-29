@@ -146,6 +146,7 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
     '',
     '## Overall goal',
     goalKey ? `\`${goalKey}\` in the input below.` : pause.goal,
+    'Your step serves this goal: stay on it. If your input does not fit the goal or seems to be about something else, say so in `verdict.reason` instead of guessing.',
     '',
     '## Input (current workflow state you may use)',
     '```json',
