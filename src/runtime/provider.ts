@@ -76,29 +76,17 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
   const context = Object.fromEntries(
     Object.entries(pause.context).filter(([k, v]) => !(k in pause.input) && v !== pause.goal),
   );
+  // Order matters for cost: the parts fixed for this step come first and the parts
+  // that change (input, feedback) last, so repeat visits reuse the cached prefix.
   const lines: string[] = [
     `You are the ${pause.role.toUpperCase()} for ONE step of a deterministic workflow.`,
     'A state machine (not you) decides what runs next. Do only this step.',
-    '',
-    '## Overall goal',
-    goalKey ? `\`${goalKey}\` in the input below.` : pause.goal,
-    '',
-    `## Your step: ${pause.label}`,
-    pause.directive,
-    '',
-    '## Input (current workflow state you may use)',
-    '```json',
-    JSON.stringify(pause.input, null, 2),
-    '```',
   ];
-  if (Object.keys(context).length > 0) {
-    lines.push('', '## Context', '```json', JSON.stringify(context, null, 2), '```');
-  }
   lines.push(
     '',
     '## Sources you can use',
     pause.isolated
-      ? '- Only the input above. You have no workspace or shell tools for this step: reason from what you were given.'
+      ? '- Only the input below. You have no workspace or shell tools for this step: reason from what you were given.'
       : pause.role === 'assessor'
         ? '- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff, gh issue/pr/run/search view|list, gh api GETs, ls, cat, find).'
         : `- Workspace: read, edit and run commands as this step needs. Put scripts, notes and other temporary files only in ${sources.scratchDir ? `the run's scratch folder \`${sources.scratchDir}\` (deleted when the run ends)` : '`.symphony/scratch/`'}, never in the project.`,
@@ -145,6 +133,22 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
       '## Free improvisation',
       'Unconventional angles are welcome: question the framing, try an approach others would not, and say what you tried.',
     );
+  }
+  lines.push(
+    '',
+    `## Your step: ${pause.label}`,
+    pause.directive,
+    '',
+    '## Overall goal',
+    goalKey ? `\`${goalKey}\` in the input below.` : pause.goal,
+    '',
+    '## Input (current workflow state you may use)',
+    '```json',
+    JSON.stringify(pause.input, null, 2),
+    '```',
+  );
+  if (Object.keys(context).length > 0) {
+    lines.push('', '## Context', '```json', JSON.stringify(context, null, 2), '```');
   }
   if (pause.feedback && pause.feedback.length > 0) {
     lines.push(

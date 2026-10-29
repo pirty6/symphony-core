@@ -42,6 +42,23 @@ describe('buildAgentPrompt', () => {
     expect(buildAgentPrompt(pause)).toBe(buildAgentPrompt(pause));
   });
 
+  it('puts what is fixed for the step first, so repeat visits share a cacheable prefix', () => {
+    const later = {
+      ...pause,
+      input: { ...pause.input, findings: ['src/a.ts:1 — more'] },
+      feedback: ['updates.findings is required'],
+      attempt: 2,
+    };
+    const a = buildAgentPrompt(pause);
+    const b = buildAgentPrompt(later);
+    const cut = a.indexOf('## Input');
+    expect(cut).toBeGreaterThan(0);
+    expect(b.slice(0, cut)).toBe(a.slice(0, cut));
+    // Rules, output keys and the step's instructions are all in that shared part.
+    for (const part of ['## Rules', 'findings (string[])', '## Your step', '## Overall goal'])
+      expect(a.indexOf(part)).toBeLessThan(cut);
+  });
+
   it("tells an executor to keep temporary files in the run's scratch folder", () => {
     const executor = { ...pause, role: 'executor' as const };
     expect(buildAgentPrompt(executor, { scratchDir: '/w/.symphony/scratch/r1' })).toContain(
