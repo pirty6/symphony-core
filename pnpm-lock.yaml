@@ -12,7 +12,7 @@ importers:
         specifier: 1.0.69
         version: 1.0.69
       '@github/copilot-sdk':
-        specifier: ^1.0.6
+        specifier: 1.0.6
         version: 1.0.6
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
