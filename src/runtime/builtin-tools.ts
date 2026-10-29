@@ -287,6 +287,13 @@ export function defaultTools(opts: CatalogOptions = {}): ToolRegistry {
 
 const stripDemo = ({ demo: _demo, ...data }: Pattern) => data;
 
+/** The inputs a pattern needs, one line each: what reading them from a request takes. */
+export const inputsOf = (p: Pattern): string[] =>
+  p.requiredContext.map((name) => {
+    const f = p.state.find((x) => x.name === name);
+    return `${name} (${f?.type ?? 'string'})${f?.description ? `: ${f.description}` : ''}`;
+  });
+
 const isFilled = (x: unknown): boolean =>
   typeof x === 'object' && x !== null && !Array.isArray(x) && Object.keys(x).length > 0;
 
@@ -341,15 +348,20 @@ export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSp
       name: 'pattern.validate',
       description:
         'Validate a drafted pattern; returns the normalized pattern or the problems. With an empty draft, a library `template` and an `adaptation`, validates the template as adapted.',
-      outputs: ['errors', 'valid', 'pattern'],
+      outputs: ['errors', 'valid', 'pattern', 'inputs'],
       run: async (args) => {
         const adapted = fromTemplate(args.pattern, args.template, args.adaptation);
         if (adapted && 'errors' in adapted)
-          return { errors: adapted.errors, valid: false, pattern: {} };
+          return { errors: adapted.errors, valid: false, pattern: {}, inputs: [] };
         const parsed = parseDraft(adapted ? adapted.pattern : args.pattern);
         return parsed.ok
-          ? { errors: [], valid: true, pattern: stripDemo(parsed.value) }
-          : { errors: parsed.errors, valid: false, pattern: {} };
+          ? {
+              errors: [],
+              valid: true,
+              pattern: stripDemo(parsed.value),
+              inputs: inputsOf(parsed.value),
+            }
+          : { errors: parsed.errors, valid: false, pattern: {}, inputs: [] };
       },
     },
     {

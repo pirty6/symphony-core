@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { runScripted } from '../core/scripted.js';
 import type { DemoScript, Pattern } from '../core/types.js';
-import { analyze, composedScore, maestro, maestroThen } from './index.js';
+import { analyze, composedScore, fix, maestro, maestroThen } from './index.js';
 
 const demo = maestro.demo!;
 const nodesRun = (r: ReturnType<typeof runScripted>) => r.state.steps.map((s) => s.nodeId);
@@ -126,6 +126,7 @@ describe('maestro', () => {
             proposals++ === 0
               ? { name: 'broken' }
               : (demo.agents!.propose!(s, 0).updates.draft as object),
+          adaptation: {},
           assumptions: ['a'],
         },
         verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
@@ -138,7 +139,7 @@ describe('maestro', () => {
     const never = run('do something new', {
       classify: classifyAs('new', 2),
       propose: () => ({
-        updates: { draft: { name: 'broken' }, assumptions: ['a'] },
+        updates: { draft: { name: 'broken' }, adaptation: {}, assumptions: ['a'] },
         verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
       }),
     });
@@ -211,5 +212,75 @@ describe('composedScore', () => {
       improvisation: 0,
       context: { question: 'q', data: 'sales.csv' },
     });
+  });
+});
+
+describe('maestro adapts library patterns instead of rewriting them', () => {
+  const v = { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' };
+  const proposing =
+    (...answers: Record<string, unknown>[]) =>
+    (_s: Readonly<Record<string, unknown>>, visit: number) => ({
+      updates: {
+        draft: {},
+        adaptation: {},
+        assumptions: ['a'],
+        ...answers[Math.min(visit, answers.length - 1)],
+      },
+      verdict: v,
+    });
+
+  it('the composed score is the tested pattern: same steps and edges, guidance and settings applied', () => {
+    const { r } = run('Fix the flaky login test that fails on CI about once in ten runs');
+    expect(r.state.outcome).toBe('success');
+    const final = r.state.state.finalPattern as Pattern;
+    expect(final.name).toBe('fix');
+    expect(final.nodes.map((n) => n.id)).toEqual(fix.nodes.map((n) => n.id));
+    expect(final.edges).toEqual(fix.edges);
+    const hypothesize = final.nodes.find((n) => n.id === 'hypothesize') as { directive: string };
+    expect(hypothesize.directive).toMatch(/For this request: It fails about once in ten CI runs/);
+    expect(final.state.find((f) => f.name === 'maxAttempts')!.initial).toBe(2);
+  });
+
+  it('the proposer reads an outline, a fraction of the template', () => {
+    const { r } = run('Fix the flaky login test that fails on CI about once in ten runs');
+    const input = r.state.steps.find((st) => st.nodeId === 'propose')!.input!;
+    expect(input).not.toHaveProperty('template');
+    expect((input.outline as string[]).length).toBe(fix.nodes.length);
+    expect(JSON.stringify(input).length).toBeLessThan(
+      JSON.stringify(r.state.state.template).length / 2,
+    );
+  });
+
+  it('an adaptation that does not fit goes back to the proposer with the errors', () => {
+    const { r } = run('fix it', {
+      classify: classifyAs('fix', 2),
+      propose: proposing(
+        { adaptation: { directives: { diagnoseEverything: 'x' } } },
+        { adaptation: { directives: { hypothesize: 'Look at the session cookie first.' } } },
+      ),
+      revise: (s) => ({
+        updates: { draft: s.draft, adaptation: s.adaptation, debateNotes: [] },
+        verdict: v,
+      }),
+    });
+    expect(nodesRun(r).filter((n) => n === 'propose')).toHaveLength(2);
+    const second = r.state.steps.filter((st) => st.nodeId === 'propose')[1]!.input!;
+    expect(String(second.draftErrors)).toMatch(/no step 'diagnoseEverything' in fix/);
+    expect(r.state.outcome).toBe('success');
+  });
+
+  it('a full rewrite is still possible when the shape must change', () => {
+    const { r } = run('fix it', {
+      classify: classifyAs('fix', 2),
+      propose: proposing({
+        draft: { ...analyze, demo: undefined, name: 'fix-reshaped' },
+        assumptions: ['needs a profile first'],
+      }),
+      revise: (s) => ({
+        updates: { draft: s.draft, adaptation: s.adaptation, debateNotes: [] },
+        verdict: v,
+      }),
+    });
+    expect((r.state.state.finalPattern as Pattern).name).toBe('fix-reshaped');
   });
 });

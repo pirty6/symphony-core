@@ -231,7 +231,7 @@ describe('maestro tools', () => {
 
   it('validates a library template as adapted; a filled draft wins', async () => {
     const list = await tools.get('patterns.list')!.run({}, c);
-    const fix = (list.catalog as Record<string, Record<string, unknown>>).fix!;
+    const fixT = (list.catalog as Record<string, Record<string, unknown>>).fix!;
     const validate = tools.get('pattern.validate')!;
     const adapted = await validate.run(
       {
@@ -245,6 +245,8 @@ describe('maestro tools', () => {
       c,
     );
     expect(adapted).toMatchObject({ valid: true, errors: [] });
+    // Just what reading the inputs from a request takes, not the whole pattern.
+    expect(adapted.inputs).toEqual([expect.stringMatching(/^issue \(string\)/)]);
     const p = adapted.pattern as {
       nodes: { id: string; directive?: string }[];
       state: { name: string; initial?: unknown }[];
@@ -254,7 +256,7 @@ describe('maestro tools', () => {
     );
     expect(p.state.find((f) => f.name === 'maxAttempts')!.initial).toBe(1);
     const wrong = await validate.run(
-      { pattern: {}, template: fix, adaptation: { directives: { nope: 'x' } } },
+      { pattern: {}, template: fixT, adaptation: { directives: { nope: 'x' } } },
       c,
     );
     expect(wrong).toMatchObject({
@@ -264,16 +266,16 @@ describe('maestro tools', () => {
     const review = (list.catalog as Record<string, Record<string, unknown>>).review!;
     expect(
       await validate.run(
-        { pattern: review, template: fix, adaptation: { directives: { nope: 'x' } } },
+        { pattern: review, template: fixT, adaptation: { directives: { nope: 'x' } } },
         c,
       ),
     ).toMatchObject({
       valid: true,
       pattern: { name: 'review' },
     });
-    const outline = await tools.get('pattern.outline')!.run({ pattern: fix }, c);
+    const outline = await tools.get('pattern.outline')!.run({ pattern: fixT }, c);
     expect((outline.steps as string[]).length).toBeGreaterThan(5);
-    expect(JSON.stringify(outline).length).toBeLessThan(JSON.stringify(fix).length / 3);
+    expect(JSON.stringify(outline).length).toBeLessThan(JSON.stringify(fixT).length / 3);
     expect(await tools.get('pattern.outline')!.run({ pattern: {} }, c)).toEqual({
       steps: [],
       settings: [],
