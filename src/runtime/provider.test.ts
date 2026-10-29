@@ -36,7 +36,7 @@ describe('buildAgentPrompt', () => {
     const p = buildAgentPrompt(pause);
     expect(p).toContain('Find the bug');
     expect(p).toContain('Collect evidence');
-    expect(p).toContain('"findings": []');
+    expect(p).toContain('"findings":[]');
     expect(p).toContain('findings (string[]): evidence');
     expect(p).toContain('READ-ONLY');
     expect(p).toContain('No interpreters (python, node, bash -c…)');
@@ -135,7 +135,7 @@ describe('buildAgentPrompt says each thing once', () => {
     });
     expect(prompt.split(q)).toHaveLength(2);
     expect(prompt).toContain('`question` in the input below.');
-    expect(prompt).toContain('"hint": "look at webpack"');
+    expect(prompt).toContain('"hint":"look at webpack"');
   });
 });
 
