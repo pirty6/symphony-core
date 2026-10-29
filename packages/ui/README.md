@@ -1,32 +1,12 @@
-# React + TypeScript + Vite
+# Symphony Studio
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Visual editor and live debugger for symphony-core patterns. Start it from the repository root with
+`npm start` (see the root [README](../../README.md)).
 
-Currently, two official plugins are available:
+- `src/Studio.tsx`: app shell, run lifecycle, editing
+- `src/canvas/`: React Flow node and edge renderers (status, data packets)
+- `src/panels/`: toolbar, library, inspector (gates, approvals, AI output, state), timeline
+- `src/lib/`: API client and the pure view model (frames, AI streams, canvas decoration)
+- `server/api.ts`: REST + Server-Sent Events over the runtime, mounted by `server/plugin.ts`
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Tests: `npm test` (unit, integration, API) and `npx playwright test` (browser e2e).

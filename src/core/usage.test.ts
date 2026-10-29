@@ -1,0 +1,56 @@
+import { describe, expect, it } from 'vitest';
+import type { AiTranscript, PerformedStep } from './types.js';
+import { formatUsage, performanceUsage, transcriptUsage } from './usage.js';
+
+const u = (input: number, output: number, calls = 1) => ({
+  calls,
+  inputTokens: input,
+  outputTokens: output,
+  cacheReadTokens: 0,
+  reasoningTokens: 0,
+});
+const t = (usage = u(100, 10), extra: Partial<AiTranscript> = {}): AiTranscript => ({
+  provider: 'copilot',
+  prompt: '',
+  output: '',
+  toolCalls: [],
+  usage,
+  ...extra,
+});
+const step = (nodeId: string, extra: Partial<PerformedStep>): PerformedStep =>
+  ({
+    step: 1,
+    nodeId,
+    kind: 'agent',
+    moveKey: 'm',
+    stateHashBefore: 'a',
+    stateHashAfter: 'b',
+    changes: [],
+    ...extra,
+  }) as PerformedStep;
+
+describe('token usage', () => {
+  it('counts every answer: rejected attempts and jazz takes too', () => {
+    const steps = [
+      step('plan', { transcript: t(), attempts: [{ errors: ['x'], transcript: t(u(50, 5)) }] }),
+      step('answer', { transcript: t(u(200, 20), { takes: [t(u(300, 30)), t(u(300, 30))] }) }),
+      step('route', { kind: 'compute' }),
+    ];
+    const { total, byNode } = performanceUsage({ steps });
+    expect(total).toEqual(u(950, 95, 5));
+    expect(byNode.plan).toEqual(u(150, 15, 2));
+    expect(Object.keys(byNode)).toEqual(['plan', 'answer']);
+  });
+
+  it('answers replayed from the repertoire cost nothing this run', () => {
+    expect(transcriptUsage(t(u(500, 50), { fromRepertoire: 'r.json' }))).toEqual(u(0, 0, 0));
+    expect(transcriptUsage(undefined).calls).toBe(0);
+  });
+
+  it('reads well', () => {
+    expect(formatUsage({ ...u(1_234_000, 45_000, 37), cacheReadTokens: 800_000 })).toBe(
+      '1.2M in (800k cached) · 45k out · 37 calls',
+    );
+    expect(formatUsage(u(0, 0, 0))).toBe('no AI tokens');
+  });
+});
