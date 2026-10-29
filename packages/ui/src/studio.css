@@ -1129,7 +1129,7 @@ pre {
 .prompt-box {
   position: relative;
 }
-.prompt-box textarea {
+.prompt-box > textarea {
   width: 100%;
   box-sizing: border-box;
   min-height: 2.6em;
@@ -1153,6 +1153,9 @@ pre {
 }
 .prompt-editor-text {
   flex: 1;
+  width: auto;
+  min-height: 0;
+  box-sizing: border-box;
   margin: 16px 22px 22px;
   padding: 12px;
   font-size: 15px;

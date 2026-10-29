@@ -220,6 +220,14 @@ test('inputs start empty with the demo as a hint, the large editor writes into t
   await expect(issue).toHaveValue('')
   await expect(issue).toHaveAttribute('placeholder', /^e\.g\. Page 2 repeats the last item of page 1/)
   await page.locator('.prompt-box').filter({ has: issue }).getByLabel('large editor').click()
+  // The editor's text area sits inside the dialog's card, filling most of it.
+  const card = (await page.locator('.prompt-editor').boundingBox())!
+  const text = (await page.getByLabel('large editor text').boundingBox())!
+  expect(text.x).toBeGreaterThanOrEqual(card.x)
+  expect(text.y).toBeGreaterThanOrEqual(card.y)
+  expect(text.x + text.width).toBeLessThanOrEqual(card.x + card.width)
+  expect(text.y + text.height).toBeLessThanOrEqual(card.y + card.height)
+  expect(text.height).toBeGreaterThan(card.height / 2)
   await page.getByLabel('large editor text').fill('Totals are wrong\nwhen a coupon applies')
   await page.getByRole('dialog').getByRole('button', { name: 'Done', exact: true }).click()
   await expect(issue).toHaveValue('Totals are wrong\nwhen a coupon applies')
