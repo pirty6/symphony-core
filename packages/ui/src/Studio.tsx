@@ -103,6 +103,18 @@ export default function Studio() {
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({ provider: settings.provider, model: settings.model }))
   }, [settings.provider, settings.model])
+  // Choosing Copilot on a machine with no GitHub account signed in: say how to fix it before a run fails.
+  useEffect(() => {
+    if (settings.provider !== 'copilot') return
+    let cancelled = false
+    void api.copilotStatus().then(
+      (s) => !cancelled && !s.signedIn && setError(s.message),
+      () => undefined,
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [settings.provider])
   const [tiers, setTiers] = useState<Tiers | undefined>()
   const [notice, setNotice] = useState<string | null>(null)
   /** The full-screen result reader is open. */

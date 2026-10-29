@@ -105,6 +105,9 @@ export const api = {
     ),
   run: (runId: string) =>
     fetch(`/api/runs/${runId}`).then((r) => json<{ id: string; status: string; score: ExecutableScore; graph: VisualGraph }>(r)),
+  /** Whether Copilot can run here (a GitHub account is signed in), and how to fix it if not. */
+  copilotStatus: () =>
+    fetch('/api/copilot/status').then((r) => json<{ signedIn: boolean; login?: string; message: string }>(r)),
   tiers: () => fetch('/api/tiers').then((r) => json<Record<Complexity, { model: string; effort?: string }>>(r)),
   savedFile: (file: string) =>
     fetch(`/api/saved/file?path=${encodeURIComponent(file)}`).then((r) =>

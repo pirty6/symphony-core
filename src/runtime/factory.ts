@@ -56,7 +56,7 @@ export function envConfig(env: NodeJS.ProcessEnv): {
   alternateModel?: string;
 } {
   const model = env.COPILOT_MODEL ?? env.MODEL;
-  const token = env.GITHUB_TOKEN ?? env.TOKEN;
+  const token = env.COPILOT_GITHUB_TOKEN ?? env.GH_TOKEN ?? env.GITHUB_TOKEN ?? env.TOKEN;
   const tiers = env.SYMPHONY_TIERS ? parseTiers(env.SYMPHONY_TIERS) : undefined;
   return {
     ...(model ? { model } : {}),

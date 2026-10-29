@@ -9,6 +9,7 @@ import type { AgentPause, Pattern } from '../core/types.js';
 import {
   CopilotProvider,
   ISOLATED_SYSTEM,
+  SIGN_IN_HELP,
   parseTiers,
   type ClientLike,
   type SessionLike,
@@ -323,6 +324,41 @@ describe('CopilotProvider', () => {
     const same = await play(['claude-sonnet-5']);
     expect(same.model).toBe('claude-sonnet-5');
     expect(same.notes[0]).toMatch(/no model from another family is available/);
+  });
+
+  it('not signed in: stops with how to sign in, before any session (or when the CLI says so)', async () => {
+    const req = {
+      pause,
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    };
+    const nobody = fakeClient(async () => {});
+    const p = new CopilotProvider({
+      clientFactory: () => ({
+        ...nobody.client,
+        getAuthStatus: async () => ({ isAuthenticated: false }),
+      }),
+    });
+    await expect(p.runAgent(req)).rejects.toMatchObject({
+      name: 'SetupError',
+      message: SIGN_IN_HELP,
+    });
+    expect(nobody.sessions).toHaveLength(0);
+    expect(await p.authStatus()).toEqual({ signedIn: false, message: SIGN_IN_HELP });
+
+    // An older CLI that does not report status answers with the error as its message.
+    const cli = fakeClient(async (_cfg, emit) => {
+      emit('assistant.message', {
+        content:
+          '[Execution failed: InvalidArg, No GitHub OAuth token or Copilot HMAC key provided]',
+      });
+      emit('session.idle');
+    });
+    await expect(
+      new CopilotProvider({ clientFactory: () => cli.client }).runAgent(req),
+    ).rejects.toMatchObject({ name: 'SetupError' });
   });
 
   it('falls back to JSON in the final message', async () => {

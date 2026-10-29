@@ -433,6 +433,12 @@ export class Run {
       transcript = res.transcript;
     } catch (e) {
       if (this.stopRequested || ((e as Error).name === 'AbortError' && !timedOut)) return undefined;
+      // The provider cannot work as configured (e.g. not signed in): stop now and say why.
+      if ((e as Error).name === 'SetupError') {
+        this.emitFor(pause)({ type: 'info', text: (e as Error).message });
+        this.stopRequested = (e as Error).message;
+        return undefined;
+      }
       result = undefined;
       transcript = {
         provider: this.opts.provider.name,

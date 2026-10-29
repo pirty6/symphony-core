@@ -13,6 +13,7 @@
  *   POST /api/runs/:id/approval {approved, updates, scripted}
  *   POST /api/runs {…, chain: [pattern…]}: patterns to play after it with its result
  *   POST /api/runs/:id/recovery {action: retry|stop, hint?, complexity?}  (a stuck AI step)
+ *   GET  /api/copilot/status               { signedIn, login?, message }: can Copilot run here
  *   GET  /api/saved                        saved runs
  *   POST /api/saved/prune {dryRun?}        retention: delete old demo runs, compact old runs
  *   GET  /api/saved/file?path=             saved run + integrity + replay check
@@ -386,6 +387,19 @@ export function createApi(opts: ApiOptions) {
       if (method === 'GET' && path === '/api/runs') {
         // Newest first; every run this server started, so the studio can switch between them.
         send(res, 200, [...runs.values()].toReversed().map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, status: r.status })))
+        return true
+      }
+      if (method === 'GET' && path === '/api/copilot/status') {
+        // Whether a GitHub account is signed in for Copilot here, so the studio can say how to fix it.
+        const copilot = makeProvider({ provider: 'copilot', workingDirectory: workspace, ...envConfig(env) })
+        try {
+          const status = await (copilot as { authStatus?: () => Promise<unknown> }).authStatus?.()
+          send(res, 200, status ?? { signedIn: true, message: '' })
+        } catch (e) {
+          send(res, 200, { signedIn: false, message: `Copilot could not start: ${(e as Error).message}` })
+        } finally {
+          await copilot.dispose?.()
+        }
         return true
       }
       if (method === 'GET' && path === '/api/tiers') {

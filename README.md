@@ -40,9 +40,17 @@ can explore every feature without credentials.
 
 ### Use real AI (GitHub Copilot)
 
-1. Have a GitHub account with Copilot and be signed in (VS Code, the Copilot CLI or `gh auth login`),
-   **or** put a token in `.env` (see `.env.example`). If that token is rejected, Symphony says so and
-   falls back to your signed-in GitHub user for the rest of the session.
+1. Sign in once with a GitHub account that has Copilot:
+
+   ```bash
+   npm run login     # opens GitHub in the browser (or shows a code); nothing else to install
+   ```
+
+   Already signed in to the GitHub CLI (`gh auth login`) or the Copilot CLI? That is used as is.
+   On a machine without a browser, put `COPILOT_GITHUB_TOKEN=<token>` in `.env` instead: a
+   **fine-grained** personal access token with the **Copilot Requests** permission (classic tokens
+   are not accepted). If nothing is signed in, the studio says so as soon as you choose Copilot,
+   and a run stops at once with these instructions instead of failing step by step.
 2. In the studio choose **AI → GitHub Copilot** and run. Each agent call uses the model for its
    complexity tier (see below); typing a model in the toolbar forces one model for every tier.
 

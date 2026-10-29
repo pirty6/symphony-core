@@ -715,3 +715,23 @@ describe('step time limit', () => {
     expect((await done).outcome).toBe('cancelled');
   });
 });
+
+describe('setup errors', () => {
+  it('a provider that cannot work as configured stops the run at once, saying why', async () => {
+    let calls = 0;
+    const provider: Provider = {
+      name: 'copilot',
+      runAgent: async () => {
+        calls += 1;
+        throw Object.assign(new Error('Copilot is not signed in on this machine.'), {
+          name: 'SetupError',
+        });
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const perf = await new Run({ score: hangmanScore, provider, clock }).start();
+    expect(calls).toBe(1);
+    expect(perf.outcome).toBe('cancelled');
+    expect(perf.reason).toMatch(/^Copilot is not signed in on this machine\./);
+  });
+});

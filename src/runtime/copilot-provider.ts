@@ -47,7 +47,20 @@ export interface ClientLike {
   start(): Promise<void>;
   createSession(config: SessionConfig): Promise<SessionLike>;
   stop(): Promise<unknown>;
+  getAuthStatus?(): Promise<{ isAuthenticated: boolean; login?: string; statusMessage?: string }>;
 }
+
+/** Copilot cannot be used as configured: no retry can help, so the run stops with this. */
+export class SetupError extends Error {
+  override name = 'SetupError';
+}
+
+/** What to do when no GitHub account is signed in for Copilot. */
+export const SIGN_IN_HELP =
+  'Copilot is not signed in on this machine. Run `npm run login` in a terminal (it signs in your GitHub account; Copilot access is required), or put COPILOT_GITHUB_TOKEN=<a fine-grained token with the "Copilot Requests" permission> in .env. Then run again. The offline demo (AI: Scripted) works without signing in.';
+
+const NOT_SIGNED_IN =
+  /No GitHub OAuth token|Copilot HMAC key|not authenticated|authentication required/i;
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
@@ -186,10 +199,27 @@ export class CopilotProvider implements Provider {
     return this.starting;
   }
 
+  private signInChecked = false;
+
+  /** Who Copilot runs as here, or why it cannot run (no GitHub account signed in). */
+  async authStatus(): Promise<{ signedIn: boolean; login?: string; message: string }> {
+    const client = await this.ensureClient();
+    if (!client.getAuthStatus) return { signedIn: true, message: 'unknown (not reported)' };
+    const s = await client.getAuthStatus();
+    return s.isAuthenticated
+      ? { signedIn: true, ...(s.login ? { login: s.login } : {}), message: s.statusMessage ?? '' }
+      : { signedIn: false, message: SIGN_IN_HELP };
+  }
+
   private async runSession(
     run: SessionRun,
   ): Promise<{ output: string; toolCalls: ToolCallRecord[]; model?: string; usage?: TokenUsage }> {
     if (run.signal.aborted) throw abortError();
+    if (!this.signInChecked) {
+      const status = await this.authStatus().catch(() => undefined);
+      if (status && !status.signedIn) throw new SetupError(SIGN_IN_HELP);
+      this.signInChecked = status !== undefined;
+    }
     const client = await this.ensureClient();
     if (run.signal.aborted) throw abortError();
     const toolCalls: ToolCallRecord[] = [];
@@ -358,6 +388,8 @@ export class CopilotProvider implements Provider {
     }
     if (run.signal.aborted) throw abortError();
     if (failure && !output) output = `[${failure}]`;
+    // Without a GitHub account the CLI answers with an error message, not a model reply.
+    if (NOT_SIGNED_IN.test(output) && toolCalls.length === 0) throw new SetupError(SIGN_IN_HELP);
     return { output, toolCalls, ...(model ? { model } : {}), ...(usage.calls ? { usage } : {}) };
   }
 
