@@ -7,7 +7,7 @@ import type { ProviderEvent } from '../../../../src/runtime/provider'
 export type PatternData = Omit<Pattern, 'demo'>
 
 export interface LibraryItem extends PatternData {
-  readonly source: 'builtin' | 'draft'
+  readonly source: 'builtin' | 'extra' | 'draft'
   readonly graph: VisualGraph
   readonly demo?: { readonly goal: string; readonly context: Record<string, unknown> }
 }

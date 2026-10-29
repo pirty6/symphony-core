@@ -19,7 +19,7 @@ import type {
   Improvisation,
   Pattern,
 } from '../core/types.js';
-import { PATTERNS } from '../patterns/index.js';
+import { libraryPatterns } from '../patterns/index.js';
 import { chainNext } from '../runtime/chain.js';
 import { concertNext } from '../runtime/concert.js';
 import { Run } from '../runtime/driver.js';
@@ -177,7 +177,7 @@ export class RunManager {
       join(this.opts.repoRoot, DRAFTS_DIR),
       (f) => import(pathToFileURL(f).href),
     ).catch(() => [] as Pattern[]);
-    return [...PATTERNS, ...drafts.filter((d) => !PATTERNS.some((p) => p.name === d.name))];
+    return libraryPatterns(this.opts.env, drafts);
   }
 
   get editsAllowed(): boolean {

@@ -37,7 +37,7 @@ import type {
   Performance,
   SavedRun,
 } from './core/types.js';
-import { maestro, maestroThen, PATTERNS } from './patterns/index.js';
+import { libraryPatterns, maestro, maestroThen } from './patterns/index.js';
 import { concertNext } from './runtime/concert.js';
 import { loadRepertoire, runsDirFor } from './runtime/store.js';
 import { editsFiles, isolate } from './runtime/worktree.js';
@@ -96,7 +96,7 @@ async function allPatterns(cwd: string): Promise<Pattern[]> {
     join(cwd, DRAFTS_DIR),
     (f) => import(pathToFileURL(f).href),
   );
-  return [...PATTERNS, ...drafts.filter((d) => !PATTERNS.some((p) => p.name === d.name))];
+  return libraryPatterns(process.env, drafts);
 }
 
 function printMessage(m: RunMessage, write: (s: string) => void): void {

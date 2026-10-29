@@ -32,7 +32,8 @@ import { chainNext } from '../../../src/runtime/chain.js'
 import type { ChainStep } from '../../../src/core/chain.js'
 import { concertNext } from '../../../src/runtime/concert.js'
 import { validatePattern } from '../../../src/core/validate.js'
-import { PATTERNS } from '../../../src/patterns/index.js'
+import { libraryPatterns, PATTERNS } from '../../../src/patterns/index.js'
+import { enabledExtras } from '../../../src/patterns/extras/index.js'
 import { draftPattern } from '../../../src/runtime/drafting.js'
 import { Run, type RunOptions } from '../../../src/runtime/driver.js'
 import {
@@ -129,14 +130,13 @@ export function createApi(opts: ApiOptions) {
   const scratchDir = join(workspace, '.symphony', 'scratch')
   void autoPrune(workspace, runsDir, env)
 
-  async function library(): Promise<{ pattern: Pattern; source: 'builtin' | 'draft' }[]> {
+  async function library(): Promise<{ pattern: Pattern; source: 'builtin' | 'extra' | 'draft' }[]> {
     const drafts = await loadPatternFiles(draftsDir, opts.importer)
-    return [
-      ...PATTERNS.map((pattern) => ({ pattern, source: 'builtin' as const })),
-      ...drafts
-        .filter((d) => !PATTERNS.some((p) => p.name === d.name))
-        .map((pattern) => ({ pattern, source: 'draft' as const })),
-    ]
+    const extras = new Set(enabledExtras(env).map((p) => p.name))
+    return libraryPatterns(env, drafts).map((pattern) => ({
+      pattern,
+      source: PATTERNS.includes(pattern) ? ('builtin' as const) : extras.has(pattern.name) ? ('extra' as const) : ('draft' as const),
+    }))
   }
 
   async function demoFor(name: string) {

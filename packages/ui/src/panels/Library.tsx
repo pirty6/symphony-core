@@ -75,7 +75,7 @@ export function Library(p: Props) {
             title={item.description}
           >
             <b>{item.name}</b>
-            {item.source === 'draft' && <span className="tag">draft</span>}
+            {item.source !== 'builtin' && <span className="tag">{item.source}</span>}
             <small>{item.description}</small>
           </button>
         ))}
