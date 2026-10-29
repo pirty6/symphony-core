@@ -73,7 +73,7 @@ export const EDIT_STATE: readonly StateField[] = [
 ];
 
 /** Upper bound on visits to the loop's nodes: attempts per diagnosis × diagnoses, with room. */
-const LOOP_VISITS = 12;
+const LOOP_VISITS = 20;
 
 export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
   const re = cfg.rediagnose;

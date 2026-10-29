@@ -1,6 +1,7 @@
 import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
+import { prReviewPhase } from './phases/prReview.js';
 import {
   checkFindings,
   CITE_BY_ID,
@@ -45,11 +46,19 @@ const edit = editVerifyPhase({
     'acceptanceCriteria',
     'testsToAdd',
     'unmetCriteria',
+    'reviewComments',
   ],
   triageReads: ['request', 'design', 'plan'],
   success: 'review',
   giveUp: 'learnFailed',
   rediagnose: { node: 'explore', gaps: 'gaps' },
+});
+const prReview = prReviewPhase({
+  subject: 'request',
+  against: ['design', 'acceptanceCriteria'],
+  edit: 'apply',
+  approved: 'learnImplemented',
+  stopped: 'reviewStopped',
 });
 
 /**
@@ -66,6 +75,8 @@ export const implement: Pattern = {
   requiredContext: ['request'],
   goalFrom: 'request',
   result: [
+    'reviewDecision',
+    'reviewComments',
     'design',
     'acceptanceCriteria',
     'criteriaReport',
@@ -122,6 +133,7 @@ export const implement: Pattern = {
     approaches,
     challenge,
     edit,
+    prReview,
   ),
   start: 'start',
   groups: [
@@ -140,6 +152,7 @@ export const implement: Pattern = {
     },
     challenge.group,
     edit.group,
+    prReview.group,
     {
       id: 'acceptancePhase',
       label: 'Acceptance review',
@@ -242,6 +255,8 @@ export const implement: Pattern = {
       shows: ['design', 'acceptanceCriteria', 'testsToAdd', 'rulings', 'files', 'plan'],
     },
     ...edit.nodes,
+    ...prReview.nodes,
+    { id: 'reviewStopped', kind: 'end', label: 'Stopped at review', outcome: 'partial' },
     {
       id: 'review',
       kind: 'agent',
@@ -323,8 +338,9 @@ export const implement: Pattern = {
     { id: 'approve-apply', from: 'approve', to: edit.entry, branch: 'approved' },
     { id: 'approve-rejected', from: 'approve', to: 'rejected', branch: 'rejected' },
     ...edit.edges,
+    ...prReview.edges,
     { id: 'review-allMet', from: 'review', to: 'allMet' },
-    { id: 'allMet-learn', from: 'allMet', to: 'learnImplemented', branch: 'then' },
+    { id: 'allMet-prReview', from: 'allMet', to: 'prReview', branch: 'then' },
     { id: 'allMet-reviewsLeft', from: 'allMet', to: 'reviewsLeft', branch: 'else' },
     { id: 'reviewsLeft-back', from: 'reviewsLeft', to: 'backToEdit', branch: 'then' },
     {
@@ -339,6 +355,14 @@ export const implement: Pattern = {
   demo: {
     context: { request: 'Add a --json flag to `todo list` that prints the items as JSON' },
     agents: {
+      prReview: () => ({
+        updates: {
+          reviewDecision: 'APPROVE',
+          reviewComments: [],
+          reviewSummary: 'The change fixes the cause and the test covers it.',
+        },
+        verdict: v('approved'),
+      }),
       hypothesize: () => ({
         updates: {
           ratedComplexity: 2,

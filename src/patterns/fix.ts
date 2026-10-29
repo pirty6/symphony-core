@@ -1,6 +1,7 @@
 import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
+import { prReviewPhase } from './phases/prReview.js';
 import {
   checkFindings,
   CITE_BY_ID,
@@ -36,11 +37,18 @@ const challenge = challengePhase({
 const edit = editVerifyPhase({
   applyDirective:
     'Implement `plan` by editing `files` (others only if the plan truly needs them). Fix the root cause in `rootCause`, not the symptom, and add or update a test that fails without the fix when that is feasible.',
-  applyReads: ['issue', 'rootCause', 'files', 'plan'],
+  applyReads: ['issue', 'rootCause', 'files', 'plan', 'reviewComments'],
   triageReads: ['issue', 'rootCause', 'plan'],
-  success: 'learnFixed',
+  success: 'prReview',
   giveUp: 'learnFailed',
   rediagnose: { node: 'research', gaps: 'gaps' },
+});
+const prReview = prReviewPhase({
+  subject: 'issue',
+  against: ['rootCause', 'plan'],
+  edit: 'apply',
+  approved: 'learnFixed',
+  stopped: 'reviewStopped',
 });
 
 /**
@@ -56,6 +64,8 @@ export const fix: Pattern = {
   requiredContext: ['issue'],
   goalFrom: 'issue',
   result: [
+    'reviewDecision',
+    'reviewComments',
     'rootCause',
     'plan',
     'changedFiles',
@@ -86,6 +96,7 @@ export const fix: Pattern = {
     hypotheses,
     challenge,
     edit,
+    prReview,
   ),
   start: 'start',
   groups: [
@@ -98,6 +109,7 @@ export const fix: Pattern = {
     },
     challenge.group,
     edit.group,
+    prReview.group,
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
@@ -169,6 +181,8 @@ export const fix: Pattern = {
       shows: ['rootCause', 'rulings', 'files', 'plan'],
     },
     ...edit.nodes,
+    ...prReview.nodes,
+    { id: 'reviewStopped', kind: 'end', label: 'Stopped at review', outcome: 'partial' },
     rememberLessonNode('learnFixed', 'fixed', {
       problem: 'issue',
       cause: 'rootCause',
@@ -198,10 +212,19 @@ export const fix: Pattern = {
     { id: 'approve-apply', from: 'approve', to: edit.entry, branch: 'approved' },
     { id: 'approve-rejected', from: 'approve', to: 'rejected', branch: 'rejected' },
     ...edit.edges,
+    ...prReview.edges,
   ],
   demo: {
     context: { issue: 'Page 2 repeats the last item of page 1' },
     agents: {
+      prReview: () => ({
+        updates: {
+          reviewDecision: 'APPROVE',
+          reviewComments: [],
+          reviewSummary: 'The change fixes the cause and the test covers it.',
+        },
+        verdict: v('approved'),
+      }),
       hypothesize: () => ({
         updates: {
           ratedComplexity: 2,

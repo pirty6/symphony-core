@@ -456,6 +456,12 @@ hash identically. A failure is triaged before retrying:
 npm run cli -- run implement -c request="Add a --json flag to the list command" --provider copilot
 ```
 
+**PR review** (`src/patterns/phases/prReview.ts`): once the tests pass (and, for implement,
+every acceptance criterion is met), a reviewer on another model family reads the diff like a pull
+request. Blocking comments (`BLOCKING path:line — what and why`) go back to the edit step, the
+engine re-runs the tests, and the review runs again until it approves. After `maxReviewRounds`
+(2) you decide: accept the change as it is (the comments stay in the result) or stop.
+
 **Chaining**: one pattern's result feeds the next pattern's goal input (`core/chain.ts`):
 `--then` in the CLI, **Then run** in the studio, or the maestro when a request asks for two shapes
 ("find out why X, then fix it"). Each run is still its own score and performance.
