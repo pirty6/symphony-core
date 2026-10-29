@@ -28,6 +28,7 @@ import { replayPerformance, restoreEngine } from '../../../src/core/replay.js'
 import { isImprovisation, playsFromRepertoire } from '../../../src/core/jazz.js'
 import type { Complexity, ExecutableScore, Pattern } from '../../../src/core/types.js'
 import { chainNext } from '../../../src/runtime/chain.js'
+import type { ChainStep } from '../../../src/core/chain.js'
 import { concertNext } from '../../../src/runtime/concert.js'
 import { validatePattern } from '../../../src/core/validate.js'
 import { PATTERNS } from '../../../src/patterns/index.js'
@@ -162,8 +163,8 @@ export function createApi(opts: ApiOptions) {
     readonly stepMode: boolean
     readonly breakpoints: string[]
     readonly restore?: RunOptions['restore']
-    /** Patterns to play after this one, each with what the previous found. */
-    readonly chain?: readonly string[]
+    /** Patterns (or backlog items) to play after this one. */
+    readonly chain?: readonly ChainStep[]
   }
 
   async function launch(score: ExecutableScore, pattern: Pattern, settings: Settings): Promise<Run> {

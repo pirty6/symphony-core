@@ -179,6 +179,27 @@ describe('studio api', () => {
     expect(second.some((m) => m.type === 'next')).toBe(false)
   })
 
+  it('plays each picked backlog item as its own run, one after another', async () => {
+    const { backlog } = await import('../../../src/patterns/index.js')
+    const items = backlog.demo!.agents!.extract!({}, 1).updates!.items as string[]
+    const start = (await (
+      await post('/api/runs', { pattern: data(backlog), goal: 'g', context: { source: 'doc.md', testCommand: 'npm test' }, provider: 'scripted', autoApprove: true })
+    ).json()) as { runId: string }
+    let id = start.runId
+    const played: string[] = []
+    for (;;) {
+      const next = (await readSse(await fetch(`${base}/api/runs/${id}/events`))).find((m) => m.type === 'next') as
+        | { runId: string; pattern: { name: string }; context: { request: string; testCommand: string } }
+        | undefined
+      if (!next) break
+      expect(next.pattern.name).toBe('implement')
+      expect(next.context.testCommand).toBe('npm test')
+      played.push(next.context.request)
+      id = next.runId
+    }
+    expect(played).toEqual(items)
+  })
+
   it('refuses cross-site and non-JSON POSTs', async () => {
     const plain = await fetch(`${base}/api/patterns`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' })
     expect(plain.status).toBe(403)
