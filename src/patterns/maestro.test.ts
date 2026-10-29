@@ -283,4 +283,20 @@ describe('maestro adapts library patterns instead of rewriting them', () => {
     });
     expect((r.state.state.finalPattern as Pattern).name).toBe('fix-reshaped');
   });
+
+  it('skips the pragmatist and the conductor when the skeptic finds nothing to change', () => {
+    const quiet = () => ({ updates: { failureModes: [], contested: [], edits: [] }, verdict: v });
+    const { r } = run('fix it', { classify: classifyAs('fix', 3), skeptic: quiet });
+    expect(r.state.outcome).toBe('success');
+    expect(nodesRun(r)).not.toContain('pragmatist');
+    expect(nodesRun(r)).not.toContain('revise');
+    expect(
+      (r.state.state.finalPattern as Pattern).nodes.find((n) => n.id === 'hypothesize'),
+    ).toMatchObject({
+      directive: expect.stringMatching(/For this request:/),
+    });
+    // Tier 4 still asks the template-critic about the fit.
+    const four = run('fix it', { classify: classifyAs('fix', 4), skeptic: quiet });
+    expect(nodesRun(four.r)).toContain('critic');
+  });
 });

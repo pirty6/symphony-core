@@ -222,10 +222,20 @@ replayable:
 
    Their contracts are enforced, not requested: the pragmatist must triage **every** skeptic concern,
    the critic's verdict must be CORRECT, WRONG or HYBRID and may only recommend real patterns.
+
+   **Library patterns are adapted, not rewritten.** The debate reads a compact outline of the chosen
+   pattern (6-7x smaller than its definition) and writes an `adaptation`: guidance appended to
+   specific AI steps (`directives`) and new values for its settings (`initial`: loop bounds, batch
+   sizes, flags like `exhaustive`). The engine applies it to the tested pattern, whose steps, edges
+   and checks stay as they are. Rewriting the whole pattern cost up to 138k output tokens and 15-24
+   minutes per run, and sometimes silently dropped tested steps. A full draft is still written for
+   `new` patterns, or when the shape truly has to change (the proposer must say why).
 3. **Conductor**: folds the debate into one score (applies REAL concerns, ignores THEORETICAL ones).
-4. **Validate** (tool): the draft is checked deterministically; errors go back to the proposer
-   (max 6 rounds).
-5. **Read inputs** from the request, then the **go-gate**: approve with empty feedback to perform;
+   Skipped when the skeptic found nothing to change (below tier 4).
+4. **Validate** (tool): the adaptation applied to the template (or the draft) is checked
+   deterministically; errors go back to the proposer (max 6 rounds).
+5. **Read inputs** from the request (one line per input, not the whole score), then the **go-gate**,
+   which shows how the pattern was tailored: approve with empty feedback to perform;
    write feedback for another round (complexity escalates one tier); reject to stop.
 6. **Perform**: the composed score runs as its own linked, recorded run at the final complexity.
 
