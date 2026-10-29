@@ -349,3 +349,14 @@ test('the extras toggle shows optional patterns, and is remembered', async ({ pa
   await page.getByLabel('extra patterns').uncheck()
   await expect(metaphorItem).toHaveCount(0)
 })
+
+test('the minimap lights up where the run is, as the diagram does', async ({ page }) => {
+  await open(page, 'hangman')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('approval-card')).toBeVisible()
+  await expect(page.getByTestId('node-ask')).toHaveAttribute('data-status', 'paused')
+  const minimap = page.locator('.react-flow__minimap')
+  await expect(minimap.locator('.react-flow__minimap-node.minimap-paused')).toHaveCount(1)
+  await expect(minimap.locator('.react-flow__minimap-node.minimap-paused')).toHaveCSS('fill', 'rgb(52, 211, 153)')
+  await expect(minimap.locator('.react-flow__minimap-node.minimap-done').first()).toBeAttached()
+})

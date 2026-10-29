@@ -17,6 +17,7 @@ import {
 } from '@xyflow/react'
 import { patternToGraph, writesOf } from '@core/graph'
 import { formatFieldInput, parseFieldInput } from '@core/schema'
+import type { NodeStatus } from '@core/replay'
 import type { Branch, ScoreEdge, ScoreNode } from '@core/types'
 import { validatePattern } from '@core/validate'
 import { formatUsage, performanceUsage } from '@core/usage'
@@ -38,6 +39,7 @@ import {
   newNode,
   parseStoredSettings,
   endLocally,
+  minimapStyle,
   originSummary,
   originsByNode,
   phaseDisplay,
@@ -69,6 +71,9 @@ const BLANK: PatternMeta = { name: 'my-flow', description: 'A new flow', require
 const ACTIVE = new Set(['running', 'paused', 'awaiting-approval'])
 const READABLE_ZOOM = 0.55
 const SETTINGS_KEY = 'symphony.settings'
+/** A diagram node's run status (steps and phase boxes both carry it in their data). */
+const statusOf = (n: { data?: unknown }): NodeStatus | undefined => (n.data as { status?: NodeStatus } | undefined)?.status
+
 /** Results longer than this (characters of Markdown) open in the reader when a live run ends. */
 const LONG_RESULT = 600
 type Tab = 'node' | 'ai' | 'state'
@@ -769,7 +774,16 @@ export default function Studio() {
           )}
           <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="#2c3354" />
           <Controls />
-          <MiniMap pannable zoomable style={{ width: 150, height: 100 }} maskColor="rgba(15, 18, 34, 0.75)" nodeColor="#2a3156" nodeStrokeWidth={2} />
+          <MiniMap
+            pannable
+            zoomable
+            style={{ width: 150, height: 100 }}
+            maskColor="rgba(15, 18, 34, 0.75)"
+            nodeColor={(n) => minimapStyle(statusOf(n)).fill}
+            nodeStrokeColor={(n) => minimapStyle(statusOf(n)).stroke}
+            nodeClassName={(n) => minimapStyle(statusOf(n)).className}
+            nodeStrokeWidth={3}
+          />
         </ReactFlow>
       </main>
       <aside className="inspector">

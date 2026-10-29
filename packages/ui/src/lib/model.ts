@@ -718,3 +718,20 @@ export const KIND_LABEL: Record<NodeKind, string> = {
   tool: 'Tool',
   end: 'End',
 }
+
+// ── minimap ──────────────────────────────────────────────────────────
+
+/** Minimap colours per node status, the same as the diagram's (studio.css --active, --approval…). */
+const MINIMAP: Record<NodeStatus | 'idle', { readonly fill: string; readonly stroke: string }> = {
+  idle: { fill: '#2a3156', stroke: '#2a3156' },
+  done: { fill: '#1f4d33', stroke: '#2f6b45' },
+  active: { fill: '#fbbf24', stroke: '#fde68a' },
+  paused: { fill: '#34d399', stroke: '#a7f3d0' },
+  failed: { fill: '#ef4444', stroke: '#fca5a5' },
+}
+
+/** How a node shows on the minimap: where the run is lights up as it does on the diagram. */
+export function minimapStyle(status: NodeStatus | undefined): { fill: string; stroke: string; className: string } {
+  const colours = MINIMAP[status ?? 'idle']
+  return { ...colours, className: status ? `minimap-${status}` : '' }
+}
