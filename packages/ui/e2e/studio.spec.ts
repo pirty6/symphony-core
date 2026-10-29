@@ -311,7 +311,7 @@ test('deletes one saved run from the list after a second click', async ({ page }
   const mine = page.locator(`[data-testid="saved-run"][data-file="${file}"]`)
   const trash = mine.getByRole('button', { name: 'delete run' })
   // The trash can shows only while hovering the run.
-  await page.mouse.move(0, 0)
+  await page.locator('.tb-title').hover()
   await expect(trash).toHaveCSS('opacity', '0')
   // The list refreshes when the run ends and rows can move under the mouse: hover again until it shows.
   await expect(async () => {
