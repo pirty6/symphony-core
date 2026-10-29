@@ -10,7 +10,8 @@ import { compactPerformance, expandPerformance } from '../core/compact.js';
 import { verifyScore } from '../core/compile.js';
 import { patternToTypeScript } from '../core/draft.js';
 import { hashOf } from '../core/hash.js';
-import { migrateRun } from '../core/migrate.js';
+import { engineNote, migrateRun } from '../core/migrate.js';
+import { replayPerformance } from '../core/replay.js';
 import type { Pattern, SavedRun } from '../core/types.js';
 import { validatePattern } from '../core/validate.js';
 import { repertoireFrom, type Repertoire } from './repertoire.js';
@@ -139,15 +140,55 @@ function summaryOf(run: SavedRun): Omit<RunSummary, 'file'> {
   };
 }
 
+/** Whether replaying a run's recorded answers reproduces it, for the run file as it was then. */
+export interface ReplayCheck {
+  readonly reproduced: boolean;
+  /** When it does not: whether another engine version recorded it. */
+  readonly note?: string;
+  /** The run file's modification time when checked: a rewritten run is checked again. */
+  readonly mtimeMs: number;
+}
+
+type StoredSummary = Omit<RunSummary, 'file'> & { readonly check?: ReplayCheck };
+
 /** The run's summary, unless it is missing or older than the run (rewritten since). */
-async function readSummary(file: string): Promise<Omit<RunSummary, 'file'> | undefined> {
+async function readSummary(file: string): Promise<StoredSummary | undefined> {
   try {
     const [run, summary] = await Promise.all([stat(file), stat(summaryFile(file))]);
     if (summary.mtimeMs < run.mtimeMs) return undefined;
-    return JSON.parse(await readFile(summaryFile(file), 'utf8')) as Omit<RunSummary, 'file'>;
+    return JSON.parse(await readFile(summaryFile(file), 'utf8')) as StoredSummary;
   } catch {
     return undefined;
   }
+}
+
+/** The replay check recorded for this run file, if it was checked since it last changed. */
+export async function cachedReplayCheck(file: string): Promise<ReplayCheck | undefined> {
+  const [summary, now] = await Promise.all([
+    readSummary(file),
+    stat(file).then(
+      (s) => s.mtimeMs,
+      () => undefined,
+    ),
+  ]);
+  return summary?.check && summary.check.mtimeMs === now ? summary.check : undefined;
+}
+
+/**
+ * Replay a saved run's recorded answers and record whether it reproduces. Long
+ * runs take seconds, so the verdict is kept in the run's summary and reused
+ * until the run file changes.
+ */
+export async function checkReplay(file: string, run: SavedRun): Promise<ReplayCheck> {
+  const cached = await cachedReplayCheck(file);
+  if (cached) return cached;
+  const mtimeMs = (await stat(file)).mtimeMs;
+  const reproduced = replayPerformance(run.score, run.performance).divergence.reproduced;
+  const note = reproduced ? undefined : engineNote(run.performance.engine);
+  const check: ReplayCheck = { reproduced, mtimeMs, ...(note ? { note } : {}) };
+  const summary = (await readSummary(file)) ?? summaryOf(run);
+  await writeFile(summaryFile(file), JSON.stringify({ ...summary, check })).catch(() => undefined);
+  return check;
 }
 
 export async function listRuns(dir: string): Promise<RunSummary[]> {
@@ -170,7 +211,8 @@ export async function listRuns(dir: string): Promise<RunSummary[]> {
       const name = relative(resolve(dir), file);
       const known = await readSummary(file);
       if (known) {
-        out.push({ file: name, ...known });
+        const { check: _check, ...summary } = known;
+        out.push({ file: name, ...summary });
         continue;
       }
       try {

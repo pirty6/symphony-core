@@ -23,6 +23,8 @@ import {
   runsDirFor,
   runScratch,
   autoPrune,
+  cachedReplayCheck,
+  checkReplay,
   deleteRun,
   listRuns,
   pruneRuns,
@@ -122,6 +124,33 @@ describe('run store', () => {
     // Deleting a run deletes its summary too.
     expect(await deleteRun(dir, file)).toBe(true);
     expect(existsSync(summaryFile(file))).toBe(false);
+  });
+
+  it('checks that a run replays once, and again only after the run file changes', async () => {
+    const dir = join(root, 'checks');
+    const score = compileScore(review, {
+      goal: 'g',
+      context: review.demo!.context!,
+      generatedAt: 't',
+    });
+    const performance = toPerformance(runScripted(score, review.demo, { at: 't' }).state);
+    const run = { schemaVersion: 3 as const, score, performance };
+    const file = await saveRun(dir, run);
+    expect(await cachedReplayCheck(file)).toBeUndefined();
+    expect(await checkReplay(file, run)).toMatchObject({ reproduced: true });
+    expect(await cachedReplayCheck(file)).toMatchObject({ reproduced: true });
+    // The recorded verdict is what is returned while the file is unchanged...
+    const summary = JSON.parse(readFileSync(summaryFile(file), 'utf8'));
+    writeFileSync(
+      summaryFile(file),
+      JSON.stringify({ ...summary, check: { ...summary.check, reproduced: false } }),
+    );
+    expect((await checkReplay(file, run)).reproduced).toBe(false);
+    // ...and a rewritten run is replayed again. Listing never shows the check.
+    utimesSync(file, new Date(), new Date(Date.now() + 5000));
+    expect(await cachedReplayCheck(file)).toBeUndefined();
+    expect((await checkReplay(file, run)).reproduced).toBe(true);
+    expect((await listRuns(dir))[0]).not.toHaveProperty('check');
   });
 
   it('returns no runs for a missing directory', async () => {
