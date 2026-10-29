@@ -125,6 +125,8 @@ describe('sources.catalog', () => {
       'patterns.list',
       'patterns.route',
       'pattern.validate',
+      'compositions.recall',
+      'compositions.remember',
       'pattern.outline',
       'pattern.save',
     ]);
@@ -280,6 +282,45 @@ describe('maestro tools', () => {
       steps: [],
       settings: [],
     });
+  });
+
+  it('remembers approved compositions per workspace and recalls them for the same or similar requests', async () => {
+    const ws = ctx(join(root, 'compositions'));
+    mkdirSync(ws.workspace, { recursive: true });
+    const remember = tools.get('compositions.remember')!;
+    const recall = tools.get('compositions.recall')!;
+    expect(await recall.run({ request: 'Fix the flaky login test' }, ws)).toEqual({
+      exact: {},
+      similar: [],
+    });
+    const adaptation = { directives: { hypothesize: 'timing races first' } };
+    await remember.run(
+      {
+        request: 'Fix the flaky login test',
+        chosen: 'fix',
+        complexity: 3,
+        thenPattern: '',
+        adaptation,
+        draft: {},
+        pattern: { name: 'fix' },
+      },
+      ws,
+    );
+    const same = await recall.run({ request: 'fix the flaky  login test' }, ws);
+    expect(same.exact).toMatchObject({ chosen: 'fix', complexity: 3, adaptation, pattern: {} });
+    const near = await recall.run({ request: 'Fix the flaky signup test' }, ws);
+    expect(near.exact).toEqual({});
+    expect(near.similar).toEqual([expect.stringMatching(/→ fix \(complexity 3\); adaptation/)]);
+    // A changed library pattern: the adaptation is precedent, no longer reused as is.
+    const changed = defaultTools({
+      probeGitHub: false,
+      mcp: { includeUser: false },
+      library: async () => [{ ...fix, description: 'changed' }],
+    });
+    expect(
+      (await changed.get('compositions.recall')!.run({ request: 'Fix the flaky login test' }, ws))
+        .exact,
+    ).toEqual({});
   });
 
   it('saves a pattern where the studio lists drafts, never over a built-in one', async () => {

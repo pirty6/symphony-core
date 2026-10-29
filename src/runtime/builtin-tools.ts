@@ -6,6 +6,7 @@
  */
 import { workspaceTools } from './workspace-tools.js';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
@@ -13,6 +14,7 @@ import { adaptPattern, outlinePattern, parseDraft } from '../core/draft.js';
 import type { Pattern } from '../core/types.js';
 import { PATTERNS, routeMatches } from '../patterns/index.js';
 import { discoverMcpServers, type McpOptions } from './mcp.js';
+import { recallCompositions, rememberComposition } from './memory.js';
 import { DRAFTS_DIR, listRuns, savePatternFile } from './store.js';
 import { registry, type ToolContext, type ToolRegistry, type ToolSpec } from './tools.js';
 
@@ -294,6 +296,16 @@ export const inputsOf = (p: Pattern): string[] =>
     return `${name} (${f?.type ?? 'string'})${f?.description ? `: ${f.description}` : ''}`;
   });
 
+/** A library pattern's fingerprint: a remembered adaptation is reused only on the same pattern. */
+export const patternFingerprint = (p: Pattern): string =>
+  createHash('sha256')
+    .update(JSON.stringify(stripDemo(p)))
+    .digest('hex')
+    .slice(0, 16);
+
+const asObject = (x: unknown): Record<string, unknown> =>
+  typeof x === 'object' && x !== null && !Array.isArray(x) ? (x as Record<string, unknown>) : {};
+
 const isFilled = (x: unknown): boolean =>
   typeof x === 'object' && x !== null && !Array.isArray(x) && Object.keys(x).length > 0;
 
@@ -362,6 +374,43 @@ export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSp
               inputs: inputsOf(parsed.value),
             }
           : { errors: parsed.errors, valid: false, pattern: {}, inputs: [] };
+      },
+    },
+    {
+      name: 'compositions.recall',
+      description:
+        'Approved maestro compositions in this workspace: `exact` is one for the same request on an unchanged pattern, to reuse without a debate ({} if none); `similar` are the closest others, as precedent.',
+      outputs: ['exact', 'similar'],
+      run: async (args, ctx) => {
+        const all = await lib();
+        const fingerprint = (name: string) => {
+          const p = all.find((x) => x.name === name);
+          return p ? patternFingerprint(p) : undefined;
+        };
+        const r = await recallCompositions(ctx.workspace, String(args.request ?? ''), fingerprint);
+        return { exact: r.exact ?? {}, similar: r.similar };
+      },
+    },
+    {
+      name: 'compositions.remember',
+      description:
+        'Remember an approved composition (request, chosen pattern, complexity, then-pattern, and its adaptation or full pattern). Returns { saved }.',
+      outputs: ['saved'],
+      run: async (args, ctx) => {
+        const chosen = String(args.chosen ?? '');
+        const library = (await lib()).find((p) => p.name === chosen);
+        // A drafted (new or reshaped) score is remembered whole; an adapted one by its adaptation.
+        const whole = chosen === 'new' || isFilled(args.draft);
+        await rememberComposition(ctx.workspace, {
+          request: String(args.request ?? ''),
+          chosen,
+          complexity: typeof args.complexity === 'number' ? args.complexity : 2,
+          thenPattern: typeof args.thenPattern === 'string' ? args.thenPattern : '',
+          adaptation: whole ? {} : asObject(args.adaptation),
+          pattern: whole ? asObject(args.pattern) : {},
+          template: library ? patternFingerprint(library) : '',
+        });
+        return { saved: true };
       },
     },
     {
