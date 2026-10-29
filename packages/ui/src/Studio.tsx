@@ -573,7 +573,17 @@ export default function Studio() {
       showGraph(scoreMeta(res.run.score), res.graph)
       setGoal(res.run.score.goal)
       setContext(contextStrings(res.run.score.context as Record<string, unknown>))
-      setView(replayView(res.run, { reproduced: res.reproduced, issues: res.issues, file }))
+      setView(replayView(res.run, { reproduced: res.reproduced ?? undefined, issues: res.issues, file }))
+      // Long runs take seconds to replay: show the run now, the verdict when it is in.
+      if (res.reproduced === null) {
+        void api.savedCheck(file).then(
+          (c) =>
+            setView((v) =>
+              v.replay?.file === file ? { ...v, replay: { ...v.replay, reproduced: c.reproduced, issues: [...v.replay.issues, ...c.issues] } } : v,
+            ),
+          (e: Error) => setError(errorText(e)),
+        )
+      }
       setTab('state')
     } catch (e) {
       setError(errorText(e))
@@ -600,8 +610,12 @@ export default function Studio() {
         <b>{view.performance?.outcome ?? view.status}</b> {view.reason}
         {view.savedTo && <div className="muted">saved {view.savedTo.split('/.symphony/')[1] ?? view.savedTo}</div>}
         {view.replay && (
-          <div className={view.replay.reproduced ? 'ok' : 'issue'} data-testid="replay-check">
-            {view.replay.reproduced ? '✓ verified: replaying recorded answers reproduces this run exactly' : `✘ not reproducible ${view.replay.issues.join('; ')}`}
+          <div className={view.replay.reproduced === undefined ? 'muted' : view.replay.reproduced ? 'ok' : 'issue'} data-testid="replay-check">
+            {view.replay.reproduced === undefined
+              ? '⏳ checking that replaying the recorded answers reproduces this run…'
+              : view.replay.reproduced
+                ? '✓ verified: replaying recorded answers reproduces this run exactly'
+                : `✘ not reproducible ${view.replay.issues.join('; ')}`}
           </div>
         )}
         {offline && (

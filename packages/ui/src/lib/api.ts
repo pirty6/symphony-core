@@ -130,10 +130,14 @@ export const api = {
   tiers: () => fetch('/api/tiers').then((r) => json<Record<Complexity, { model: string; effort?: string }>>(r)),
   /** Delete one saved run (refused while it is still playing). */
   deleteSaved: (file: string) => post('/api/saved/delete', { path: file }).then((r) => json<{ deleted: string }>(r)),
+  /** A saved run; `reproduced` is null while its replay is still being checked (see savedCheck). */
   savedFile: (file: string) =>
     fetch(`/api/saved/file?path=${encodeURIComponent(file)}`).then((r) =>
-      json<{ run: SavedRun; issues: string[]; reproduced: boolean; graph: VisualGraph }>(r),
+      json<{ run: SavedRun; issues: string[]; reproduced: boolean | null; graph: VisualGraph }>(r),
     ),
+  /** Waits for a saved run's replay verdict. */
+  savedCheck: (file: string) =>
+    fetch(`/api/saved/check?path=${encodeURIComponent(file)}`).then((r) => json<{ reproduced: boolean; issues: string[] }>(r)),
 }
 
 export const TERMINAL = new Set(['done', 'failed', 'cancelled'])

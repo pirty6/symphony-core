@@ -221,7 +221,8 @@ export interface RunView {
   readonly performance?: Performance
   readonly savedTo?: string
   readonly reason?: string
-  readonly replay?: { readonly reproduced: boolean; readonly issues: readonly string[]; readonly file?: string }
+  /** reproduced: undefined while the replay is still being checked. */
+  readonly replay?: { readonly reproduced?: boolean; readonly issues: readonly string[]; readonly file?: string }
   /** The maestro handed on a composed score. */
   readonly next?: NextPerformance
 }
@@ -359,7 +360,7 @@ export function musicianLines(t: AiTranscript): string[] {
   return [[`tier ${m.tier}`, asked, m.account, m.sdk].filter(Boolean).join(' · '), `sampling: ${m.sampling}`]
 }
 
-export function replayView(run: SavedRun, check: { reproduced: boolean; issues: readonly string[]; file?: string }): RunView {
+export function replayView(run: SavedRun, check: { reproduced?: boolean | undefined; issues: readonly string[]; file?: string }): RunView {
   const perf = run.performance
   const frames = framesOf(perf.events)
   const streams: AiStream[] = []
@@ -414,7 +415,11 @@ export function replayView(run: SavedRun, check: { reproduced: boolean; issues: 
     streams,
     performance: perf,
     ...(perf.reason ? { reason: perf.reason } : {}),
-    replay: { reproduced: check.reproduced, issues: check.issues, ...(check.file ? { file: check.file } : {}) },
+    replay: {
+      ...(check.reproduced !== undefined ? { reproduced: check.reproduced } : {}),
+      issues: check.issues,
+      ...(check.file ? { file: check.file } : {}),
+    },
   }
 }
 

@@ -18,17 +18,17 @@
  *   GET  /api/saved                        saved runs
  *   POST /api/saved/prune {dryRun?}        retention: delete old demo runs, compact old runs
  *   POST /api/saved/delete {path}           delete one saved run (not one still playing)
- *   GET  /api/saved/file?path=             saved run + integrity + replay check
+ *   GET  /api/saved/file?path=             saved run + integrity (+ replay verdict once known)
+ *   GET  /api/saved/check?path=            waits for the replay verdict: { reproduced, issues }
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join, relative } from 'node:path'
 import { CompileError, compileScore } from '../../../src/core/compile.js'
 import { parseDraft, patternToTypeScript } from '../../../src/core/draft.js'
 import { patternToGraph } from '../../../src/core/graph.js'
-import { engineNote } from '../../../src/core/migrate.js'
-import { replayPerformance, restoreEngine } from '../../../src/core/replay.js'
+import { restoreEngine } from '../../../src/core/replay.js'
 import { isImprovisation, playsFromRepertoire } from '../../../src/core/jazz.js'
-import type { Complexity, ExecutableScore, Pattern } from '../../../src/core/types.js'
+import type { Complexity, ExecutableScore, Pattern, SavedRun } from '../../../src/core/types.js'
 import { chainNext } from '../../../src/runtime/chain.js'
 import type { ChainStep } from '../../../src/core/chain.js'
 import { concertNext } from '../../../src/runtime/concert.js'
@@ -46,7 +46,7 @@ import {
   type RuntimeExtras,
 } from '../../../src/runtime/factory.js'
 import { isolate, editsFiles } from '../../../src/runtime/worktree.js'
-import { autoPrune, deleteRun, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
+import { autoPrune, cachedReplayCheck, checkReplay, deleteRun, type ReplayCheck, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
 
 export interface ApiOptions {
   /** Repository root (where src/patterns lives). */
@@ -124,6 +124,18 @@ export function createApi(opts: ApiOptions) {
   const runs = opts.runs ?? new Map<string, Run>()
   /** The file each run saves its checkpoints to, so a run still playing is not deleted. */
   const savedFiles = new Map<string, string>()
+  /** Replay checks in progress, by run file: opening a run twice checks it once. */
+  const checking = new Map<string, Promise<ReplayCheck>>()
+  function replayCheckOf(file: string, run?: SavedRun): Promise<ReplayCheck> {
+    let p = checking.get(file)
+    if (!p) {
+      p = (run ? Promise.resolve(run) : loadRun(file).then((l) => l.run))
+        .then((r) => checkReplay(file, r))
+        .finally(() => checking.delete(file))
+      checking.set(file, p)
+    }
+    return p
+  }
   const env = opts.env ?? process.env
   const workspace = opts.workspace ?? opts.repoRoot
   const runsDir = runsDirFor(opts.repoRoot, env)
@@ -225,7 +237,12 @@ export function createApi(opts: ApiOptions) {
       ...(next ? { next } : {}),
     })
     runs.set(run.id, run)
-    void run.start().finally(() => provider.dispose?.())
+    void run.start().finally(() => {
+      provider.dispose?.()
+      // Check the finished run replays now, so opening it later is instant.
+      const file = savedFiles.get(id)
+      if (file) void replayCheckOf(file).catch(() => undefined)
+    })
     return run
   }
 
@@ -528,16 +545,27 @@ export function createApi(opts: ApiOptions) {
           return true
         }
         const { run, issues, migrated } = await loadRun(file)
-        const reproduced = issues.length === 0 && replayPerformance(run.score, run.performance).divergence.reproduced
-        // When a replay diverges, say whether a different engine version recorded it.
-        const engine = !reproduced && issues.length === 0 ? engineNote(run.performance.engine) : undefined
+        // Replaying a long run takes seconds: answer now, with the verdict if it is known
+        // (null = still checking; GET /api/saved/check waits for it).
+        const check = issues.length === 0 ? await cachedReplayCheck(file) : undefined
+        if (issues.length === 0 && !check) void replayCheckOf(file, run).catch(() => undefined)
         send(res, 200, {
           run,
-          issues: engine ? [...issues, engine] : issues,
-          reproduced,
+          issues: check?.note ? [...issues, check.note] : issues,
+          reproduced: issues.length > 0 ? false : (check?.reproduced ?? null),
           migrated,
           graph: patternToGraph(run.score),
         })
+        return true
+      }
+      if (method === 'GET' && path === '/api/saved/check') {
+        const file = runPath(runsDir, url.searchParams.get('path') ?? '')
+        if (!file) {
+          send(res, 400, { error: 'invalid path' })
+          return true
+        }
+        const check = await replayCheckOf(file)
+        send(res, 200, { reproduced: check.reproduced, issues: check.note ? [check.note] : [] })
         return true
       }
       send(res, 404, { error: 'not found' })
