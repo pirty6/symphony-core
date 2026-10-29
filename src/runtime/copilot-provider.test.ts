@@ -10,6 +10,7 @@ import {
   CopilotProvider,
   ISOLATED_SYSTEM,
   SIGN_IN_HELP,
+  normalizeSubmission,
   withoutTokenVars,
   parseTiers,
   type ClientLike,
@@ -360,6 +361,50 @@ describe('CopilotProvider', () => {
     await expect(
       new CopilotProvider({ clientFactory: () => cli.client }).runAgent(req),
     ).rejects.toMatchObject({ name: 'SetupError' });
+  });
+
+  it('keeps the last valid answer: a later bad or parallel call never replaces it', async () => {
+    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+    const play = async (calls: unknown[]) => {
+      const replies: string[] = [];
+      const { client } = fakeClient(async (cfg, emit) => {
+        for (const c of calls) replies.push(String(await callTool(cfg, 'submit_result', c)));
+        emit('session.idle');
+      });
+      const res = await new CopilotProvider({ clientFactory: () => client }).runAgent({
+        pause,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      });
+      return { result: res.result, replies };
+    };
+    const good = { updates: { word: 'cat' }, verdict };
+    // A garbled parallel call after a good one: the good one stays.
+    expect((await play([good, { updates: 'oops' }])).result).toEqual(good);
+    // A deliberate correction (both valid): the later one wins.
+    const better = { updates: { word: 'dog' }, verdict };
+    expect((await play([good, better])).result).toEqual(better);
+    // updates sent as a JSON string is repaired, not rejected.
+    const text = await play([{ updates: '{"word":"owl"}', verdict }]);
+    expect(text.replies[0]).toMatch(/^Result recorded/);
+    expect(text.result).toEqual({ updates: { word: 'owl' }, verdict });
+    // Never valid: the last bad answer reaches the engine, which says why.
+    const bad = await play([{ updates: {} }, { updates: {} }, { updates: {} }]);
+    expect(bad.replies.map((r) => r.split('\n')[0])).toEqual([
+      'REJECTED: the result was not recorded.',
+      'REJECTED: the result was not recorded.',
+      'Result recorded. Your step is complete: stop now.',
+    ]);
+    expect(bad.result).toEqual({ updates: {} });
+  });
+
+  it('normalizeSubmission parses string-encoded JSON only where it is an object', () => {
+    expect(normalizeSubmission('{"updates":{"a":1}}')).toEqual({ updates: { a: 1 } });
+    expect(normalizeSubmission({ updates: '{"a":1}' })).toEqual({ updates: { a: 1 } });
+    expect(normalizeSubmission({ updates: '[1]' })).toEqual({ updates: '[1]' });
+    expect(normalizeSubmission({ updates: 'not json' })).toEqual({ updates: 'not json' });
   });
 
   it('falls back to JSON in the final message', async () => {

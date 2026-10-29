@@ -182,6 +182,26 @@ export const ISOLATED_SYSTEM = [
 const checkErrors = (c: { ok: boolean; errors?: readonly string[] }) =>
   c.ok ? [] : [...(c.errors ?? [])];
 
+/**
+ * Repair the commonest malformed submission before judging it: `updates` (or the
+ * whole result) sent as a JSON string instead of an object.
+ */
+export function normalizeSubmission(raw: unknown): unknown {
+  const parse = (v: unknown) => {
+    if (typeof v !== 'string') return v;
+    try {
+      const o = JSON.parse(v) as unknown;
+      return o && typeof o === 'object' && !Array.isArray(o) ? o : v;
+    } catch {
+      return v;
+    }
+  };
+  const r = parse(raw);
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return r;
+  const o = r as Record<string, unknown>;
+  return 'updates' in o ? { ...o, updates: parse(o.updates) } : o;
+}
+
 /** In-session retries of a malformed submit_result before the engine judges it. */
 const MAX_SUBMIT_CORRECTIONS = 2;
 
@@ -558,14 +578,18 @@ export class CopilotProvider implements Provider {
       type: 'info',
       text: `${integrating ? 'integrating takes' : req.take ? `take ${req.take}` : 'playing'} · tier ${pause.complexity} · ${tier.model ?? 'default model'}${tier.effort ? ` (${tier.effort})` : ''}`,
     });
-    let submitted: unknown;
+    // The last VALID answer wins (the AI may revise on purpose); an invalid one never
+    // replaces it, even from a parallel call, and is kept only so the engine can say why.
+    let valid: unknown;
+    let invalid: unknown;
+    const submitted = () => valid ?? invalid;
     let corrections = 0;
     const tool = defineTool(SUBMIT_TOOL, {
       description: `Submit the result of step '${pause.label}'. Call exactly once when done.`,
       parameters: resultJsonSchema(pause.outputSchema, pause.choices),
       skipPermission: true,
-      handler: async (args: unknown) => {
-        submitted = args;
+      handler: async (raw: unknown) => {
+        const args = normalizeSubmission(raw);
         // Catch a malformed answer while the AI still has its context, instead of
         // a fresh attempt that redoes all the reading. The engine re-checks anyway.
         const checked = checkAgentResult(args, pause.outputSchema, pause.choices);
@@ -576,8 +600,15 @@ export class CopilotProvider implements Provider {
               ...checkErrors(acceptance(pause.checks ?? [], req.state, checked.value)),
             ]
           : checked.errors;
-        if (errors.length === 0 || corrections >= MAX_SUBMIT_CORRECTIONS) {
+        if (errors.length === 0) {
+          valid = args;
           return 'Result recorded. Your step is complete: stop now.';
+        }
+        invalid = args;
+        if (corrections >= MAX_SUBMIT_CORRECTIONS) {
+          return valid === undefined
+            ? 'Result recorded. Your step is complete: stop now.'
+            : 'Not recorded: your earlier valid result is kept. Your step is complete: stop now.';
         }
         corrections += 1;
         req.onEvent({
@@ -616,7 +647,7 @@ export class CopilotProvider implements Provider {
     const blockedOn: string[] = [];
     // A content filter blocks the same prompt on the same model every time, so the
     // engine's retries cannot help: let another model (the nearest tiers') answer.
-    if (submitted === undefined && isProviderBlock(out.output)) {
+    if (submitted() === undefined && isProviderBlock(out.output)) {
       for (const alt of await this.otherModels(pause.complexity, tier.model)) {
         blockedOn.push(out.model ?? played.model ?? 'default model');
         req.onEvent({
@@ -626,12 +657,12 @@ export class CopilotProvider implements Provider {
         out = await play(alt);
         played = alt;
         usage = usage && out.usage ? addUsage(usage, out.usage) : (out.usage ?? usage);
-        if (submitted !== undefined || !isProviderBlock(out.output)) break;
+        if (submitted() !== undefined || !isProviderBlock(out.output)) break;
       }
     }
     const model = out.model ?? played.model;
     return {
-      result: submitted ?? extractJson(out.output),
+      result: submitted() ?? extractJson(out.output),
       transcript: {
         provider: this.name,
         ...(model ? { model } : {}),
