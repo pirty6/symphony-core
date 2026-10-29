@@ -917,15 +917,44 @@ function typedContext(pattern: Pattern, raw: unknown): Record<string, unknown> {
   );
 }
 
+function strings(x: unknown): string[] {
+  return Array.isArray(x) ? x.map(String).filter((t) => t.trim()) : [];
+}
+
 /**
- * The score the maestro composed, ready to perform: compiled with the request as goal,
- * the extracted inputs, the final complexity and the maestro run's improvisation level.
+ * The hand-off brief: what the debate left open (the conductor's 'Open doubts' and any
+ * requirement no step covers). The goal stays the verbatim request; this goes in `hint`.
  */
+export function briefOf(finalState: Readonly<Record<string, unknown>>): string {
+  const doubts = strings(finalState.debateNotes).filter((n) => /^open doubts:/i.test(n.trim()));
+  const uncovered = strings(finalState.uncovered).map((u) => `Not covered by any step: ${u}`);
+  const lines = [...doubts, ...uncovered];
+  return lines.length > 0 ? ['From the maestro (watch for these):', ...lines].join('\n') : '';
+}
+
+function withBrief(
+  pattern: Pattern,
+  context: Record<string, unknown>,
+  finalState: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const hint = pattern.state.find((f) => f.name === 'hint');
+  const brief = briefOf(finalState);
+  if (hint?.type !== 'string' || !brief) return context;
+  const own = typeof context.hint === 'string' ? context.hint : '';
+  return { ...context, hint: own ? `${own}\n\n${brief}` : brief };
+}
+
 /** Patterns the maestro chose to play after its composed score (at most one). */
 export function maestroThen(finalState: Readonly<Record<string, unknown>>): string[] {
   const then = finalState.thenPattern;
   return typeof then === 'string' && then.trim() ? [then.trim()] : [];
 }
+
+/**
+ * The score the maestro composed, ready to perform: compiled with the request as goal,
+ * the extracted inputs (plus the hand-off brief in `hint`, when the pattern takes one),
+ * the final complexity and the maestro run's improvisation level.
+ */
 
 export function composedScore(
   maestroScore: ExecutableScore,
@@ -940,7 +969,7 @@ export function composedScore(
   const pattern = parsed.value;
   const score = compileScore(pattern, {
     goal: String(finalState.request ?? maestroScore.goal),
-    context: typedContext(pattern, finalState.childContext),
+    context: withBrief(pattern, typedContext(pattern, finalState.childContext), finalState),
     complexity,
     improvisation: opts.improvisation ?? maestroScore.improvisation,
     ...(opts.generatedAt ? { generatedAt: opts.generatedAt } : {}),

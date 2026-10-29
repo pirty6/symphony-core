@@ -246,6 +246,9 @@ replayable:
    the last round (`maxRounds`, 6) is never dropped: the run ends partial without performing,
    keeping the score and your feedback (`unappliedFeedback`, also in the debate notes).
 6. **Perform**: the composed score runs as its own linked, recorded run at the final complexity.
+   The goal stays your verbatim request. When the pattern takes a `hint` (fix, implement,
+   investigate, refactor), the debate's open doubts and any uncovered requirement are handed over
+   there as a short brief, after your own hint.
 
 **Requirement ledger: substance, not only form.** The classifier lists the request's explicit
 requirements, and every piece of go-gate feedback is appended (`requirements`), so later rounds must

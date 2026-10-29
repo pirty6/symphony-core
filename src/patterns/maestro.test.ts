@@ -248,6 +248,42 @@ describe('composedScore', () => {
       context: { question: 'q', data: 'sales.csv' },
     });
   });
+
+  it("hands the debate's open doubts and uncovered requirements to the performer in hint", () => {
+    const m = compileScore(maestro, { goal: 'g', context: { request: 'x' } });
+    const fixPattern = (({ demo: _d, ...rest }) => rest)(fix) as Pattern;
+    const state = {
+      finalPattern: fixPattern,
+      complexity: 3,
+      request: 'Fix the flaky login test',
+      childContext: { issue: 'flaky login', hint: 'it fails on CI only' },
+      debateNotes: ['Approach: reproduce first', 'Open doubts: the retry may hide a race'],
+      uncovered: ['From your feedback: add a regression test'],
+    };
+    const ctx = composedScore(m, state)!.score.context;
+    expect(ctx.hint).toBe(
+      [
+        'it fails on CI only',
+        '',
+        'From the maestro (watch for these):',
+        'Open doubts: the retry may hide a race',
+        'Not covered by any step: From your feedback: add a regression test',
+      ].join('\n'),
+    );
+    // The goal is untouched: the brief is only in hint.
+    expect(composedScore(m, state)!.score.goal).not.toMatch(/maestro|doubts/);
+    // Nothing open: no brief. A pattern without a hint input gets none either.
+    expect(composedScore(m, { ...state, debateNotes: [], uncovered: [] })!.score.context.hint).toBe(
+      'it fails on CI only',
+    );
+    const p = (({ demo: _d, ...rest }) => rest)(analyze) as Pattern;
+    const plain = composedScore(m, {
+      ...state,
+      finalPattern: p,
+      childContext: { question: 'q', data: 'sales.csv' },
+    })!;
+    expect(plain.score.context).toEqual({ question: 'q', data: 'sales.csv' });
+  });
 });
 
 describe('maestro adapts library patterns instead of rewriting them', () => {
