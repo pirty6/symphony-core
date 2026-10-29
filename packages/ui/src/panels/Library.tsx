@@ -1,6 +1,7 @@
 import { useState, type DragEvent } from 'react'
 import { TERMINAL, type LibraryItem, type LiveRun, type SavedSummary } from '../lib/api'
 import type { PaletteKind } from '../lib/model'
+import { PromptBox } from './PromptBox'
 
 const PALETTE: { kind: PaletteKind; icon: string; label: string; hint: string }[] = [
   { kind: 'assessor', icon: '🔍', label: 'Assessor', hint: 'AI, read-only' },
@@ -65,12 +66,14 @@ export function Library(p: Props) {
 
       <section className="maestro-box">
         <h2>🎼 Ask the maestro</h2>
-        <textarea
+        <PromptBox
           className="draft-input"
+          title="Ask the maestro"
           placeholder="Describe what you want done, e.g. “find out why checkout got slower this week”. The maestro picks or drafts the score, debates it by complexity, then you approve and it plays."
           value={request}
-          onChange={(e) => setRequest(e.target.value)}
-          aria-label="maestro request"
+          onChange={setRequest}
+          ariaLabel="maestro request"
+          rows={3}
         />
         <button type="button" className="primary" disabled={p.asking || !request.trim()} onClick={() => p.onAsk(request.trim())}>
           {p.asking ? 'Composing…' : '🎼 Compose & perform'}

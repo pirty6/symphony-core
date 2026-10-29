@@ -573,7 +573,11 @@ export function isOfflineDemo(perf: Performance | undefined): boolean {
 
 /** Inputs the user typed that the demo's canned answers were not written for. */
 export function changedFromDemo(context: Readonly<Record<string, string>>, demo: Readonly<Record<string, string>>): string[] {
-  return Object.keys(demo).filter((k) => (context[k] ?? '').trim() !== (demo[k] ?? '').trim())
+  // Only what you typed counts: an empty field plays the demo's value.
+  return Object.keys(demo).filter((k) => {
+    const mine = (context[k] ?? '').trim()
+    return mine !== '' && mine !== (demo[k] ?? '').trim()
+  })
 }
 
 // ── phases ──────────────────────────────────────────────────────────

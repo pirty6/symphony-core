@@ -1124,3 +1124,38 @@ pre {
   margin-top: 6px;
   font-size: 12px;
 }
+
+/* Prompt boxes: grow with the text, ⤢ opens a large editor. */
+.prompt-box {
+  position: relative;
+}
+.prompt-box textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 2.6em;
+  max-height: 40vh;
+  resize: vertical;
+  padding-right: 26px;
+  line-height: 1.4;
+}
+.prompt-expand {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 14px;
+  opacity: 0.7;
+}
+.prompt-expand:hover {
+  opacity: 1;
+}
+.prompt-editor {
+  height: 80vh;
+}
+.prompt-editor-text {
+  flex: 1;
+  margin: 16px 22px 22px;
+  padding: 12px;
+  font-size: 15px;
+  line-height: 1.55;
+  resize: none;
+}

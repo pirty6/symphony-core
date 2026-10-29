@@ -213,3 +213,19 @@ test('several runs play at once on one server; the studio switches between them'
   await expect(page.locator('.tb-title')).toContainText('fix')
   await expect(page.getByTestId('gate-card')).toContainText('Paused before “recall”')
 })
+
+test('inputs start empty with the demo as a hint, the large editor writes into them, and offline runs still work', async ({ page }) => {
+  await open(page, 'fix')
+  const issue = page.getByLabel('context issue', { exact: true })
+  await expect(issue).toHaveValue('')
+  await expect(issue).toHaveAttribute('placeholder', /^e\.g\. Page 2 repeats the last item of page 1/)
+  await page.locator('.prompt-box').filter({ has: issue }).getByLabel('large editor').click()
+  await page.getByLabel('large editor text').fill('Totals are wrong\nwhen a coupon applies')
+  await page.getByRole('dialog').getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(issue).toHaveValue('Totals are wrong\nwhen a coupon applies')
+  // Blank again: the offline demo plays its own example.
+  await issue.fill('')
+  await page.getByText('auto-approve').click()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('run-status')).toHaveText('done')
+})

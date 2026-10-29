@@ -2,12 +2,16 @@ import { useState } from 'react'
 import { FIELD_TYPES, type FieldType, type StateField } from '@core/types'
 import type { Issue } from '@core/validate'
 import type { PatternMeta } from '../lib/model'
+import { PromptBox } from './PromptBox'
 
 interface Props {
   meta: PatternMeta
   editable: boolean
   goal: string
   context: Record<string, string>
+  /** The offline demo's inputs, shown as examples in empty fields. */
+  examples?: Readonly<Record<string, string>>
+  exampleGoal?: string
   errors: readonly Issue[]
   warnings: readonly Issue[]
   onMeta: (m: PatternMeta) => void
@@ -31,6 +35,11 @@ export function PatternPanel(p: Props) {
   const isPrimary = (f: StateField) => m.requiredContext.includes(f.name) || f.initial !== undefined || (p.context[f.name] ?? '') !== ''
   const primary = m.state.filter(isPrimary).sort((a, b) => Number(b.name === m.goalFrom) - Number(a.name === m.goalFrom))
   const secondary = m.state.filter((f) => !isPrimary(f))
+  // An example (the offline demo's value) is a hint, never pre-filled text you must delete.
+  const hint = (f: StateField) =>
+    p.examples?.[f.name]
+      ? `e.g. ${p.examples[f.name]}`
+      : (f.description ?? (f.initial !== undefined ? `initial ${JSON.stringify(f.initial)}` : ''))
   const field = (f: StateField) => (
     <label key={f.name} className="field">
       {f.name}{' '}
@@ -38,12 +47,23 @@ export function PatternPanel(p: Props) {
         ({f.type}){m.requiredContext.includes(f.name) ? ' · required' : ''}
         {f.name === m.goalFrom ? ' · the goal' : ''}
       </small>
-      <input
-        value={p.context[f.name] ?? ''}
-        placeholder={f.description ?? (f.initial !== undefined ? `initial ${JSON.stringify(f.initial)}` : '')}
-        onChange={(e) => p.onContext({ ...p.context, [f.name]: e.target.value })}
-        aria-label={`context ${f.name}`}
-      />
+      {f.type === 'string' ? (
+        <PromptBox
+          value={p.context[f.name] ?? ''}
+          title={f.name === m.goalFrom ? `${m.name}: ${f.name} (the goal)` : `${m.name}: ${f.name}`}
+          placeholder={hint(f)}
+          onChange={(v) => p.onContext({ ...p.context, [f.name]: v })}
+          ariaLabel={`context ${f.name}`}
+          rows={f.name === m.goalFrom ? 3 : 1}
+        />
+      ) : (
+        <input
+          value={p.context[f.name] ?? ''}
+          placeholder={hint(f)}
+          onChange={(e) => p.onContext({ ...p.context, [f.name]: e.target.value })}
+          aria-label={`context ${f.name}`}
+        />
+      )}
     </label>
   )
 
@@ -54,7 +74,14 @@ export function PatternPanel(p: Props) {
         {!m.goalFrom && (
           <label className="field">
             Goal
-            <textarea rows={2} value={p.goal} onChange={(e) => p.onGoal(e.target.value)} aria-label="goal" />
+            <PromptBox
+              value={p.goal}
+              title={`${m.name}: goal`}
+              placeholder={p.exampleGoal ? `e.g. ${p.exampleGoal}` : 'What this run is for'}
+              onChange={p.onGoal}
+              ariaLabel="goal"
+              rows={2}
+            />
           </label>
         )}
         {primary.map(field)}

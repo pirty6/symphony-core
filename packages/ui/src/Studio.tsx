@@ -76,6 +76,10 @@ function contextStrings(ctx: Record<string, unknown> | undefined): Record<string
   return Object.fromEntries(Object.entries(ctx ?? {}).map(([k, v]) => [k, formatFieldInput(v)]))
 }
 
+/** The fields that have something typed in them. */
+const nonBlank = (c: Readonly<Record<string, string>>) =>
+  Object.fromEntries(Object.entries(c).filter(([, v]) => v.trim() !== ''))
+
 export default function Studio() {
   const { screenToFlowPosition, fitView, getZoom, setCenter, getNode } = useReactFlow()
   const [follow, setFollow] = useState(true)
@@ -158,9 +162,10 @@ export default function Studio() {
     (item: LibraryItem) => {
       unsubscribe.current?.()
       showGraph(metaOf(item), item.graph)
-      setGoal(item.demo?.goal ?? item.description)
+      // Start empty: the demo's inputs are shown as examples, and fill blanks only for offline runs.
+      setGoal('')
       setThenPattern('')
-      setContext(contextStrings(item.demo?.context))
+      setContext({})
       setBreakpoints(new Set())
       setView(IDLE_VIEW)
       setTab('node')
@@ -293,6 +298,7 @@ export default function Studio() {
   const offline = isOfflineDemo(view.performance)
   // The offline demo plays answers written for the demo inputs; warn before it ignores the user's own.
   const demoInputs = useMemo(() => contextStrings(library.find((l) => l.name === meta.name)?.demo?.context), [library, meta.name])
+  const demoGoal = library.find((l) => l.name === meta.name)?.demo?.goal ?? ''
   const ignoredInputs = editable && settings.provider === 'scripted' ? changedFromDemo(context, demoInputs) : []
   const goalText = view.goal ?? ''
 
@@ -354,16 +360,21 @@ export default function Studio() {
 
   const run = async () => {
     setError(null)
+    // The offline demo answers the demo's question: blanks take the demo's value there.
+    // A real AI uses only what you wrote.
+    const offline = settings.provider === 'scripted'
+    const filled = offline ? { ...demoInputs, ...nonBlank(context) } : context
     let ctx: Record<string, unknown>
     try {
       ctx = Object.fromEntries(
-        meta.state.filter((f) => (context[f.name] ?? '').trim() !== '').map((f) => [f.name, parseFieldInput(f.type, context[f.name]!)]),
+        meta.state.filter((f) => (filled[f.name] ?? '').trim() !== '').map((f) => [f.name, parseFieldInput(f.type, filled[f.name]!)]),
       )
     } catch (e) {
       setError(`Invalid run input: ${(e as Error).message}`)
       return
     }
-    await start({ pattern, goal, context: ctx }, breakpoints)
+    const runGoal = goal.trim() || (offline ? demoGoal || meta.description : '')
+    await start({ pattern, goal: runGoal, context: ctx }, breakpoints)
   }
 
   const followRun = (runId: string, score?: { goal: string; result?: readonly string[] }) => {
@@ -738,6 +749,8 @@ export default function Studio() {
                 editable={editable}
                 goal={goal}
                 context={context}
+                examples={demoInputs}
+                exampleGoal={demoGoal}
                 errors={report.errors}
                 warnings={report.warnings}
                 onMeta={setMeta}

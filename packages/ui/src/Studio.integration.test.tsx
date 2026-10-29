@@ -109,7 +109,7 @@ async function guess(letter: string) {
 describe('Studio (integration)', () => {
   it('loads the library and the requested pattern', async () => {
     renderStudio()
-    expect(await screen.findByText('Play a round of hangman', {}, { timeout: 5000 })).toBeInTheDocument()
+    expect(await screen.findByPlaceholderText('e.g. Play a round of hangman', {}, { timeout: 5000 })).toBeInTheDocument()
     // React Flow copies nodes into its own store a render later: wait for the node itself.
     expect(await screen.findByTestId('node-pick', {}, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.getByText(/Valid: every path is bounded/)).toBeInTheDocument()
@@ -117,7 +117,7 @@ describe('Studio (integration)', () => {
 
   it('runs live: AI node streams, human answers approvals, run completes', async () => {
     renderStudio()
-    await screen.findByText('Play a round of hangman', {}, { timeout: 5000 })
+    await screen.findByPlaceholderText('e.g. Play a round of hangman', {}, { timeout: 5000 })
     fireEvent.click(screen.getByText('▶ Run'))
     for (const l of ['p', 'l', 'a', 'n', 'e', 't']) await guess(l)
     await waitFor(() => expect(screen.getByTestId('run-status')).toHaveTextContent('done'))
@@ -133,7 +133,7 @@ describe('Studio (integration)', () => {
 
   it('step mode pauses before the AI and shows its proposed answer before applying it', async () => {
     renderStudio()
-    await screen.findByText('Play a round of hangman', {}, { timeout: 5000 })
+    await screen.findByPlaceholderText('e.g. Play a round of hangman', {}, { timeout: 5000 })
     fireEvent.click(screen.getByLabelText('step mode'))
     fireEvent.click(screen.getByText('▶ Run'))
     const gate = await screen.findByTestId('gate-card')
@@ -148,7 +148,7 @@ describe('Studio (integration)', () => {
 
   it('blocks runs while the graph is invalid and points at the node', async () => {
     renderStudio()
-    await screen.findByText('Play a round of hangman', {}, { timeout: 5000 })
+    await screen.findByPlaceholderText('e.g. Play a round of hangman', {}, { timeout: 5000 })
     fireEvent.click(await screen.findByTestId('node-over', {}, { timeout: 5000 }))
     fireEvent.change(screen.getByLabelText('expression'), { target: { value: 'won ||' } })
     expect(screen.getByText('▶ Run')).toBeDisabled()
@@ -158,7 +158,7 @@ describe('Studio (integration)', () => {
 
   it('sends complexity and the improvisation knob with the run', async () => {
     renderStudio()
-    await screen.findByText('Play a round of hangman', {}, { timeout: 5000 })
+    await screen.findByPlaceholderText('e.g. Play a round of hangman', {}, { timeout: 5000 })
     fireEvent.change(screen.getByLabelText('complexity'), { target: { value: '4' } })
     fireEvent.change(screen.getByLabelText('improvisation'), { target: { value: '2' } })
     expect(screen.getByText('Swing')).toBeInTheDocument()
