@@ -24,7 +24,7 @@ import { describeEdits } from '@core/edits'
 import { DataEdge } from './canvas/DataEdge'
 import { FlowNode } from './canvas/FlowNode'
 import { FrameNode, PhaseNode } from './canvas/PhaseNode'
-import { api, errorText, isNetworkError, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
+import { api, errorText, isNetworkError, isRunGone, RUN_GONE, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
 import {
   IDLE_VIEW,
   applyMessage,
@@ -37,6 +37,7 @@ import {
   isOfflineDemo,
   newNode,
   parseStoredSettings,
+  endLocally,
   originSummary,
   originsByNode,
   phaseDisplay,
@@ -393,7 +394,32 @@ export default function Studio() {
     setView(startLive(runId, score?.goal, score?.result))
     setSelected(null)
     setTab('ai')
-    unsubscribe.current = subscribeRun(runId, (m) => setView((v) => (v.runId === runId ? applyMessage(v, m) : v)))
+    unsubscribe.current = subscribeRun(
+      runId,
+      (m) => setView((v) => (v.runId === runId ? applyMessage(v, m) : v)),
+      () => endRun(runId, RUN_GONE),
+    )
+  }
+
+  /** The server cannot tell us more about this run: end it on screen so nothing waits forever. */
+  const endRun = (runId: string, reason: string) => {
+    setView((v) => (v.runId === runId ? endLocally(v, reason) : v))
+  }
+
+  /** A request about the open run failed: end it here if the server lost it, else say why. */
+  const runRequestFailed = (runId: string, e: unknown) => {
+    if (isRunGone(e)) endRun(runId, RUN_GONE)
+    else setError(errorText(e))
+  }
+
+  /** Send an approval or recovery answer; rejects when it fails, so its card can be sent again. */
+  const sendAnswer = (send: (runId: string) => Promise<unknown>) => {
+    const runId = view.runId
+    if (!runId) return
+    return send(runId).catch((e: unknown) => {
+      runRequestFailed(runId, e)
+      throw e
+    })
   }
 
   const start = async (
@@ -469,7 +495,14 @@ export default function Studio() {
   }, [handedOn])
 
   const control = (action: string, extra?: Record<string, unknown>) => {
-    if (view.runId) void api.control(view.runId, action, extra).catch((e: Error) => setError(errorText(e)))
+    const runId = view.runId
+    if (!runId) return
+    void api.control(runId, action, extra).catch((e: unknown) => {
+      // Stop must always get you out, even when the server cannot be reached to hear it.
+      if (action === 'stop' && isNetworkError(e))
+        endRun(runId, 'Stopped here, but the server could not be reached to stop it. If it is still playing, it is listed under Live runs.')
+      else runRequestFailed(runId, e)
+    })
   }
 
   const changeSettings = (s: RunSettings) => {
@@ -727,8 +760,8 @@ export default function Studio() {
           </div>
         )}
         <GateCard view={view} onResume={() => control('resume')} onStep={() => control('step')} onStop={() => control('stop')} />
-        <ApprovalCard view={view} onAnswer={(a) => view.runId && void api.approve(view.runId, a).catch((e: Error) => setError(errorText(e)))} />
-        <RecoveryCard view={view} onAnswer={(a) => view.runId && void api.recover(view.runId, a).catch((e: Error) => setError(errorText(e)))} />
+        <ApprovalCard view={view} onAnswer={(a) => sendAnswer((id) => api.approve(id, a))} />
+        <RecoveryCard view={view} onAnswer={(a) => sendAnswer((id) => api.recover(id, a))} />
         {resultBanner}
         <nav className="tabs">
           {(['node', 'ai', 'state'] as const).map((t) => (

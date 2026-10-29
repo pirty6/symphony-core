@@ -262,3 +262,37 @@ test('a lost server says so and reconnects; request errors close with ✕ and cl
   await expect(page.locator('.tb-title')).toContainText('hangman')
   await expect(alert).toBeHidden()
 })
+
+test('an answer that does not get through can be sent again', async ({ page }) => {
+  await open(page, 'hangman')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  const card = page.getByTestId('approval-card')
+  await card.getByLabel('letter', { exact: true }).fill('e')
+  await page.route('**/api/runs/*/approval', (r) => r.abort())
+  await card.getByRole('button', { name: 'Approve', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Could not reach the studio server')
+  // Not stuck disabled: the same answer goes through once the server answers again.
+  await page.unroute('**/api/runs/*/approval')
+  await expect(card.getByLabel('letter', { exact: true })).toBeEnabled()
+  await guess(page, 'e')
+})
+
+for (const lose of ['restarted', 'unreachable'] as const) {
+  test(`stop always ends a paused run: server ${lose}`, async ({ page }) => {
+    await open(page, 'fix')
+    await page.getByText('auto-approve').click()
+    await page.getByLabel('step mode').check()
+    await page.getByRole('button', { name: '▶ Run' }).click()
+    const gate = page.getByTestId('gate-card')
+    await expect(gate).toBeVisible()
+    await page.route('**/api/runs/*/control', (r) =>
+      lose === 'restarted' ? r.fulfill({ status: 404, json: { error: 'run not found' } }) : r.abort(),
+    )
+    await gate.getByRole('button', { name: '⏹ Stop' }).click()
+    await expect(gate).toBeHidden()
+    await expect(page.getByTestId('run-status')).toHaveText('cancelled')
+    await expect(page.getByTestId('run-result')).toContainText(
+      lose === 'restarted' ? 'no longer on the server' : 'could not be reached to stop it',
+    )
+  })
+}

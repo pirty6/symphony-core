@@ -265,6 +265,16 @@ function updateStream(
   return streams
 }
 
+/**
+ * End the run on screen when the server can no longer tell us about it (it
+ * restarted and lost the run, or cannot be reached to stop it): no gate or
+ * approval stays waiting for an answer nobody can receive.
+ */
+export function endLocally(v: RunView, reason: string): RunView {
+  const { gate: _g, pause: _p, ...rest } = v
+  return { ...rest, status: 'cancelled', reason }
+}
+
 export function applyMessage(v: RunView, m: RunMessage): RunView {
   switch (m.type) {
     case 'engine': {

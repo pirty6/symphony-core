@@ -79,11 +79,12 @@ export function isNetworkError(e: unknown): boolean {
 export const SERVER_UNREACHABLE =
   "Could not reach the studio server, so that did not happen. If it restarted (e.g. after a code change), the runs it was playing stopped; open a saved run to resume it."
 
+export const isRunGone = (e: unknown): boolean => e instanceof ApiError && e.message === 'run not found'
+
 /** What to tell the user about a failed request. */
 export function errorText(e: unknown): string {
   if (isNetworkError(e)) return SERVER_UNREACHABLE
-  if (e instanceof ApiError && e.message === 'run not found')
-    return 'That run is no longer on the server (it restarted). Open its saved run to resume it.'
+  if (isRunGone(e)) return RUN_GONE
   return e instanceof Error ? e.message : String(e)
 }
 
@@ -133,13 +134,30 @@ export const api = {
 
 export const TERMINAL = new Set(['done', 'failed', 'cancelled'])
 
-/** Subscribe to a run. EventSource resumes from the last seq on reconnect; closes at the end. */
-export function subscribeRun(runId: string, onMessage: (m: RunMessage) => void): () => void {
+export const RUN_GONE = 'That run is no longer on the server (it restarted). Open its saved run to resume it.'
+
+/**
+ * Subscribe to a run. EventSource resumes from the last seq on reconnect; closes
+ * at the end. When the connection drops and the server no longer has the run
+ * (it restarted), onLost is called once and the subscription closes.
+ */
+export function subscribeRun(runId: string, onMessage: (m: RunMessage) => void, onLost?: () => void): () => void {
   const source = new EventSource(`/api/runs/${runId}/events`)
   source.onmessage = (e: MessageEvent<string>) => {
     const m = JSON.parse(e.data) as RunMessage
     onMessage(m)
     if (m.type === 'status' && TERMINAL.has(m.status)) source.close()
+  }
+  source.onerror = () => {
+    if (source.readyState === EventSource.CLOSED || !onLost) return
+    void fetch(`/api/runs/${runId}`).then(
+      (r) => {
+        if (r.status !== 404 || source.readyState === EventSource.CLOSED) return
+        source.close()
+        onLost()
+      },
+      () => undefined, // Unreachable: EventSource keeps retrying.
+    )
   }
   return () => source.close()
 }
