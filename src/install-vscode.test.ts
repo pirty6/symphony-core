@@ -51,10 +51,11 @@ describe('install:vscode', () => {
   });
 
   it("writes a maestrov2 skill for chats that load skills, with the agent's own instructions", () => {
+    // Git may check it out with CRLF (Windows).
     const agent = readFileSync(
       join(import.meta.dirname, '../integrations/vscode/maestro-v2.agent.md'),
       'utf8',
-    );
+    ).replaceAll('\r\n', '\n');
     const skill = skillFromAgent(agent);
     const front = /^---\n([\s\S]*?)\n---\n/.exec(skill)![1]!;
     expect(front).toMatch(new RegExp(`^name: ${SKILL_NAME}$`, 'm'));

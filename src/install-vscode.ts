@@ -27,7 +27,10 @@ export const SKILL_NAME = 'maestrov2';
  * so both entry points relay the same way (one source, no drift).
  */
 export function skillFromAgent(agent: string): string {
-  const body = agent.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
+  const body = agent
+    .replaceAll('\r\n', '\n')
+    .replace(/^---\n[\s\S]*?\n---\n/, '')
+    .trim();
   return `---
 name: ${SKILL_NAME}
 description: "Run the Symphony maestro: a deterministic, auditable pipeline (maestro, investigate, fix, refactor, implement, backlog, review) through the symphony MCP server, relaying every approval and stuck step to the user. Use when: /maestrov2, maestrov2, maestro, run the maestro, Symphony, deterministic investigation, fix or feature implementation."
