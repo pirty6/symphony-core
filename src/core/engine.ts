@@ -612,6 +612,24 @@ function resolveRecovery(
   emit(ctx, { type: 'paused', pause: next });
 }
 
+/**
+ * Why an AI step gave no result at all, from what it said: a "result must be an
+ * object" error would hide that the provider blocked the answer or the AI stopped.
+ */
+export function isProviderBlock(output: string): boolean {
+  return /content filter|blocked by|content management policy|responsible ai/i.test(output);
+}
+
+export function noResult(transcript: AiTranscript | undefined): string {
+  const said = transcript?.output.trim() ?? '';
+  if (isProviderBlock(said)) {
+    return `no result: the AI provider blocked the response ("${said.slice(0, 200)}"). The same model usually blocks the same prompt again: retry at another tier (a different model), or with a hint.`;
+  }
+  return said
+    ? `no result: the AI ended without calling submit_result. It last said: "${said.slice(-300)}"`
+    : 'no result: the AI ended without calling submit_result and wrote nothing (it may have hit a limit or timed out).';
+}
+
 function resolveAgent(
   score: ExecutableScore,
   ctx: Ctx,
@@ -619,7 +637,10 @@ function resolveAgent(
   pause: Extract<Pause, { kind: 'agent' }>,
   res: AgentResolution,
 ): void {
-  const routed = checkAgentResult(res.result, pause.outputSchema, pause.choices);
+  const routed: ReturnType<typeof checkAgentResult> =
+    res.result === undefined
+      ? { ok: false, errors: [noResult(res.transcript)] }
+      : checkAgentResult(res.result, pause.outputSchema, pause.choices);
   const checked =
     routed.ok && node.kind === 'agent' && node.checks?.length
       ? acceptance(node.checks, ctx.state, routed.value)
@@ -794,5 +815,8 @@ export function toPerformance(st: EngineState): Performance {
     finalState: st.state,
     steps: st.steps,
     events: st.events,
+    ...(st.kind === 'running' && st.pause && st.attempts.length > 0
+      ? { pending: { nodeId: st.pause.nodeId, step: st.pause.step, attempts: st.attempts } }
+      : {}),
   };
 }

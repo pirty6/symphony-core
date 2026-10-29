@@ -117,6 +117,15 @@ describe('pattern library', () => {
     expect(r.state.cursor).toBe('clean');
   });
 
+  it('maestro prompts avoid wording that provider content filters blocked', () => {
+    const blocked = /how (i|we) got here|unsure, cut|what i cut|what i am not sure/i;
+    const texts = findPattern('maestro')!.nodes.flatMap((n) =>
+      n.kind === 'agent' ? [n.directive] : [],
+    );
+    const fields = findPattern('maestro')!.state.map((f) => f.description ?? '');
+    expect([...texts, ...fields].filter((t) => blocked.test(t))).toEqual([]);
+  });
+
   it('routes prompts by verb triggers', () => {
     expect(routePrompt('Please fix this broken test')?.name).toBe('fix');
     expect(routePrompt('review my PR')?.name).toBe('review');

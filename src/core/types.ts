@@ -300,6 +300,8 @@ export interface Musician {
   readonly sdk?: string;
   /** Sampling settings, or why they are not recorded. */
   readonly sampling: string;
+  /** Models whose content filter blocked this answer before another model gave it. */
+  readonly blockedOn?: readonly string[];
 }
 
 // ── Engine: pauses and resolutions ─────────────────────────────────
@@ -566,6 +568,15 @@ export interface Performance {
   readonly steps: readonly PerformedStep[];
   /** Full ordered event log; enough to replay the run visually. */
   readonly events: readonly EngineEvent[];
+  /**
+   * A run saved mid-step (stuck, stopped or interrupted): the rejected attempts of the
+   * step it was on, with what the AI said. For audit; replay does not use them.
+   */
+  readonly pending?: {
+    readonly nodeId: string;
+    readonly step: number;
+    readonly attempts: NonNullable<PerformedStep['attempts']>;
+  };
   /** Where a run's file edits went when it played in its own worktree (runtime/worktree.ts). */
   readonly edits?: EditsResult;
   /**

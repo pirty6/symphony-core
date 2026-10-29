@@ -124,6 +124,41 @@ describe('engine: response validation', () => {
     expect(r.state.steps.find((s) => s.nodeId === 'pick')?.attempts).toHaveLength(1);
   });
 
+  it('no result at all says why: what the AI said, or that a provider filter blocked it', () => {
+    const answer = (r: AdvanceResult, output: string) =>
+      advance(score, r.state, {
+        kind: 'agent',
+        pauseId: r.state.pause!.pauseId,
+        result: undefined,
+        transcript: { provider: 'copilot', prompt: 'p', output, toolCalls: [] },
+      });
+    let r = answer(
+      createEngine(score),
+      'The model returned no content because the response was blocked by content filtering.',
+    );
+    expect(r.state.pause?.feedback?.[0]).toMatch(
+      /^no result: the AI provider blocked the response .* retry at another tier \(a different model\)/,
+    );
+    r = answer(r, 'I read the files and think the word is cat.');
+    expect(r.state.pause?.feedback?.[0]).toBe(
+      'no result: the AI ended without calling submit_result. It last said: "I read the files and think the word is cat."',
+    );
+    r = answer(r, '');
+    expect(r.state.pause).toMatchObject({ kind: 'stuck' });
+    expect(r.state.pause?.feedback?.[0]).toMatch(
+      /wrote nothing \(it may have hit a limit or timed out\)/,
+    );
+    // Saved while stuck, the run keeps what the AI said in each attempt.
+    const pending = toPerformance(r.state).pending!;
+    expect(pending.nodeId).toBe('pick');
+    expect(pending.attempts.map((a) => a.transcript?.output)).toEqual([
+      'The model returned no content because the response was blocked by content filtering.',
+      'I read the files and think the word is cat.',
+      '',
+    ]);
+    expect(pending.attempts[0]!.errors[0]).toMatch(/blocked the response/);
+  });
+
   it('gets stuck after exhausting retries; stopping fails without touching state', () => {
     let r = createEngine(score);
     for (let i = 0; i < 3; i += 1) r = answerAgent(score, r, 'not json');

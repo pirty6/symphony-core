@@ -84,7 +84,8 @@ export const maestro: Pattern = {
     {
       name: 'debateNotes',
       type: 'string[]',
-      description: 'How we got here, what was argued, unsure, cut',
+      description:
+        'Notes on how the score was reached: approach, what was debated, open doubts, removed steps',
     },
     { name: 'draftErrors', type: 'string[]' },
     { name: 'draftValid', type: 'boolean' },
@@ -292,7 +293,9 @@ Put the whole pattern object in \`draft\`.`,
       role: 'assessor',
       isolated: true,
       label: 'Conductor',
-      directive: `You are the CONDUCTOR: fold the debate into ONE final score. Start from \`draft\`. Apply every concern the pragmatist marked REAL (if no pragmatist ran, every concrete skeptic concern), the skeptic's sound \`edits\`, and the pragmatist's \`cuts\`/\`leaner\` where they do not drop a load-bearing step. Ignore THEORETICAL concerns. Do not add steps nobody argued for. Put the final pattern in \`draft\` and summarize in \`debateNotes\` (short entries, omit empty ones): 'How I got here: ...', 'What we argued about: ...', 'What I am not sure about: ...', 'What I cut: ...'. Refer to agents by what they did.
+      // Keep the notes' wording neutral: first-person, emotional phrasing ("how I got
+      // here", "unsure, cut") made a provider content filter block every answer here.
+      directive: `You are the CONDUCTOR: fold the debate into ONE final score. Start from \`draft\`. Apply every concern the pragmatist marked REAL (if no pragmatist ran, every concrete skeptic concern), the skeptic's sound \`edits\`, and the pragmatist's \`cuts\`/\`leaner\` where they do not drop a load-bearing step. Ignore THEORETICAL concerns. Do not add steps nobody argued for. Put the final pattern in \`draft\` and summarize in \`debateNotes\` (short entries, omit empty ones): 'Approach: ...', 'Debated: ...', 'Open doubts: ...', 'Removed steps: ...'. Refer to agents by what they did.
 
 ${SCORE_FORMAT}`,
       reads: [
@@ -501,9 +504,9 @@ ${SCORE_FORMAT}`,
         updates: {
           draft: s.draft as Record<string, unknown>,
           debateNotes: [
-            'How I got here: started from the fix pattern.',
-            'What we argued about: whether one passing run proves a flaky fix (it does not).',
-            'What I am not sure about: whether CI timing reproduces locally.',
+            'Approach: started from the fix pattern.',
+            'Debated: whether one passing run proves a flaky fix (it does not).',
+            'Open doubts: whether CI timing reproduces locally.',
           ],
         },
         verdict: v('conducted'),

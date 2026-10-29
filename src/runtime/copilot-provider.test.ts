@@ -149,6 +149,72 @@ describe('CopilotProvider', () => {
     expect(sessions[0]!.cfg.excludedTools).toEqual(['task']);
   });
 
+  it('a content filter block is answered by another model, nearest tier first', async () => {
+    const BLOCK =
+      'The model returned no content because the response was blocked by content filtering.';
+    const play = (blocking: string[]) =>
+      fakeClient(async (cfg, emit) => {
+        if (blocking.includes(cfg.model!)) {
+          emit('assistant.usage', { model: cfg.model, inputTokens: 100, outputTokens: 0 });
+          emit('assistant.message', { content: BLOCK, model: cfg.model });
+        } else {
+          await callTool(cfg, 'submit_result', {
+            updates: { word: 'dog' },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+          });
+          emit('assistant.usage', { model: cfg.model, inputTokens: 100, outputTokens: 10 });
+          emit('assistant.message', { content: 'Done.', model: cfg.model });
+        }
+        emit('session.idle');
+      });
+    const tiers = { 1: { model: 'c' }, 2: { model: 'b' }, 3: { model: 'a' }, 4: { model: 'a' } };
+    const run = async (blocking: string[]) => {
+      const { client, sessions } = play(blocking);
+      const events: string[] = [];
+      const p = new CopilotProvider({
+        clientFactory: () => ({
+          ...client,
+          listModels: async () => ['a', 'b', 'c'].map((id) => ({ id })),
+        }),
+        tiers,
+      });
+      const res = await p.runAgent({
+        pause: { ...pause, complexity: 3 },
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: (e) => e.type === 'info' && events.push(e.text),
+      });
+      return { res, models: sessions.map((x) => x.cfg.model), events };
+    };
+
+    const healed = await run(['a', 'b']);
+    expect(healed.models).toEqual(['a', 'b', 'c']);
+    expect(healed.res.result).toMatchObject({ updates: { word: 'dog' } });
+    expect(healed.res.transcript.model).toBe('c');
+    expect(healed.res.transcript.musician).toMatchObject({
+      requestedModel: 'a',
+      blockedOn: ['a', 'b'],
+    });
+    expect(healed.res.transcript.usage).toMatchObject({
+      calls: 3,
+      inputTokens: 300,
+      outputTokens: 10,
+    });
+    expect(healed.events.filter((t) => t.includes('content filtering'))).toEqual([
+      'a blocked the response (content filtering); trying b',
+      'b blocked the response (content filtering); trying c',
+    ]);
+
+    // Every model blocks: the engine gets no result and says why (engine.noResult).
+    const blocked = await run(['a', 'b', 'c']);
+    expect(blocked.res.result).toBeUndefined();
+    expect(blocked.res.transcript.output).toBe(BLOCK);
+
+    // A normal answer never tries another model.
+    expect((await run([])).models).toEqual(['a']);
+  });
+
   it('falls back to JSON in the final message', async () => {
     const { client } = fakeClient(async (_cfg, emit) => {
       emit('assistant.message', { content: '```json\n{"updates":{"word":"dog"}}\n```' });

@@ -13,7 +13,9 @@ import { fileURLToPath } from 'node:url';
 import { CopilotClient, defineTool, ToolSet } from '@github/copilot-sdk';
 import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
 import { webSearch, type SearchResult } from './web-search.js';
+import { isProviderBlock } from '../core/engine.js';
 import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
+import { addUsage } from '../core/usage.js';
 import type { Complexity, Role, TokenUsage, ToolCallRecord } from '../core/types.js';
 import type {
   AgentRequest,
@@ -361,6 +363,27 @@ export class CopilotProvider implements Provider {
     };
   }
 
+  /** Up to two other models, from the nearest tiers, for when a content filter blocks one. */
+  private async otherModels(
+    complexity: Complexity,
+    current: string | undefined,
+  ): Promise<{ model: string; effort?: ReasoningEffort }[]> {
+    const available = await this.availableModels();
+    const table = { ...DEFAULT_TIERS, ...this.opts.tiers };
+    const seen = new Set([current]);
+    const out: { model: string; effort?: ReasoningEffort }[] = [];
+    for (const d of [-1, 1, -2, 2, -3, 3]) {
+      const t = complexity + d;
+      if (t < 1 || t > 4 || out.length >= 2) continue;
+      const { model, effort } = table[t as Complexity];
+      if (seen.has(model) || (available && !available.has(model))) continue;
+      seen.add(model);
+      const efforts = available?.get(model);
+      out.push({ model, ...(effort && (!efforts || efforts.includes(effort)) ? { effort } : {}) });
+    }
+    return out;
+  }
+
   private models: Promise<Map<string, readonly string[]> | undefined> | undefined;
 
   private availableModels(): Promise<Map<string, readonly string[]> | undefined> {
@@ -433,19 +456,39 @@ export class CopilotProvider implements Provider {
         ? [this.webSearchTool(req.signal)]
         : []),
     ];
-    const out = await this.runSession({
-      prompt,
-      role: pause.role,
-      tools,
-      mcpServers,
-      onlyCustomTools: isolated,
-      ...(tier.model ? { model: tier.model } : {}),
-      ...(tier.effort ? { effort: tier.effort } : {}),
-      complexity: pause.complexity,
-      signal: req.signal,
-      onEvent: req.onEvent,
-    });
-    const model = out.model ?? tier.model;
+    const play = (m: { model?: string; effort?: ReasoningEffort }) =>
+      this.runSession({
+        prompt,
+        role: pause.role,
+        tools,
+        mcpServers,
+        onlyCustomTools: isolated,
+        ...(m.model ? { model: m.model } : {}),
+        ...(m.effort ? { effort: m.effort } : {}),
+        complexity: pause.complexity,
+        signal: req.signal,
+        onEvent: req.onEvent,
+      });
+    let out = await play(tier);
+    let played: { model?: string } = tier;
+    let usage = out.usage;
+    const blockedOn: string[] = [];
+    // A content filter blocks the same prompt on the same model every time, so the
+    // engine's retries cannot help: let another model (the nearest tiers') answer.
+    if (submitted === undefined && isProviderBlock(out.output)) {
+      for (const alt of await this.otherModels(pause.complexity, tier.model)) {
+        blockedOn.push(out.model ?? played.model ?? 'default model');
+        req.onEvent({
+          type: 'info',
+          text: `${blockedOn.at(-1)} blocked the response (content filtering); trying ${alt.model}`,
+        });
+        out = await play(alt);
+        played = alt;
+        usage = usage && out.usage ? addUsage(usage, out.usage) : (out.usage ?? usage);
+        if (submitted !== undefined || !isProviderBlock(out.output)) break;
+      }
+    }
+    const model = out.model ?? played.model;
     return {
       result: submitted ?? extractJson(out.output),
       transcript: {
@@ -454,12 +497,13 @@ export class CopilotProvider implements Provider {
         prompt,
         output: out.output,
         toolCalls: out.toolCalls,
-        ...(out.usage ? { usage: out.usage } : {}),
+        ...(usage ? { usage } : {}),
         ...(startedAt ? { startedAt, completedAt: this.opts.clock!() } : {}),
         musician: {
           tier: pause.complexity,
           ...(tier.model ? { requestedModel: tier.model } : {}),
           ...(tier.effort ? { effort: tier.effort } : {}),
+          ...(blockedOn.length ? { blockedOn } : {}),
           account: this.usingSignedInUser ? 'signed-in user' : 'token',
           ...(SDK ? { sdk: SDK } : {}),
           sampling: SAMPLING_NOTE,
