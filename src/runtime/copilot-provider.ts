@@ -186,20 +186,21 @@ const checkErrors = (c: { ok: boolean; errors?: readonly string[] }) =>
  * Repair the commonest malformed submission before judging it: `updates` (or the
  * whole result) sent as a JSON string instead of an object.
  */
+function parseObject(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  try {
+    const o = JSON.parse(v) as unknown;
+    return o && typeof o === 'object' && !Array.isArray(o) ? o : v;
+  } catch {
+    return v;
+  }
+}
+
 export function normalizeSubmission(raw: unknown): unknown {
-  const parse = (v: unknown) => {
-    if (typeof v !== 'string') return v;
-    try {
-      const o = JSON.parse(v) as unknown;
-      return o && typeof o === 'object' && !Array.isArray(o) ? o : v;
-    } catch {
-      return v;
-    }
-  };
-  const r = parse(raw);
+  const r = parseObject(raw);
   if (!r || typeof r !== 'object' || Array.isArray(r)) return r;
   const o = r as Record<string, unknown>;
-  return 'updates' in o ? { ...o, updates: parse(o.updates) } : o;
+  return 'updates' in o ? { ...o, updates: parseObject(o.updates) } : o;
 }
 
 /** In-session retries of a malformed submit_result before the engine judges it. */
