@@ -308,7 +308,8 @@ test('deletes one saved run from the list after a second click', async ({ page }
   await expect(newest).toBeVisible()
   // Other tests' runs may still be saving: follow this run by its file, not by position or count.
   const file = (await newest.getAttribute('data-file'))!
-  const mine = page.locator(`[data-testid="saved-run"][data-file="${file}"]`)
+  // Windows paths have backslashes, which CSS selectors read as escapes.
+  const mine = page.locator(`[data-testid="saved-run"][data-file="${file.replaceAll('\\', '\\\\')}"]`)
   const trash = mine.getByRole('button', { name: 'delete run' })
   // The trash can shows only while hovering the run.
   await page.locator('.tb-title').hover()
