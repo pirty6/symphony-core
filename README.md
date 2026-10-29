@@ -386,7 +386,9 @@ npm run install:vscode      # once; add -- --insiders for VS Code Insiders, -- -
 ```
 
 This installs, for every workspace:
-- the `/maestrov2` prompt and the `maestro-v2` agent, in your user prompts folder;
+- the `/maestrov2` prompt and the `maestro-v2` agent, in your user prompts folder (Copilot Chat);
+- the `maestrov2` skill, in `~/.agents/skills/maestrov2`, for chats that load skills rather than
+  prompt files (Copilot CLI, the VS Code agent host). Same instructions as the agent;
 - the `symphony` MCP server, in your user `mcp.json`. Your other servers and comments are kept,
   and a `.bak` copy is written.
 

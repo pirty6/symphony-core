@@ -1,6 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { serverEntry, withServer, withoutServer } from './install-vscode.js';
+import {
+  SKILL_NAME,
+  serverEntry,
+  skillFromAgent,
+  withServer,
+  withoutServer,
+} from './install-vscode.js';
 import { stripJsonc } from './runtime/mcp.js';
 
 const entry = serverEntry('/repo', '/usr/bin/node');
@@ -41,5 +48,24 @@ describe('install:vscode', () => {
     expect(twice.match(/"symphony"/g)).toHaveLength(1);
     const removed = withoutServer(twice);
     expect(Object.keys(parse(removed).servers)).toEqual(['teams']);
+  });
+
+  it("writes a maestrov2 skill for chats that load skills, with the agent's own instructions", () => {
+    const agent = readFileSync(
+      join(import.meta.dirname, '../integrations/vscode/maestro-v2.agent.md'),
+      'utf8',
+    );
+    const skill = skillFromAgent(agent);
+    const front = /^---\n([\s\S]*?)\n---\n/.exec(skill)![1]!;
+    expect(front).toMatch(new RegExp(`^name: ${SKILL_NAME}$`, 'm'));
+    expect(SKILL_NAME).toMatch(/^[a-z0-9-]{1,64}$/);
+    const description = /^description: "(.*)"$/m.exec(front)![1]!;
+    expect(description.length).toBeLessThanOrEqual(1024);
+    expect(description).toContain('/maestrov2');
+    // The relay rules come from the agent file, without its frontmatter (tools: is agent-only).
+    expect(skill).toContain('NEVER answer an approval or a stuck step on the user');
+    expect(skill).not.toMatch(/^tools:/m);
+    expect(skill.match(/^---$/gm)).toHaveLength(2);
+    expect(skillFromAgent(agent.replaceAll('\n', '\r\n'))).not.toMatch(/^tools:/m);
   });
 });
