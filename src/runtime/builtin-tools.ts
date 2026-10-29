@@ -398,7 +398,7 @@ export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSp
       outputs: ['saved'],
       run: async (args, ctx) => {
         const chosen = String(args.chosen ?? '');
-        const library = (await lib()).find((p) => p.name === chosen);
+        const known = (await lib()).find((p) => p.name === chosen);
         // A drafted (new or reshaped) score is remembered whole; an adapted one by its adaptation.
         const whole = chosen === 'new' || isFilled(args.draft);
         await rememberComposition(ctx.workspace, {
@@ -408,7 +408,7 @@ export function maestroTools(library: () => Promise<readonly Pattern[]>): ToolSp
           thenPattern: typeof args.thenPattern === 'string' ? args.thenPattern : '',
           adaptation: whole ? {} : asObject(args.adaptation),
           pattern: whole ? asObject(args.pattern) : {},
-          template: library ? patternFingerprint(library) : '',
+          template: known ? patternFingerprint(known) : '',
         });
         return { saved: true };
       },

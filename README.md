@@ -239,6 +239,17 @@ replayable:
    write feedback for another round (complexity escalates one tier); reject to stop.
 6. **Perform**: the composed score runs as its own linked, recorded run at the final complexity.
 
+**Memory of compositions.** What you approve at the go-gate is remembered in the workspace's
+`.symphony/memory.json`: the request, the pattern, complexity, then-pattern and its adaptation (or
+the whole pattern for new ones), with a fingerprint of the library pattern it adapted.
+
+- **The same request again** (ignoring case and spacing), on an unchanged pattern, skips
+  classification and the debate: the approved composition is validated and shown at the go-gate,
+  marked as reused. Feedback there composes it afresh; if the pattern changed meanwhile, the old
+  adaptation goes to the proposer with what no longer fits.
+- **Similar requests** get the three closest approved compositions as precedent for the classifier
+  and the proposer, so a familiar kind of request usually composes in one round.
+
 ### Complexity → model
 
 Each agent call uses the model of its tier, with reasoning effort when the model supports it.
