@@ -10,7 +10,14 @@ import { type ChainStep, resultText } from '../core/chain.js';
 import { compileScore } from '../core/compile.js';
 import { playsFromRepertoire } from '../core/jazz.js';
 import { zeroValue } from '../core/schema.js';
-import { formatUsage, performanceUsage } from '../core/usage.js';
+import {
+  addUsage,
+  costliest,
+  formatUsage,
+  performanceUsage,
+  rejectionUsage,
+} from '../core/usage.js';
+import type { Performance, TokenUsage } from '../core/types.js';
 import { describeEdits } from '../core/edits.js';
 import type {
   Complexity,
@@ -122,6 +129,67 @@ export type Waiting =
       readonly complexity: Complexity;
     };
 
+export interface Usage {
+  readonly premiumRequests?: number;
+  /** Costliest steps of this run first. */
+  readonly byStep: Readonly<Record<string, string>>;
+  /** Attempts thrown away and what they cost, and answers that sent updates as text. */
+  readonly rejected?: string;
+  /** The whole chain (maestro -> composed -> chained): composing apart from performing. */
+  readonly chain?: {
+    readonly compose: string;
+    readonly perform: string;
+    readonly premiumRequests: number;
+  };
+}
+
+const NONE: TokenUsage = {
+  calls: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  reasoningTokens: 0,
+};
+
+type Steps = { readonly steps: Performance['steps'] };
+
+/**
+ * Usage of the run shown, measured: its costliest steps (rejected attempts included),
+ * what rejected answers cost, and, for a chain, composing (maestro) apart from performing.
+ */
+export function usageOf(
+  latest: Steps,
+  chain: readonly ({ readonly pattern: string } & Steps)[],
+): Usage {
+  const mine = performanceUsage(latest);
+  const rejected = rejectionUsage(latest);
+  let compose = NONE;
+  let perform = NONE;
+  for (const r of chain) {
+    const u = performanceUsage(r).total;
+    if (r.pattern === 'maestro') compose = addUsage(compose, u);
+    else perform = addUsage(perform, u);
+  }
+  return {
+    ...(mine.total.premiumRequests ? { premiumRequests: mine.total.premiumRequests } : {}),
+    byStep: Object.fromEntries(costliest(mine.byNode).map((t) => [t.node, t.text])),
+    ...(rejected.attempts || rejected.textUpdates
+      ? {
+          rejected: `${rejected.attempts} attempts (${formatUsage(rejected.attemptUsage)})${rejected.textUpdates ? ` · ${rejected.textUpdates} answers sent updates as text` : ''}`,
+        }
+      : {}),
+    ...(chain.length > 1
+      ? {
+          chain: {
+            compose: formatUsage(compose),
+            perform: formatUsage(perform),
+            premiumRequests: (compose.premiumRequests ?? 0) + (perform.premiumRequests ?? 0),
+          },
+        }
+      : {}),
+  };
+}
+
 export interface RunView {
   /** The run being shown: the latest one when a run handed on to another. */
   readonly runId: string;
@@ -142,6 +210,8 @@ export interface RunView {
   readonly note?: string;
   /** Tokens the AI steps of this run spent so far. */
   readonly tokens?: string;
+  /** What the AI spent, measured: this run's costliest steps, rejected answers, the whole chain. */
+  readonly usage?: Usage;
   /** Where the file edits went (the run played in its own worktree). */
   readonly edits?: string;
 }
@@ -359,9 +429,17 @@ export class RunManager {
       ...(result ? { result } : {}),
       ...(managed.savedTo ? { savedTo: managed.savedTo } : {}),
       ...(managed.blocked ? { note: managed.blocked } : {}),
-      ...(used.calls > 0 ? { tokens: formatUsage(used) } : {}),
+      ...(used.calls > 0 ? { tokens: formatUsage(used), usage: this.usage(engine, chain) } : {}),
       ...(edits ? { edits: describeEdits(edits) } : {}),
     };
+  }
+
+  private usage(engine: { readonly steps: Performance['steps'] }, chain: readonly string[]): Usage {
+    const runs = chain.flatMap((id) => {
+      const r = this.runs.get(id)?.run;
+      return r?.engine ? [{ pattern: r.score.pattern, steps: r.engine.steps }] : [];
+    });
+    return usageOf(engine, runs);
   }
 
   /** Settled: needs a human, or ended without handing on. */
