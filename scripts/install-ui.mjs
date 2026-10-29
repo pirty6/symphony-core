@@ -4,6 +4,7 @@
 // pnpm installs the workspace itself (pnpm-workspace.yaml), so this does nothing there.
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const agent = process.env.npm_config_user_agent ?? '';
@@ -16,7 +17,13 @@ const windows = process.platform === 'win32';
 const result = spawnSync(
   windows ? 'npm.cmd' : 'npm',
   // Same peer handling as the root (.npmrc): see the note there.
-  ['install', '--no-audit', '--no-fund', '--legacy-peer-deps'],
+  // The studio's lockfile pins exactly what CI tests; `ci` installs just that.
+  [
+    existsSync(join(ui, 'package-lock.json')) ? 'ci' : 'install',
+    '--no-audit',
+    '--no-fund',
+    '--legacy-peer-deps',
+  ],
   { cwd: ui, stdio: 'inherit', shell: windows },
 );
 process.exit(result.status ?? 1);
