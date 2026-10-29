@@ -6,7 +6,11 @@ import {
   CITE_BY_ID,
   citesFindings,
   EVIDENCE_STATE,
+  MEMORY_NOTE,
+  MEMORY_STATE,
   MERGE_FINDINGS,
+  recallMemory,
+  rememberLessonNode,
 } from './phases/evidence.js';
 
 const v = (reason: string, confidence = 0.9) => ({
@@ -17,7 +21,10 @@ const v = (reason: string, confidence = 0.9) => ({
 });
 
 // The "hypotheses" here are competing approaches, including "it already exists".
-const approaches = hypothesesPhase({ subject: 'request', context: ['hint'] });
+const approaches = hypothesesPhase({
+  subject: 'request',
+  context: ['hint', 'knownFacts', 'pastLessons'],
+});
 const challenge = challengePhase({
   subject: 'request',
   evidence: 'findings',
@@ -41,7 +48,7 @@ const edit = editVerifyPhase({
   ],
   triageReads: ['request', 'design', 'plan'],
   success: 'review',
-  giveUp: 'gaveUp',
+  giveUp: 'learnFailed',
   rediagnose: { node: 'explore', gaps: 'gaps' },
 });
 
@@ -109,6 +116,7 @@ export const implement: Pattern = {
       { name: 'reviews', type: 'number', description: 'Acceptance reviews sent back to editing' },
       { name: 'maxReviews', type: 'number', initial: 2 },
       ...EVIDENCE_STATE,
+      ...MEMORY_STATE,
     ],
     approaches,
     challenge,
@@ -157,6 +165,7 @@ export const implement: Pattern = {
       // Edits must change the workspace from here; pre-existing changes are not progress.
       output: { hash: 'prevDiffHash' },
     },
+    recallMemory('recall', 'request'),
     ...approaches.nodes,
     {
       id: 'explore',
@@ -165,8 +174,9 @@ export const implement: Pattern = {
       capabilities: ['web'],
       label: 'Explore the code',
       directive:
-        'Read the code (no edits) for evidence on how to build `request`: for AND against every entry of `hypotheses` (each is an approach), tagging each finding with the approaches it bears on (e.g. "[H2 against]"). Find where the feature plugs in, similar features to copy the shape of, the conventions to follow (naming, errors, docs) and the tests that cover the area. If `gaps` is set, settle those first: they are objections to the last design or the reason the last edit failed. Record each fact in `newFindings`, without repeating `findings`.',
-      reads: ['request', 'hint', 'hypotheses', 'findings', 'gaps', 'baselineOutput'],
+        'Read the code (no edits) for evidence on how to build `request`: for AND against every entry of `hypotheses` (each is an approach), tagging each finding with the approaches it bears on (e.g. "[H2 against]"). Find where the feature plugs in, similar features to copy the shape of, the conventions to follow (naming, errors, docs) and the tests that cover the area. If `gaps` is set, settle those first: they are objections to the last design or the reason the last edit failed. Record each fact in `newFindings`, without repeating `findings`.' +
+        MEMORY_NOTE,
+      reads: ['request', 'hint', 'hypotheses', 'findings', 'gaps', 'baselineOutput', 'knownFacts'],
       writes: ['newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -270,6 +280,16 @@ export const implement: Pattern = {
         { field: 'failureReason', expr: '"acceptance criteria not met: see unmetCriteria"' },
       ],
     },
+    rememberLessonNode('learnImplemented', 'implemented', {
+      problem: 'request',
+      cause: 'design',
+      files: 'changedFiles',
+    }),
+    rememberLessonNode('learnFailed', 'failed', {
+      problem: 'request',
+      failure: 'failureReason',
+      files: 'changedFiles',
+    }),
     { id: 'implemented', kind: 'end', label: 'Implemented', outcome: 'success' },
     { id: 'incomplete', kind: 'end', label: 'Criteria unmet', outcome: 'partial' },
     { id: 'gaveUp', kind: 'end', label: 'Gave up', outcome: 'failed' },
@@ -287,7 +307,10 @@ export const implement: Pattern = {
       branch: 'else',
       label: 'fix the tests first',
     },
-    { id: 'snapshot-hypothesize', from: 'snapshot', to: approaches.entry },
+    { id: 'snapshot-recall', from: 'snapshot', to: 'recall' },
+    { id: 'recall-hypothesize', from: 'recall', to: approaches.entry },
+    { id: 'learnImplemented-implemented', from: 'learnImplemented', to: 'implemented' },
+    { id: 'learnFailed-gaveUp', from: 'learnFailed', to: 'gaveUp' },
     ...approaches.edges,
     { id: 'rating-explore', from: approaches.exit!, to: 'explore' },
     { id: 'explore-check', from: 'explore', to: 'checkExplore' },
@@ -299,7 +322,7 @@ export const implement: Pattern = {
     { id: 'approve-rejected', from: 'approve', to: 'rejected', branch: 'rejected' },
     ...edit.edges,
     { id: 'review-allMet', from: 'review', to: 'allMet' },
-    { id: 'allMet-implemented', from: 'allMet', to: 'implemented', branch: 'then' },
+    { id: 'allMet-learn', from: 'allMet', to: 'learnImplemented', branch: 'then' },
     { id: 'allMet-reviewsLeft', from: 'allMet', to: 'reviewsLeft', branch: 'else' },
     { id: 'reviewsLeft-back', from: 'reviewsLeft', to: 'backToEdit', branch: 'then' },
     {
@@ -396,6 +419,9 @@ export const implement: Pattern = {
       }),
     },
     tools: {
+      recall: () => ({ facts: [], lessons: [] }),
+      learnImplemented: () => ({ saved: true }),
+      learnFailed: () => ({ saved: true }),
       checkExplore: (s) => ({ valid: s.newFindings, invalid: [] }),
       baseline: () => ({ passed: true, output: 'Tests 20 passed', command: 'npm test' }),
       snapshot: () => ({ diff: '', hash: 'base', files: [] }),

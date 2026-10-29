@@ -6,7 +6,11 @@ import {
   CITE_BY_ID,
   citesFindings,
   EVIDENCE_STATE,
+  MEMORY_NOTE,
+  MEMORY_STATE,
   MERGE_FINDINGS,
+  recallMemory,
+  rememberLessonNode,
 } from './phases/evidence.js';
 
 const v = (reason: string, confidence = 0.9) => ({
@@ -16,7 +20,10 @@ const v = (reason: string, confidence = 0.9) => ({
   reason,
 });
 
-const hypotheses = hypothesesPhase({ subject: 'issue', context: ['hint'] });
+const hypotheses = hypothesesPhase({
+  subject: 'issue',
+  context: ['hint', 'knownFacts', 'pastLessons'],
+});
 const challenge = challengePhase({
   subject: 'issue',
   evidence: 'findings',
@@ -31,8 +38,8 @@ const edit = editVerifyPhase({
     'Implement `plan` by editing `files` (others only if the plan truly needs them). Fix the root cause in `rootCause`, not the symptom, and add or update a test that fails without the fix when that is feasible.',
   applyReads: ['issue', 'rootCause', 'files', 'plan'],
   triageReads: ['issue', 'rootCause', 'plan'],
-  success: 'fixed',
-  giveUp: 'gaveUp',
+  success: 'learnFixed',
+  giveUp: 'learnFailed',
   rediagnose: { node: 'research', gaps: 'gaps' },
 });
 
@@ -73,6 +80,7 @@ export const fix: Pattern = {
       { name: 'files', type: 'string[]', description: 'Files to change' },
       { name: 'plan', type: 'string', description: 'Step-by-step fix plan' },
       ...EVIDENCE_STATE,
+      ...MEMORY_STATE,
     ],
     hypotheses,
     challenge,
@@ -92,6 +100,7 @@ export const fix: Pattern = {
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
+    recallMemory('recall', 'issue'),
     ...hypotheses.nodes,
     {
       id: 'research',
@@ -100,8 +109,9 @@ export const fix: Pattern = {
       capabilities: ['web'],
       label: 'Gather evidence',
       directive:
-        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating `findings`.',
-      reads: ['issue', 'hint', 'hypotheses', 'findings', 'gaps'],
+        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating `findings`.' +
+        MEMORY_NOTE,
+      reads: ['issue', 'hint', 'hypotheses', 'findings', 'gaps', 'knownFacts'],
       writes: ['newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -157,12 +167,25 @@ export const fix: Pattern = {
       shows: ['rootCause', 'rulings', 'files', 'plan'],
     },
     ...edit.nodes,
+    rememberLessonNode('learnFixed', 'fixed', {
+      problem: 'issue',
+      cause: 'rootCause',
+      files: 'changedFiles',
+    }),
+    rememberLessonNode('learnFailed', 'failed', {
+      problem: 'issue',
+      failure: 'failureReason',
+      files: 'changedFiles',
+    }),
     { id: 'fixed', kind: 'end', label: 'Fixed', outcome: 'success' },
     { id: 'gaveUp', kind: 'end', label: 'Gave up', outcome: 'failed' },
     { id: 'rejected', kind: 'end', label: 'Plan rejected', outcome: 'partial' },
   ],
   edges: [
-    { id: 'start-hypothesize', from: 'start', to: hypotheses.entry },
+    { id: 'start-recall', from: 'start', to: 'recall' },
+    { id: 'recall-hypothesize', from: 'recall', to: hypotheses.entry },
+    { id: 'learnFixed-fixed', from: 'learnFixed', to: 'fixed' },
+    { id: 'learnFailed-gaveUp', from: 'learnFailed', to: 'gaveUp' },
     ...hypotheses.edges,
     { id: 'rating-research', from: hypotheses.exit!, to: 'research' },
     { id: 'research-check', from: 'research', to: 'checkResearch' },
@@ -240,6 +263,9 @@ export const fix: Pattern = {
       }),
     },
     tools: {
+      recall: () => ({ facts: [], lessons: [] }),
+      learnFixed: () => ({ saved: true }),
+      learnFailed: () => ({ saved: true }),
       checkResearch: (s) => ({ valid: s.newFindings, invalid: [] }),
       captureDiff: (s) => {
         const n = (s.attempts as number) ?? 0;

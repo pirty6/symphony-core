@@ -5,6 +5,7 @@
  * project's own test script, never from the AI.
  */
 import { checkCitations } from './evidence.js';
+import { recall, rememberFacts, rememberLesson } from './memory.js';
 import { exec as execCb, execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -204,7 +205,31 @@ export function workspaceTools(): ToolSpec[] {
           ? args.findings.filter((f): f is string => typeof f === 'string')
           : [];
         const r = await checkCitations(ctx.workspace, findings);
+        // What held is remembered for later runs (re-checked whenever it is recalled).
+        await rememberFacts(ctx.workspace, r.valid).catch(() => 0);
         return { valid: r.valid, invalid: r.invalid.map((i) => `${i.finding} ✗ ${i.reason}`) };
+      },
+    },
+    {
+      name: 'memory.recall',
+      description:
+        'Facts from earlier runs that still hold in the workspace (re-checked now) and lessons from earlier fix/implement runs, ranked by the words they share with `query`: { facts, lessons }.',
+      outputs: ['facts', 'lessons'],
+      run: (args, ctx) => recall(ctx.workspace, String(args.query ?? '')),
+    },
+    {
+      name: 'memory.lesson',
+      description:
+        'Remember how a fix or implement run ended: { kind: "fixed" | "failed" | "implemented", problem, cause, files, failure }. Returns { saved }.',
+      outputs: ['saved'],
+      run: async (args, ctx) => {
+        const files = Array.isArray(args.files) ? args.files.map(String) : [];
+        const text =
+          args.kind === 'failed'
+            ? `FAILED to fix "${String(args.problem ?? '')}": ${String(args.failure ?? 'unknown')}`
+            : `${args.kind === 'implemented' ? 'Implemented' : 'Fixed'} "${String(args.problem ?? '')}": ${String(args.cause ?? '')} (files: ${files.join(', ')})`;
+        await rememberLesson(ctx.workspace, text, files);
+        return { saved: true };
       },
     },
   ];

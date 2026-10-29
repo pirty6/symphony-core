@@ -14,6 +14,7 @@
  * Fragments return their state, nodes, edges and a phase; the pattern wires an
  * edge into `entry` and supplies where the fragment exits.
  */
+import { MEMORY_NOTE } from './evidence.js';
 import type { ScoreEdge, ScoreGroup, ScoreNode, StateField } from '../../core/types.js';
 import { applyRating, RATING_CHECK, RATING_DIRECTIVE, RATING_STATE } from './complexity.js';
 
@@ -114,7 +115,7 @@ export function hypothesesPhase(cfg: HypothesesConfig): Fragment {
         role: 'assessor',
         isolated: true,
         label: 'Propose hypotheses',
-        directive: `You are the PROPOSER of competing hypotheses for \`${cfg.subject}\`. Before any evidence is read, list EVERY plausible answer or explanation, including the unwelcome ones and one that says the premise is wrong or the answer is "none of these". Write each \`hypotheses\` entry as "H<n>: <claim> | confirm if <evidence that would prove it> | refute if <evidence that would disprove it>". They must be distinct; the investigation will look for evidence for AND against each one, so do not rank them or pick a favourite.${RATING_DIRECTIVE}`,
+        directive: `You are the PROPOSER of competing hypotheses for \`${cfg.subject}\`. Before any evidence is read, list EVERY plausible answer or explanation, including the unwelcome ones and one that says the premise is wrong or the answer is "none of these". Write each \`hypotheses\` entry as "H<n>: <claim> | confirm if <evidence that would prove it> | refute if <evidence that would disprove it>". They must be distinct; the investigation will look for evidence for AND against each one, so do not rank them or pick a favourite.${cfg.context.includes('knownFacts') ? MEMORY_NOTE : ''}${RATING_DIRECTIVE}`,
         reads: [cfg.subject, ...cfg.context],
         writes: ['hypotheses', 'ratedComplexity'],
         retries: 2,

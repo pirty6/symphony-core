@@ -120,6 +120,8 @@ describe('sources.catalog', () => {
       'tests.run',
       'git.diff',
       'evidence.check',
+      'memory.recall',
+      'memory.lesson',
       'patterns.list',
       'patterns.route',
       'pattern.validate',

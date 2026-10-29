@@ -51,3 +51,52 @@ export function citesFindings(field: string): AcceptanceCheck {
     message: `Cite findings by their ids in ${field} (e.g. [F3]), using only ids that exist in findings.`,
   };
 }
+
+// ── memory across runs (runtime/memory.ts) ─────────────────────────
+
+export const MEMORY_STATE: readonly StateField[] = [
+  {
+    name: 'knownFacts',
+    type: 'string[]',
+    description: 'Facts from earlier runs, re-checked against the files today',
+  },
+  { name: 'pastLessons', type: 'string[]', description: 'How earlier fix/implement runs ended' },
+  {
+    name: 'lessonSaved',
+    type: 'boolean',
+    description: 'Whether the outcome of this run was remembered',
+  },
+];
+
+/** Bring back what earlier runs learned that bears on `query`. */
+export function recallMemory(id: string, query: string): ScoreNode {
+  return {
+    id,
+    kind: 'tool',
+    label: 'Recall earlier runs',
+    tool: 'memory.recall',
+    inputs: { query },
+    output: { facts: 'knownFacts', lessons: 'pastLessons' },
+  };
+}
+
+/** How to treat recalled memory: hints that point somewhere, never evidence. */
+export const MEMORY_NOTE =
+  ' `knownFacts` (when present) were true in earlier runs and still match the files today, and `pastLessons` say how earlier runs ended: use them as leads to check, never as evidence on their own.';
+
+/** Remember how the run ended, for later runs. */
+export function rememberLessonNode(
+  id: string,
+  kind: 'fixed' | 'failed' | 'implemented',
+  inputs: Readonly<Record<string, string>>,
+): ScoreNode {
+  return {
+    id,
+    kind: 'tool',
+    label: kind === 'failed' ? 'Remember the failure' : 'Remember the outcome',
+    tool: 'memory.lesson',
+    args: { kind },
+    inputs,
+    output: { saved: 'lessonSaved' },
+  };
+}

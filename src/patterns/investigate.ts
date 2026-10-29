@@ -5,12 +5,14 @@ import {
   CITE_BY_ID,
   citesFindings,
   EVIDENCE_STATE,
+  MEMORY_STATE,
   MERGE_FINDINGS,
+  recallMemory,
 } from './phases/evidence.js';
 
 const hypotheses = hypothesesPhase({
   subject: 'question',
-  context: ['hint', 'subQuestions', 'sourceInfo'],
+  context: ['hint', 'subQuestions', 'sourceInfo', 'knownFacts', 'pastLessons'],
 });
 const challenge = challengePhase({
   subject: 'question',
@@ -145,6 +147,7 @@ export const investigate: Pattern = {
         description: 'All checked evidence, each with its id (F<n>) and location',
       },
       ...EVIDENCE_STATE,
+      ...MEMORY_STATE,
       { name: 'gaps', type: 'string[]', description: 'Sub-questions without enough evidence' },
       { name: 'gapRounds', type: 'number' },
       { name: 'maxGapRounds', type: 'number', initial: 2 },
@@ -239,6 +242,7 @@ export const investigate: Pattern = {
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
+    recallMemory('recall', 'question'),
     {
       id: 'catalog',
       kind: 'tool',
@@ -732,7 +736,8 @@ export const investigate: Pattern = {
     { id: 'done', kind: 'end', label: 'Answered' },
   ],
   edges: [
-    { id: 'start-catalog', from: 'start', to: 'catalog' },
+    { id: 'start-recall', from: 'start', to: 'recall' },
+    { id: 'recall-catalog', from: 'recall', to: 'catalog' },
     { id: 'catalog-plan', from: 'catalog', to: 'plan' },
     { id: 'plan-queue', from: 'plan', to: 'queue' },
     { id: 'queue-hypothesize', from: 'queue', to: hypotheses.entry },
@@ -826,6 +831,7 @@ export const investigate: Pattern = {
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
+      recall: () => ({ facts: [], lessons: [] }),
       ...Object.fromEntries(
         ['checkTriage', 'checkDeep', 'checkExperiment', 'checkSource', 'checkChase'].map((id) => [
           id,

@@ -155,3 +155,26 @@ describe('evidence.check', () => {
     });
   });
 });
+
+describe('memory tools', () => {
+  it('what one run verified, the next run recalls; lessons too', async () => {
+    const d = dir();
+    writeFileSync(join(d, 'config.js'), 'export const port = DEFAULTS.port + 1;\n');
+    await tool('evidence.check').run(
+      { findings: ['config.js:1 — the default port is one above DEFAULTS `DEFAULTS.port + 1`'] },
+      ctx(d),
+    );
+    await tool('memory.lesson').run(
+      { kind: 'fixed', problem: 'wrong default port', cause: 'off by one', files: ['config.js'] },
+      ctx(d),
+    );
+    const r = (await tool('memory.recall').run({ query: 'what is the default port?' }, ctx(d))) as {
+      facts: string[];
+      lessons: string[];
+    };
+    expect(r.facts).toEqual([
+      'config.js:1 — the default port is one above DEFAULTS `DEFAULTS.port + 1`',
+    ]);
+    expect(r.lessons[0]).toMatch(/Fixed "wrong default port": off by one \(files: config.js\)$/);
+  });
+});
