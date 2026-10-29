@@ -1,4 +1,5 @@
 import type { Pattern } from '../core/types.js';
+import { backlog } from './backlog.js';
 import { fix } from './fix.js';
 import { hangman } from './hangman.js';
 import { implement } from './implement.js';
@@ -16,6 +17,7 @@ export const PATTERNS: readonly Pattern[] = [
   fix,
   refactor,
   implement,
+  backlog,
   review,
   analyze,
   hangman,
@@ -49,6 +51,7 @@ export function routeMatches(prompt: string, library: readonly Pattern[]): Patte
 
 export {
   analyze,
+  backlog,
   composedScore,
   fix,
   hangman,
