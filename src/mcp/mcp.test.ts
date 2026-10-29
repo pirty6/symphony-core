@@ -123,6 +123,9 @@ describe('Symphony MCP server', () => {
     const next = await settle(client, body.run_id);
     expect(next.chain).toHaveLength(2);
     expect(next.pattern).toBe('fix');
+    // Stopping by the maestro's id stops the composed run, and says so once it has ended.
+    const stopped = await call(client, 'stop_run', { run_id: body.run_id });
+    expect(stopped.body).toMatchObject({ pattern: 'fix', status: 'cancelled' });
   });
 
   it('remote callers may not run patterns that edit files', async () => {

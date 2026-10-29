@@ -137,6 +137,8 @@ export interface RunView {
 }
 
 const ACTIVE = new Set(['running', 'paused', 'awaiting-approval']);
+/** How long stop_run waits for the current step to end before answering. */
+const STOP_WAIT_MS = 15_000;
 
 function describe(e: EngineEvent): string | undefined {
   switch (e.type) {
@@ -415,9 +417,23 @@ export class RunManager {
     return this.view(id);
   }
 
-  stop(runId: string): RunView {
+  /**
+   * Stop the latest run of the chain (any run id of it works), then wait up to
+   * `waitMs` for its current step to wind down: answering "running" right after
+   * a stop made callers think it had not stopped. Still ending: 'stopping'.
+   */
+  async stop(runId: string, waitMs = STOP_WAIT_MS): Promise<RunView> {
     const { managed, id } = this.latest(runId);
     managed.run.stop('stopped from chat');
-    return this.view(id);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      managed.run.start().catch(() => undefined),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, waitMs);
+      }),
+    ]);
+    clearTimeout(timer);
+    const view = this.view(id);
+    return ACTIVE.has(view.status) ? { ...view, status: 'stopping' } : view;
   }
 }

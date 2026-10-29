@@ -245,12 +245,12 @@ export function createSymphonyServer(runs: RunManager): McpServer {
     {
       title: 'Stop a run',
       description:
-        'Stop a run (it is saved and can be resumed or forked later from the studio or CLI).',
+        'Stop a run: any run id of a chain stops the run playing now (maestro -> composed -> chained). Waits for its current step to end; status "stopping" means it is still winding down. It is saved and can be resumed or forked later from the studio or CLI.',
       inputSchema: { run_id: z.string() },
     },
     async (a) => {
       try {
-        return json(runs.stop(a.run_id));
+        return json(await runs.stop(a.run_id));
       } catch (e) {
         return failure(e);
       }
