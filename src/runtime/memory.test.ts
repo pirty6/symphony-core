@@ -2,7 +2,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { memoryPath, recall, rememberFacts, rememberLesson } from './memory.js';
+import {
+  memoryPath,
+  recall,
+  recallCompositions,
+  rememberComposition,
+  rememberFacts,
+  rememberLesson,
+} from './memory.js';
 
 const root = mkdtempSync(join(tmpdir(), 'symphony-memory-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -64,5 +71,93 @@ describe('memory across runs', () => {
     );
     const saved = JSON.parse(readFileSync(memoryPath(ws), 'utf8')) as { lessons: unknown[] };
     expect(saved.lessons).toHaveLength(8);
+  });
+});
+
+describe('remembered compositions', () => {
+  const ws = mkdtempSync(join(tmpdir(), 'symphony-compositions-'));
+  afterAll(() => rmSync(ws, { recursive: true, force: true }));
+  const base = { complexity: 3, thenPattern: '', pattern: {}, template: 'fix-v1' };
+  const fingerprints: Record<string, string> = { fix: 'fix-v1', investigate: 'inv-v1' };
+  const fp = (name: string) => fingerprints[name];
+
+  it('the same request reuses the approved composition; similar ones are precedent', async () => {
+    await rememberComposition(
+      ws,
+      {
+        ...base,
+        request: 'Fix the flaky login test on CI',
+        chosen: 'fix',
+        adaptation: { directives: { hypothesize: 'timing' } },
+      },
+      '2026-01-01T00:00:00Z',
+    );
+    await rememberComposition(
+      ws,
+      {
+        ...base,
+        request: 'Why is checkout slow on mobile?',
+        chosen: 'investigate',
+        template: 'inv-v1',
+        adaptation: {},
+        thenPattern: 'fix',
+      },
+      '2026-01-02T00:00:00Z',
+    );
+    const same = await recallCompositions(ws, '  fix the FLAKY login test on ci ', fp);
+    expect(same.exact).toMatchObject({
+      chosen: 'fix',
+      adaptation: { directives: { hypothesize: 'timing' } },
+    });
+    expect(same.similar).toEqual([]);
+    const near = await recallCompositions(ws, 'Fix the flaky signup test on CI', fp);
+    expect(near.exact).toBeUndefined();
+    expect(near.similar).toEqual([
+      expect.stringMatching(
+        /^2026-01-01 \| "Fix the flaky login test on CI" → fix \(complexity 3\); adaptation \{"directives"/,
+      ),
+    ]);
+    expect((await recallCompositions(ws, 'checkout slow', fp)).similar[0]).toMatch(
+      /→ investigate \(complexity 3, then fix\)/,
+    );
+  });
+
+  it('is not reused as is once its pattern changed, or left the library', async () => {
+    expect(
+      (await recallCompositions(ws, 'Fix the flaky login test on CI', () => 'fix-v2')).exact,
+    ).toBeUndefined();
+    expect(
+      (await recallCompositions(ws, 'Fix the flaky login test on CI', () => undefined)).exact,
+    ).toBeUndefined();
+  });
+
+  it('keeps the newest per request and pattern; a new pattern is reused by its definition', async () => {
+    await rememberComposition(ws, {
+      ...base,
+      request: 'fix the flaky login test on CI',
+      chosen: 'fix',
+      adaptation: { initial: { maxAttempts: 1 } },
+    });
+    const m = JSON.parse(readFileSync(memoryPath(ws), 'utf8')) as { compositions: unknown[] };
+    expect(m.compositions).toHaveLength(2);
+    expect(
+      (await recallCompositions(ws, 'Fix the flaky login test on CI', fp)).exact?.adaptation,
+    ).toEqual({
+      initial: { maxAttempts: 1 },
+    });
+    await rememberComposition(ws, {
+      ...base,
+      request: 'Compose a haiku about the build',
+      chosen: 'new',
+      adaptation: {},
+      template: '',
+      pattern: { name: 'haiku' },
+    });
+    expect(
+      (await recallCompositions(ws, 'compose a haiku about the build', fp)).exact,
+    ).toMatchObject({
+      chosen: 'new',
+      pattern: { name: 'haiku' },
+    });
   });
 });

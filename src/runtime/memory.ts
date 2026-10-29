@@ -6,6 +6,9 @@
  *   about code that has since changed is never offered again.
  * - Lessons: how fix and implement runs ended (root cause and files, or why they
  *   failed), offered to later runs as hints, never as evidence.
+ * - Compositions: what the maestro composed for a request and you approved (the
+ *   pattern, complexity, and how it was tailored). The same request again reuses
+ *   it without a debate; similar ones are offered as precedent.
  *
  * Recall ranks by the words shared with the question; nothing here decides an
  * answer: steps still have to find and cite their own evidence.
@@ -20,13 +23,30 @@ interface Entry {
   readonly files?: readonly string[];
 }
 
+/** An approved maestro composition. */
+export interface Composition {
+  readonly request: string;
+  readonly chosen: string;
+  readonly complexity: number;
+  readonly thenPattern: string;
+  /** How a library pattern was tailored ({} for new or reshaped ones). */
+  readonly adaptation: Readonly<Record<string, unknown>>;
+  /** The approved pattern, for new or reshaped ones ({} for adapted library patterns). */
+  readonly pattern: Readonly<Record<string, unknown>>;
+  /** Fingerprint of the library pattern it adapted: a changed pattern is not reused as is. */
+  readonly template: string;
+  readonly at: string;
+}
+
 interface MemoryFile {
   readonly facts: readonly Entry[];
   readonly lessons: readonly Entry[];
+  readonly compositions?: readonly Composition[];
 }
 
 const MAX_FACTS = 2000;
 const MAX_LESSONS = 300;
+const MAX_COMPOSITIONS = 200;
 const QUOTED_CITATION = /^[\w@./-]+\.[A-Za-z0-9]+:\d+(?:-\d+)?\b.*`[^`]{4,}`/;
 
 export const memoryPath = (workspace: string) => join(workspace, '.symphony', 'memory.json');
@@ -34,7 +54,7 @@ export const memoryPath = (workspace: string) => join(workspace, '.symphony', 'm
 async function load(workspace: string): Promise<MemoryFile> {
   try {
     const m = JSON.parse(await readFile(memoryPath(workspace), 'utf8')) as Partial<MemoryFile>;
-    return { facts: m.facts ?? [], lessons: m.lessons ?? [] };
+    return { facts: m.facts ?? [], lessons: m.lessons ?? [], compositions: m.compositions ?? [] };
   } catch {
     return { facts: [], lessons: [] };
   }
@@ -109,7 +129,7 @@ const words = (s: string) =>
       .filter((w) => w.length >= 4),
   );
 
-function ranked(entries: readonly Entry[], query: string, limit: number): Entry[] {
+function ranked<E extends Entry>(entries: readonly E[], query: string, limit: number): E[] {
   const q = words(query);
   return entries
     .map((e, i) => ({
@@ -137,4 +157,63 @@ export async function recall(
     (e) => `${e.at.slice(0, 10)} | ${e.text}`,
   );
   return { facts: still, lessons };
+}
+
+// ── compositions ───────────────────────────────────────────────────
+
+/** Requests that differ only in case and spacing are the same request. */
+export const sameRequest = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
+
+/** Remember an approved composition; the newest one per request and pattern wins. */
+export async function rememberComposition(
+  workspace: string,
+  c: Omit<Composition, 'at'>,
+  at = new Date().toISOString(),
+): Promise<void> {
+  if (!c.request.trim() || !c.chosen) return;
+  const key = `${sameRequest(c.request)}\u0000${c.chosen}`;
+  await update(workspace, (m) => ({
+    ...m,
+    compositions: [
+      { ...c, at },
+      ...(m.compositions ?? []).filter((x) => `${sameRequest(x.request)}\u0000${x.chosen}` !== key),
+    ].slice(0, MAX_COMPOSITIONS),
+  }));
+}
+
+const briefly = (x: unknown, max: number): string => {
+  const s = JSON.stringify(x);
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+};
+
+/**
+ * Approved compositions for a request: `exact` is the newest one for the same
+ * request whose pattern is still in the library unchanged (fingerprint), to reuse
+ * as is; `similar` are the closest others (shared words), as precedent.
+ */
+export async function recallCompositions(
+  workspace: string,
+  request: string,
+  fingerprint: (pattern: string) => string | undefined,
+  limit = 3,
+): Promise<{ exact: Composition | undefined; similar: string[] }> {
+  const all = (await load(workspace)).compositions ?? [];
+  const same = sameRequest(request);
+  const exact = all.find(
+    (c) =>
+      sameRequest(c.request) === same &&
+      (c.chosen === 'new'
+        ? Object.keys(c.pattern).length > 0
+        : fingerprint(c.chosen) === c.template),
+  );
+  const entries = all.filter((c) => c !== exact).map((c) => ({ text: c.request, at: c.at, c }));
+  const similar = ranked(entries, request, limit).map(({ c }) => {
+    const then = c.thenPattern ? `, then ${c.thenPattern}` : '';
+    const how =
+      c.chosen === 'new'
+        ? `new pattern '${String(c.pattern.name ?? '')}'`
+        : `adaptation ${briefly(c.adaptation, 600)}`;
+    return `${c.at.slice(0, 10)} | "${c.request.slice(0, 200)}" → ${c.chosen} (complexity ${c.complexity}${then}); ${how}`;
+  });
+  return { exact, similar };
 }
