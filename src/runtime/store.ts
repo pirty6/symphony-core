@@ -289,6 +289,19 @@ export function runPath(dir: string, file: string): string | undefined {
     : undefined;
 }
 
+/** Delete one saved run inside `dir`. False when the path is outside it or there is no such run. */
+export async function deleteRun(dir: string, file: string): Promise<boolean> {
+  const full = runPath(dir, file);
+  if (!full) return false;
+  try {
+    if (!(await stat(full)).isFile()) return false;
+  } catch {
+    return false;
+  }
+  await rm(full);
+  return true;
+}
+
 // ── user patterns (TypeScript files) ───────────────────────────────
 
 export async function savePatternFile(
