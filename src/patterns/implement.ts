@@ -2,6 +2,7 @@ import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
 import { prReviewPhase } from './phases/prReview.js';
+import { TESTS_KEPT_CHECK, testFirstPhase } from './phases/testFirst.js';
 import {
   checkFindings,
   CITE_BY_ID,
@@ -37,7 +38,7 @@ const challenge = challengePhase({
 });
 const edit = editVerifyPhase({
   applyDirective:
-    'Implement `design` following `plan`, editing `files` (others only if the plan truly needs them) and following the conventions it names. Add the tests in `testsToAdd` so that every entry of `acceptanceCriteria` is covered by a test that would fail without your change. Do not change unrelated behaviour. If `unmetCriteria` is set, the acceptance review found those criteria not met: address each one.',
+    'Implement `design` following `plan`, editing `files` (others only if the plan truly needs them) and following the conventions it names. The tests in `testFiles` were written first and fail now (`redOutput`): make them pass by changing the code. Do NOT edit `testFiles`: they are locked and the engine checks it; put any extra test in another file. Do not change unrelated behaviour. If `unmetCriteria` is set, the acceptance review found those criteria not met: address each one.',
   applyReads: [
     'request',
     'design',
@@ -45,13 +46,22 @@ const edit = editVerifyPhase({
     'files',
     'acceptanceCriteria',
     'testsToAdd',
+    'testFiles',
+    'redOutput',
     'unmetCriteria',
     'reviewComments',
   ],
   triageReads: ['request', 'design', 'plan'],
-  success: 'review',
+  success: TESTS_KEPT_CHECK,
   giveUp: 'learnFailed',
   rediagnose: { node: 'explore', gaps: 'gaps' },
+});
+const testFirst = testFirstPhase({
+  subject: 'request',
+  from: ['design', 'plan', 'files'],
+  implement: 'apply',
+  kept: 'review',
+  stopped: 'testFirstStopped',
 });
 const prReview = prReviewPhase({
   subject: 'request',
@@ -80,6 +90,8 @@ export const implement: Pattern = {
     'design',
     'acceptanceCriteria',
     'criteriaReport',
+    'testFiles',
+    'redReport',
     'changedFiles',
     'testsPassed',
     'unmetCriteria',
@@ -132,6 +144,7 @@ export const implement: Pattern = {
     ],
     approaches,
     challenge,
+    testFirst,
     edit,
     prReview,
   ),
@@ -151,6 +164,7 @@ export const implement: Pattern = {
       nodes: ['explore', 'checkExplore', 'mergeFindings', 'design'],
     },
     challenge.group,
+    testFirst.group,
     edit.group,
     prReview.group,
     {
@@ -250,10 +264,12 @@ export const implement: Pattern = {
       kind: 'approval',
       label: 'Approve design',
       message:
-        'Review the design, the approaches ruled out and the acceptance criteria. Approve to let the executor edit files; the engine runs the tests after every edit, then each criterion is reviewed.',
+        'Review the design, the approaches ruled out and the acceptance criteria. Approve to let the executor write the tests first (they must fail), then the code; the engine runs the tests after every edit, then each criterion is reviewed.',
       writes: [],
       shows: ['design', 'acceptanceCriteria', 'testsToAdd', 'rulings', 'files', 'plan'],
     },
+    ...testFirst.nodes,
+    { id: 'testFirstStopped', kind: 'end', label: 'Stopped at tests', outcome: 'partial' },
     ...edit.nodes,
     ...prReview.nodes,
     { id: 'reviewStopped', kind: 'end', label: 'Stopped at review', outcome: 'partial' },
@@ -335,8 +351,9 @@ export const implement: Pattern = {
     { id: 'merge-design', from: 'mergeFindings', to: 'design' },
     { id: 'design-challenge', from: 'design', to: challenge.entry },
     ...challenge.edges,
-    { id: 'approve-apply', from: 'approve', to: edit.entry, branch: 'approved' },
+    { id: 'approve-tests', from: 'approve', to: testFirst.entry, branch: 'approved' },
     { id: 'approve-rejected', from: 'approve', to: 'rejected', branch: 'rejected' },
+    ...testFirst.edges,
     ...edit.edges,
     ...prReview.edges,
     { id: 'review-allMet', from: 'review', to: 'allMet' },
@@ -408,15 +425,26 @@ export const implement: Pattern = {
         verdict: v('designed'),
       }),
       challenge: () => ({ updates: { objections: [] }, verdict: v('the design stands') }),
+      writeTests: () => ({
+        updates: { testFiles: ['src/commands/list.test.ts'] },
+        verdict: v('tests written'),
+      }),
+      checkRed: () => ({
+        updates: {
+          redReport: [
+            'C1: RED — "prints JSON with --json" — list rejects the unknown option --json',
+            'C2: RED — "prints text by default" — expects no trailing blank line; list prints one',
+          ],
+          wrongRed: [],
+        },
+        verdict: v('red for the right reason'),
+      }),
       apply: (_s, visit) => ({
         updates: {
           changes:
             visit === 0
-              ? [
-                  'src/commands/list.ts: --json prints JSON.stringify(items)',
-                  'src/commands/list.test.ts: JSON test',
-                ]
-              : ['src/commands/list.test.ts: test that text output is unchanged'],
+              ? ['src/commands/list.ts: --json prints JSON.stringify(items)']
+              : ['src/commands/list.ts: --json output ends with a newline like the text output'],
         },
         verdict: v('edited'),
       }),
@@ -425,10 +453,10 @@ export const implement: Pattern = {
           visit === 0
             ? {
                 criteriaReport: [
-                  'C1: MET — src/commands/list.test.ts "prints JSON with --json"',
-                  'C2: NOT MET — no test covers the default text output',
+                  'C1: NOT MET — src/commands/list.ts:21 the JSON has no trailing newline, unlike every other output',
+                  'C2: MET — src/commands/list.test.ts "prints text by default"',
                 ],
-                unmetCriteria: ['C2: add the "prints text by default" test'],
+                unmetCriteria: ['C1: end the JSON output with a newline'],
               }
             : {
                 criteriaReport: [
@@ -451,6 +479,18 @@ export const implement: Pattern = {
       checkExplore: (s) => ({ valid: s.newFindings, invalid: [] }),
       baseline: () => ({ passed: true, output: 'Tests 20 passed', command: 'npm test' }),
       snapshot: () => ({ diff: '', hash: 'base', files: [] }),
+      captureTests: () => ({
+        diff: '+++ b/src/commands/list.test.ts\n+  it("prints JSON with --json", …)',
+        hash: 'tests-1',
+        files: ['src/commands/list.test.ts'],
+      }),
+      runRed: () => ({
+        passed: false,
+        output: 'FAIL src/commands/list.test.ts > prints JSON with --json: unknown option --json',
+        command: 'npm test',
+      }),
+      lockTests: () => ({ diff: '', hash: 'locked', files: ['src/commands/list.test.ts'] }),
+      checkTests: () => ({ diff: '', hash: 'locked', files: ['src/commands/list.test.ts'] }),
       captureDiff: (s) => {
         const n = (s.attempts as number) ?? 0;
         return {
