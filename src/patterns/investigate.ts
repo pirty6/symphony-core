@@ -1,5 +1,12 @@
 import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
+import {
+  checkFindings,
+  CITE_BY_ID,
+  citesFindings,
+  EVIDENCE_STATE,
+  MERGE_FINDINGS,
+} from './phases/evidence.js';
 
 const hypotheses = hypothesesPhase({
   subject: 'question',
@@ -120,7 +127,12 @@ export const investigate: Pattern = {
       { name: 'queries', type: 'string[]', description: 'Queries, commands and tool calls made' },
       { name: 'consulted', type: 'string[]', description: 'Sources searched' },
       { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
-      { name: 'findings', type: 'string[]', description: 'All evidence, each with its location' },
+      {
+        name: 'findings',
+        type: 'string[]',
+        description: 'All checked evidence, each with its id (F<n>) and location',
+      },
+      ...EVIDENCE_STATE,
       { name: 'gaps', type: 'string[]', description: 'Sub-questions without enough evidence' },
       { name: 'gapRounds', type: 'number' },
       { name: 'maxGapRounds', type: 'number', initial: 2 },
@@ -158,7 +170,7 @@ export const investigate: Pattern = {
       id: 'triagePhase',
       label: 'Triage files',
       description: 'Every listed file, in batches',
-      nodes: ['filesLeft', 'takeBatch', 'triage', 'mergeTriage'],
+      nodes: ['filesLeft', 'takeBatch', 'triage', 'checkTriage', 'mergeTriage'],
     },
     {
       id: 'deepPhase',
@@ -169,6 +181,7 @@ export const investigate: Pattern = {
         'deepLeft',
         'takeDeep',
         'deepRead',
+        'checkDeep',
         'mergeDeep',
         'retryUnread',
         'requeueUnread',
@@ -185,6 +198,7 @@ export const investigate: Pattern = {
         'experimentsLeft',
         'takeExperiment',
         'experiment',
+        'checkExperiment',
         'mergeExperiment',
       ],
     },
@@ -192,13 +206,22 @@ export const investigate: Pattern = {
       id: 'sourcePhase',
       label: 'Search sources',
       description: 'History, GitHub, dependencies, MCP',
-      nodes: ['sourcesLeft', 'takeSource', 'sweep', 'mergeSource'],
+      nodes: ['sourcesLeft', 'takeSource', 'sweep', 'checkSource', 'mergeSource'],
     },
     {
       id: 'gapPhase',
       label: 'Close gaps',
       description: 'Targeted research, then a human hint',
-      nodes: ['assess', 'moreGaps', 'chase', 'mergeChase', 'confident', 'clarify', 'useHint'],
+      nodes: [
+        'assess',
+        'moreGaps',
+        'chase',
+        'checkChase',
+        'mergeChase',
+        'confident',
+        'clarify',
+        'useHint',
+      ],
     },
     challenge.group,
   ],
@@ -340,6 +363,7 @@ export const investigate: Pattern = {
         AGAINST,
       reads: ['hypotheses', 'question', 'subQuestions', 'batch'],
       writes: ['triaged', 'batchRelevant', 'newFindings'],
+      cites: 'newFindings',
       retries: 2,
       complexityShift: -1,
       checks: [
@@ -354,13 +378,14 @@ export const investigate: Pattern = {
         },
       ],
     },
+    checkFindings('checkTriage'),
     {
       id: 'mergeTriage',
       kind: 'compute',
       label: 'Record triage',
       assign: [
         { field: 'relevantFiles', expr: 'relevantFiles + batchRelevant' },
-        { field: 'findings', expr: 'unique(findings + newFindings)' },
+        ...MERGE_FINDINGS,
       ],
     },
     {
@@ -395,6 +420,7 @@ export const investigate: Pattern = {
         AGAINST,
       reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch'],
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
+      cites: 'newFindings',
       retries: 2,
       checks: [
         {
@@ -431,12 +457,13 @@ export const investigate: Pattern = {
         { field: 'unreadRetries', expr: 'unreadRetries + 1' },
       ],
     },
+    checkFindings('checkDeep'),
     {
       id: 'mergeDeep',
       kind: 'compute',
       label: 'Record deep read',
       assign: [
-        { field: 'findings', expr: 'unique(findings + newFindings)' },
+        ...MERGE_FINDINGS,
         { field: 'notRead', expr: 'notRead + unreadable' },
         { field: 'notReadReasons', expr: 'notReadReasons + unreadableReasons' },
         { field: 'unreadable', expr: '[]' },
@@ -489,6 +516,7 @@ export const investigate: Pattern = {
         'Run `currentExperiment` in the workspace. Do not modify tracked files: put any scripts and output only in the scratch folder named in your instructions. For timings, warm up once and report the median of at least 3 runs with the raw numbers. Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings`. If it cannot run, say exactly why in `newFindings`.',
       reads: ['question', 'currentExperiment'],
       writes: ['queries', 'newFindings'],
+      cites: 'newFindings',
       retries: 1,
       checks: [
         { expr: 'len(queries) > 0', message: 'Record the commands you ran in queries.' },
@@ -498,14 +526,12 @@ export const investigate: Pattern = {
         },
       ],
     },
+    checkFindings('checkExperiment'),
     {
       id: 'mergeExperiment',
       kind: 'compute',
       label: 'Record experiment',
-      assign: [
-        { field: 'findings', expr: 'unique(findings + newFindings)' },
-        { field: 'ran', expr: 'append(ran, currentExperiment)' },
-      ],
+      assign: [...MERGE_FINDINGS, { field: 'ran', expr: 'append(ran, currentExperiment)' }],
     },
     {
       id: 'sourcesLeft',
@@ -540,6 +566,7 @@ export const investigate: Pattern = {
         'sourceInfo',
       ],
       writes: ['queries', 'newFindings'],
+      cites: 'newFindings',
       retries: 2,
       checks: [
         {
@@ -553,14 +580,12 @@ export const investigate: Pattern = {
         },
       ],
     },
+    checkFindings('checkSource'),
     {
       id: 'mergeSource',
       kind: 'compute',
       label: 'Record source',
-      assign: [
-        { field: 'findings', expr: 'unique(findings + newFindings)' },
-        { field: 'consulted', expr: 'append(consulted, currentSource)' },
-      ],
+      assign: [...MERGE_FINDINGS, { field: 'consulted', expr: 'append(consulted, currentSource)' }],
     },
     {
       id: 'assess',
@@ -596,6 +621,7 @@ export const investigate: Pattern = {
         AGAINST,
       reads: ['hypotheses', 'question', 'gaps', 'hint', 'findings', 'sourceInfo', 'consulted'],
       writes: ['queries', 'newFindings'],
+      cites: 'newFindings',
       retries: 2,
       checks: [
         {
@@ -609,14 +635,12 @@ export const investigate: Pattern = {
         },
       ],
     },
+    checkFindings('checkChase'),
     {
       id: 'mergeChase',
       kind: 'compute',
       label: 'Record gap research',
-      assign: [
-        { field: 'findings', expr: 'unique(findings + newFindings)' },
-        { field: 'gapRounds', expr: 'gapRounds + 1' },
-      ],
+      assign: [...MERGE_FINDINGS, { field: 'gapRounds', expr: 'gapRounds + 1' }],
     },
     {
       id: 'confident',
@@ -648,7 +672,9 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Write answer',
       directive:
-        'Answer `question` using only `findings`, citing evidence inline (path:line, URL, issue/PR #, commit, experiment). End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), items that could not be read in full and why (`notRead`, `notReadReasons`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered.',
+        'Answer `question` using only `findings`. ' +
+        CITE_BY_ID +
+        ' Findings the engine could not verify are in `unverified`: do not rely on them. End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), items that could not be read in full and why (`notRead`, `notReadReasons`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered.',
       reads: [
         'question',
         'subQuestions',
@@ -665,12 +691,14 @@ export const investigate: Pattern = {
         'confidence',
         'hypotheses',
         'disagreements',
+        'unverified',
       ],
       writes: ['answer', 'openQuestions', 'rulings'],
       retries: 2,
       complexityShift: 1,
       checks: [
         { expr: 'len(answer) > 0', message: 'Write the answer.' },
+        citesFindings('answer'),
         {
           expr: 'len(rulings) == len(hypotheses)',
           message:
@@ -714,7 +742,8 @@ export const investigate: Pattern = {
     { id: 'filesLeft-takeBatch', from: 'filesLeft', to: 'takeBatch', branch: 'then' },
     { id: 'filesLeft-deepQueue', from: 'filesLeft', to: 'deepQueue', branch: 'else' },
     { id: 'takeBatch-triage', from: 'takeBatch', to: 'triage' },
-    { id: 'triage-mergeTriage', from: 'triage', to: 'mergeTriage' },
+    { id: 'triage-checkTriage', from: 'triage', to: 'checkTriage' },
+    { id: 'checkTriage-mergeTriage', from: 'checkTriage', to: 'mergeTriage' },
     { id: 'mergeTriage-filesLeft', from: 'mergeTriage', to: 'filesLeft', label: 'next batch' },
     { id: 'deepQueue-deepLeft', from: 'deepQueue', to: 'deepLeft' },
     { id: 'deepLeft-takeDeep', from: 'deepLeft', to: 'takeDeep', branch: 'then' },
@@ -729,7 +758,8 @@ export const investigate: Pattern = {
     { id: 'retryUnread-hasExperiments', from: 'retryUnread', to: 'hasExperiments', branch: 'else' },
     { id: 'requeue-deepLeft', from: 'requeueUnread', to: 'deepLeft' },
     { id: 'takeDeep-deepRead', from: 'takeDeep', to: 'deepRead' },
-    { id: 'deepRead-mergeDeep', from: 'deepRead', to: 'mergeDeep' },
+    { id: 'deepRead-checkDeep', from: 'deepRead', to: 'checkDeep' },
+    { id: 'checkDeep-mergeDeep', from: 'checkDeep', to: 'mergeDeep' },
     { id: 'mergeDeep-deepLeft', from: 'mergeDeep', to: 'deepLeft', label: 'next' },
     { id: 'hasExperiments-allow', from: 'hasExperiments', to: 'allowExperiments', branch: 'then' },
     { id: 'hasExperiments-sourcesLeft', from: 'hasExperiments', to: 'sourcesLeft', branch: 'else' },
@@ -755,17 +785,20 @@ export const investigate: Pattern = {
       branch: 'else',
     },
     { id: 'takeExperiment-experiment', from: 'takeExperiment', to: 'experiment' },
-    { id: 'experiment-merge', from: 'experiment', to: 'mergeExperiment' },
+    { id: 'experiment-checkExperiment', from: 'experiment', to: 'checkExperiment' },
+    { id: 'checkExperiment-mergeExperiment', from: 'checkExperiment', to: 'mergeExperiment' },
     { id: 'mergeExperiment-left', from: 'mergeExperiment', to: 'experimentsLeft', label: 'next' },
     { id: 'sourcesLeft-takeSource', from: 'sourcesLeft', to: 'takeSource', branch: 'then' },
     { id: 'sourcesLeft-assess', from: 'sourcesLeft', to: 'assess', branch: 'else' },
     { id: 'takeSource-sweep', from: 'takeSource', to: 'sweep' },
-    { id: 'sweep-mergeSource', from: 'sweep', to: 'mergeSource' },
+    { id: 'sweep-checkSource', from: 'sweep', to: 'checkSource' },
+    { id: 'checkSource-mergeSource', from: 'checkSource', to: 'mergeSource' },
     { id: 'mergeSource-sourcesLeft', from: 'mergeSource', to: 'sourcesLeft', label: 'next source' },
     { id: 'assess-moreGaps', from: 'assess', to: 'moreGaps' },
     { id: 'moreGaps-chase', from: 'moreGaps', to: 'chase', branch: 'then' },
     { id: 'moreGaps-confident', from: 'moreGaps', to: 'confident', branch: 'else' },
-    { id: 'chase-mergeChase', from: 'chase', to: 'mergeChase' },
+    { id: 'chase-checkChase', from: 'chase', to: 'checkChase' },
+    { id: 'checkChase-mergeChase', from: 'checkChase', to: 'mergeChase' },
     { id: 'mergeChase-assess', from: 'mergeChase', to: 'assess', label: 're-assess' },
     { id: 'confident-answer', from: 'confident', to: 'answer', branch: 'then' },
     { id: 'confident-clarify', from: 'confident', to: 'clarify', branch: 'else' },
@@ -779,6 +812,12 @@ export const investigate: Pattern = {
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
+      ...Object.fromEntries(
+        ['checkTriage', 'checkDeep', 'checkExperiment', 'checkSource', 'checkChase'].map((id) => [
+          id,
+          (s: Readonly<Record<string, unknown>>) => ({ valid: s.newFindings, invalid: [] }),
+        ]),
+      ),
       catalog: () => ({
         names: ['workspace', 'git-history', 'web', 'experiment', 'prior-runs'],
         descriptions: [
@@ -905,7 +944,7 @@ export const investigate: Pattern = {
       answer: (s) => ({
         updates: {
           answer: [
-            "**AI answers are validated in the engine, before any state changes.** `resolveAgent` in `src/core/engine.ts` calls `checkAgentResult` (`src/core/schema.ts`), which checks the shape of `{ updates, verdict }`, that every key is one the node may write, and the solo route; then the node's acceptance checks run on the merged state.",
+            "**AI answers are validated in the engine, before any state changes.** `resolveAgent` in `src/core/engine.ts` calls `checkAgentResult` (`src/core/schema.ts`), which checks the shape of `{ updates, verdict }`, that every key is one the node may write, and the solo route; then the node's acceptance checks run on the merged state [F1].",
             '',
             '## Why',
             '',

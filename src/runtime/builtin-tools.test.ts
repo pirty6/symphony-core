@@ -119,6 +119,7 @@ describe('sources.catalog', () => {
       'sources.catalog',
       'tests.run',
       'git.diff',
+      'evidence.check',
       'patterns.list',
       'patterns.route',
       'pattern.validate',

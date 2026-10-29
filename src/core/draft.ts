@@ -67,6 +67,7 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(capabilities.length > 0 ? { capabilities } : {}),
         ...(isComplexity(raw.complexity) ? { complexity: raw.complexity } : {}),
         ...(raw.isolated === true ? { isolated: true } : {}),
+        ...(typeof raw.cites === 'string' && raw.cites ? { cites: raw.cites } : {}),
         ...(Number.isInteger(raw.complexityShift)
           ? { complexityShift: raw.complexityShift as number }
           : {}),
@@ -207,7 +208,7 @@ export function draftInstructions(): string {
 Node kinds:
 - start {id,kind:"start",label}: exactly one.
 - agent {id,kind:"agent",role:"assessor"|"executor",label,directive,reads:[state keys],writes:[state keys],maxVisits?,
-  capabilities?:["web","mcp"], checks?:[{expr,message}], complexity?:1-4 (fixed tier), complexityShift?:-2..2 (tiers above or below the run's complexity: bulk steps -1, judging or concluding steps +1), isolated?:true (no workspace tools),
+  capabilities?:["web","mcp"], checks?:[{expr,message}], complexity?:1-4 (fixed tier), complexityShift?:-2..2 (tiers above or below the run's complexity: bulk steps -1, judging or concluding steps +1), isolated?:true (no workspace tools), cites?:"<string[] field it writes>" (entries cite path:line, checked against the workspace),
   solo?:true (assessor only: from Swing up the AI picks one of its labelled, unguarded out edges)} - checks are expressions over state+answer that must be true
   or the answer is rejected and re-asked (use them to force full coverage, e.g. subset(batch, examined)).
   assessor = read-only research/analysis; executor = may edit files and run commands. AI runs ONLY in agent nodes.
@@ -223,6 +224,7 @@ Optional "groups": [{id,label,description?,nodes:[node ids]}] name the phases of
 
 Expressions (guards, conditions, compute): state keys by name, literals, == != < <= > >= && || ! + -,
 functions len(x) empty(x) includes(list,v) lower(s) append(list,v) if(c,a,b) chars(s) subset(a,b),
+numbered(list,start) unnumbered(list) ids(list) refs(text) (evidence ids "F<n>"),
 and verdict.outcome / verdict.confidence of the last agent. Must be boolean for guards/conditions.
 
 Rules: every node reachable from start; an end reachable from every node; edges are tried in order and

@@ -62,7 +62,8 @@ describe('investigate adapts its evidence to the question', () => {
       expect.arrayContaining(['designExperiments', 'allowExperiments', 'experiment']),
     );
     expect(r.state.state.ran).toHaveLength(1);
-    expect((r.state.state.findings as string[]).some((f) => f.startsWith('experiment |'))).toBe(
+    // Recorded findings carry the id the engine gave them.
+    expect((r.state.state.findings as string[]).some((f) => /^F\d+ experiment \|/.test(f))).toBe(
       true,
     );
   });
@@ -188,5 +189,62 @@ describe('open questions', () => {
     expect(r.state.outcome).toBe('success');
     const gap = (r.state.state.subQuestions as string[])[0];
     expect(r.state.state.openQuestions).toEqual([gap, 'my own wording of it']);
+  });
+});
+
+describe('investigate only records evidence that holds', () => {
+  const play = (over: Partial<DemoScript>) => {
+    const script: DemoScript = {
+      ...demo,
+      agents: { ...demo.agents, ...over.agents },
+      tools: { ...demo.tools, ...over.tools },
+    };
+    const score = compileScore(investigate, { goal: 'g', context: demo.context! });
+    return runScripted(score, script);
+  };
+
+  it('drops findings whose citation failed, numbers the rest, and lists the dropped', () => {
+    const r = play({
+      tools: {
+        checkDeep: (s) => ({
+          valid: (s.newFindings as string[]).slice(1),
+          invalid: [`${(s.newFindings as string[])[0]} ✗ the quote is not at that line`],
+        }),
+      },
+    });
+    expect(r.state.outcome).toBe('success');
+    const findings = r.state.state.findings as string[];
+    const unverified = r.state.state.unverified as string[];
+    expect(unverified.length).toBeGreaterThan(0);
+    for (const u of unverified) {
+      const original = u.split(' ✗ ')[0]!;
+      expect(findings.some((f) => f.endsWith(original))).toBe(false);
+    }
+    // Ids are assigned in order, once each.
+    expect(findings.map((f) => /^F(\d+) /.exec(f)?.[1])).toEqual(
+      findings.map((_f, i) => String(i + 1)),
+    );
+  });
+
+  it('rejects an answer that cites an id no finding has', () => {
+    const r = play({
+      agents: {
+        answer: (s) => ({
+          updates: {
+            answer: 'It is validated in the engine [F999].',
+            openQuestions: [],
+            rulings: ((s.hypotheses as string[]) ?? []).map(
+              (h) => `${h.split(':')[0]}: UNKNOWN — x`,
+            ),
+          },
+          verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+        }),
+      },
+    });
+    const rejected = r.state.events.filter(
+      (e) => e.type === 'response-rejected' && e.nodeId === 'answer',
+    );
+    expect(rejected.length).toBeGreaterThan(0);
+    expect(JSON.stringify(rejected[0])).toMatch(/using only ids that exist in findings/);
   });
 });

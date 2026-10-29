@@ -12,6 +12,7 @@
  * Functions: len(x), empty(x), includes(listOrString, value), lower(s),
  *   append(list, v), if(cond, a, b), chars(s), subset(listA, listB),
  *   take(list, n), drop(list, n), first(list), unique(list), without(listA, listB),
+ *   numbered(list, start) ("F<n> " ids), unnumbered(list), ids(list), refs(textOrList),
  *   get(objectOrList, keyOrIndex) (null when missing), keys(object).
  */
 
@@ -39,7 +40,11 @@ type FnName =
   | 'unique'
   | 'without'
   | 'get'
-  | 'keys';
+  | 'keys'
+  | 'numbered'
+  | 'unnumbered'
+  | 'ids'
+  | 'refs';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -57,6 +62,19 @@ const FNS: Record<FnName, number> = {
   without: 2,
   get: 2,
   keys: 1,
+  numbered: 2,
+  unnumbered: 1,
+  ids: 1,
+  refs: 1,
+};
+
+/** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
+const LEADING_ID = /^(F\d+)\s+/;
+const ANY_ID = /\bF\d+\b/g;
+const strings = (fn: string, x: unknown): string[] => {
+  if (!Array.isArray(x) || x.some((v) => typeof v !== 'string'))
+    throw new ExprError(`${fn}() needs a list of strings`);
+  return x as string[];
 };
 
 export class ExprError extends Error {
@@ -344,6 +362,20 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           if (!x || typeof x !== 'object' || Array.isArray(x))
             throw new ExprError('keys() needs an object');
           return Object.keys(x).toSorted();
+        case 'numbered': {
+          const start = args[1];
+          if (typeof start !== 'number' || !Number.isInteger(start))
+            throw new ExprError('numbered() needs a whole start number');
+          return strings('numbered', x).map((s, i) => `F${start + i} ${s}`);
+        }
+        case 'unnumbered':
+          return strings('unnumbered', x).map((s) => s.replace(LEADING_ID, ''));
+        case 'ids':
+          return strings('ids', x).flatMap((s) => LEADING_ID.exec(s)?.[1] ?? []);
+        case 'refs': {
+          const text = typeof x === 'string' ? x : strings('refs', x).join('\n');
+          return [...new Set(text.match(ANY_ID) ?? [])];
+        }
         case 'without': {
           const y = args[1];
           if (!Array.isArray(x) || !Array.isArray(y))

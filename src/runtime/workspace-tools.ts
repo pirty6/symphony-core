@@ -4,6 +4,7 @@
  * facts, not an AI's report. Commands come from the run inputs or the
  * project's own test script, never from the AI.
  */
+import { checkCitations } from './evidence.js';
 import { exec as execCb, execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -192,6 +193,19 @@ export function workspaceTools(): ToolSpec[] {
         'The workspace changes against HEAD (untracked files included): { diff, hash, files }. Equal hash means nothing changed.',
       outputs: ['diff', 'hash', 'files'],
       run: (_args, ctx) => workspaceDiff(ctx),
+    },
+    {
+      name: 'evidence.check',
+      description:
+        'Check cited findings against the workspace: a "path:line — fact `quote`" must name a real file and line, and the quote must be there. { valid, invalid } (invalid entries end with why).',
+      outputs: ['valid', 'invalid'],
+      run: async (args, ctx) => {
+        const findings = Array.isArray(args.findings)
+          ? args.findings.filter((f): f is string => typeof f === 'string')
+          : [];
+        const r = await checkCitations(ctx.workspace, findings);
+        return { valid: r.valid, invalid: r.invalid.map((i) => `${i.finding} ✗ ${i.reason}`) };
+      },
     },
   ];
 }

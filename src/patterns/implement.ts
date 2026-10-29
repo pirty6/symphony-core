@@ -1,6 +1,13 @@
 import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
+import {
+  checkFindings,
+  CITE_BY_ID,
+  citesFindings,
+  EVIDENCE_STATE,
+  MERGE_FINDINGS,
+} from './phases/evidence.js';
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -101,6 +108,7 @@ export const implement: Pattern = {
       { name: 'unmetCriteria', type: 'string[]', description: 'Criteria the review found unmet' },
       { name: 'reviews', type: 'number', description: 'Acceptance reviews sent back to editing' },
       { name: 'maxReviews', type: 'number', initial: 2 },
+      ...EVIDENCE_STATE,
     ],
     approaches,
     challenge,
@@ -119,7 +127,7 @@ export const implement: Pattern = {
       id: 'designPhase',
       label: 'Design',
       description: 'Evidence for and against each approach, then a design with acceptance criteria',
-      nodes: ['explore', 'mergeFindings', 'design'],
+      nodes: ['explore', 'checkExplore', 'mergeFindings', 'design'],
     },
     challenge.group,
     edit.group,
@@ -157,9 +165,10 @@ export const implement: Pattern = {
       capabilities: ['web'],
       label: 'Explore the code',
       directive:
-        'Read the code (no edits) for evidence on how to build `request`: for AND against every entry of `hypotheses` (each is an approach), tagging each finding with the approaches it bears on (e.g. "[H2 against]"). Find where the feature plugs in, similar features to copy the shape of, the conventions to follow (naming, errors, docs) and the tests that cover the area. If `gaps` is set, settle those first: they are objections to the last design or the reason the last edit failed. Record each fact as "path:line — fact" in `newFindings`, without repeating `findings`.',
+        'Read the code (no edits) for evidence on how to build `request`: for AND against every entry of `hypotheses` (each is an approach), tagging each finding with the approaches it bears on (e.g. "[H2 against]"). Find where the feature plugs in, similar features to copy the shape of, the conventions to follow (naming, errors, docs) and the tests that cover the area. If `gaps` is set, settle those first: they are objections to the last design or the reason the last edit failed. Record each fact in `newFindings`, without repeating `findings`.',
       reads: ['request', 'hint', 'hypotheses', 'findings', 'gaps', 'baselineOutput'],
       writes: ['newFindings'],
+      cites: 'newFindings',
       retries: 2,
       maxVisits: 8,
       checks: [
@@ -169,14 +178,12 @@ export const implement: Pattern = {
         },
       ],
     },
+    checkFindings('checkExplore'),
     {
       id: 'mergeFindings',
       kind: 'compute',
       label: 'Record evidence',
-      assign: [
-        { field: 'findings', expr: 'unique(findings + newFindings)' },
-        { field: 'gaps', expr: '[]' },
-      ],
+      assign: [...MERGE_FINDINGS, { field: 'gaps', expr: '[]' }],
     },
     {
       id: 'design',
@@ -184,7 +191,9 @@ export const implement: Pattern = {
       role: 'assessor',
       label: 'Design',
       directive:
-        'From `findings` only, choose how to build `request` and write it in `design`, citing the evidence (path:line) and the conventions to follow. Rule on every approach in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence", where CONFIRMED is the approach you chose (if the feature already exists, confirm that and plan only what is missing). Write `acceptanceCriteria` as observable behaviour, one per entry, each checkable by a test; list those tests in `testsToAdd` (file and test name), the `files` to change or create, and a short step-by-step `plan`. If a previous attempt failed (`failureReason`, `testOutput`), the new design must say why it will not fail the same way.',
+        'From `findings` only, choose how to build `request` and write it in `design`, citing the evidence by id and naming the conventions to follow. ' +
+        CITE_BY_ID +
+        ' Rule on every approach in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence", where CONFIRMED is the approach you chose (if the feature already exists, confirm that and plan only what is missing). Write `acceptanceCriteria` as observable behaviour, one per entry, each checkable by a test; list those tests in `testsToAdd` (file and test name), the `files` to change or create, and a short step-by-step `plan`. If a previous attempt failed (`failureReason`, `testOutput`), the new design must say why it will not fail the same way.',
       reads: ['request', 'hint', 'hypotheses', 'findings', 'failureReason', 'testOutput'],
       writes: ['design', 'rulings', 'acceptanceCriteria', 'testsToAdd', 'files', 'plan'],
       retries: 2,
@@ -192,6 +201,7 @@ export const implement: Pattern = {
       maxVisits: 8,
       checks: [
         { expr: 'len(design) > 0', message: 'Write the design.' },
+        citesFindings('design'),
         {
           expr: 'len(acceptanceCriteria) > 0',
           message: 'List the acceptance criteria: observable behaviour a test can check.',
@@ -280,7 +290,8 @@ export const implement: Pattern = {
     { id: 'snapshot-hypothesize', from: 'snapshot', to: approaches.entry },
     ...approaches.edges,
     { id: 'rating-explore', from: approaches.exit!, to: 'explore' },
-    { id: 'explore-merge', from: 'explore', to: 'mergeFindings' },
+    { id: 'explore-check', from: 'explore', to: 'checkExplore' },
+    { id: 'check-merge', from: 'checkExplore', to: 'mergeFindings' },
     { id: 'merge-design', from: 'mergeFindings', to: 'design' },
     { id: 'design-challenge', from: 'design', to: challenge.entry },
     ...challenge.edges,
@@ -328,7 +339,7 @@ export const implement: Pattern = {
       design: (s) => ({
         updates: {
           design:
-            'Add a boolean `json` option to the parseArgs call in src/commands/list.ts:8 and print JSON.stringify(items) when set (H1).',
+            'Add a boolean `json` option to the parseArgs call in src/commands/list.ts:8 and print JSON.stringify(items) when set (H1) [F1][F4].',
           rulings: ((s.hypotheses as string[]) ?? []).map((h, i) =>
             i === 0
               ? `${h.split(':')[0]}: CONFIRMED — src/commands/list.ts:8`
@@ -385,6 +396,7 @@ export const implement: Pattern = {
       }),
     },
     tools: {
+      checkExplore: (s) => ({ valid: s.newFindings, invalid: [] }),
       baseline: () => ({ passed: true, output: 'Tests 20 passed', command: 'npm test' }),
       snapshot: () => ({ diff: '', hash: 'base', files: [] }),
       captureDiff: (s) => {

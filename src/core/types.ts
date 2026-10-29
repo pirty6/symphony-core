@@ -82,6 +82,12 @@ export interface AgentNode extends NodeBase {
   /** No workspace tools at all: the agent works only from its input. */
   readonly isolated?: boolean;
   /**
+   * A string[] field this step writes whose entries cite the workspace
+   * ("path:line — fact `quote`"). The provider checks them while the AI still has
+   * its context and sends wrong ones back; patterns also check them with a tool step.
+   */
+  readonly cites?: string;
+  /**
    * Solo point: from Swing (improvisation >= 2) the AI chooses which labelled
    * out edge to take. Below that the first edge (the written melody) is played.
    */
@@ -323,6 +329,8 @@ export interface AgentPause {
   readonly complexity: Complexity;
   readonly improvisation: Improvisation;
   readonly isolated: boolean;
+  /** Field of `updates` whose entries cite the workspace (AgentNode.cites). */
+  readonly cites?: string;
   /** Independent takes to play before integrating (1 = a single take). */
   readonly takes: number;
   /** Present at an active solo point: the routes the AI may choose from. */

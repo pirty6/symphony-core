@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SessionConfig } from '@github/copilot-sdk';
 import { compileScore } from '../core/compile.js';
@@ -215,6 +218,52 @@ describe('CopilotProvider', () => {
 
     // A normal answer never tries another model.
     expect((await run([])).models).toEqual(['a']);
+  });
+
+  it('sends citations the workspace does not back up back to the AI, in the same session', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'symphony-cites-'));
+    writeFileSync(join(ws, 'a.js'), 'const port = 8081;\n');
+    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+    const replies: string[] = [];
+    const { client } = fakeClient(async (cfg, emit) => {
+      replies.push(
+        String(
+          await callTool(cfg, 'submit_result', {
+            updates: { findings: ['a.js:1 — the port `port = 8080`', 'b.js:3 — imports a'] },
+            verdict,
+          }),
+        ),
+      );
+      replies.push(
+        String(
+          await callTool(cfg, 'submit_result', {
+            updates: { findings: ['a.js:1 — the port `port = 8081`'] },
+            verdict,
+          }),
+        ),
+      );
+      emit('session.idle');
+    });
+    const p = new CopilotProvider({ clientFactory: () => client, workingDirectory: ws });
+    const res = await p.runAgent({
+      pause: {
+        ...pause,
+        outputSchema: [{ name: 'findings', type: 'string[]' }],
+        cites: 'findings',
+      },
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    rmSync(ws, { recursive: true, force: true });
+    expect(replies[0]).toMatch(/^REJECTED/);
+    expect(replies[0]).toContain('the quote `port = 8080` is not at a.js:1');
+    expect(replies[0]).toContain('b.js does not exist in the workspace');
+    expect(replies[1]).toMatch(/^Result recorded/);
+    expect(res.result).toMatchObject({
+      updates: { findings: ['a.js:1 — the port `port = 8081`'] },
+    });
   });
 
   it('falls back to JSON in the final message', async () => {

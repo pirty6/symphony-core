@@ -1,6 +1,13 @@
 import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
+import {
+  checkFindings,
+  CITE_BY_ID,
+  citesFindings,
+  EVIDENCE_STATE,
+  MERGE_FINDINGS,
+} from './phases/evidence.js';
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -65,6 +72,7 @@ export const fix: Pattern = {
       { name: 'rootCause', type: 'string', description: 'The root cause, with evidence' },
       { name: 'files', type: 'string[]', description: 'Files to change' },
       { name: 'plan', type: 'string', description: 'Step-by-step fix plan' },
+      ...EVIDENCE_STATE,
     ],
     hypotheses,
     challenge,
@@ -77,7 +85,7 @@ export const fix: Pattern = {
       id: 'diagnosePhase',
       label: 'Diagnose',
       description: 'Evidence for and against every hypothesis, then the root cause',
-      nodes: ['research', 'mergeResearch', 'diagnose'],
+      nodes: ['research', 'checkResearch', 'mergeResearch', 'diagnose'],
     },
     challenge.group,
     edit.group,
@@ -92,9 +100,10 @@ export const fix: Pattern = {
       capabilities: ['web'],
       label: 'Gather evidence',
       directive:
-        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact as "path:line — fact" in `newFindings`, without repeating `findings`.',
+        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating `findings`.',
       reads: ['issue', 'hint', 'hypotheses', 'findings', 'gaps'],
       writes: ['newFindings'],
+      cites: 'newFindings',
       retries: 2,
       maxVisits: 8,
       checks: [
@@ -104,14 +113,12 @@ export const fix: Pattern = {
         },
       ],
     },
+    checkFindings('checkResearch'),
     {
       id: 'mergeResearch',
       kind: 'compute',
       label: 'Record evidence',
-      assign: [
-        { field: 'findings', expr: 'findings + newFindings' },
-        { field: 'gaps', expr: '[]' },
-      ],
+      assign: [...MERGE_FINDINGS, { field: 'gaps', expr: '[]' }],
     },
     {
       id: 'diagnose',
@@ -119,7 +126,9 @@ export const fix: Pattern = {
       role: 'assessor',
       label: 'Diagnose',
       directive:
-        'From `findings` only, state the root cause of `issue` in `rootCause`, citing the evidence (path:line). Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way.',
+        'From `findings` only, state the root cause of `issue` in `rootCause`, citing the evidence by id. ' +
+        CITE_BY_ID +
+        ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way.',
       reads: ['issue', 'hint', 'hypotheses', 'findings', 'failureReason', 'testOutput'],
       writes: ['rootCause', 'files', 'plan', 'rulings'],
       retries: 2,
@@ -127,6 +136,7 @@ export const fix: Pattern = {
       maxVisits: 8,
       checks: [
         { expr: 'len(rootCause) > 0', message: 'State the root cause.' },
+        citesFindings('rootCause'),
         { expr: 'len(files) > 0', message: 'List the files to change.' },
         { expr: 'len(plan) > 0', message: 'Write the plan.' },
         {
@@ -155,7 +165,8 @@ export const fix: Pattern = {
     { id: 'start-hypothesize', from: 'start', to: hypotheses.entry },
     ...hypotheses.edges,
     { id: 'rating-research', from: hypotheses.exit!, to: 'research' },
-    { id: 'research-merge', from: 'research', to: 'mergeResearch' },
+    { id: 'research-check', from: 'research', to: 'checkResearch' },
+    { id: 'check-merge', from: 'checkResearch', to: 'mergeResearch' },
     { id: 'merge-diagnose', from: 'mergeResearch', to: 'diagnose' },
     { id: 'diagnose-challenge', from: 'diagnose', to: challenge.entry },
     ...challenge.edges,
@@ -194,7 +205,8 @@ export const fix: Pattern = {
       }),
       diagnose: (s) => ({
         updates: {
-          rootCause: 'src/paginate.ts:7 slices from start - 1, so each page starts one item early',
+          rootCause:
+            'src/paginate.ts:7 slices from start - 1, so each page starts one item early [F1]',
           files: ['src/paginate.ts', 'src/paginate.test.ts'],
           plan: '1. use slice(start, end)\n2. add a test for page boundaries',
           rulings: ((s.hypotheses as string[]) ?? []).map((h, i) =>
@@ -228,6 +240,7 @@ export const fix: Pattern = {
       }),
     },
     tools: {
+      checkResearch: (s) => ({ valid: s.newFindings, invalid: [] }),
       captureDiff: (s) => {
         const n = (s.attempts as number) ?? 0;
         return {

@@ -134,3 +134,24 @@ describe('git.diff', () => {
     expect((await workspaceDiff(ctx(d))).hash).toBe(withRun.hash);
   });
 });
+
+describe('evidence.check', () => {
+  it('splits findings into the ones the workspace backs up and the rest, with why', async () => {
+    const d = dir();
+    writeFileSync(join(d, 'a.js'), 'export const port = 8081;\n');
+    const out = await tool('evidence.check').run(
+      {
+        findings: [
+          'a.js:1 — exports the port `port = 8081`',
+          'a.js:1 — the port is `8080`',
+          'web | https://example.com — a page',
+        ],
+      },
+      ctx(d),
+    );
+    expect(out).toEqual({
+      valid: ['a.js:1 — exports the port `port = 8081`', 'web | https://example.com — a page'],
+      invalid: ['a.js:1 — the port is `8080` ✗ the quote `8080` is not at a.js:1'],
+    });
+  });
+});

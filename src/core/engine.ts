@@ -303,6 +303,7 @@ function makePause(
         complexityFor(score, ctx.state, node),
       improvisation: score.improvisation,
       isolated: node.isolated === true,
+      ...(node.cites ? { cites: node.cites } : {}),
       takes: takesFor(score.improvisation, node.role),
       ...(node.solo && solosActive(score.improvisation) ? { choices: choicesOf(score, node) } : {}),
       attempt,

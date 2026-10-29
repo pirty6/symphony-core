@@ -73,10 +73,15 @@ describe('graphToPattern', () => {
 describe('loop layout', () => {
   it('draws loop bodies as a row beside their condition', () => {
     const bodies = loopBodies(investigate);
-    expect(bodies.get('filesLeft')).toEqual(['takeBatch', 'triage', 'mergeTriage']);
-    expect(bodies.get('deepLeft')).toEqual(['takeDeep', 'deepRead', 'mergeDeep']);
-    expect(bodies.get('sourcesLeft')).toEqual(['takeSource', 'sweep', 'mergeSource']);
-    expect(bodies.get('moreGaps')).toEqual(['chase', 'mergeChase']);
+    expect(bodies.get('filesLeft')).toEqual(['takeBatch', 'triage', 'checkTriage', 'mergeTriage']);
+    expect(bodies.get('deepLeft')).toEqual(['takeDeep', 'deepRead', 'checkDeep', 'mergeDeep']);
+    expect(bodies.get('sourcesLeft')).toEqual([
+      'takeSource',
+      'sweep',
+      'checkSource',
+      'mergeSource',
+    ]);
+    expect(bodies.get('moreGaps')).toEqual(['chase', 'checkChase', 'mergeChase']);
     const pos = layout(investigate);
     expect(pos.get('triage')!.y).toBe(pos.get('filesLeft')!.y);
     expect(pos.get('triage')!.x).toBeGreaterThan(pos.get('filesLeft')!.x);

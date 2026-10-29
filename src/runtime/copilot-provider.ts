@@ -16,7 +16,8 @@ import { webSearch, type SearchResult } from './web-search.js';
 import { isProviderBlock } from '../core/engine.js';
 import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
 import { addUsage } from '../core/usage.js';
-import type { Complexity, Role, TokenUsage, ToolCallRecord } from '../core/types.js';
+import { checkCitations } from './evidence.js';
+import type { AgentPause, Complexity, Role, TokenUsage, ToolCallRecord } from '../core/types.js';
 import type {
   AgentRequest,
   AgentResponse,
@@ -376,6 +377,23 @@ export class CopilotProvider implements Provider {
     };
   }
 
+  /** Citations in the step's `cites` field that the workspace does not back up. */
+  private async citationErrors(
+    pause: AgentPause,
+    updates: Readonly<Record<string, unknown>>,
+  ): Promise<string[]> {
+    const cited = pause.cites ? updates[pause.cites] : undefined;
+    if (!this.opts.workingDirectory || !Array.isArray(cited)) return [];
+    const r = await checkCitations(
+      this.opts.workingDirectory,
+      cited.filter((c): c is string => typeof c === 'string'),
+    );
+    return r.invalid.map(
+      (i) =>
+        `${pause.cites}: "${i.finding.slice(0, 120)}" — ${i.reason}. Fix the path, line or quote from the file, or remove it.`,
+    );
+  }
+
   /** Up to two other models, from the nearest tiers, for when a content filter blocks one. */
   private async otherModels(
     complexity: Complexity,
@@ -443,22 +461,25 @@ export class CopilotProvider implements Provider {
       description: `Submit the result of step '${pause.label}'. Call exactly once when done.`,
       parameters: resultJsonSchema(pause.outputSchema, pause.choices),
       skipPermission: true,
-      handler: (args: unknown) => {
+      handler: async (args: unknown) => {
         submitted = args;
         // Catch a malformed answer while the AI still has its context, instead of
         // a fresh attempt that redoes all the reading. The engine re-checks anyway.
         const checked = checkAgentResult(args, pause.outputSchema, pause.choices);
-        if (checked.ok || corrections >= MAX_SUBMIT_CORRECTIONS) {
+        const errors = checked.ok
+          ? await this.citationErrors(pause, checked.value.updates)
+          : checked.errors;
+        if (errors.length === 0 || corrections >= MAX_SUBMIT_CORRECTIONS) {
           return 'Result recorded. Your step is complete: stop now.';
         }
         corrections += 1;
         req.onEvent({
           type: 'info',
-          text: `submit_result rejected (${corrections}/${MAX_SUBMIT_CORRECTIONS}), asking for a corrected call: ${checked.errors.join('; ')}`,
+          text: `submit_result rejected (${corrections}/${MAX_SUBMIT_CORRECTIONS}), asking for a corrected call: ${errors.join('; ')}`,
         });
         return [
           'REJECTED: the result was not recorded.',
-          ...checked.errors.map((e) => `- ${e}`),
+          ...errors.map((e) => `- ${e}`),
           `Call ${SUBMIT_TOOL} again now with the complete corrected result ({ updates, verdict${pause.choices ? ', next' : ''} }). Do not redo your research.`,
         ].join('\n');
       },
