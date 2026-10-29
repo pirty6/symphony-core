@@ -126,4 +126,16 @@ describe('originOf and agreement', () => {
     });
     expect(rows.find((r) => r.nodeId === 'start')).toMatchObject({ variants: 1, agreement: 1 });
   });
+
+  it('compares only the named fields, listing only the nodes that wrote them', () => {
+    const runs = [play(hangman), play(hangman), play(hangman, pick('rocket'))];
+    const rows = agreement(runs, ['word']);
+    expect(rows.map((r) => r.nodeId)).toEqual(['pick']);
+    expect(rows[0]).toMatchObject({ reached: 3, variants: 2 });
+    // A field nobody disagrees on: every take agrees, whatever else differed.
+    expect(agreement([runs[0]!, runs[1]!], ['word'])[0]).toMatchObject({
+      variants: 1,
+      agreement: 1,
+    });
+  });
 });

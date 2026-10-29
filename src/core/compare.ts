@@ -176,8 +176,14 @@ export interface NodeAgreement {
   readonly agreement: number;
 }
 
-/** Per node, how often several performances of one score produced the same output. */
-export function agreement(runs: readonly SavedRun[]): NodeAgreement[] {
+/**
+ * Per node, how often several performances of one score produced the same output.
+ * With `fields`, only those state fields count (e.g. a router's `chosen` and `complexity`,
+ * not its free-text reason), and only nodes that wrote one of them are listed.
+ */
+export function agreement(runs: readonly SavedRun[], fields?: readonly string[]): NodeAgreement[] {
+  const only = fields && fields.length > 0 ? new Set(fields) : undefined;
+  const writers = new Set<string>();
   const order: string[] = [];
   const kinds = new Map<string, PerformedStep['kind']>();
   const outputs = new Map<string, string[]>();
@@ -188,23 +194,29 @@ export function agreement(runs: readonly SavedRun[]): NodeAgreement[] {
         kinds.set(s.nodeId, s.kind);
         order.push(s.nodeId);
       }
-      const out = s.changes.map((c) => [c.key, c.after]);
-      perNode.set(s.nodeId, [...(perNode.get(s.nodeId) ?? []), { out, next: s.next ?? null }]);
+      const changes = only ? s.changes.filter((c) => only.has(c.key)) : s.changes;
+      if (changes.length > 0) writers.add(s.nodeId);
+      const out = changes.map((c) => [c.key, c.after]);
+      // With fields, where a node went next is not what is being compared.
+      const visit = only ? { out } : { out, next: s.next ?? null };
+      perNode.set(s.nodeId, [...(perNode.get(s.nodeId) ?? []), visit]);
     }
     for (const [id, visits] of perNode)
       outputs.set(id, [...(outputs.get(id) ?? []), canonicalJson(visits)]);
   }
-  return order.map((nodeId) => {
-    const outs = outputs.get(nodeId) ?? [];
-    const counts = new Map<string, number>();
-    for (const o of outs) counts.set(o, (counts.get(o) ?? 0) + 1);
-    const top = Math.max(0, ...counts.values());
-    return {
-      nodeId,
-      kind: kinds.get(nodeId)!,
-      reached: outs.length,
-      variants: counts.size,
-      agreement: outs.length > 0 ? top / outs.length : 0,
-    };
-  });
+  return order
+    .filter((nodeId) => !only || writers.has(nodeId))
+    .map((nodeId) => {
+      const outs = outputs.get(nodeId) ?? [];
+      const counts = new Map<string, number>();
+      for (const o of outs) counts.set(o, (counts.get(o) ?? 0) + 1);
+      const top = Math.max(0, ...counts.values());
+      return {
+        nodeId,
+        kind: kinds.get(nodeId)!,
+        reached: outs.length,
+        variants: counts.size,
+        agreement: outs.length > 0 ? top / outs.length : 0,
+      };
+    });
 }

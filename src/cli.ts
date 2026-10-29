@@ -578,9 +578,17 @@ async function cmdRehearse(argv: string[], cwd: string): Promise<number> {
   const args = parseArgs({
     args: argv,
     allowPositionals: true,
-    options: { ...SCORE_OPTIONS, times: { type: 'string', short: 'n', default: '3' } },
+    options: {
+      ...SCORE_OPTIONS,
+      times: { type: 'string', short: 'n', default: '3' },
+      fields: { type: 'string' },
+    },
   });
   const times = Number(args.values.times);
+  const fields = (args.values.fields ?? '')
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean);
   if (!Number.isInteger(times) || times < 2 || times > 20) {
     console.error('--times must be a whole number from 2 to 20');
     return 1;
@@ -603,7 +611,7 @@ async function cmdRehearse(argv: string[], cwd: string): Promise<number> {
     });
     runs.push({ schemaVersion: RUN_SCHEMA_VERSION, score, performance });
   }
-  const rows = agreement(runs);
+  const rows = agreement(runs, fields);
   const width = Math.max(4, ...rows.map((r) => r.nodeId.length));
   console.log(
     `\n${c.bold('rehearsal')} ${c.dim(`${times} performances of ${pattern.name} · score ${score.id.slice(0, 12)} · fresh answers (no recorded ones)`)}`,
@@ -989,6 +997,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   verify <run.json>            integrity + deterministic replay check
   compare <a.json> <b.json>    where two runs diverge and why (plan, environment, AI, human, engine)
   rehearse <pattern> -n 3      play the same score N times with fresh answers; per-node agreement
+      --fields a,b               compare only these fields (maestro: --fields chosen,complexity)
       (takes the same options as run; approvals are auto-approved)
   resume <run.json>            continue an interrupted or stopped run from its last checkpoint
   fork <run.json> --at <step>  keep steps before <step>, play the rest again as a new run

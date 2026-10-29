@@ -109,6 +109,7 @@ npm run cli -- draft "triage a flaky test" --provider copilot --save
 npm run cli -- verify .symphony/runs/fix/<file>.json # integrity + deterministic replay check
 npm run cli -- compare <a.json> <b.json>             # where two runs diverge, and why
 npm run cli -- rehearse analyze -n 5 --provider copilot -i swing   # how deterministic is the AI here?
+npm run cli -- rehearse maestro -n 5 --provider copilot -c "request=..." --fields chosen,complexity  # does routing agree?
 npm run cli -- resume .symphony/runs/fix/<file>.json # continue an interrupted or stopped run
 npm run cli -- fork .symphony/runs/fix/<file>.json --at 4   # keep steps 1-3, play the rest again
 npm run cli -- runs [--all]                          # saved runs (in-progress = resumable); --all adds demo runs
