@@ -310,7 +310,13 @@ test('deletes one saved run from the list after a second click', async ({ page }
   const before = await rows.count()
   const title = await mine.locator('.lib-item').getAttribute('title')
   const when = await mine.locator('small').innerText()
-  await mine.getByRole('button', { name: 'delete run' }).click()
+  // The trash can shows only while hovering the run.
+  const trash = mine.getByRole('button', { name: 'delete run' })
+  await page.mouse.move(0, 0)
+  await expect(trash).toHaveCSS('opacity', '0')
+  await mine.hover()
+  await expect(trash).toHaveCSS('opacity', '1')
+  await trash.click()
   // One click only asks; Keep leaves it.
   await mine.getByRole('button', { name: 'keep' }).click()
   await expect(rows).toHaveCount(before)

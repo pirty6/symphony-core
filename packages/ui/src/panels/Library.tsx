@@ -48,6 +48,22 @@ export function Library(p: Props) {
   }
   return (
     <aside className="library">
+      <section className="maestro-box">
+        <h2>🎼 Ask the maestro</h2>
+        <PromptBox
+          className="draft-input"
+          title="Ask the maestro"
+          placeholder="Describe what you want done, e.g. “find out why checkout got slower this week”. The maestro picks or drafts the score, debates it by complexity, then you approve and it plays."
+          value={request}
+          onChange={setRequest}
+          ariaLabel="maestro request"
+          rows={3}
+        />
+        <button type="button" className="primary" disabled={p.asking || !request.trim()} onClick={() => p.onAsk(request.trim())}>
+          {p.asking ? 'Composing…' : '🎼 Compose & perform'}
+        </button>
+      </section>
+
       <section>
         <h2>Patterns</h2>
         {p.library.filter((item) => item.name !== 'maestro').map((item) => (
@@ -65,22 +81,6 @@ export function Library(p: Props) {
         ))}
         <button type="button" className="lib-new" onClick={p.onNew}>
           + Blank pattern
-        </button>
-      </section>
-
-      <section className="maestro-box">
-        <h2>🎼 Ask the maestro</h2>
-        <PromptBox
-          className="draft-input"
-          title="Ask the maestro"
-          placeholder="Describe what you want done, e.g. “find out why checkout got slower this week”. The maestro picks or drafts the score, debates it by complexity, then you approve and it plays."
-          value={request}
-          onChange={setRequest}
-          ariaLabel="maestro request"
-          rows={3}
-        />
-        <button type="button" className="primary" disabled={p.asking || !request.trim()} onClick={() => p.onAsk(request.trim())}>
-          {p.asking ? 'Composing…' : '🎼 Compose & perform'}
         </button>
       </section>
 

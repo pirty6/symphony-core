@@ -1185,27 +1185,30 @@ pre {
 }
 
 .saved-row {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
+  position: relative;
 }
 .saved-row > .lib-item {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
+  padding-right: 28px;
 }
+/* Inside the run's button, top right; only shown while hovering or using the keyboard. */
 .saved-delete {
-  opacity: 0.45;
+  position: absolute;
+  top: 4px;
+  right: 4px;
   font-size: 13px;
+  opacity: 0;
 }
 .saved-row:hover .saved-delete,
 .saved-delete:focus-visible {
   opacity: 1;
 }
 .saved-confirm {
+  position: absolute;
+  top: 4px;
+  right: 4px;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
+  gap: 4px;
 }
 .saved-confirm button {
   font-size: 11px;
