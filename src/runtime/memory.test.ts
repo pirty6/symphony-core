@@ -25,6 +25,10 @@ function workspace() {
   return ws;
 }
 
+const many = (n: number, from = 0) =>
+  Array.from({ length: n }, (_, i) => `src/config.js:${i + from + 1} — line \`DEFAULTS.port + 1\``);
+const old = (text: string) => ({ text, at: '2026-01-01T00:00:00Z' });
+
 describe('memory across runs', () => {
   it('keeps checked facts that quote the file, and recalls the ones about the question', async () => {
     const ws = workspace();
@@ -101,11 +105,6 @@ describe('memory across runs', () => {
 
   it('one run adds at most MAX_FACTS_PER_RUN facts, so a few runs cannot replace the store', async () => {
     const ws = workspace();
-    const many = (n: number, from = 0) =>
-      Array.from(
-        { length: n },
-        (_, i) => `src/config.js:${i + from + 1} — line \`DEFAULTS.port + 1\``,
-      );
     expect(await rememberFacts(ws, many(MAX_FACTS_PER_RUN + 50), undefined, 'run-a')).toBe(
       MAX_FACTS_PER_RUN,
     );
@@ -118,7 +117,6 @@ describe('memory across runs', () => {
   it('a stored file from before the rules is tidied as it is read', async () => {
     const ws = workspace();
     mkdirSync(join(ws, '.symphony'), { recursive: true });
-    const old = (text: string) => ({ text, at: '2026-01-01T00:00:00Z' });
     writeFileSync(
       memoryPath(ws),
       JSON.stringify({

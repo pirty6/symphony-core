@@ -153,7 +153,7 @@ export async function rememberFacts(
   const facts = findings
     .map((f) => cleanFact(f.replace(/^F\d+\s+/, '')))
     .filter((f) => QUOTED_CITATION.test(f))
-    .map((text) => ({ text, at, ...(run ? { run } : {}) }));
+    .map((text): Entry => (run ? { text, at, run } : { text, at }));
   if (facts.length === 0) return 0;
   let added = 0;
   await update(workspace, (m) => {
