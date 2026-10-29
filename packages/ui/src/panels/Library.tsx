@@ -144,7 +144,7 @@ export function Library(p: Props) {
           <small className="muted">{demoCount > 0 ? 'No runs with a real AI yet.' : 'Runs are saved to .symphony/runs'}</small>
         )}
         {saved.slice(0, 30).map((r) => (
-          <div key={r.file} className="saved-row" data-testid="saved-run">
+          <div key={r.file} className="saved-row" data-testid="saved-run" data-file={r.file}>
             <button type="button" className="lib-item saved" onClick={() => p.onOpenSaved(r.file)} title={r.goal}>
               <b>{r.pattern}</b> <span className={`tag outcome-${r.outcome}`}>{r.outcome}</span>
               {r.demo && <span className="tag demo">demo</span>}

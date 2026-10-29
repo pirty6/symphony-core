@@ -304,24 +304,26 @@ test('deletes one saved run from the list after a second click', async ({ page }
   await expect(page.getByTestId('run-status')).toHaveText('done')
   const toggle = page.getByTestId('toggle-demo-runs')
   if ((await toggle.innerText()).startsWith('Show')) await toggle.click()
-  const rows = page.getByTestId('saved-run')
-  const mine = rows.filter({ has: page.locator('b', { hasText: /^review$/ }) }).first()
-  await expect(mine).toBeVisible()
-  const before = await rows.count()
-  const title = await mine.locator('.lib-item').getAttribute('title')
-  const when = await mine.locator('small').innerText()
-  // The trash can shows only while hovering the run.
+  const newest = page.getByTestId('saved-run').filter({ has: page.locator('b', { hasText: /^review$/ }) }).first()
+  await expect(newest).toBeVisible()
+  // Other tests' runs may still be saving: follow this run by its file, not by position or count.
+  const file = (await newest.getAttribute('data-file'))!
+  const mine = page.locator(`[data-testid="saved-run"][data-file="${file}"]`)
   const trash = mine.getByRole('button', { name: 'delete run' })
+  // The trash can shows only while hovering the run.
   await page.mouse.move(0, 0)
   await expect(trash).toHaveCSS('opacity', '0')
-  await mine.hover()
-  await expect(trash).toHaveCSS('opacity', '1')
+  // The list refreshes when the run ends and rows can move under the mouse: hover again until it shows.
+  await expect(async () => {
+    await mine.hover()
+    await expect(trash).toHaveCSS('opacity', '1', { timeout: 500 })
+  }).toPass()
   await trash.click()
   // One click only asks; Keep leaves it.
   await mine.getByRole('button', { name: 'keep' }).click()
-  await expect(rows).toHaveCount(before)
-  await mine.getByRole('button', { name: 'delete run' }).click()
+  await expect(mine).toHaveCount(1)
+  await mine.hover()
+  await trash.click()
   await mine.getByRole('button', { name: 'Delete', exact: true }).click()
-  await expect(rows).toHaveCount(before - 1)
-  await expect(rows.filter({ hasText: when }).filter({ has: page.locator(`[title="${title}"]`) })).toHaveCount(0)
+  await expect(mine).toHaveCount(0)
 })

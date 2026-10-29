@@ -221,7 +221,10 @@ export default function Studio() {
   }, [refreshSaved])
 
   useEffect(() => {
-    if (view.mode === 'live' && !ACTIVE.has(view.status)) refreshSaved()
+    if (view.mode !== 'live' || ACTIVE.has(view.status)) return
+    refreshSaved()
+    // A run may have saved a new pattern (metaphor, maestro --save): list it right away.
+    void api.patterns().then(setLibrary, () => undefined)
   }, [view.mode, view.status, refreshSaved])
 
   // ── derived ────────────────────────────────────────────────────────
