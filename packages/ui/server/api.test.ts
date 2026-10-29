@@ -226,6 +226,15 @@ describe('studio api', () => {
     expect(played).toEqual(items)
   })
 
+  it('lists optional patterns only when asked (default: SYMPHONY_EXTRAS, off here)', async () => {
+    const names = async (q: string) =>
+      ((await (await fetch(`${base}/api/patterns${q}`)).json()) as { name: string; source: string }[])
+    expect((await names('')).some((p) => p.name === 'metaphor')).toBe(false)
+    const on = await names('?extras=on')
+    expect(on.filter((p) => p.source === 'extra').map((p) => p.name)).toEqual(['metaphor', 'storm-in-between'])
+    expect((await names('?extras=off')).some((p) => p.source === 'extra')).toBe(false)
+  })
+
   it('refuses cross-site and non-JSON POSTs', async () => {
     const plain = await fetch(`${base}/api/patterns`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' })
     expect(plain.status).toBe(403)

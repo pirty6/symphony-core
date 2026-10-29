@@ -560,6 +560,8 @@ export function originSummary(perf: Performance): string {
 export interface StoredSettings {
   provider: 'scripted' | 'copilot'
   model: string
+  /** Optional patterns shown in the library (unset: as the server's SYMPHONY_EXTRAS says). */
+  extras: boolean
 }
 
 /** The AI choice kept between visits, so a reload never silently switches to the offline demo. */
@@ -569,6 +571,7 @@ export function parseStoredSettings(raw: string | null): Partial<StoredSettings>
     return {
       ...(v.provider === 'scripted' || v.provider === 'copilot' ? { provider: v.provider } : {}),
       ...(typeof v.model === 'string' ? { model: v.model } : {}),
+      ...(typeof v.extras === 'boolean' ? { extras: v.extras } : {}),
     }
   } catch {
     return {}

@@ -107,9 +107,16 @@ export default function Studio() {
     complexity: 0,
     improvisation: 0,
   }))
+  /** Optional patterns in the library: the toggle's choice, or unset for the server's default. */
+  const [extras, setExtras] = useState<boolean | undefined>(() => parseStoredSettings(localStorage.getItem(SETTINGS_KEY)).extras)
+  const extrasRef = useRef(extras)
+  extrasRef.current = extras
   useEffect(() => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ provider: settings.provider, model: settings.model }))
-  }, [settings.provider, settings.model])
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ provider: settings.provider, model: settings.model, ...(extras === undefined ? {} : { extras }) }),
+    )
+  }, [settings.provider, settings.model, extras])
   // Choosing Copilot on a machine with no GitHub account signed in: say how to fix it before a run fails.
   useEffect(() => {
     if (settings.provider !== 'copilot') return
@@ -199,7 +206,7 @@ export default function Studio() {
   loadPatternRef.current = loadPattern
   useEffect(() => {
     let cancelled = false
-    api.patterns().then(
+    api.patterns(extrasRef.current).then(
       (items) => {
         if (cancelled) return
         setLibrary(items)
@@ -224,8 +231,13 @@ export default function Studio() {
     if (view.mode !== 'live' || ACTIVE.has(view.status)) return
     refreshSaved()
     // A run may have saved a new pattern (metaphor, maestro --save): list it right away.
-    void api.patterns().then(setLibrary, () => undefined)
+    void api.patterns(extrasRef.current).then(setLibrary, () => undefined)
   }, [view.mode, view.status, refreshSaved])
+
+  const toggleExtras = (on: boolean) => {
+    setExtras(on)
+    void api.patterns(on).then(setLibrary, (e: Error) => setError(errorText(e)))
+  }
 
   // ── derived ────────────────────────────────────────────────────────
 
@@ -683,6 +695,8 @@ export default function Studio() {
         }}
         onOpenSaved={(f) => void openSaved(f)}
         onDeleteSaved={deleteSaved}
+        extras={extras ?? library.some((i) => i.source === 'extra')}
+        onExtras={toggleExtras}
         onRefreshSaved={refreshSaved}
         live={live}
         liveId={view.mode === 'live' ? view.runId : undefined}
@@ -829,7 +843,7 @@ export default function Studio() {
                 onExport={() => api.typescript(pattern).then((r) => r.source)}
                 onSave={() =>
                   api.savePattern(pattern).then((r) => {
-                    void api.patterns().then(setLibrary)
+                    void api.patterns(extrasRef.current).then(setLibrary)
                     return r.file
                   })
                 }

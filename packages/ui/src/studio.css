@@ -1214,3 +1214,12 @@ pre {
   font-size: 11px;
   padding: 2px 6px;
 }
+
+.extras-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}

@@ -1,7 +1,8 @@
 /**
  * Studio API: REST + Server-Sent Events over the deterministic runtime.
  *
- *   GET  /api/patterns                     library (built-in + drafts) as graphs
+ *   GET  /api/patterns?extras=on|off      library (built-in, optional, drafts) as graphs;
+ *                                          extras unset: as SYMPHONY_EXTRAS says
  *   POST /api/validate        {pattern}    static validation
  *   POST /api/typescript      {pattern}    TypeScript source for a pattern
  *   POST /api/patterns        {pattern}    save as src/patterns/drafts/<name>.ts
@@ -130,10 +131,17 @@ export function createApi(opts: ApiOptions) {
   const scratchDir = join(workspace, '.symphony', 'scratch')
   void autoPrune(workspace, runsDir, env)
 
-  async function library(): Promise<{ pattern: Pattern; source: 'builtin' | 'extra' | 'draft' }[]> {
+  /**
+   * The library. Optional patterns: 'env' = as SYMPHONY_EXTRAS says (the studio's default),
+   * 'on'/'off' = the studio's toggle. Lookups use 'on', so a run of an extra still resumes.
+   */
+  async function library(
+    extrasMode: 'env' | 'on' | 'off' = 'on',
+  ): Promise<{ pattern: Pattern; source: 'builtin' | 'extra' | 'draft' }[]> {
     const drafts = await loadPatternFiles(draftsDir, opts.importer)
-    const extras = new Set(enabledExtras(env).map((p) => p.name))
-    return libraryPatterns(env, drafts).map((pattern) => ({
+    const withExtras = extrasMode === 'env' ? env : { ...env, SYMPHONY_EXTRAS: extrasMode === 'on' ? 'all' : '' }
+    const extras = new Set(enabledExtras(withExtras).map((p) => p.name))
+    return libraryPatterns(withExtras, drafts).map((pattern) => ({
       pattern,
       source: PATTERNS.includes(pattern) ? ('builtin' as const) : extras.has(pattern.name) ? ('extra' as const) : ('draft' as const),
     }))
@@ -347,7 +355,8 @@ export function createApi(opts: ApiOptions) {
     }
     try {
       if (method === 'GET' && path === '/api/patterns') {
-        const items = await library()
+        const asked = url.searchParams.get('extras')
+        const items = await library(asked === 'on' || asked === 'off' ? asked : 'env')
         send(
           res,
           200,

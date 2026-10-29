@@ -98,7 +98,9 @@ const post = (path: string, body: unknown) =>
   fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
 export const api = {
-  patterns: () => fetch('/api/patterns').then((r) => json<LibraryItem[]>(r)),
+  /** The library; `extras` turns the optional patterns on or off (unset: the server's SYMPHONY_EXTRAS). */
+  patterns: (extras?: boolean) =>
+    fetch(`/api/patterns${extras === undefined ? '' : `?extras=${extras ? 'on' : 'off'}`}`).then((r) => json<LibraryItem[]>(r)),
   validate: (pattern: PatternData) => post('/api/validate', { pattern }).then((r) => json<ValidationReport>(r)),
   typescript: (pattern: PatternData) => post('/api/typescript', { pattern }).then((r) => json<{ source: string }>(r)),
   savePattern: (pattern: PatternData) => post('/api/patterns', { pattern }).then((r) => json<{ file: string }>(r)),
