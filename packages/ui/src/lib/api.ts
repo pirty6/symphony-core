@@ -71,6 +71,22 @@ export class ApiError extends Error {
   }
 }
 
+/** The browser could not reach the studio server at all (stopped, or restarting). */
+export function isNetworkError(e: unknown): boolean {
+  return e instanceof TypeError && /fetch|network|load failed/i.test(e.message)
+}
+
+export const SERVER_UNREACHABLE =
+  "Could not reach the studio server, so that did not happen. If it restarted (e.g. after a code change), the runs it was playing stopped; open a saved run to resume it."
+
+/** What to tell the user about a failed request. */
+export function errorText(e: unknown): string {
+  if (isNetworkError(e)) return SERVER_UNREACHABLE
+  if (e instanceof ApiError && e.message === 'run not found')
+    return 'That run is no longer on the server (it restarted). Open its saved run to resume it.'
+  return e instanceof Error ? e.message : String(e)
+}
+
 async function json<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => ({}))) as T & { error?: string; issues?: Issue[] }
   if (!res.ok) throw new ApiError(body.error ?? `HTTP ${res.status}`, body.issues ?? [])

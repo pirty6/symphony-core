@@ -237,3 +237,28 @@ test('inputs start empty with the demo as a hint, the large editor writes into t
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('run-status')).toHaveText('done')
 })
+
+test('a lost server says so and reconnects; request errors close with ✕ and clear when switching runs', async ({ page }) => {
+  await open(page, 'hangman')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('approval-card')).toBeVisible()
+  // The server goes away: the poll shows it, and it clears itself when the server answers again.
+  await page.route('**/api/runs', (r) => r.abort())
+  await expect(page.getByTestId('server-down')).toBeVisible()
+  const alert = page.getByRole('alert')
+  await page.locator('button.lib-item:not(.saved)').filter({ has: page.locator('b', { hasText: /^fix$/ }) }).click()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(alert).toContainText('Could not reach the studio server')
+  await expect(alert).not.toContainText('Failed to fetch')
+  await alert.getByRole('button', { name: 'dismiss' }).click()
+  await expect(alert).toBeHidden()
+  await page.unroute('**/api/runs')
+  await expect(page.getByTestId('server-down')).toBeHidden()
+  // An error, then another run is opened: the error was about the last action, so it goes.
+  await page.route('**/api/runs', (r) => (r.request().method() === 'POST' ? r.abort() : r.continue()))
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(alert).toBeVisible()
+  await page.getByTestId('live-runs').getByRole('button', { name: /hangman/ }).first().click()
+  await expect(page.locator('.tb-title')).toContainText('hangman')
+  await expect(alert).toBeHidden()
+})

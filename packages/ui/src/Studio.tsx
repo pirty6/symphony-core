@@ -24,7 +24,7 @@ import { describeEdits } from '@core/edits'
 import { DataEdge } from './canvas/DataEdge'
 import { FlowNode } from './canvas/FlowNode'
 import { FrameNode, PhaseNode } from './canvas/PhaseNode'
-import { ApiError, api, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
+import { api, errorText, isNetworkError, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
 import {
   IDLE_VIEW,
   applyMessage,
@@ -90,6 +90,8 @@ export default function Studio() {
   const [library, setLibrary] = useState<LibraryItem[]>([])
   const [saved, setSaved] = useState<SavedSummary[]>([])
   const [live, setLive] = useState<LiveRun[]>([])
+  /** The last poll could not reach the server (stopped or restarting); clears when it answers. */
+  const [serverDown, setServerDown] = useState(false)
   const [meta, setMeta] = useState<PatternMeta>(BLANK)
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeType>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([])
@@ -178,7 +180,14 @@ export default function Studio() {
   const refreshSaved = useCallback(() => void api.saved().then(setSaved, () => setSaved([])), [])
   // Several runs can play at once on this server; poll so the list stays current.
   useEffect(() => {
-    const poll = () => void api.liveRuns().then(setLive, () => undefined)
+    const poll = () =>
+      void api.liveRuns().then(
+        (runs) => {
+          setLive(runs)
+          setServerDown(false)
+        },
+        (e: unknown) => isNetworkError(e) && setServerDown(true),
+      )
     poll()
     const timer = setInterval(poll, 2000)
     return () => clearInterval(timer)
@@ -197,7 +206,7 @@ export default function Studio() {
         const first = items.find((i) => i.name === wanted) ?? items[0]
         if (first) loadPatternRef.current(first)
       },
-      (e: Error) => !cancelled && setError(`Could not load patterns: ${e.message}`),
+      (e: Error) => !cancelled && setError(`Could not load patterns: ${errorText(e)}`),
     )
     refreshSaved()
     api.tiers().then(
@@ -379,6 +388,8 @@ export default function Studio() {
 
   const followRun = (runId: string, score?: { goal: string; result?: readonly string[] }) => {
     unsubscribe.current?.()
+    // Another run: an error about the last one no longer applies.
+    setError(null)
     setView(startLive(runId, score?.goal, score?.result))
     setSelected(null)
     setTab('ai')
@@ -403,7 +414,7 @@ export default function Studio() {
       })
       followRun(runId, score)
     } catch (e) {
-      setError(e instanceof ApiError && e.issues.length ? `${e.message}` : (e as Error).message)
+      setError(errorText(e))
     }
   }
 
@@ -444,7 +455,7 @@ export default function Studio() {
           )
           followRun(childId, r.score)
         },
-        (e: Error) => setError(e.message),
+        (e: Error) => setError(errorText(e)),
       )
     } else {
       unsubscribe.current?.()
@@ -458,7 +469,7 @@ export default function Studio() {
   }, [handedOn])
 
   const control = (action: string, extra?: Record<string, unknown>) => {
-    if (view.runId) void api.control(view.runId, action, extra).catch((e: Error) => setError(e.message))
+    if (view.runId) void api.control(view.runId, action, extra).catch((e: Error) => setError(errorText(e)))
   }
 
   const changeSettings = (s: RunSettings) => {
@@ -488,7 +499,7 @@ export default function Studio() {
       )
       followRun(runId, score)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : (e as Error).message)
+      setError(errorText(e))
     }
   }
 
@@ -502,7 +513,7 @@ export default function Studio() {
       setNotice(null)
       followRun(runId, r.score)
     } catch (e) {
-      setError((e as Error).message)
+      setError(errorText(e))
     }
   }
 
@@ -510,13 +521,14 @@ export default function Studio() {
     try {
       const res = await api.savedFile(file)
       unsubscribe.current?.()
+      setError(null)
       showGraph(scoreMeta(res.run.score), res.graph)
       setGoal(res.run.score.goal)
       setContext(contextStrings(res.run.score.context as Record<string, unknown>))
       setView(replayView(res.run, { reproduced: res.reproduced, issues: res.issues, file }))
       setTab('state')
     } catch (e) {
-      setError((e as Error).message)
+      setError(errorText(e))
     }
   }
 
@@ -641,7 +653,7 @@ export default function Studio() {
               setNotice(`Cleaned up ${done.deleted.length + done.compacted.length + done.scratch.length} item(s), ${(done.freed / 1e6).toFixed(1)} MB freed.`)
               refreshSaved()
             })
-            .catch((e: Error) => setError(`Clean up failed: ${e.message}`))
+            .catch((e: Error) => setError(`Clean up failed: ${errorText(e)}`))
         }
         onAsk={(r) => void ask(r)}
       />
@@ -684,10 +696,15 @@ export default function Studio() {
         </ReactFlow>
       </main>
       <aside className="inspector">
+        {serverDown && (
+          <div className="card issue warning" role="status" data-testid="server-down">
+            ⚠ Can't reach the studio server (stopped, or restarting after a code change). Reconnecting…
+          </div>
+        )}
         {error && (
-          <div className="card issue" role="alert">
-            {error}
-            <button type="button" className="link" onClick={() => setError(null)} aria-label="dismiss">
+          <div className="card issue dismissable" role="alert">
+            <span>{error}</span>
+            <button type="button" className="link dismiss" onClick={() => setError(null)} aria-label="dismiss" title="Dismiss">
               ✕
             </button>
           </div>
@@ -710,8 +727,8 @@ export default function Studio() {
           </div>
         )}
         <GateCard view={view} onResume={() => control('resume')} onStep={() => control('step')} onStop={() => control('stop')} />
-        <ApprovalCard view={view} onAnswer={(a) => view.runId && void api.approve(view.runId, a).catch((e: Error) => setError(e.message))} />
-        <RecoveryCard view={view} onAnswer={(a) => view.runId && void api.recover(view.runId, a).catch((e: Error) => setError(e.message))} />
+        <ApprovalCard view={view} onAnswer={(a) => view.runId && void api.approve(view.runId, a).catch((e: Error) => setError(errorText(e)))} />
+        <RecoveryCard view={view} onAnswer={(a) => view.runId && void api.recover(view.runId, a).catch((e: Error) => setError(errorText(e)))} />
         {resultBanner}
         <nav className="tabs">
           {(['node', 'ai', 'state'] as const).map((t) => (

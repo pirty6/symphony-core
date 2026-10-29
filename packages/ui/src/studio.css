@@ -1162,3 +1162,24 @@ pre {
   line-height: 1.55;
   resize: none;
 }
+
+.issue.dismissable {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.issue.dismissable > span {
+  flex: 1;
+  white-space: pre-wrap;
+}
+.issue .dismiss {
+  flex: none;
+  width: auto;
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.8;
+}
+.issue .dismiss:hover {
+  opacity: 1;
+}
