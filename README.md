@@ -104,6 +104,7 @@ npm run cli -- run investigate -c question="Where is auth handled?" --provider c
 npm run cli -- run fix --step --break apply          # pause at gates
 npm run cli -- run investigate -c question="Why do logins fail on CI?" --then fix --provider copilot
 #   chain: fix starts with what investigate found; inputs for it: -c fix.testCommand="npm test"
+npm run cli -- run backlog -c source=docs/improvements.md --provider copilot   # one implement run per picked item
 npm run cli -- draft "triage a flaky test" --provider copilot --save
 npm run cli -- verify .symphony/runs/fix/<file>.json # integrity + deterministic replay check
 npm run cli -- compare <a.json> <b.json>             # where two runs diverge, and why
@@ -160,7 +161,7 @@ Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the V
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
 state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + -`,
-`len empty includes lower append if chars subset take drop first unique without`, and
+`len empty includes lower append if chars subset take drop first unique without pick`, and
 `verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
@@ -465,6 +466,19 @@ engine re-runs the tests, and the review runs again until it approves. After `ma
 **Chaining**: one pattern's result feeds the next pattern's goal input (`core/chain.ts`):
 `--then` in the CLI, **Then run** in the studio, or the maestro when a request asks for two shapes
 ("find out why X, then fix it"). Each run is still its own score and performance.
+
+**Backlog**: turn a document of improvements (or a pasted investigate result) into one run per
+item (`src/patterns/backlog.ts`). An assessor reads `source` (a workspace file or the text
+itself) and writes at most 10 self-contained requests, skipping what the code already does; you
+pick the item numbers (`1, 3`; empty = all; reject = none). The runtime then plays `runPattern`
+(`implement` by default, or `fix` / `refactor`) once per pick, in order, each in its own run with
+its own worktree, approvals and PR review; `testCommand` goes to every item. A failed item does not
+stop the rest (a plain chain does); stopping a run stops them all. The CLI ends with a table of how
+each item went; the studio follows each run as it starts.
+
+```bash
+npm run cli -- run backlog -c source=docs/improvements.md -c testCommand="npm test" --provider copilot
+```
 
 ## Quality, cost and speed
 
