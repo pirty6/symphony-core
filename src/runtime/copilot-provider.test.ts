@@ -11,6 +11,7 @@ import {
   CopilotProvider,
   ISOLATED_SYSTEM,
   SIGN_IN_HELP,
+  hasContent,
   normalizeSubmission,
   withoutTokenVars,
   parseTiers,
@@ -417,6 +418,144 @@ describe('CopilotProvider', () => {
     expect(bad.result).toEqual({ updates: {} });
   });
 
+  it('an empty valid answer never replaces one with content; a revision with content does', async () => {
+    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+    const skeptic: AgentPause = {
+      ...pause,
+      nodeId: 'skeptic',
+      outputSchema: [
+        { name: 'failureModes', type: 'string[]' },
+        { name: 'edits', type: 'string[]' },
+      ],
+    };
+    const play = async (calls: unknown[]) => {
+      const replies: string[] = [];
+      const events: ProviderEvent[] = [];
+      const { client } = fakeClient(async (cfg, emit) => {
+        for (const c of calls) replies.push(String(await callTool(cfg, 'submit_result', c)));
+        emit('session.idle');
+      });
+      const res = await new CopilotProvider({ clientFactory: () => client }).runAgent({
+        pause: skeptic,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: (e) => events.push(e),
+      });
+      return { result: res.result, replies, events };
+    };
+    // As recorded: the first call's updates came as text missing its last brace, the second was empty.
+    const first = {
+      updates:
+        '{"failureModes":["Objections never reach the answer"],"edits":["Add objections to answer.reads"]},"verdict":' +
+        JSON.stringify(verdict),
+    };
+    const empty = { updates: { failureModes: [], edits: [] }, verdict };
+    const kept = await play([first, empty]);
+    expect(kept.replies[0]).toMatch(/^Result recorded/);
+    expect(kept.replies[1]).toMatch(/^Not recorded: this result is empty/);
+    expect(kept.result).toEqual({
+      updates: {
+        failureModes: ['Objections never reach the answer'],
+        edits: ['Add objections to answer.reads'],
+      },
+      verdict,
+    });
+    expect(
+      kept.events.some((e) => e.type === 'info' && /kept the earlier answer/.test(e.text)),
+    ).toBe(true);
+    // Empty first is fine; and a later answer with content still replaces an earlier one.
+    expect((await play([empty])).result).toEqual(empty);
+    const revised = { updates: { failureModes: ['A better one'], edits: [] }, verdict };
+    expect((await play([normalizeSubmission(first), revised])).result).toEqual(revised);
+    expect(hasContent({ updates: { a: [], b: '  ', c: {}, d: 0, e: false } })).toBe(false);
+    expect(hasContent({ updates: { a: ['x'] } })).toBe(true);
+  });
+
+  it('repairs updates sent as text in every shape recorded from Claude models, deterministically', () => {
+    const verdict = { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'r' };
+    const v = JSON.stringify(verdict);
+    // The whole result with its {"updates": cut off (deepRead, propose).
+    expect(
+      normalizeSubmission({
+        updates: `{\n"examined": ["a.ts"],\n"newFindings": ["a.ts:1 — x"]\n},"verdict":${v}}`,
+      }),
+    ).toEqual({
+      updates: { examined: ['a.ts'], newFindings: ['a.ts:1 — x'] },
+      verdict,
+    });
+    // ...and also its last brace (skeptic).
+    expect(normalizeSubmission({ updates: `{"failureModes":["f"]},"verdict":${v}` })).toEqual({
+      updates: { failureModes: ['f'] },
+      verdict,
+    });
+    // An object never closed, its other fields sent beside it (plan, hypothesize, triage).
+    expect(
+      normalizeSubmission({
+        updates: '{"subQuestions":["q1","q2"]',
+        searchTerms: ['t'],
+        useSources: ['workspace'],
+        verdict,
+      }),
+    ).toEqual({
+      updates: { subQuestions: ['q1', 'q2'], searchTerms: ['t'], useSources: ['workspace'] },
+      verdict,
+    });
+    // Tool-call markup, with the verdict as markup or flattened beside it (deepRead, sweep).
+    expect(
+      normalizeSubmission({
+        updates: '\n<parameter name="examined">["README.md", "AGENTS.md"]',
+        newFindings: ['README.md:1 — y'],
+        verdict,
+      }),
+    ).toEqual({
+      updates: { examined: ['README.md', 'AGENTS.md'], newFindings: ['README.md:1 — y'] },
+      verdict,
+    });
+    expect(
+      normalizeSubmission({
+        updates: '<parameter name="queries">["git log"]</parameter>',
+        outcome: 'applied',
+        confidence: 0.9,
+        shouldTerminate: false,
+        reason: 'r',
+      }),
+    ).toEqual({ updates: { queries: ['git log'] }, verdict });
+    // Trailing commas, one closing brace too many, cut off after a list (triage, deepRead, chase).
+    expect(normalizeSubmission({ updates: '{"triaged": ["a.ts", "b.ts"],\n}', verdict })).toEqual({
+      updates: { triaged: ['a.ts', 'b.ts'] },
+      verdict,
+    });
+    expect(
+      normalizeSubmission({ updates: '{"examined":["a.ts"],"unreadable":[]\n},\n', verdict }),
+    ).toEqual({
+      updates: { examined: ['a.ts'], unreadable: [] },
+      verdict,
+    });
+    expect(
+      normalizeSubmission({ updates: '{"queries":["q"],"newFindings":["n"],', verdict }),
+    ).toEqual({
+      updates: { queries: ['q'], newFindings: ['n'] },
+      verdict,
+    });
+    // The verdict inside updates (experiment): lifted out, it can never be a state field.
+    expect(normalizeSubmission({ updates: `{"queries":["npm test"],"verdict":${v}}}` })).toEqual({
+      updates: { queries: ['npm test'] },
+      verdict,
+    });
+    // Fields named in updates win over strays; prose is left for the schema to reject.
+    expect(normalizeSubmission({ updates: '{"a":1', a: 2, verdict })).toEqual({
+      updates: { a: 1 },
+      verdict,
+    });
+    expect(
+      normalizeSubmission({ updates: 'I looked at the files and found nothing.', verdict }),
+    ).toEqual({
+      updates: 'I looked at the files and found nothing.',
+      verdict,
+    });
+  });
+
   it('normalizeSubmission parses string-encoded JSON only where it is an object', () => {
     expect(normalizeSubmission('{"updates":{"a":1}}')).toEqual({ updates: { a: 1 } });
     expect(normalizeSubmission({ updates: '{"a":1}' })).toEqual({ updates: { a: 1 } });
@@ -522,7 +661,7 @@ describe('CopilotProvider', () => {
     const replies: unknown[] = [];
     const verdict = { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'ok' };
     const { client, sessions } = fakeClient(async (cfg, emit) => {
-      replies.push(await callTool(cfg, 'submit_result', { updates: '<parameter name="word">x' }));
+      replies.push(await callTool(cfg, 'submit_result', { updates: 'the word is x' }));
       replies.push(await callTool(cfg, 'submit_result', { updates: { word: 'x' } }));
       replies.push(await callTool(cfg, 'submit_result', { updates: { word: 'cat' }, verdict }));
       emit('session.idle');

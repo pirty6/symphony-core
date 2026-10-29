@@ -574,6 +574,15 @@ solved rate or citation validity.
   (F1, F2…) and answers, root causes and designs must cite existing ids (`refs`, `ids`).
 - **The step's own checks run in-session** too ("at least 3 hypotheses"), so a bad answer is fixed
   while the AI still has its context instead of costing a fresh attempt.
+- **Malformed answers are repaired before they are judged.** Claude models sometimes send
+  `updates` as text: the whole result with its `{"updates":` cut off (sometimes its last `}` too),
+  an object never closed with its other fields sent beside it, trailing commas, a `verdict` inside
+  `updates`, or tool-call markup (`<parameter name="…">`). Each shape is repaired deterministically
+  and then checked like any answer; on 150 recorded payloads, 115 now pass instead of 0 (the rest
+  lack a verdict or fields, and are sent back for a correction). Rejected attempts cost up to 48%
+  of a maestro run before; the CLI and `eval` report them (`rejected: N attempts …`).
+- **The last valid answer wins, but an empty one never replaces one with content**: a skeptic's
+  eight real concerns were once lost to an empty second call. The AI is told, and the run notes it.
 - **Parallel parts (`fanOut`).** investigate's triage and deep reads take a wave of four batches
   (100 files to triage, 16 items to read in full) and play them at once (at most 4 calls); answers are checked per part and merged in part order,
   so the result does not depend on timing and replays exactly.

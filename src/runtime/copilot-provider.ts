@@ -206,11 +206,111 @@ function parseObject(v: unknown): unknown {
   }
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+const tryObject = (text: string): Record<string, unknown> | undefined => {
+  try {
+    const o = JSON.parse(text) as unknown;
+    return isRecord(o) ? o : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** `<parameter name="k">value` blocks (the AI wrote tool-call markup into a string). */
+function fromParameterMarkup(text: string): Record<string, unknown> | undefined {
+  const blocks = [
+    ...text.matchAll(
+      /<parameter name="([\w-]+)">\s*([\s\S]*?)\s*(?:<\/parameter>|(?=<parameter name=")|$)/g,
+    ),
+  ];
+  if (blocks.length === 0) return undefined;
+  return Object.fromEntries(
+    blocks.map(([, key, value]) => {
+      try {
+        return [key, JSON.parse(value!) as unknown];
+      } catch {
+        return [key, value];
+      }
+    }),
+  );
+}
+
+/** Trailing commas before a closing bracket or at the end (the commonest near-JSON slip). */
+const withoutTrailingCommas = (t: string) => t.replace(/,(\s*[}\]])/g, '$1').replace(/,\s*$/, '');
+
+/**
+ * `updates` sent as text, repaired deterministically (recorded Claude payloads):
+ * the whole result with its `{"updates":` cut off, sometimes also its last `}`; an
+ * object never closed or closed once too often, its other fields sent beside it;
+ * trailing commas; or tool-call markup. Returns the updates and, when the text held
+ * the whole result, its other parts. The schema still judges whatever comes out.
+ */
+function repairUpdates(
+  text: string,
+): { updates: Record<string, unknown>; rest: Record<string, unknown> } | undefined {
+  for (const t of [text, withoutTrailingCommas(text)]) {
+    const asIs = tryObject(t);
+    if (asIs) return { updates: asIs, rest: {} };
+    for (const whole of [`{"updates":${t}`, `{"updates":${t}}`]) {
+      const o = tryObject(whole);
+      if (o && isRecord(o.updates)) {
+        const { updates, ...rest } = o;
+        return { updates, rest };
+      }
+    }
+    const closed = tryObject(`${t}}`) ?? tryObject(t.replace(/}\s*$/, ''));
+    if (closed) return { updates: closed, rest: {} };
+  }
+  const markup = fromParameterMarkup(text);
+  return markup ? { updates: markup, rest: {} } : undefined;
+}
+
+/** A verdict sent as JSON text or as tool-call markup, as an object. */
+function repairVerdict(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  return tryObject(v) ?? fromParameterMarkup(v) ?? v;
+}
+
+const RESULT_KEYS = new Set(['updates', 'verdict', 'next']);
+const VERDICT_KEYS = new Set(['outcome', 'confidence', 'shouldTerminate', 'reason']);
+
+/**
+ * Repair the shapes a submission arrives in before the schema judges it: the
+ * result or `updates` as a JSON string, `updates` as broken text (repairUpdates),
+ * update fields sent beside `updates`, verdict fields sent beside `verdict`'s place.
+ * Anything still wrong is left for the schema check to reject.
+ */
 export function normalizeSubmission(raw: unknown): unknown {
   const r = parseObject(raw);
-  if (!r || typeof r !== 'object' || Array.isArray(r)) return r;
-  const o = r as Record<string, unknown>;
-  return 'updates' in o ? { ...o, updates: parseObject(o.updates) } : o;
+  if (!isRecord(r) || !('updates' in r)) return r;
+  let updates = parseObject(r.updates);
+  let outer: Record<string, unknown> = r;
+  if (typeof updates === 'string') {
+    const repaired = repairUpdates(updates);
+    if (!repaired) return { ...r, updates };
+    updates = repaired.updates;
+    outer = { ...repaired.rest, ...r };
+  }
+  if (!isRecord(updates)) return { ...outer, updates };
+  // verdict and next can never be state fields: inside updates, they were misplaced.
+  const { verdict: innerVerdict, next: innerNext, ...fields } = updates;
+  if (outer.verdict === undefined && innerVerdict !== undefined)
+    outer = { ...outer, verdict: innerVerdict };
+  if (outer.next === undefined && innerNext !== undefined) outer = { ...outer, next: innerNext };
+  const strays = Object.entries(outer).filter(([k]) => !RESULT_KEYS.has(k) && !VERDICT_KEYS.has(k));
+  const flatVerdict = Object.fromEntries(
+    Object.entries(outer).filter(([k]) => VERDICT_KEYS.has(k)),
+  );
+  const verdict =
+    repairVerdict(outer.verdict) ?? (Object.keys(flatVerdict).length > 0 ? flatVerdict : undefined);
+  return {
+    // Fields named in updates win over strays of the same name.
+    updates: { ...Object.fromEntries(strays), ...fields },
+    ...(verdict !== undefined ? { verdict } : {}),
+    ...('next' in outer ? { next: outer.next } : {}),
+  };
 }
 
 /** Keep the record small: optional measurements the provider never reported are left out. */
@@ -223,6 +323,19 @@ function withoutZeros(u: TokenUsage): TokenUsage {
     )
       out[key] = v as number;
   return out as unknown as TokenUsage;
+}
+
+/** Whether an answer says anything: some text, list or object in its updates is filled. */
+export function hasContent(result: unknown): boolean {
+  const updates = isRecord(result) ? result.updates : undefined;
+  if (!isRecord(updates)) return false;
+  return Object.values(updates).some((v) =>
+    typeof v === 'string'
+      ? v.trim() !== ''
+      : Array.isArray(v)
+        ? v.length > 0
+        : isRecord(v) && Object.keys(v).length > 0,
+  );
 }
 
 /** In-session retries of a malformed submit_result before the engine judges it. */
@@ -657,6 +770,15 @@ export class CopilotProvider implements Provider {
             ]
           : checked.errors;
         if (errors.length === 0) {
+          // Last valid wins, except that an empty answer never replaces one with content:
+          // a skeptic's 8 real defects were lost to an empty second call that way.
+          if (valid !== undefined && hasContent(valid) && !hasContent(args)) {
+            req.onEvent({
+              type: 'info',
+              text: 'kept the earlier answer: the later valid one was empty and would have discarded its content',
+            });
+            return 'Not recorded: this result is empty, and your earlier result with content is kept. If that earlier result was wrong, submit the corrected content instead. Your step is complete: stop now.';
+          }
           valid = args;
           return 'Result recorded. Your step is complete: stop now.';
         }
