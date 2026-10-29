@@ -244,6 +244,43 @@ describe('main', () => {
     expect(plain()).not.toMatch(/performing the composed score/);
   });
 
+  it('maestro --complexity sets the tier: its debate roster and the composed score follow it', async () => {
+    const compose = async (tier: string) => {
+      out = '';
+      const args = [
+        'maestro',
+        'Fix the flaky login test',
+        '--auto-approve',
+        '--no-save',
+        '--compose-only',
+      ];
+      expect(await main([...args, '--complexity', tier], cwd)).toBe(0);
+      const steps =
+        plain()
+          .match(/^\[\d+\] \w+ agent/gm)
+          ?.map((l) => l.split(' ')[1]) ?? [];
+      return { steps, text: plain() };
+    };
+    const one = await compose('1');
+    expect(one.text).toMatch(/maestro score .* complexity 1/);
+    expect(one.text).toMatch(/♪ composed 'fix' complexity 1/);
+    expect(one.steps).toEqual(['classify', 'context']);
+    const four = await compose('4');
+    expect(four.text).toMatch(/♪ composed 'fix' complexity 4/);
+    expect(four.steps).toEqual([
+      'classify',
+      'propose',
+      'skeptic',
+      'pragmatist',
+      'critic',
+      'revise',
+      'context',
+    ]);
+    await expect(main(['maestro', 'x', '--complexity', '5', '--no-save'], cwd)).rejects.toThrow(
+      /1, 2, 3 or 4/,
+    );
+  });
+
   it('accepts complexity and improvisation by name', async () => {
     expect(
       await main(

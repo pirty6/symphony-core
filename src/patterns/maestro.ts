@@ -73,6 +73,12 @@ export const maestro: Pattern = {
     },
     { name: 'classifyReason', type: 'string' },
     {
+      name: 'presetComplexity',
+      type: 'number',
+      description: 'The complexity you chose for the run (0 = let the maestro classify)',
+    },
+    { name: 'ratedComplexity', type: 'number', description: "The classifier's own rating" },
+    {
       name: 'thenPattern',
       type: 'string',
       description: "Pattern to play after the composed score with its result, or ''",
@@ -150,6 +156,13 @@ export const maestro: Pattern = {
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
     {
+      id: 'notePreset',
+      kind: 'compute',
+      label: 'Note preset tier',
+      // A complexity chosen for the run starts in `complexity` (compile); 0 = auto.
+      assign: [{ field: 'presetComplexity', expr: 'complexity' }],
+    },
+    {
       id: 'library',
       kind: 'tool',
       label: 'Read the library',
@@ -185,7 +198,10 @@ export const maestro: Pattern = {
       // The same request, approved before on the same pattern: no classification, no debate.
       assign: [
         { field: 'chosen', expr: 'get(remembered, "chosen")' },
-        { field: 'complexity', expr: 'get(remembered, "complexity")' },
+        {
+          field: 'complexity',
+          expr: 'if(presetComplexity > 0, presetComplexity, get(remembered, "complexity"))',
+        },
         { field: 'thenPattern', expr: 'get(remembered, "thenPattern")' },
         {
           field: 'template',
@@ -223,6 +239,16 @@ export const maestro: Pattern = {
           message:
             "thenPattern must be '' or another pattern name from names (not chosen, not maestro).",
         },
+      ],
+    },
+    {
+      id: 'keepPreset',
+      kind: 'compute',
+      label: 'Preset tier wins',
+      // You set the cost tier: the classifier's rating is kept for the record, not used.
+      assign: [
+        { field: 'ratedComplexity', expr: 'complexity' },
+        { field: 'complexity', expr: 'if(presetComplexity > 0, presetComplexity, complexity)' },
       ],
     },
     {
@@ -554,14 +580,16 @@ ${SCORE_FORMAT}`,
     },
   ],
   edges: [
-    { id: 'start-library', from: 'start', to: 'library' },
+    { id: 'start-notePreset', from: 'start', to: 'notePreset' },
+    { id: 'notePreset-library', from: 'notePreset', to: 'library' },
     { id: 'library-route', from: 'library', to: 'route' },
     { id: 'route-recall', from: 'route', to: 'recall' },
     { id: 'recall-hasRemembered', from: 'recall', to: 'hasRemembered' },
     { id: 'hasRemembered-reuse', from: 'hasRemembered', to: 'reuse', branch: 'then' },
     { id: 'hasRemembered-classify', from: 'hasRemembered', to: 'classify', branch: 'else' },
     { id: 'reuse-outline', from: 'reuse', to: 'outline', label: 'composed before' },
-    { id: 'classify-load', from: 'classify', to: 'load' },
+    { id: 'classify-keepPreset', from: 'classify', to: 'keepPreset' },
+    { id: 'keepPreset-load', from: 'keepPreset', to: 'load' },
     { id: 'load-outline', from: 'load', to: 'outline' },
     { id: 'outline-debate', from: 'outline', to: 'debate' },
     { id: 'debate-propose', from: 'debate', to: 'propose', branch: 'then' },

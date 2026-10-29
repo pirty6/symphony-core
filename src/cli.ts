@@ -742,15 +742,18 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
   const request = positionals.join(' ').trim();
   if (!request || !isProviderName(values.provider)) {
     console.error(
-      'usage: symphony maestro "<what you want done>" [--provider copilot] [-i classical|cool|swing|bebop|free]',
+      'usage: symphony maestro "<what you want done>" [--provider copilot] [--complexity 1-4] [-i classical|cool|swing|bebop|free]',
     );
     return 1;
   }
   const improvisation = levelOf(values.improvisation);
+  // A preset tier wins over the maestro's own rating (cost control), on every surface.
+  const complexity = complexityOf(values.complexity);
   const score = compileScore(maestro, {
     goal: 'Compose the score for the request',
     context: { request },
     ...(improvisation !== undefined ? { improvisation } : {}),
+    ...(complexity ? { complexity } : {}),
   });
   const rl = process.stdin.isTTY
     ? createInterface({ input: process.stdin, output: process.stdout })

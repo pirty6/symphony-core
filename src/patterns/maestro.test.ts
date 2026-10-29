@@ -429,3 +429,51 @@ describe('maestro never drops go-gate feedback', () => {
     expect(r.state.state.unappliedFeedback).toBe('');
   });
 });
+
+describe('maestro keeps a preset complexity', () => {
+  const at = (complexity: 1 | 2 | 3 | 4, extra: Partial<DemoScript> = {}) => {
+    const score = compileScore(maestro, {
+      goal: 'compose',
+      context: { request: 'Fix the flaky login test' },
+      complexity,
+      generatedAt: 't',
+    });
+    return runScripted(score, { ...demo, ...extra }, { at: 't' });
+  };
+
+  it('a preset of 2 stays 2: the classifier rates 3, its rating is kept for the record', () => {
+    const r = at(2);
+    expect(r.state.outcome).toBe('success');
+    expect(r.state.state).toMatchObject({ complexity: 2, presetComplexity: 2, ratedComplexity: 3 });
+    expect(nodesRun(r)).toContain('skeptic');
+    expect(nodesRun(r)).not.toContain('pragmatist');
+  });
+
+  it('without a preset the classifier decides; a preset also wins over a remembered composition', () => {
+    const auto = run('Fix the flaky login test').r;
+    expect(auto.state.state).toMatchObject({
+      complexity: 3,
+      presetComplexity: 0,
+      ratedComplexity: 3,
+    });
+    const remembered = at(1, {
+      tools: {
+        ...demo.tools,
+        recall: () => ({
+          exact: {
+            request: 'r',
+            chosen: 'fix',
+            complexity: 4,
+            thenPattern: '',
+            adaptation: {},
+            pattern: {},
+            template: 'x',
+            at: 't',
+          },
+          similar: [],
+        }),
+      },
+    });
+    expect(remembered.state.state.complexity).toBe(1);
+  });
+});

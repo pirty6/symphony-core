@@ -220,6 +220,10 @@ replayable:
    | 3 | proposer + skeptic + pragmatist |
    | 4 | + template-critic, who can reroute to another pattern once |
 
+   A complexity you choose (`--complexity 1-4` in the CLI, the toolbar in the studio, `complexity`
+   over MCP) wins over the classifier's rating, which is kept as `ratedComplexity`: you control
+   the cost tier on every surface. The go-gate remains the backstop if you under-rate a request.
+
    Their contracts are enforced, not requested: the pragmatist must triage **every** skeptic concern,
    the critic's verdict must be CORRECT, WRONG or HYBRID and may only recommend real patterns.
 
