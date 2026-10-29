@@ -15,6 +15,7 @@ export interface ProviderConfig {
   readonly pattern?: Pattern;
   readonly model?: string;
   readonly gitHubToken?: string;
+  readonly gitHubTokenSource?: string;
   readonly workingDirectory?: string;
   /** Streaming delay for the scripted provider (ms). */
   readonly delayMs?: number;
@@ -34,6 +35,7 @@ export function makeProvider(cfg: ProviderConfig): Provider {
     return new CopilotProvider({
       ...(cfg.model ? { model: cfg.model } : {}),
       ...(cfg.gitHubToken ? { gitHubToken: cfg.gitHubToken } : {}),
+      ...(cfg.gitHubTokenSource ? { gitHubTokenSource: cfg.gitHubTokenSource } : {}),
       ...(cfg.workingDirectory ? { workingDirectory: cfg.workingDirectory } : {}),
       ...(cfg.mcpServers ? { mcpServers: cfg.mcpServers } : {}),
       ...(cfg.tiers ? { tiers: cfg.tiers } : {}),
@@ -49,18 +51,23 @@ export function makeProvider(cfg: ProviderConfig): Provider {
 }
 
 /** Env vars: COPILOT_MODEL / MODEL, GITHUB_TOKEN / TOKEN (optional: the SDK also uses your logged-in user). */
+/** Where a GitHub token for Copilot may be set, most specific first. */
+export const TOKEN_VARS = ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN', 'TOKEN'] as const;
+
 export function envConfig(env: NodeJS.ProcessEnv): {
   model?: string;
   gitHubToken?: string;
+  gitHubTokenSource?: string;
   tiers?: Partial<Record<Complexity, Tier>>;
   alternateModel?: string;
 } {
   const model = env.COPILOT_MODEL ?? env.MODEL;
-  const token = env.COPILOT_GITHUB_TOKEN ?? env.GH_TOKEN ?? env.GITHUB_TOKEN ?? env.TOKEN;
+  const source = TOKEN_VARS.find((name) => env[name] && env[name] !== 'token');
+  const token = source ? env[source] : undefined;
   const tiers = env.SYMPHONY_TIERS ? parseTiers(env.SYMPHONY_TIERS) : undefined;
   return {
     ...(model ? { model } : {}),
-    ...(token && token !== 'token' ? { gitHubToken: token } : {}),
+    ...(token && source ? { gitHubToken: token, gitHubTokenSource: source } : {}),
     ...(tiers ? { tiers } : {}),
     ...(env.SYMPHONY_ALT_MODEL ? { alternateModel: env.SYMPHONY_ALT_MODEL } : {}),
   };

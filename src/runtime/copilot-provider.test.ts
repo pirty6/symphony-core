@@ -10,6 +10,7 @@ import {
   CopilotProvider,
   ISOLATED_SYSTEM,
   SIGN_IN_HELP,
+  withoutTokenVars,
   parseTiers,
   type ClientLike,
   type SessionLike,
@@ -497,6 +498,59 @@ describe('CopilotProvider', () => {
     });
     expect(res.result).toEqual({ updates: { word: 'cat' } });
     expect(created).toEqual(['claude-haiku-5.5']);
+  });
+
+  it('a token Copilot refuses mid-session gives way to the signed-in account; then it stops with why', async () => {
+    const REFUSED = '[Authorization error, you may need to run /login (Request ID: B233:3B33)]';
+    const play = (signedInWorks: boolean) => {
+      const auths: { gitHubToken?: string }[] = [];
+      const factory = (auth: { gitHubToken?: string }) => {
+        auths.push(auth);
+        const works = !auth.gitHubToken && signedInWorks;
+        return fakeClient(async (cfg, emit) => {
+          if (works) await callTool(cfg, 'submit_result', { updates: { word: 'cat' } });
+          else emit('assistant.message', { content: REFUSED });
+          emit('session.idle');
+        }).client;
+      };
+      const events: string[] = [];
+      const p = new CopilotProvider({
+        clientFactory: factory,
+        gitHubToken: 'ghp_old',
+        gitHubTokenSource: 'TOKEN',
+      });
+      const run = p.runAgent({
+        pause,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: (e) => e.type === 'info' && events.push(e.text),
+      });
+      return { run, auths, events };
+    };
+    const healed = play(true);
+    expect((await healed.run).result).toEqual({ updates: { word: 'cat' } });
+    expect(healed.auths).toEqual([{ gitHubToken: 'ghp_old' }, {}]);
+    expect(healed.events.join('\n')).toMatch(/Copilot refused the token in TOKEN/);
+
+    const stuck = play(false);
+    await expect(stuck.run).rejects.toMatchObject({
+      name: 'SetupError',
+      message: expect.stringContaining(
+        'Copilot refused the GitHub account signed in on this machine',
+      ),
+    });
+  });
+
+  it('the signed-in account is used without token variables the CLI would prefer', () => {
+    expect(
+      withoutTokenVars({
+        PATH: '/bin',
+        GITHUB_TOKEN: 'a',
+        GH_TOKEN: 'b',
+        COPILOT_GITHUB_TOKEN: 'c',
+      }),
+    ).toEqual({ PATH: '/bin' });
   });
 
   it('falls back to the signed-in user when the configured token is rejected', async () => {

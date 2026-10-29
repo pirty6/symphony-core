@@ -35,9 +35,14 @@ async function main(): Promise<number> {
     const status = await provider.authStatus();
     console.log(
       status.signedIn
-        ? `Signed in${status.login ? ` as ${status.login}` : ''}: Symphony can use Copilot now (AI: Copilot).`
+        ? `Signed in${status.login ? ` as ${status.login}` : ''}${status.message ? ` (${status.message})` : ''}: Symphony can use Copilot now (AI: Copilot).`
         : status.message,
     );
+    // A token variable is used before this sign-in: an old or classic one makes every request fail.
+    if (status.tokenSource)
+      console.log(
+        `Note: ${status.tokenSource} is set (in .env or your environment) and is used before this sign-in. If runs fail with "Authorization error", remove it; Symphony then uses the account you just signed in with.`,
+      );
     return status.signedIn ? 0 : 1;
   } finally {
     await provider.dispose?.();
