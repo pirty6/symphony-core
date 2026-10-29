@@ -51,6 +51,18 @@ export const maestro: Pattern = {
     { name: 'summaries', type: 'string[]', description: 'One line per pattern' },
     { name: 'catalog', type: 'object', description: 'Pattern definitions by name' },
     { name: 'suggested', type: 'string', description: 'Verb-trigger route' },
+    {
+      name: 'pastCompositions',
+      type: 'string[]',
+      description: 'Approved compositions of similar earlier requests (precedent)',
+    },
+    {
+      name: 'remembered',
+      type: 'object',
+      description: 'An approved composition of this same request, to reuse ({} if none)',
+    },
+    { name: 'reused', type: 'boolean', description: 'Composed from memory, without a debate' },
+    { name: 'compositionSaved', type: 'boolean' },
     { name: 'chosen', type: 'string', description: "Pattern name, or 'new'" },
     {
       name: 'complexity',
@@ -145,6 +157,42 @@ export const maestro: Pattern = {
       output: { suggested: 'suggested' },
     },
     {
+      id: 'recall',
+      kind: 'tool',
+      label: 'Recall compositions',
+      tool: 'compositions.recall',
+      inputs: { request: 'request' },
+      output: { exact: 'remembered', similar: 'pastCompositions' },
+    },
+    {
+      id: 'hasRemembered',
+      kind: 'condition',
+      label: 'Composed before?',
+      expression: 'len(keys(remembered)) > 0',
+    },
+    {
+      id: 'reuse',
+      kind: 'compute',
+      label: 'Reuse composition',
+      // The same request, approved before on the same pattern: no classification, no debate.
+      assign: [
+        { field: 'chosen', expr: 'get(remembered, "chosen")' },
+        { field: 'complexity', expr: 'get(remembered, "complexity")' },
+        { field: 'thenPattern', expr: 'get(remembered, "thenPattern")' },
+        {
+          field: 'template',
+          expr: 'if(get(remembered, "chosen") == "new", {}, get(catalog, get(remembered, "chosen")))',
+        },
+        { field: 'adaptation', expr: 'get(remembered, "adaptation")' },
+        { field: 'draft', expr: 'get(remembered, "pattern")' },
+        { field: 'reused', expr: 'true' },
+        {
+          field: 'debateNotes',
+          expr: '["Reused: this request was composed and approved before, so there was no debate. Write feedback to compose it afresh."]',
+        },
+      ],
+    },
+    {
       id: 'classify',
       kind: 'agent',
       role: 'assessor',
@@ -152,8 +200,8 @@ export const maestro: Pattern = {
       complexity: 2,
       label: 'Route and classify',
       directive:
-        "Decide which pattern from `summaries` fits `request`, or 'new' if none has the right shape. `suggested` is the verb-trigger match: keep it unless the request clearly signals another shape (e.g. 'fix' but architectural -> not fix; 'investigate' but the cause is already known -> fix). Then classify complexity, picking the LOWEST tier that covers the risk: 1 routine and well understood; 2 some judgement or several steps; 3 cross-cutting, risky or ambiguous; 4 novel, where the pattern fit itself is in question. Explain both choices in one or two sentences in `classifyReason`. If the request asks for two shapes in sequence (e.g. 'find out why X, then fix it' -> chosen investigate, then fix; 'understand this module and clean it up' -> investigate, then refactor), set `thenPattern` to the second pattern from `names`: it plays after the first with what the first found. Otherwise set `thenPattern` to ''. Do not chain when one pattern already covers both (fix diagnoses before it edits).",
-      reads: ['request', 'summaries', 'suggested'],
+        "Decide which pattern from `summaries` fits `request`, or 'new' if none has the right shape. `suggested` is the verb-trigger match: keep it unless the request clearly signals another shape (e.g. 'fix' but architectural -> not fix; 'investigate' but the cause is already known -> fix). Then classify complexity, picking the LOWEST tier that covers the risk: 1 routine and well understood; 2 some judgement or several steps; 3 cross-cutting, risky or ambiguous; 4 novel, where the pattern fit itself is in question. Explain both choices in one or two sentences in `classifyReason`. If the request asks for two shapes in sequence (e.g. 'find out why X, then fix it' -> chosen investigate, then fix; 'understand this module and clean it up' -> investigate, then refactor), set `thenPattern` to the second pattern from `names`: it plays after the first with what the first found. Otherwise set `thenPattern` to ''. Do not chain when one pattern already covers both (fix diagnoses before it edits). `pastCompositions` are approved compositions of similar earlier requests in this workspace: follow their choice of pattern, complexity and thenPattern when this request is the same kind, unless it signals otherwise.",
+      reads: ['request', 'summaries', 'suggested', 'pastCompositions'],
       writes: ['chosen', 'complexity', 'classifyReason', 'thenPattern'],
       retries: 2,
       checks: [
@@ -192,7 +240,7 @@ export const maestro: Pattern = {
       id: 'debate',
       kind: 'condition',
       label: 'Debate needed?',
-      expression: 'complexity > 1 || chosen == "new"',
+      expression: '(complexity > 1 || chosen == "new") && !reused',
     },
     {
       id: 'propose',
@@ -203,6 +251,7 @@ export const maestro: Pattern = {
       directive: `You are the PROPOSER: compose the score (an executable workflow pattern) for \`request\`. Every debate responds to your proposal.
 - If \`chosen\` is a library pattern (its steps are in \`outline\`, its settings in \`settings\`), it is tested: do NOT rewrite it. Tailor it in \`adaptation\` = { "directives": { "<agent step id>": "guidance for this request" }, "initial": { "<setting>": value } }: guidance is appended to that step's directive (what to look at first, which files, PRs, tests or errors the request names, what to ignore); initial values change settings (loop bounds, batch sizes, flags such as exhaustive). Only steps that need something specific; {} is fine. Leave \`draft\` as {}. Only if the request truly needs a different shape (steps added, removed or reordered) write the whole pattern in \`draft\` instead, and say why in \`assumptions\`.
 - If \`chosen\` is 'new', draft a fresh pattern in \`draft\` and leave \`adaptation\` as {}.
+- \`pastCompositions\` are approved compositions of similar earlier requests: when one used the same pattern, start from its adaptation and change only what this request needs.
 - Revise rather than restart when \`adaptation\` or \`draft\` already holds a previous round: address \`draftErrors\`, \`feedback\`, and REAL concerns in \`failureModes\`/\`triage\`, and follow the template-critic's \`fit\`/\`criticReason\`.
 - Start with grounding (observe, reproduce, define) and end with verification (test, confirm). Prefer compute/condition/tool nodes for anything mechanical: AI only where judgement is needed. Bound every loop.
 - Do not investigate the codebase: you plan, you do not diagnose.
@@ -217,6 +266,7 @@ ${SCORE_FORMAT}`,
         'settings',
         'adaptation',
         'draft',
+        'pastCompositions',
         'complexity',
         'draftErrors',
         'feedback',
@@ -446,6 +496,8 @@ ${SCORE_FORMAT}`,
       assign: [
         { field: 'round', expr: 'round + 1' },
         { field: 'complexity', expr: 'if(complexity < 4, complexity + 1, 4)' },
+        // Feedback on a reused composition composes it afresh.
+        { field: 'reused', expr: 'false' },
       ],
     },
     {
@@ -454,6 +506,22 @@ ${SCORE_FORMAT}`,
       label: 'Final score',
       assign: [{ field: 'finalPattern', expr: 'normalized' }],
     },
+    {
+      id: 'remember',
+      kind: 'tool',
+      label: 'Remember composition',
+      tool: 'compositions.remember',
+      inputs: {
+        request: 'request',
+        chosen: 'chosen',
+        complexity: 'complexity',
+        thenPattern: 'thenPattern',
+        adaptation: 'adaptation',
+        draft: 'draft',
+        pattern: 'normalized',
+      },
+      output: { saved: 'compositionSaved' },
+    },
     { id: 'done', kind: 'end', label: 'Score composed', outcome: 'success' },
     { id: 'gaveUp', kind: 'end', label: 'No valid score', outcome: 'failed' },
     { id: 'stopped', kind: 'end', label: 'Stopped', outcome: 'partial' },
@@ -461,7 +529,11 @@ ${SCORE_FORMAT}`,
   edges: [
     { id: 'start-library', from: 'start', to: 'library' },
     { id: 'library-route', from: 'library', to: 'route' },
-    { id: 'route-classify', from: 'route', to: 'classify' },
+    { id: 'route-recall', from: 'route', to: 'recall' },
+    { id: 'recall-hasRemembered', from: 'recall', to: 'hasRemembered' },
+    { id: 'hasRemembered-reuse', from: 'hasRemembered', to: 'reuse', branch: 'then' },
+    { id: 'hasRemembered-classify', from: 'hasRemembered', to: 'classify', branch: 'else' },
+    { id: 'reuse-outline', from: 'reuse', to: 'outline', label: 'composed before' },
     { id: 'classify-load', from: 'classify', to: 'load' },
     { id: 'load-outline', from: 'load', to: 'outline' },
     { id: 'outline-debate', from: 'outline', to: 'debate' },
@@ -513,7 +585,8 @@ ${SCORE_FORMAT}`,
     { id: 'gate-finalize', from: 'gate', to: 'finalize', branch: 'approved' },
     { id: 'gate-stopped', from: 'gate', to: 'stopped', branch: 'rejected' },
     { id: 'escalate-propose', from: 'escalate', to: 'propose', label: 'next round' },
-    { id: 'finalize-done', from: 'finalize', to: 'done' },
+    { id: 'finalize-remember', from: 'finalize', to: 'remember' },
+    { id: 'remember-done', from: 'remember', to: 'done' },
   ],
   demo: {
     context: { request: 'Fix the flaky login test that fails on CI about once in ten runs' },
@@ -523,6 +596,8 @@ ${SCORE_FORMAT}`,
         summaries: DEMO_LIBRARY.map((p) => `${p.name}: ${p.description}`),
         catalog: Object.fromEntries(DEMO_LIBRARY.map(({ demo: _d, ...p }) => [p.name, p])),
       }),
+      recall: () => ({ exact: {}, similar: [] }),
+      remember: () => ({ saved: true }),
       route: (s) => {
         const text = String(s.request).toLowerCase();
         const hit = DEMO_LIBRARY.find((p) =>

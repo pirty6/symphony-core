@@ -300,3 +300,92 @@ describe('maestro adapts library patterns instead of rewriting them', () => {
     expect(nodesRun(four.r)).toContain('critic');
   });
 });
+
+describe('maestro remembers approved compositions', () => {
+  const adaptation = { directives: { hypothesize: 'Timing races between tests first.' } };
+  const remembered = (over: Record<string, unknown> = {}) => ({
+    recall: () => ({
+      exact: {
+        request: 'r',
+        chosen: 'fix',
+        complexity: 3,
+        thenPattern: '',
+        adaptation,
+        pattern: {},
+        template: 'x',
+        at: 't',
+        ...over,
+      },
+      similar: [],
+    }),
+  });
+
+  it('the same request again: no classification, no debate, the approved adaptation is reused', () => {
+    const { r } = run(
+      'Fix the flaky login test',
+      {},
+      { tools: { ...demo.tools, ...remembered() } },
+    );
+    expect(r.state.outcome).toBe('success');
+    const ran = nodesRun(r);
+    for (const id of ['classify', 'propose', 'skeptic', 'revise']) expect(ran).not.toContain(id);
+    expect(ran).toEqual(
+      expect.arrayContaining(['reuse', 'validate', 'context', 'gate', 'remember']),
+    );
+    const final = r.state.state.finalPattern as Pattern;
+    expect(final.nodes.find((n) => n.id === 'hypothesize')).toMatchObject({
+      directive: expect.stringMatching(/For this request: Timing races between tests first\.$/),
+    });
+    expect(r.state.state).toMatchObject({ reused: true, complexity: 3, chosen: 'fix' });
+    expect(String(r.state.state.debateNotes)).toMatch(/approved before, so there was no debate/);
+  });
+
+  it('similar requests are precedent for the classifier and the proposer', () => {
+    const similar = [
+      '2026-01-01 | "Fix the flaky signup test" → fix (complexity 3); adaptation {}',
+    ];
+    const { r } = run(
+      'Fix the flaky login test',
+      {},
+      {
+        tools: { ...demo.tools, recall: () => ({ exact: {}, similar }) },
+      },
+    );
+    for (const id of ['classify', 'propose'])
+      expect(r.state.steps.find((st) => st.nodeId === id)!.input!.pastCompositions).toEqual(
+        similar,
+      );
+  });
+
+  it('a remembered adaptation that no longer fits goes to the proposer with the errors', () => {
+    const { r } = run(
+      'Fix the flaky login test',
+      {},
+      {
+        tools: { ...demo.tools, ...remembered({ adaptation: { directives: { gone: 'x' } } }) },
+      },
+    );
+    const propose = r.state.steps.find((st) => st.nodeId === 'propose')!;
+    expect(String(propose.input!.draftErrors)).toMatch(/no step 'gone'/);
+    expect(r.state.outcome).toBe('success');
+  });
+
+  it('feedback on a reused composition composes it afresh', () => {
+    const { r } = run(
+      'Fix the flaky login test',
+      {},
+      {
+        tools: { ...demo.tools, ...remembered() },
+        approvals: {
+          gate: (_s, visit) => ({
+            approved: true,
+            updates: { feedback: visit === 0 ? 'also check the retry logic' : '' },
+          }),
+        },
+      },
+    );
+    expect(nodesRun(r)).toContain('propose');
+    expect(r.state.state.reused).toBe(false);
+    expect(r.state.outcome).toBe('success');
+  });
+});
