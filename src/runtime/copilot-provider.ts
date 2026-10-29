@@ -61,6 +61,19 @@ export const SIGN_IN_HELP =
 
 const NOT_SIGNED_IN =
   /No GitHub OAuth token|Copilot HMAC key|not authenticated|authentication required/i;
+/** Signed in, but Copilot refuses the credential (no Copilot access, or a token that cannot use it). */
+const REFUSED = /Authorization error|you may need to run \/login|\b401\b|Unauthorized/i;
+
+/** Copilot token variables, which the CLI would otherwise prefer over the signed-in account. */
+export function withoutTokenVars(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  const { COPILOT_GITHUB_TOKEN: _a, GH_TOKEN: _b, GITHUB_TOKEN: _c, ...rest } = env;
+  return rest;
+}
+
+/** What to do when Copilot refuses the account that is signed in. */
+export function refusedHelp(login?: string): string {
+  return `Copilot refused the GitHub account signed in on this machine${login ? ` (${login})` : ''}. Check that it has Copilot (https://github.com/settings/copilot) and that your organization allows Copilot in the CLI, then run \`npm run login\` again. The offline demo (AI: Scripted) works without it.`;
+}
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
@@ -107,6 +120,8 @@ export interface CopilotProviderOptions {
   /** Backend for the web_search tool (nodes with the 'web' capability). */
   readonly webSearch?: (query: string, signal: AbortSignal) => Promise<readonly SearchResult[]>;
   readonly gitHubToken?: string;
+  /** Where the token was set (e.g. TOKEN), named in messages when Copilot refuses it. */
+  readonly gitHubTokenSource?: string;
   /** Per-node timeout. Default 10 minutes. */
   readonly timeoutMs?: number;
   /** Builds the SDK client; `gitHubToken` is undefined when using the signed-in GitHub user. */
@@ -191,7 +206,12 @@ export class CopilotProvider implements Provider {
       const auth = token ? { gitHubToken: token } : {};
       const client =
         this.opts.clientFactory?.(auth) ??
-        (new CopilotClient(token ? auth : { useLoggedInUser: true }) as unknown as ClientLike);
+        (new CopilotClient(
+          token
+            ? auth
+            : // The CLI prefers token variables over a sign-in: hide them so the sign-in is used.
+              { useLoggedInUser: true, env: withoutTokenVars(process.env) },
+        ) as unknown as ClientLike);
       await client.start();
       this.client = client;
       return client;
@@ -202,13 +222,29 @@ export class CopilotProvider implements Provider {
   private signInChecked = false;
 
   /** Who Copilot runs as here, or why it cannot run (no GitHub account signed in). */
-  async authStatus(): Promise<{ signedIn: boolean; login?: string; message: string }> {
+  async authStatus(): Promise<{
+    signedIn: boolean;
+    login?: string;
+    message: string;
+    /** The token variable used instead of the signed-in account, when one is set. */
+    tokenSource?: string;
+  }> {
     const client = await this.ensureClient();
-    if (!client.getAuthStatus) return { signedIn: true, message: 'unknown (not reported)' };
+    const source =
+      this.opts.gitHubToken && !this.tokenRejected && this.opts.gitHubTokenSource
+        ? { tokenSource: this.opts.gitHubTokenSource }
+        : {};
+    if (!client.getAuthStatus)
+      return { signedIn: true, message: 'unknown (not reported)', ...source };
     const s = await client.getAuthStatus();
     return s.isAuthenticated
-      ? { signedIn: true, ...(s.login ? { login: s.login } : {}), message: s.statusMessage ?? '' }
-      : { signedIn: false, message: SIGN_IN_HELP };
+      ? {
+          signedIn: true,
+          ...(s.login ? { login: s.login } : {}),
+          message: s.statusMessage ?? '',
+          ...source,
+        }
+      : { signedIn: false, message: SIGN_IN_HELP, ...source };
   }
 
   private async runSession(
@@ -389,7 +425,8 @@ export class CopilotProvider implements Provider {
     if (run.signal.aborted) throw abortError();
     if (failure && !output) output = `[${failure}]`;
     // Without a GitHub account the CLI answers with an error message, not a model reply.
-    if (NOT_SIGNED_IN.test(output) && toolCalls.length === 0) throw new SetupError(SIGN_IN_HELP);
+    if (toolCalls.length === 0 && NOT_SIGNED_IN.test(output)) throw new SetupError(SIGN_IN_HELP);
+    if (toolCalls.length === 0 && REFUSED.test(output)) return this.refused(run, output);
     return { output, toolCalls, ...(model ? { model } : {}), ...(usage.calls ? { usage } : {}) };
   }
 
@@ -690,6 +727,31 @@ export class CopilotProvider implements Provider {
         }
       },
     });
+  }
+
+  /**
+   * Copilot refused the credential. A configured token is dropped once for the
+   * signed-in account (the step runs again); if that is refused too, stop and say why.
+   */
+  private async refused(
+    run: SessionRun,
+    output: string,
+  ): Promise<{ output: string; toolCalls: ToolCallRecord[]; model?: string; usage?: TokenUsage }> {
+    if (this.opts.gitHubToken && !this.tokenRejected) {
+      this.tokenRejected = true;
+      this.signInChecked = false;
+      run.onEvent({
+        type: 'info',
+        text: `Copilot refused the token in ${this.opts.gitHubTokenSource ?? 'your settings'} ("${output.slice(0, 120)}"); using the GitHub account signed in on this machine instead. Remove that token, or replace it with a fine-grained one with the "Copilot Requests" permission.`,
+      });
+      await this.dropClient();
+      return this.runSession(run);
+    }
+    const login = await this.authStatus().then(
+      (s) => s.login,
+      () => undefined,
+    );
+    throw new SetupError(refusedHelp(login));
   }
 
   private async dropClient(): Promise<void> {
