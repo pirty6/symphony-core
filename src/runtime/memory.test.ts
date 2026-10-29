@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+  cleanFact,
+  LESSON_DAYS,
+  MAX_FACTS_PER_RUN,
   memoryPath,
   recall,
   recallCompositions,
@@ -46,22 +49,99 @@ describe('memory across runs', () => {
     expect((await recall(ws, 'default port')).facts).toEqual([]);
   });
 
-  it('recalls lessons from earlier runs by shared words, newest wins on ties', async () => {
+  it('recalls lessons from earlier runs by shared words; gone files or old lessons are not recalled', async () => {
     const ws = workspace();
+    writeFileSync(join(ws, 'src', 'paginate.ts'), 'export {};\n');
+    const day = (ago: number) => new Date(Date.now() - ago * 86_400_000).toISOString();
     await rememberLesson(
       ws,
       'Fixed "page 2 repeats an item": slice(start - 1)',
       ['src/paginate.ts'],
-      '2026-01-01T00:00:00Z',
+      day(2),
     );
     await rememberLesson(
       ws,
       'FAILED to fix "login timeout": flaky network',
       ['src/auth.ts'],
-      '2026-01-02T00:00:00Z',
+      day(1),
     );
     const r = await recall(ws, 'paginate shows a repeated item on page 2');
-    expect(r.lessons).toEqual(['2026-01-01 | Fixed "page 2 repeats an item": slice(start - 1)']);
+    expect(r.lessons).toEqual([
+      `${day(2).slice(0, 10)} | Fixed "page 2 repeats an item": slice(start - 1)`,
+    ]);
+    // src/auth.ts does not exist: that lesson is about code that is gone.
+    expect((await recall(ws, 'login timeout flaky network')).lessons).toEqual([]);
+    await rememberLesson(
+      ws,
+      'Fixed "page 3 skips an item": old',
+      ['src/paginate.ts'],
+      day(LESSON_DAYS + 1),
+    );
+    expect((await recall(ws, 'page skips an item')).lessons.join()).not.toMatch(/old/);
+  });
+
+  it('stores facts without run annotations, one per path:line, the newest', async () => {
+    const ws = workspace();
+    expect(cleanFact('src/a.ts:3 — reads `arr[0]` first [H2 against] [F7]')).toBe(
+      'src/a.ts:3 — reads `arr[0]` first',
+    );
+    await rememberFacts(
+      ws,
+      ['src/config.js:1 — the port is one more than the default `DEFAULTS.port + 1` [H1 for]'],
+      '2026-01-01T00:00:00Z',
+    );
+    await rememberFacts(
+      ws,
+      ['F3 src/config.js:1 — adds one `DEFAULTS.port + 1` [H4 against]'],
+      '2026-01-02T00:00:00Z',
+    );
+    const m = JSON.parse(readFileSync(memoryPath(ws), 'utf8')) as { facts: { text: string }[] };
+    expect(m.facts.map((f) => f.text)).toEqual(['src/config.js:1 — adds one `DEFAULTS.port + 1`']);
+  });
+
+  it('one run adds at most MAX_FACTS_PER_RUN facts, so a few runs cannot replace the store', async () => {
+    const ws = workspace();
+    const many = (n: number, from = 0) =>
+      Array.from(
+        { length: n },
+        (_, i) => `src/config.js:${i + from + 1} — line \`DEFAULTS.port + 1\``,
+      );
+    expect(await rememberFacts(ws, many(MAX_FACTS_PER_RUN + 50), undefined, 'run-a')).toBe(
+      MAX_FACTS_PER_RUN,
+    );
+    expect(await rememberFacts(ws, many(10, 500), undefined, 'run-a')).toBe(0);
+    expect(await rememberFacts(ws, many(10, 900), undefined, 'run-b')).toBe(10);
+    const m = JSON.parse(readFileSync(memoryPath(ws), 'utf8')) as { facts: unknown[] };
+    expect(m.facts).toHaveLength(MAX_FACTS_PER_RUN + 10);
+  });
+
+  it('a stored file from before the rules is tidied as it is read', async () => {
+    const ws = workspace();
+    mkdirSync(join(ws, '.symphony'), { recursive: true });
+    const old = (text: string) => ({ text, at: '2026-01-01T00:00:00Z' });
+    writeFileSync(
+      memoryPath(ws),
+      JSON.stringify({
+        facts: [
+          old('src/config.js:1 — newest `DEFAULTS.port + 1` [H22 against]'),
+          old('src/config.js:1 — older `DEFAULTS.port + 1` [H3 for]'),
+        ],
+        lessons: [],
+      }),
+    );
+    await rememberLesson(ws, 'any write saves the tidy store', []);
+    const m = JSON.parse(readFileSync(memoryPath(ws), 'utf8')) as { facts: { text: string }[] };
+    expect(m.facts.map((f) => f.text)).toEqual(['src/config.js:1 — newest `DEFAULTS.port + 1`']);
+  });
+
+  it('ranks by rare shared words above common ones', async () => {
+    const ws = workspace();
+    const at = new Date().toISOString();
+    for (let i = 0; i < 6; i += 1)
+      await rememberLesson(ws, `Fixed "value returns early ${i}": config`, [], at);
+    await rememberLesson(ws, 'Fixed "paginate drops the tail": slice', [], at);
+    const r = await recall(ws, 'paginate value returns');
+    expect(r.lessons[0]).toMatch(/paginate drops the tail/);
   });
 
   it('parallel writers leave a readable file', async () => {

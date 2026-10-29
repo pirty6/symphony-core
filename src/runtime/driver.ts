@@ -490,6 +490,7 @@ export class Run {
         workspace: this.opts.toolContext?.workspace ?? '.',
         repoRoot: this.opts.toolContext?.repoRoot ?? '.',
         signal: this.abort.signal,
+        runId: this.id,
       });
       const updates = mapToolOutput(pause.output, raw);
       emit(
