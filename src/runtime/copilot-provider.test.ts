@@ -362,6 +362,22 @@ describe('CopilotProvider', () => {
     await expect(
       new CopilotProvider({ clientFactory: () => cli.client }).runAgent(req),
     ).rejects.toMatchObject({ name: 'SetupError' });
+
+    // A used-up quota stops the run at once: every retry would be refused the same way.
+    const broke = fakeClient(async (_cfg, emit) => {
+      emit('session.error', {
+        message: 'You have exceeded your monthly quota (Request ID: 3BAB:F09)',
+      });
+      emit('session.idle');
+    });
+    await expect(
+      new CopilotProvider({ clientFactory: () => broke.client }).runAgent(req),
+    ).rejects.toMatchObject({
+      name: 'SetupError',
+      message: expect.stringMatching(
+        /quota is used up.*exceeded your monthly quota.*Retrying cannot help/,
+      ),
+    });
   });
 
   it('keeps the last valid answer: a later bad or parallel call never replaces it', async () => {

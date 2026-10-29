@@ -65,6 +65,15 @@ const NOT_SIGNED_IN =
 /** Signed in, but Copilot refuses the credential (no Copilot access, or a token that cannot use it). */
 const REFUSED = /Authorization error|you may need to run \/login|\b401\b|Unauthorized/i;
 
+/** The account's Copilot quota is used up: every model refuses until it resets. */
+const QUOTA =
+  /exceeded your (monthly )?quota|quota (has been |was )?exceeded|out of premium requests/i;
+
+/** What to do when the Copilot quota is used up. */
+export function quotaHelp(said: string): string {
+  return `Your Copilot quota is used up, so no model will answer (Copilot said: ${said.replace(/^\[|\]$/g, '').trim()}). Wait for it to reset, or raise your premium-request budget in your GitHub Copilot settings (https://github.com/settings/copilot). Retrying cannot help. The offline demo (AI: Scripted) still works.`;
+}
+
 /** Copilot token variables, which the CLI would otherwise prefer over the signed-in account. */
 export function withoutTokenVars(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
   const { COPILOT_GITHUB_TOKEN: _a, GH_TOKEN: _b, GITHUB_TOKEN: _c, ...rest } = env;
@@ -488,6 +497,7 @@ export class CopilotProvider implements Provider {
     // Without a GitHub account the CLI answers with an error message, not a model reply.
     if (toolCalls.length === 0 && NOT_SIGNED_IN.test(output)) throw new SetupError(SIGN_IN_HELP);
     if (toolCalls.length === 0 && REFUSED.test(output)) return this.refused(run, output);
+    if (toolCalls.length === 0 && QUOTA.test(output)) throw new SetupError(quotaHelp(output));
     return {
       output,
       toolCalls,
