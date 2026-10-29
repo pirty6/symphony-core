@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { formatUsage } from '../core/usage.js';
 import type { SessionConfig } from '@github/copilot-sdk';
 import { compileScore } from '../core/compile.js';
 import { replayPerformance } from '../core/replay.js';
@@ -405,6 +406,51 @@ describe('CopilotProvider', () => {
     expect(normalizeSubmission({ updates: '{"a":1}' })).toEqual({ updates: { a: 1 } });
     expect(normalizeSubmission({ updates: '[1]' })).toEqual({ updates: '[1]' });
     expect(normalizeSubmission({ updates: 'not json' })).toEqual({ updates: 'not json' });
+  });
+
+  it('records what the provider reports beyond tokens: time, cost, cache writes, compactions', async () => {
+    const { client } = fakeClient(async (cfg, emit) => {
+      await callTool(cfg, 'submit_result', {
+        updates: { word: 'cat' },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+      });
+      const call = {
+        inputTokens: 100,
+        outputTokens: 5,
+        cacheWriteTokens: 40,
+        duration: 1500,
+        timeToFirstTokenMs: 400,
+        cost: 1,
+        copilotUsage: { totalNanoAiu: 2000 },
+      };
+      emit('assistant.usage', { model: 'm', ...call });
+      emit('session.compaction_complete', { success: true });
+      emit('assistant.usage', { model: 'm', ...call });
+      emit('session.idle');
+    });
+    const res = await new CopilotProvider({ clientFactory: () => client }).runAgent({
+      pause,
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    expect(res.transcript.usage).toEqual({
+      calls: 2,
+      inputTokens: 200,
+      outputTokens: 10,
+      cacheReadTokens: 0,
+      reasoningTokens: 0,
+      cacheWriteTokens: 80,
+      apiMs: 3000,
+      firstTokenMs: 800,
+      premiumRequests: 2,
+      nanoAiu: 4000,
+      compactions: 1,
+    });
+    expect(formatUsage(res.transcript.usage!)).toBe(
+      '200 in · 10 out · 2 calls · 3.0s in the model, first token 0.4s avg · 2 premium requests · compacted 1×',
+    );
   });
 
   it('falls back to JSON in the final message', async () => {

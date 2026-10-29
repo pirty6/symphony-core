@@ -204,6 +204,18 @@ export function normalizeSubmission(raw: unknown): unknown {
   return 'updates' in o ? { ...o, updates: parseObject(o.updates) } : o;
 }
 
+/** Keep the record small: optional measurements the provider never reported are left out. */
+function withoutZeros(u: TokenUsage): TokenUsage {
+  const out: Record<string, number> = {};
+  for (const [key, v] of Object.entries(u))
+    if (
+      v !== 0 ||
+      ['calls', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'reasoningTokens'].includes(key)
+    )
+      out[key] = v as number;
+  return out as unknown as TokenUsage;
+}
+
 /** In-session retries of a malformed submit_result before the engine judges it. */
 const MAX_SUBMIT_CORRECTIONS = 2;
 
@@ -358,6 +370,12 @@ export class CopilotProvider implements Provider {
       outputTokens: 0,
       cacheReadTokens: 0,
       reasoningTokens: 0,
+      cacheWriteTokens: 0,
+      apiMs: 0,
+      firstTokenMs: 0,
+      premiumRequests: 0,
+      nanoAiu: 0,
+      compactions: 0,
     };
     const names = new Map<string, string>();
     let settle!: () => void;
@@ -405,8 +423,19 @@ export class CopilotProvider implements Provider {
           usage.outputTokens += n('outputTokens');
           usage.cacheReadTokens += n('cacheReadTokens');
           usage.reasoningTokens += n('reasoningTokens');
+          usage.cacheWriteTokens += n('cacheWriteTokens');
+          usage.apiMs += n('duration');
+          usage.firstTokenMs += n('timeToFirstTokenMs');
+          usage.premiumRequests += n('cost');
+          usage.nanoAiu += Number(
+            (d.copilotUsage as { totalNanoAiu?: unknown } | undefined)?.totalNanoAiu ?? 0,
+          );
           break;
         }
+        case 'session.compaction_complete':
+          usage.compactions += 1;
+          run.onEvent({ type: 'info', text: 'the conversation was compacted to fit the context' });
+          break;
         case 'session.error':
           failure = String(d.message ?? 'session error');
           run.onEvent({ type: 'info', text: `error: ${failure}` });
@@ -449,7 +478,12 @@ export class CopilotProvider implements Provider {
     // Without a GitHub account the CLI answers with an error message, not a model reply.
     if (toolCalls.length === 0 && NOT_SIGNED_IN.test(output)) throw new SetupError(SIGN_IN_HELP);
     if (toolCalls.length === 0 && REFUSED.test(output)) return this.refused(run, output);
-    return { output, toolCalls, ...(model ? { model } : {}), ...(usage.calls ? { usage } : {}) };
+    return {
+      output,
+      toolCalls,
+      ...(model ? { model } : {}),
+      ...(usage.calls ? { usage: withoutZeros(usage) } : {}),
+    };
   }
 
   /** Resolve the model and reasoning effort for a tier, checked against the models available. */

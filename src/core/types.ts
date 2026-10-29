@@ -308,6 +308,18 @@ export interface TokenUsage {
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
   readonly reasoningTokens: number;
+  /** Tokens written to the provider's prompt cache. */
+  readonly cacheWriteTokens?: number;
+  /** Time the provider spent on the calls (ms). */
+  readonly apiMs?: number;
+  /** Time to first token summed over the calls (ms); divide by calls for the average. */
+  readonly firstTokenMs?: number;
+  /** Billing multiplier units the provider reported (experimental in the SDK). */
+  readonly premiumRequests?: number;
+  /** Copilot's own cost, in nano AI units. */
+  readonly nanoAiu?: number;
+  /** Times the provider compacted the conversation to fit its context window. */
+  readonly compactions?: number;
 }
 
 export interface Musician {
