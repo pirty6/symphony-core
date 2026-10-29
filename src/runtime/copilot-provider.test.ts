@@ -5,6 +5,7 @@ import { replayPerformance } from '../core/replay.js';
 import type { AgentPause, Pattern } from '../core/types.js';
 import {
   CopilotProvider,
+  ISOLATED_SYSTEM,
   parseTiers,
   type ClientLike,
   type SessionLike,
@@ -147,6 +148,7 @@ describe('CopilotProvider', () => {
     expect(sessions[0]!.disconnected).toBe(true);
     expect(sessions[0]!.cfg.skipCustomInstructions).toBe(true);
     expect(sessions[0]!.cfg.excludedTools).toEqual(['task']);
+    expect(sessions[0]!.cfg.systemMessage).toBeUndefined();
   });
 
   it('a content filter block is answered by another model, nearest tier first', async () => {
@@ -570,6 +572,8 @@ describe('CopilotProvider', () => {
     });
     expect(res.result).toMatchObject({ next: 'go' });
     expect(sessions[0]!.cfg.availableTools).toBeDefined();
+    // No workspace tools, so not the SDK's long system prompt about them either.
+    expect(sessions[0]!.cfg.systemMessage).toEqual({ mode: 'replace', content: ISOLATED_SYSTEM });
     expect(res.transcript.prompt).toContain('## Solo: you choose where the tune goes next');
     const schema = sessions[0]!.cfg.tools![0]!.parameters as { required: string[] };
     expect(schema.required).toContain('next');

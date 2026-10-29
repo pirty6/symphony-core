@@ -136,6 +136,14 @@ const SDK = (() => {
 export const SAMPLING_NOTE =
   'provider default: the Copilot SDK does not expose seed or temperature; use classical mode (recorded answers) for identical notes';
 
+/** System prompt for sessions with only Symphony's own tools (no workspace, files or shell). */
+export const ISOLATED_SYSTEM = [
+  'You work on one step of a deterministic workflow, inside a session with no workspace, files or shell.',
+  'Use only the tools you are given (always submit_result; web_search and web_fetch when listed).',
+  'Reason only from what the user message gives you and what those tools return. Never invent facts, file contents, line numbers or citations; say what you do not know.',
+  'Finish by calling submit_result exactly once with the requested JSON.',
+].join('\n');
+
 /** In-session retries of a malformed submit_result before the engine judges it. */
 const MAX_SUBMIT_CORRECTIONS = 2;
 
@@ -181,7 +189,12 @@ export class CopilotProvider implements Provider {
       ...(this.opts.workingDirectory ? { workingDirectory: this.opts.workingDirectory } : {}),
       tools: [...run.tools],
       ...(run.onlyCustomTools
-        ? { availableTools: run.tools.reduce((set, t) => set.addCustom(t.name), new ToolSet()) }
+        ? {
+            availableTools: run.tools.reduce((set, t) => set.addCustom(t.name), new ToolSet()),
+            // The SDK's own system prompt (~4k tokens) is about workspace tools this
+            // session cannot use; a short one says what it can do.
+            systemMessage: { mode: 'replace', content: ISOLATED_SYSTEM },
+          }
         : { excludedTools: ['task'] }),
       ...(run.mcpServers && Object.keys(run.mcpServers).length > 0
         ? { mcpServers: { ...run.mcpServers } }
