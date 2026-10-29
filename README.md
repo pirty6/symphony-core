@@ -589,7 +589,9 @@ solved rate or citation validity.
   implement and a refactor checked by hidden tests the AI never saw, and an investigate whose
   docs say 8080 while the code says 8081. It records solved, citations valid, tokens, time and
   models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline on
-  correctness.
+  correctness. `--task routing` adds 20 maestro requests (compose only) judged in code on the
+  pattern chosen, a complexity band and the chained pattern; `rehearse maestro --fields
+  chosen,complexity` measures how often routing agrees with itself.
 - **Checked evidence.** Findings are written `path:line — fact \`quote\``. A **Check citations**
   step (`evidence.check`) after every research step keeps only findings whose file, line and
   quote are real (the rest go to `unverified`); the Copilot provider also sends wrong citations
@@ -612,7 +614,13 @@ solved rate or citation validity.
 - **Memory across runs** (`.symphony/memory.json`). Facts that passed the citation check are
   remembered; a **Recall earlier runs** step brings back those that share words with the question
   *and still match the files today* (re-checked at recall), plus lessons from earlier fix and
-  implement runs. They are leads to check, never evidence.
+  implement runs. They are leads to check, never evidence. The store stays clean: run tags such
+  as `[H2 against]` are stripped, only the newest fact per `path:line` is kept, one run writes at
+  most 200 facts (so a few runs cannot replace the whole store), lessons expire after 90 days or
+  when their files are gone, and recall weights rare words above common ones.
+- **Replays know who played.** A recorded answer is reused only for the same move *and* the same
+  model settings (tier, requested model, effort); `compare` names "played by different models"
+  as a cause instead of calling two runs identical.
 - **Low confidence is re-checked** (`verifyBelow`, 0.6 on answers, diagnoses and designs): once,
   one tier smarter. **Second opinions use another model family** (`otherModel`; set
   `SYMPHONY_ALT_MODEL`, default `gpt-6.1-sol`).
@@ -622,6 +630,24 @@ solved rate or citation validity.
 - **Time limit per step** (15 min, `SYMPHONY_STEP_TIMEOUT_S`): a hung call is retried, then waits
   for a human like any stuck step. Mechanical steps already play a tier lower (smaller model,
   lower reasoning effort) through `complexityShift`.
+- **Compact JSON in prompts.** Inputs are sent unindented: about 3-4% fewer prompt characters
+  (measured on 549 recorded Copilot prompts), less than the 1.5x a pretty-printing estimate
+  suggests, because most of a prompt's JSON is long strings.
+
+**Decided, and left alone (until the eval says otherwise):**
+
+- **Debate depth.** Raising the debate thresholds saved 16% of prompt characters but its effect
+  on quality is unknown, and the maestro's confidences are not calibrated enough to gate on.
+  It stays as is until `eval --task routing` and `maestro-requirements` can measure it.
+- **The goal is the verbatim request.** Every step reads it; the debate's open doubts travel in
+  `hint` instead (see the maestro's Perform step).
+- **Debate history does not pile up**: each debater reads the current draft and the latest
+  critique, not a transcript, so there is nothing to summarise. The lossy point was rejected
+  answers, now repaired before they are judged.
+- **`runs --prune`** (`compact.ts`) only deals with old saved runs, not with prompt context.
+- **Drift in the composed score** is what the requirement ledger addresses.
+- **Past compositions for the classifier** are the composition memory: only approved ones are
+  stored, and they are precedent, not a cache.
 
 ## Library API
 
