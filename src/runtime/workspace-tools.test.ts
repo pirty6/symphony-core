@@ -159,6 +159,14 @@ describe('git.diff', () => {
     expect(withRun.files).toEqual(['a.txt', 'new.txt']);
     writeFileSync(join(d, '.symphony', 'runs', 'r.json'), '{"n":2}');
     expect((await workspaceDiff(ctx(d))).hash).toBe(withRun.hash);
+    // Only some paths: changes elsewhere leave their hash alone.
+    const onlyNew = await tool('git.diff').run({ paths: ['new.txt'] }, ctx(d));
+    expect(onlyNew.files).toEqual(['new.txt']);
+    writeFileSync(join(d, 'a.txt'), 'three\n');
+    expect((await workspaceDiff(ctx(d), ['new.txt'])).hash).toBe(onlyNew.hash);
+    writeFileSync(join(d, 'new.txt'), 'z');
+    expect((await workspaceDiff(ctx(d), ['new.txt'])).hash).not.toBe(onlyNew.hash);
+    expect((await workspaceDiff(ctx(d), ['gone.txt'])).files).toEqual([]);
   });
 });
 

@@ -187,8 +187,15 @@ export function truncateDiff(diff: string, max: number): string {
 /** Symphony's own files (saved runs, checkpoints) are never the edit. */
 const NOT_THE_EDIT = ':(exclude).symphony';
 
-/** Changes in the workspace against HEAD. Read-only: never touches the index. */
-export async function workspaceDiff(ctx: ToolContext): Promise<WorkspaceDiff> {
+/**
+ * Changes in the workspace against HEAD, or only in `paths` when given (e.g. to
+ * check that tests written first were left alone). Read-only: never touches the index.
+ */
+export async function workspaceDiff(
+  ctx: ToolContext,
+  paths: readonly string[] = [],
+): Promise<WorkspaceDiff> {
+  const where = paths.length > 0 ? paths : ['.'];
   const run = async (args: string[]) =>
     (
       await git('git', args, {
@@ -204,14 +211,14 @@ export async function workspaceDiff(ctx: ToolContext): Promise<WorkspaceDiff> {
     '--no-color',
     '--no-ext-diff',
     '--',
-    '.',
+    ...where,
     NOT_THE_EDIT,
   ]);
-  const changed = (await run(['diff', 'HEAD', '--name-only', '--', '.', NOT_THE_EDIT]))
+  const changed = (await run(['diff', 'HEAD', '--name-only', '--', ...where, NOT_THE_EDIT]))
     .split('\n')
     .filter(Boolean);
   const untracked = (
-    await run(['ls-files', '--others', '--exclude-standard', '--', '.', NOT_THE_EDIT])
+    await run(['ls-files', '--others', '--exclude-standard', '--', ...where, NOT_THE_EDIT])
   )
     .split('\n')
     .filter(Boolean);
@@ -254,9 +261,15 @@ export function workspaceTools(): ToolSpec[] {
     {
       name: 'git.diff',
       description:
-        'The workspace changes against HEAD (untracked files included): { diff, hash, files }. Equal hash means nothing changed.',
+        'The workspace changes against HEAD (untracked files included), or only in `paths`: { diff, hash, files }. Equal hash means nothing changed.',
       outputs: ['diff', 'hash', 'files'],
-      run: (_args, ctx) => workspaceDiff(ctx),
+      run: (args, ctx) =>
+        workspaceDiff(
+          ctx,
+          Array.isArray(args.paths)
+            ? args.paths.filter((p): p is string => typeof p === 'string' && p.trim() !== '')
+            : [],
+        ),
     },
     {
       name: 'evidence.check',
