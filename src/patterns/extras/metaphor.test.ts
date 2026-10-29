@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { compileScore } from '../core/compile.js';
-import { parseDraft } from '../core/draft.js';
-import { toPerformance } from '../core/engine.js';
-import { replayPerformance } from '../core/replay.js';
-import { runScripted } from '../core/scripted.js';
-import type { DemoScript } from '../core/types.js';
-import { metaphor, PATTERNS, routePrompt } from './index.js';
+import { compileScore } from '../../core/compile.js';
+import { parseDraft } from '../../core/draft.js';
+import { toPerformance } from '../../core/engine.js';
+import { replayPerformance } from '../../core/replay.js';
+import { runScripted } from '../../core/scripted.js';
+import type { DemoScript } from '../../core/types.js';
+import { libraryPatterns, PATTERNS, routePrompt } from '../index.js';
+import { enabledExtras, EXTRAS, metaphor, stormInBetween } from './index.js';
 import { METAPHOR_RULES } from './metaphor.js';
 
 const demo = metaphor.demo!;
+const names = (env: Record<string, string>) => libraryPatterns(env).map((p) => p.name);
 const v = { outcome: 'applied' as const, confidence: 0.9, shouldTerminate: false, reason: 'r' };
 const draftOf = (over: Record<string, unknown>) => () => ({
   updates: {
@@ -105,10 +107,24 @@ describe('metaphor', () => {
   it('maps by explicit rules, and is routed from metaphor requests', () => {
     const map = metaphor.nodes.find((n) => n.id === 'map');
     for (const rule of METAPHOR_RULES) expect(JSON.stringify(map)).toContain(rule.split(':')[0]);
-    expect(PATTERNS.map((p) => p.name)).toContain('metaphor');
+    const ask = 'Create a symphony pattern that from a metaphor can create symphony patterns';
+    expect(routePrompt(ask, [...PATTERNS, metaphor])?.name).toBe('metaphor');
+  });
+
+  it('is optional: only in the library when SYMPHONY_EXTRAS turns it on', () => {
+    expect(PATTERNS.map((p) => p.name)).not.toContain('metaphor');
+    expect(names({})).not.toContain('metaphor');
+    expect(names({})).not.toContain('storm-in-between');
+    expect(names({ SYMPHONY_EXTRAS: 'metaphor' })).toContain('metaphor');
+    expect(names({ SYMPHONY_EXTRAS: 'metaphor' })).not.toContain('storm-in-between');
+    expect(enabledExtras({ SYMPHONY_EXTRAS: ' ALL ' })).toEqual([...EXTRAS]);
+    // A draft never shadows a pattern that is on.
+    const draft = { ...stormInBetween, description: 'mine' };
     expect(
-      routePrompt('Create a symphony pattern that from a metaphor can create symphony patterns')
-        ?.name,
-    ).toBe('metaphor');
+      libraryPatterns({ SYMPHONY_EXTRAS: 'all' }, [draft]).filter(
+        (p) => p.name === 'storm-in-between',
+      ),
+    ).toEqual([stormInBetween]);
+    expect(libraryPatterns({}, [draft]).find((p) => p.name === 'storm-in-between')).toBe(draft);
   });
 });

@@ -5,7 +5,7 @@ import { hangman } from './hangman.js';
 import { implement } from './implement.js';
 import { analyze } from './analyze.js';
 import { investigate } from './investigate.js';
-import { metaphor } from './metaphor.js';
+import { enabledExtras } from './extras/index.js';
 import { composedScore, maestro, maestroThen } from './maestro.js';
 import { refactor } from './refactor.js';
 import { review } from './review.js';
@@ -21,9 +21,20 @@ export const PATTERNS: readonly Pattern[] = [
   backlog,
   review,
   analyze,
-  metaphor,
   hangman,
 ];
+
+/**
+ * The library a run can use: the core patterns, the optional ones turned on in
+ * env (SYMPHONY_EXTRAS), then saved drafts that do not reuse one of their names.
+ */
+export function libraryPatterns(
+  env: Readonly<Record<string, string | undefined>>,
+  drafts: readonly Pattern[] = [],
+): Pattern[] {
+  const known = [...PATTERNS, ...enabledExtras(env)];
+  return [...known, ...drafts.filter((d) => !known.some((p) => p.name === d.name))];
+}
 
 export function findPattern(name: string): Pattern | undefined {
   return PATTERNS.find((p) => p.name === name);
@@ -61,7 +72,6 @@ export {
   investigate,
   maestro,
   maestroThen,
-  metaphor,
   refactor,
   review,
 };

@@ -495,9 +495,17 @@ each item went; the studio follows each run as it starts.
 npm run cli -- run backlog -c source=docs/improvements.md -c testCommand="npm test" --provider copilot
 ```
 
-## Metaphor to model
+## Optional patterns: metaphor to model
 
-`metaphor` (`src/patterns/metaphor.ts`) turns a metaphor into a pattern you can run. It reads the
+Optional patterns live in `src/patterns/extras/` and are not part of the core library. Turn them on
+with `SYMPHONY_EXTRAS` (names, comma-separated, or `all`); the studio tags them `extra`:
+
+```bash
+SYMPHONY_EXTRAS=metaphor,storm-in-between npm start
+SYMPHONY_EXTRAS=all npm run cli -- list
+```
+
+`metaphor` (`src/patterns/extras/metaphor.ts`) turns a metaphor into a pattern you can run. It reads the
 metaphor's frames, tensions, movements and what must stay true, then maps it to a model by fixed
 rules (`METAPHOR_RULES`), so any metaphor maps the same way:
 
@@ -515,12 +523,12 @@ rules (`METAPHOR_RULES`), so any metaphor maps the same way:
 The AI drafts the pattern, the engine validates it (errors go back to the draft, up to 3 rounds),
 you approve it or write feedback for another draft, and the engine saves it to
 `src/patterns/drafts/<name>.ts`, where the studio and the CLI list it. Built-in names are never
-overwritten. `src/patterns/drafts/storm-in-between.ts` is an example: a storm read as an edge, a
+overwritten. `src/patterns/extras/storm-in-between.ts` is an example: a storm read as an edge, a
 center, a filter, a forecast and the beat between them.
 
 ```bash
-npm run cli -- run metaphor -c metaphor="Chaos is a storm..." -c name=storm-in-between --provider copilot
-npm run cli -- run storm-in-between -c subject="this week's sales data" --provider copilot
+SYMPHONY_EXTRAS=all npm run cli -- run metaphor -c metaphor="Chaos is a storm..." -c name=my-storm --provider copilot
+SYMPHONY_EXTRAS=all npm run cli -- run storm-in-between -c subject="this week's sales data" --provider copilot
 ```
 
 ## Quality, cost and speed

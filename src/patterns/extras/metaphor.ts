@@ -1,5 +1,5 @@
-import { draftInstructions } from '../core/draft.js';
-import type { Pattern } from '../core/types.js';
+import { draftInstructions } from '../../core/draft.js';
+import type { Pattern } from '../../core/types.js';
 
 const v = (reason: string) => ({
   outcome: 'applied' as const,
