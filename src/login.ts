@@ -5,32 +5,30 @@
  */
 import 'dotenv/config';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { CopilotClient } from '@github/copilot-sdk';
 import { CopilotProvider } from './runtime/copilot-provider.js';
 import { envConfig } from './runtime/factory.js';
 
-/** The bundled Copilot CLI for this platform, found the way npm and pnpm lay it out. */
-export function bundledCli(root = process.cwd()): string {
-  const sdk = createRequire(join(root, 'package.json')).resolve('@github/copilot-sdk');
-  const variants = process.platform === 'linux' ? ['linux', 'linuxmusl'] : [process.platform];
-  for (let dir = dirname(sdk); dir !== dirname(dir); dir = dirname(dir)) {
-    for (const v of variants) {
-      const cli = join(dir, 'node_modules', '@github', `copilot-${v}-${process.arch}`, 'index.js');
-      if (existsSync(cli)) return cli;
-    }
-  }
-  throw new Error(
-    `the Copilot CLI for ${process.platform}-${process.arch} is not installed: run npm install`,
-  );
+/**
+ * The Copilot CLI the SDK itself starts (so sign-in and runs always use the same one).
+ * Throws the SDK's own error when no compatible CLI is installed.
+ */
+export function bundledCli(): string {
+  const client = new CopilotClient({ useLoggedInUser: true }) as unknown as {
+    resolvedCliPath?: string;
+  };
+  if (!client.resolvedCliPath) throw new Error('the Copilot SDK did not report its CLI');
+  return client.resolvedCliPath;
 }
 
 async function main(): Promise<number> {
-  const signIn = spawnSync(process.execPath, [bundledCli(), 'login', ...process.argv.slice(2)], {
-    stdio: 'inherit',
-  });
+  const cli = bundledCli();
+  // Older CLIs ship a Node entry point (index.js), newer ones a native binary.
+  const [command, args] = cli.endsWith('.js')
+    ? [process.execPath, [cli, 'login', ...process.argv.slice(2)]]
+    : [cli, ['login', ...process.argv.slice(2)]];
+  const signIn = spawnSync(command, args, { stdio: 'inherit' });
   if (signIn.status !== 0) return signIn.status ?? 1;
   const provider = new CopilotProvider(envConfig(process.env));
   try {

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@github/copilot':
+        specifier: 1.0.69
+        version: 1.0.69
       '@github/copilot-sdk':
         specifier: ^1.0.6
         version: 1.0.6
@@ -401,7 +404,7 @@ packages:
     hasBin: true
 
   '@github/copilot@1.0.69':
-    resolution: {integrity: sha512-sri6PKtRQu7mfok3eV505fmYo6M6PGZpB1vd+QbMEm2rEZaKE2+wJGCAtkpQNKfAWBvvoW/C94IaeFyyulUvqQ==}
+    resolution: {integrity: sha1-rILueCbIPnVDqzJI4RhDthM/Vs4=, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@github/copilot/-/copilot-1.0.69.tgz}
     hasBin: true
 
   '@hono/node-server@2.1.5':
@@ -1074,7 +1077,7 @@ packages:
     engines: {node: '>=6'}
 
   detect-libc@2.1.2:
-    resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
+    resolution: {integrity: sha1-aJxdzcGQDvVYOky59te0c3QgdK0=, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/detect-libc/-/detect-libc-2.1.2.tgz}
     engines: {node: '>=8'}
 
   dom-accessibility-api@0.5.16:
