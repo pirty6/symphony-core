@@ -292,6 +292,39 @@ describe('CopilotProvider', () => {
     expect(res.result).toMatchObject({ updates: { words: ['cat', 'dog'] } });
   });
 
+  it('a step that wants another model family gets one when it is available', async () => {
+    const play = async (models: string[]) => {
+      const notes: string[] = [];
+      const { client, sessions } = fakeClient(async (cfg, emit) => {
+        await callTool(cfg, 'submit_result', {
+          updates: { word: 'dog' },
+          verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+        });
+        emit('session.idle');
+      });
+      const p = new CopilotProvider({
+        clientFactory: () => ({ ...client, listModels: async () => models.map((id) => ({ id })) }),
+        tiers: { 2: { model: 'claude-sonnet-5' } },
+      });
+      await p.runAgent({
+        pause: { ...pause, otherModel: true },
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: (e) => e.type === 'info' && notes.push(e.text),
+      });
+      return { model: sessions[0]!.cfg.model, notes };
+    };
+    const other = await play(['claude-sonnet-5', 'gpt-6.1-sol']);
+    expect(other.model).toBe('gpt-6.1-sol');
+    expect(other.notes[0]).toMatch(
+      /second opinion on gpt-6.1-sol, another model family than claude-sonnet-5/,
+    );
+    const same = await play(['claude-sonnet-5']);
+    expect(same.model).toBe('claude-sonnet-5');
+    expect(same.notes[0]).toMatch(/no model from another family is available/);
+  });
+
   it('falls back to JSON in the final message', async () => {
     const { client } = fakeClient(async (_cfg, emit) => {
       emit('assistant.message', { content: '```json\n{"updates":{"word":"dog"}}\n```' });

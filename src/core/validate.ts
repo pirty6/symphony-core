@@ -188,6 +188,9 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         if (n.complexity !== undefined && ![1, 2, 3, 4].includes(n.complexity)) {
           errors.push({ ...at, message: 'complexity must be 1, 2, 3 or 4' });
         }
+        if (n.verifyBelow !== undefined && !(n.verifyBelow > 0 && n.verifyBelow <= 1)) {
+          errors.push({ ...at, message: 'verifyBelow must be a confidence above 0 and at most 1' });
+        }
         if (n.fanOut) {
           const typeOf = (name: string) => g.state.find((f) => f.name === name)?.type;
           const isList = (name: string) => String(typeOf(name) ?? '').endsWith('[]');

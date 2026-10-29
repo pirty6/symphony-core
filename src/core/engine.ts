@@ -63,6 +63,7 @@ export interface EngineState {
   readonly pause?: Pause;
   readonly attempts: readonly {
     readonly errors: readonly string[];
+    readonly lowConfidence?: true;
     readonly transcript?: AiTranscript;
     /** The raw rejected answer, so replay can feed it back verbatim. */
     readonly result?: unknown;
@@ -342,6 +343,10 @@ function checkParts(
   };
 }
 
+/** One tier smarter for the re-check after a low-confidence answer. */
+const escalate = (c: Complexity, up: boolean): Complexity =>
+  up ? (Math.min(4, c + 1) as Complexity) : c;
+
 function makePause(
   score: ExecutableScore,
   ctx: Ctx,
@@ -369,13 +374,16 @@ function makePause(
       input: pick(ctx.state, node.reads),
       outputSchema: fieldsOf(score, node.writes),
       capabilities: node.capabilities ?? [],
-      complexity:
+      complexity: escalate(
         ctx.recoveries.findLast((r) => r.action === 'retry' && r.complexity)?.complexity ??
-        complexityFor(score, ctx.state, node),
+          complexityFor(score, ctx.state, node),
+        ctx.attempts.some((a) => a.lowConfidence),
+      ),
       improvisation: score.improvisation,
       isolated: node.isolated === true,
       ...(node.cites ? { cites: node.cites } : {}),
       ...(node.checks?.length ? { checks: node.checks } : {}),
+      ...(node.otherModel ? { otherModel: true } : {}),
       ...partsOf(node, ctx.state),
       // Parallel parts already multiply the calls: a fanned-out step plays one take.
       takes: node.fanOut ? 1 : takesFor(score.improvisation, node.role),
@@ -706,6 +714,20 @@ export function noResult(transcript: AiTranscript | undefined): string {
     : 'no result: the AI ended without calling submit_result and wrote nothing (it may have hit a limit or timed out).';
 }
 
+/** A valid answer the step asks to re-check once, because the AI was not confident. */
+function lowConfidence(
+  node: ScoreNode,
+  ctx: Ctx,
+  pause: AgentPause,
+  value: NodeResult,
+): string | undefined {
+  if (node.kind !== 'agent' || node.verifyBelow === undefined) return undefined;
+  const c = value.verdict.confidence;
+  if (c >= node.verifyBelow || ctx.attempts.some((a) => a.lowConfidence)) return undefined;
+  if (pause.attempt >= pause.maxAttempts) return undefined;
+  return `You reported confidence ${c}, below ${node.verifyBelow} for this step. Re-check the claims you were least sure of against the evidence, fix or drop what does not hold, and answer again.`;
+}
+
 function resolveAgent(
   score: ExecutableScore,
   ctx: Ctx,
@@ -718,16 +740,19 @@ function resolveAgent(
     (res.result === undefined
       ? { ok: false, errors: [noResult(res.transcript)] }
       : checkAgentResult(res.result, pause.outputSchema, pause.choices));
-  const checked =
+  const accepted =
     routed.ok && node.kind === 'agent' && node.checks?.length
       ? acceptance(node.checks, ctx.state, routed.value)
       : routed;
+  const doubt = accepted.ok ? lowConfidence(node, ctx, pause, accepted.value) : undefined;
+  const checked: typeof accepted = doubt ? { ok: false, errors: [doubt] } : accepted;
   const hashBefore = stateHashOf(ctx.state, ctx.env);
   if (!checked.ok) {
     ctx.attempts = [
       ...ctx.attempts,
       {
         errors: checked.errors,
+        ...(doubt ? { lowConfidence: true as const } : {}),
         result: res.result,
         ...(res.transcript ? { transcript: res.transcript } : {}),
         ...(res.at ? { at: res.at } : {}),

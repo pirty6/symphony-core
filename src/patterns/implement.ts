@@ -206,6 +206,7 @@ export const implement: Pattern = {
         ' Rule on every approach in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence", where CONFIRMED is the approach you chose (if the feature already exists, confirm that and plan only what is missing). Write `acceptanceCriteria` as observable behaviour, one per entry, each checkable by a test; list those tests in `testsToAdd` (file and test name), the `files` to change or create, and a short step-by-step `plan`. If a previous attempt failed (`failureReason`, `testOutput`), the new design must say why it will not fail the same way.',
       reads: ['request', 'hint', 'hypotheses', 'findings', 'failureReason', 'testOutput'],
       writes: ['design', 'rulings', 'acceptanceCriteria', 'testsToAdd', 'files', 'plan'],
+      verifyBelow: 0.6,
       retries: 2,
       complexityShift: 1,
       maxVisits: 8,

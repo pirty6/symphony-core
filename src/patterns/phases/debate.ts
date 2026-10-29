@@ -272,6 +272,8 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         role: 'assessor',
         capabilities: ['web', 'mcp'],
         label: 'Second investigator',
+        // Another model family: its mistakes are less likely to be the first one's.
+        otherModel: true,
         directive: `You are an INDEPENDENT second investigator. Answer \`${subject}\` yourself, from scratch, without seeing the first investigator's answer or evidence. Test every entry of \`hypotheses\` against the sources yourself and cite what you find (path:line, URL, issue/PR #, commit). Write your conclusion, with citations and a verdict per hypothesis, in \`secondOpinion\`.`,
         reads: [subject, 'hypotheses', ...cfg.research],
         writes: ['secondOpinion'],

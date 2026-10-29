@@ -68,6 +68,9 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(isComplexity(raw.complexity) ? { complexity: raw.complexity } : {}),
         ...(raw.isolated === true ? { isolated: true } : {}),
         ...(typeof raw.cites === 'string' && raw.cites ? { cites: raw.cites } : {}),
+        ...(typeof raw.verifyBelow === 'number' ? { verifyBelow: raw.verifyBelow } : {}),
+        ...(raw.otherModel === true ? { otherModel: true } : {}),
+        ...fanOutOf(raw.fanOut),
         ...(Number.isInteger(raw.complexityShift)
           ? { complexityShift: raw.complexityShift as number }
           : {}),
@@ -139,6 +142,13 @@ function parseEdge(raw: unknown, i: number, errors: string[]): ScoreEdge | undef
     ...(branch ? { branch } : {}),
     ...(str(raw.label) ? { label: str(raw.label)! } : {}),
   };
+}
+
+function fanOutOf(raw: unknown): { fanOut?: { over: string; per: number | string } } {
+  const f = raw as { over?: unknown; per?: unknown } | null | undefined;
+  return typeof f?.over === 'string' && (typeof f.per === 'number' || typeof f.per === 'string')
+    ? { fanOut: { over: f.over, per: f.per } }
+    : {};
 }
 
 export function parseDraft(raw: unknown): Checked<Pattern> {

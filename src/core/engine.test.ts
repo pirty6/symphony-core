@@ -589,3 +589,33 @@ describe('engine: complexity, solos and takes', () => {
     });
   });
 });
+
+describe('engine: low confidence is re-checked once, one tier smarter', () => {
+  const careful: Pattern = {
+    ...hangman,
+    nodes: hangman.nodes.map((n) =>
+      n.id === 'pick' ? Object.assign({}, n, { verifyBelow: 0.7 }) : n,
+    ),
+  };
+  const s = compileScore(careful, { goal: 'play', complexity: 2, generatedAt: 't0' });
+  const unsure = { ...ok({ word: 'cat' }), verdict: { ...ok({}).verdict, confidence: 0.4 } };
+
+  it('asks again at a higher tier, then accepts the second answer even if still unsure', () => {
+    let r = createEngine(s);
+    expect(r.state.pause).toMatchObject({ nodeId: 'pick', complexity: 2 });
+    r = answerAgent(s, r, unsure);
+    expect(r.state.pause).toMatchObject({ nodeId: 'pick', attempt: 2, complexity: 3 });
+    expect(r.state.pause?.feedback?.[0]).toMatch(/confidence 0.4, below 0.7/);
+    r = answerAgent(s, r, unsure);
+    expect(r.state.pause).toMatchObject({ kind: 'approval', nodeId: 'ask' });
+    const step = r.state.steps.find((x) => x.nodeId === 'pick')!;
+    expect(step.attempts).toHaveLength(1);
+    expect(step.attempts![0]!.lowConfidence).toBe(true);
+    expect(replayPerformance(s, toPerformance(r.state)).divergence.reproduced).toBe(true);
+  });
+
+  it('a confident answer goes straight through', () => {
+    const r = answerAgent(s, createEngine(s), ok({ word: 'cat' }));
+    expect(r.state.pause).toMatchObject({ kind: 'approval' });
+  });
+});

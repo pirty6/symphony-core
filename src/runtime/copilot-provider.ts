@@ -86,6 +86,8 @@ export interface CopilotProviderOptions {
   readonly model?: string;
   /** Model per complexity tier; defaults to DEFAULT_TIERS. */
   readonly tiers?: Partial<Record<Complexity, Tier>>;
+  /** For steps that want another model family (otherModel); default gpt-6.1-sol. */
+  readonly alternateModel?: string;
   readonly workingDirectory?: string;
   /** MCP servers connected to nodes with the 'mcp' capability. */
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
@@ -136,6 +138,10 @@ const SDK = (() => {
 
 export const SAMPLING_NOTE =
   'provider default: the Copilot SDK does not expose seed or temperature; use classical mode (recorded answers) for identical notes';
+
+const DEFAULT_ALTERNATE = 'gpt-6.1-sol';
+/** 'claude-sonnet-5' -> 'claude'. */
+const family = (model: string) => model.split('-')[0];
 
 /** System prompt for sessions with only Symphony's own tools (no workspace, files or shell). */
 export const ISOLATED_SYSTEM = [
@@ -380,6 +386,29 @@ export class CopilotProvider implements Provider {
     };
   }
 
+  /** The alternate model when it is available and from another family than the tier's. */
+  private async otherFamily(
+    complexity: Complexity,
+  ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
+    const base = await this.modelFor(complexity);
+    const want = this.opts.alternateModel ?? DEFAULT_ALTERNATE;
+    const available = await this.availableModels();
+    if (!base.model || family(base.model) === family(want) || (available && !available.has(want))) {
+      return {
+        ...base,
+        note: `no model from another family is available (${want}); using ${base.model ?? 'the default model'}`,
+      };
+    }
+    const efforts = available?.get(want);
+    return {
+      model: want,
+      ...(base.effort && (!efforts || efforts.includes(base.effort))
+        ? { effort: base.effort }
+        : {}),
+      note: `second opinion on ${want}, another model family than ${base.model}`,
+    };
+  }
+
   /** Citations in the step's `cites` field that the workspace does not back up. */
   private async citationErrors(
     pause: AgentPause,
@@ -452,7 +481,9 @@ export class CopilotProvider implements Provider {
           ...(req.scratchDir ? { scratchDir: req.scratchDir } : {}),
         });
     const startedAt = this.opts.clock?.();
-    const tier = await this.modelFor(pause.complexity);
+    const tier = pause.otherModel
+      ? await this.otherFamily(pause.complexity)
+      : await this.modelFor(pause.complexity);
     if (tier.note) req.onEvent({ type: 'info', text: tier.note });
     req.onEvent({
       type: 'info',

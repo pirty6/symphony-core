@@ -141,6 +141,7 @@ export const fix: Pattern = {
         ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way.',
       reads: ['issue', 'hint', 'hypotheses', 'findings', 'failureReason', 'testOutput'],
       writes: ['rootCause', 'files', 'plan', 'rulings'],
+      verifyBelow: 0.6,
       retries: 2,
       complexityShift: 1,
       maxVisits: 8,

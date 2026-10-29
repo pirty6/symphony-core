@@ -95,6 +95,13 @@ export interface AgentNode extends NodeBase {
    */
   readonly fanOut?: { readonly over: string; readonly per: number | string };
   /**
+   * When the AI reports confidence below this (0-1), ask it once more, one tier
+   * smarter, to re-check its weakest claims; that second answer is accepted.
+   */
+  readonly verifyBelow?: number;
+  /** Play on a different model family than the tier's (an independent second opinion). */
+  readonly otherModel?: boolean;
+  /**
    * Solo point: from Swing (improvisation >= 2) the AI chooses which labelled
    * out edge to take. Below that the first edge (the written melody) is played.
    */
@@ -340,6 +347,8 @@ export interface AgentPause {
   readonly isolated: boolean;
   /** Field of `updates` whose entries cite the workspace (AgentNode.cites). */
   readonly cites?: string;
+  /** AgentNode.otherModel: a different model family than the tier's. */
+  readonly otherModel?: boolean;
   /** The step's acceptance checks, so a provider can apply them while the AI still has its context. */
   readonly checks?: readonly AcceptanceCheck[];
   /**
@@ -560,6 +569,8 @@ export interface PerformedStep {
     readonly transcript?: AiTranscript;
     /** The raw rejected answer, so replay can feed it back verbatim. */
     readonly result?: unknown;
+    /** Valid, but sent back once because the AI's confidence was below verifyBelow. */
+    readonly lowConfidence?: true;
     readonly at?: string;
   }[];
   readonly transcript?: AiTranscript;

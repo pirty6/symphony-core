@@ -712,6 +712,7 @@ export const investigate: Pattern = {
         'unverified',
       ],
       writes: ['answer', 'openQuestions', 'rulings'],
+      verifyBelow: 0.6,
       retries: 2,
       complexityShift: 1,
       checks: [

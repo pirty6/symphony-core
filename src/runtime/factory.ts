@@ -20,6 +20,7 @@ export interface ProviderConfig {
   readonly delayMs?: number;
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
   readonly tiers?: Partial<Record<Complexity, Tier>>;
+  readonly alternateModel?: string;
 }
 
 export function isProviderName(v: unknown): v is ProviderName {
@@ -36,6 +37,7 @@ export function makeProvider(cfg: ProviderConfig): Provider {
       ...(cfg.workingDirectory ? { workingDirectory: cfg.workingDirectory } : {}),
       ...(cfg.mcpServers ? { mcpServers: cfg.mcpServers } : {}),
       ...(cfg.tiers ? { tiers: cfg.tiers } : {}),
+      ...(cfg.alternateModel ? { alternateModel: cfg.alternateModel } : {}),
       clock,
     });
   }
@@ -51,6 +53,7 @@ export function envConfig(env: NodeJS.ProcessEnv): {
   model?: string;
   gitHubToken?: string;
   tiers?: Partial<Record<Complexity, Tier>>;
+  alternateModel?: string;
 } {
   const model = env.COPILOT_MODEL ?? env.MODEL;
   const token = env.GITHUB_TOKEN ?? env.TOKEN;
@@ -59,6 +62,7 @@ export function envConfig(env: NodeJS.ProcessEnv): {
     ...(model ? { model } : {}),
     ...(token && token !== 'token' ? { gitHubToken: token } : {}),
     ...(tiers ? { tiers } : {}),
+    ...(env.SYMPHONY_ALT_MODEL ? { alternateModel: env.SYMPHONY_ALT_MODEL } : {}),
   };
 }
 
