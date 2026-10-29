@@ -6,7 +6,7 @@
  */
 import { checkCitations } from './evidence.js';
 import { recall, rememberFacts, rememberLesson } from './memory.js';
-import { exec as execCb, execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -14,7 +14,6 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { ToolContext, ToolSpec } from './tools.js';
 
-const exec = promisify(execCb);
 const git = promisify(execFile);
 
 /** Default time a test or lint command may run. */
@@ -83,34 +82,83 @@ export type CommandResult = {
   readonly command: string;
 };
 
-/** Run a command in the workspace. A non-zero exit or a timeout is a result, not an error. */
-export async function runCommand(
+const MAX_OUTPUT = 32 * 1024 * 1024;
+
+/** Stop a command and everything it started (a test runner's workers too). */
+function killTree(pid: number | undefined): void {
+  if (pid === undefined) return;
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  } else {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/**
+ * Run a command in the workspace. A non-zero exit or a timeout is a result, not an
+ * error. On timeout or stop the whole process tree is killed: killing only the
+ * shell would leave the test processes running (and holding the workspace).
+ */
+export function runCommand(
   command: string,
   ctx: ToolContext,
   timeoutMs = TEST_TIMEOUT_MS,
 ): Promise<CommandResult> {
-  try {
-    const { stdout, stderr } = await exec(command, {
+  return new Promise((resolve, reject) => {
+    if (ctx.signal.aborted) {
+      reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      return;
+    }
+    const child = spawn(command, {
       cwd: ctx.workspace,
-      timeout: timeoutMs,
-      maxBuffer: 32 * 1024 * 1024,
-      signal: ctx.signal,
+      shell: true,
+      // Its own process group, so a timeout can kill the group (POSIX).
+      detached: process.platform !== 'win32',
+      windowsHide: true,
       env: { ...process.env, CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' },
     });
-    return {
-      passed: true,
-      output: normalizeOutput(`${stdout}\n${stderr}`, ctx.workspace),
-      command,
+    let out = '';
+    const take = (b: Buffer) => {
+      if (out.length < MAX_OUTPUT) out += b.toString('utf8');
     };
-  } catch (e) {
-    if (ctx.signal.aborted) throw e;
-    const err = e as { stdout?: string; stderr?: string; killed?: boolean; code?: number | string };
-    const why = err.killed
-      ? `timed out after ${Math.round(timeoutMs / 1000)}s`
-      : `exit code ${String(err.code ?? '?')}`;
-    const output = normalizeOutput(`${err.stdout ?? ''}\n${err.stderr ?? ''}`, ctx.workspace);
-    return { passed: false, output: `${why}\n${output}`.trim(), command };
-  }
+    child.stdout?.on('data', take);
+    child.stderr?.on('data', take);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child.pid);
+    }, timeoutMs);
+    const onAbort = () => killTree(child.pid);
+    ctx.signal.addEventListener('abort', onAbort, { once: true });
+    let settled = false;
+    const done = (code: number | null, error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      ctx.signal.removeEventListener('abort', onAbort);
+      if (ctx.signal.aborted) {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        return;
+      }
+      const output = normalizeOutput(out, ctx.workspace);
+      if (!timedOut && !error && code === 0) {
+        resolve({ passed: true, output, command });
+        return;
+      }
+      const why = timedOut
+        ? `timed out after ${Math.round(timeoutMs / 1000)}s`
+        : error
+          ? `could not run: ${error.message}`
+          : `exit code ${String(code ?? '?')}`;
+      resolve({ passed: false, output: `${why}\n${output}`.trim(), command });
+    };
+    child.on('error', (e) => done(null, e));
+    child.on('close', (code) => done(code));
+  });
 }
 
 export type WorkspaceDiff = {

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -82,6 +82,31 @@ describe('tests.run', () => {
     const slow = await runCommand('node -e "setTimeout(() => {}, 5000)"', ctx(d), 300);
     expect(slow.passed).toBe(false);
     expect(slow.output).toMatch(/^timed out after 0s/);
+  });
+
+  it('a timeout kills everything the command started, not just its shell', async () => {
+    const d = dir();
+    // A command that starts a grandchild (like a test runner's workers) and waits.
+    writeFileSync(
+      join(d, 'tree.js'),
+      `const { spawn } = require('node:child_process');
+spawn(process.execPath, ['-e', "require('fs').writeFileSync('pid', String(process.pid)); setInterval(() => {}, 1000)"], { stdio: 'ignore' });
+setInterval(() => {}, 1000);`,
+    );
+    const r = await runCommand('node tree.js', ctx(d), 1500);
+    expect(r.passed).toBe(false);
+    expect(r.output).toMatch(/^timed out after 2s/);
+    const pid = Number(readFileSync(join(d, 'pid'), 'utf8'));
+    const alive = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (let i = 0; i < 20 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(alive()).toBe(false);
   });
 
   it('needs a command it can find, and never takes one from elsewhere than its input', async () => {
