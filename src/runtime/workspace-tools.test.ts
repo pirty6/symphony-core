@@ -105,7 +105,7 @@ setInterval(() => {}, 1000);`,
         return false;
       }
     };
-    for (let i = 0; i < 20 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
+    for (let i = 0; i < 20 && alive(); i++) await new Promise((wait) => setTimeout(wait, 100));
     expect(alive()).toBe(false);
   });
 
