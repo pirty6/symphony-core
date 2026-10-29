@@ -177,7 +177,18 @@ export function ApprovalCard({
           {f}
         </div>
       ))}
-      {pause.outputSchema.map((f) => (
+      {pause.outputSchema.map((f) =>
+        f.type === 'boolean' ? (
+          <label key={f.name} className="field checkbox" title={f.description ?? ''}>
+            <input
+              type="checkbox"
+              checked={values[f.name] === 'true'}
+              onChange={(e) => setValues({ ...values, [f.name]: String(e.target.checked) })}
+              aria-label={f.name}
+            />{' '}
+            {f.name} <small>{f.description ?? ''}</small>
+          </label>
+        ) : (
         <label key={f.name} className="field">
           {f.name} <small>({f.type})</small>
           <input
@@ -188,7 +199,8 @@ export function ApprovalCard({
             aria-label={f.name}
           />
         </label>
-      ))}
+        ),
+      )}
       <div className="row">
         <button type="submit" className="primary">
           Approve

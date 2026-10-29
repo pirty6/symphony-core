@@ -20,7 +20,7 @@ You relay between the user and Symphony, a deterministic AI pipeline: a state ma
 3. When `waitingFor.kind` is `approval`:
    - Show `waitingFor.message` and everything in `waitingFor.shows` as readable Markdown.
    - At the maestro's go-gate, `shows.composed` is the composed score. Show its pattern, steps, inputs and debate notes.
-   - Ask: approve, reject, or (when `fields` include `feedback`) send feedback for another round.
+   - Ask: approve, reject, or (when `fields` include `feedback`) send feedback for another round. With feedback, ask whether the next round should be smarter (`smarter`: one complexity tier up; otherwise the same tier).
    - Then call `answer_approval` with `approved` true or false, putting feedback or other field values in `updates`.
 4. When `waitingFor.kind` is `stuck`:
    - Show the `feedback` lines (why each attempt was rejected).

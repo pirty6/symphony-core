@@ -17,7 +17,7 @@ You relay between the user and Symphony, a deterministic AI pipeline: a state ma
 3. When `waitingFor.kind` is `approval`:
    - Show `waitingFor.message` and the content of `waitingFor.shows`. At the maestro's go-gate, `shows.composed` holds the composed pipeline's steps, inputs and debate notes.
    - Ask the user to approve, reject, or give feedback.
-   - Call `answer_approval` with `approved` true or false, and their feedback or other field values in `updates` (e.g. `updates.feedback`).
+   - Call `answer_approval` with `approved` true or false, and their feedback or other field values in `updates` (e.g. `updates.feedback`, and `updates.smarter` true only if they want the next round one complexity tier higher).
    - Never approve on the user's behalf.
 4. When `waitingFor.kind` is `stuck`:
    - Show the `feedback` lines.
