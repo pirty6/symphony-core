@@ -127,8 +127,47 @@ describe('pattern library', () => {
   it('runs a pattern without demo scripts using placeholders', () => {
     const p = findPattern('review')!;
     const r = runScripted(compileScore(p, { goal: 'g', context: { target: 'x' } }), undefined);
-    expect(r.state.kind).toBe('done');
-    expect(r.state.cursor).toBe('clean');
+    // Placeholder answers review nothing: the run ends, and never as a clean review.
+    expect(['done', 'failed']).toContain(r.state.kind);
+    expect(r.state.outcome).toBe('failed');
+  });
+
+  it('review ends honestly: a failed analysis is not "looks good"', () => {
+    const p = findPattern('review')!;
+    const score = compileScore(p, { goal: 'g', context: p.demo!.context! });
+    const ok = runScripted(score, p.demo);
+    expect(ok.state).toMatchObject({ cursor: 'issues', outcome: 'success' });
+    expect(ok.state.state.findings).toEqual([
+      'F1 src/core/engine.ts:120 — retry counter never resets `attempts += 1`',
+    ]);
+    const blind = runScripted(score, {
+      ...p.demo!,
+      agents: {
+        ...p.demo!.agents,
+        analyze: (s) => ({
+          updates: { newFindings: [], reviewed: (s.files as string[]) ?? [] },
+          verdict: {
+            outcome: 'failed',
+            confidence: 0.2,
+            shouldTerminate: false,
+            reason: 'gh failed',
+          },
+        }),
+      },
+    });
+    expect(blind.state).toMatchObject({ cursor: 'notReviewed', outcome: 'failed' });
+    const sound = runScripted(score, {
+      ...p.demo!,
+      agents: {
+        ...p.demo!.agents,
+        analyze: (s) => ({
+          updates: { newFindings: [], reviewed: (s.files as string[]) ?? [] },
+          verdict: { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'ok' },
+        }),
+      },
+    });
+    expect(sound.state).toMatchObject({ cursor: 'clean', outcome: 'success' });
+    expect(sound.state.state.report).toBe('No real issues found. Reviewed: src/core/engine.ts');
   });
 
   it('maestro prompts avoid wording that provider content filters blocked', () => {
