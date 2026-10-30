@@ -88,7 +88,7 @@ describe('PR review after the tests pass', () => {
     });
     expect(stopped.r.state.outcome).toBe('partial');
     expect(stopped.end).toBe('reviewStopped');
- 
+
     // With nobody to ask (auto-approve, the demo), a blocked change is never accepted.
     const unattended = play(fix, { agents: never });
     expect(unattended.end).toBe('reviewStopped');

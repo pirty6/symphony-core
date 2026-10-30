@@ -303,14 +303,11 @@ describe('engine: loop safety', () => {
     for (const l of ['q', 'w', 'x']) r = guess(s, r, l);
     // Three wrong guesses end the game as the rules say, not at the cap of 2.
     expect(r.state.reason).toBe("reached end 'lose'");
-    expect(
-      validatePattern({
-        ...raised,
-        nodes: raised.nodes.map((n) => (n.id === 'ask' ? { ...n, visitsFrom: 'maxWrong +' } : n)),
-      })
-        .errors.map((e) => e.message)
-        .join(),
-    ).toMatch(/visitsFrom 'maxWrong \+' is invalid/);
+    const nodes = [...raised.nodes];
+    const ask = nodes.findIndex((n) => n.id === 'ask');
+    nodes[ask] = { ...nodes[ask]!, visitsFrom: 'maxWrong +' };
+    const messages = validatePattern({ ...raised, nodes }).errors.map((e) => e.message);
+    expect(messages.join()).toMatch(/visitsFrom 'maxWrong \+' is invalid/);
   });
 });
 
