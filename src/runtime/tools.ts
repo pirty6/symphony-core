@@ -12,6 +12,11 @@ export interface ToolContext {
   readonly signal: AbortSignal;
   /** The run calling the tool (memory caps what one run may add). */
   readonly runId?: string;
+  /**
+   * Where memory (.symphony/memory.json) lives when it is not `workspace`: a run in its
+   * own worktree reads and adds to your workspace's memory, not a copy that is deleted.
+   */
+  readonly memoryRoot?: string;
 }
 
 export interface ToolSpec {

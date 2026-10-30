@@ -629,7 +629,9 @@ solved rate or citation validity.
   implement runs. They are leads to check, never evidence. The store stays clean: run tags such
   as `[H2 against]` are stripped, only the newest fact per `path:line` is kept, one run writes at
   most 200 facts (so a few runs cannot replace the whole store), lessons expire after 90 days or
-  when their files are gone, and recall weights rare words above common ones.
+  when their files are gone, and recall weights rare words above common ones. A run never
+  recalls its own facts, investigate remembers each answer as a lesson too, and a run playing in
+  its own worktree reads and adds to your workspace's memory, not a copy deleted with it.
 - **Replays know who played.** A recorded answer is reused only for the same move *and* the same
   model settings (tier, requested model, effort); `compare` names "played by different models"
   as a cause instead of calling two runs identical.

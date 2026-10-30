@@ -347,7 +347,9 @@ export class RunManager {
       score,
       provider,
       tools: extras.tools,
-      toolContext: isolation ? { ...extras.toolContext, workspace: dir } : extras.toolContext,
+      toolContext: isolation
+        ? { ...extras.toolContext, workspace: dir, memoryRoot: extras.toolContext.workspace }
+        : extras.toolContext,
       ...(pattern.demo ? { demo: pattern.demo } : {}),
       ...(playsFromRepertoire(score.improvisation)
         ? { repertoire: await loadRepertoire(runsDir) }

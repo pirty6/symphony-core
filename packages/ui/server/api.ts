@@ -198,7 +198,8 @@ export function createApi(opts: ApiOptions) {
     const isolation =
       settings.provider === 'copilot' && editsFiles(score) ? await isolate(workspace, score.pattern, env) : undefined
     const dir = isolation?.dir ?? workspace
-    const toolContext = isolation ? { ...shared, workspace: dir } : shared
+    // In a worktree, memory stays in your workspace: what the run learns outlives the worktree.
+    const toolContext = isolation ? { ...shared, workspace: dir, memoryRoot: shared.workspace } : shared
     const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir)
     const id = `run-${Date.now().toString(36)}-${(counter++).toString(36)}`
     const next = concertNext({

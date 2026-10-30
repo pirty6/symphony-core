@@ -233,7 +233,9 @@ async function play(
   const run = new Run({
     score,
     tools: extras.tools,
-    toolContext: isolation ? { ...extras.toolContext, workspace: dir } : extras.toolContext,
+    toolContext: isolation
+      ? { ...extras.toolContext, workspace: dir, memoryRoot: extras.toolContext.workspace }
+      : extras.toolContext,
     provider: makeProvider({
       provider: o.providerName,
       pattern: demo ? { ...pattern, demo } : pattern,

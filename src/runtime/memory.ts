@@ -235,10 +235,13 @@ export async function recall(
   workspace: string,
   query: string,
   limit = 12,
+  opts: { readonly store?: string; readonly excludeRun?: string } = {},
 ): Promise<{ facts: string[]; lessons: string[] }> {
-  const m = await load(workspace);
+  const m = await load(opts.store ?? workspace);
+  // A run's own facts are already in its findings: recalling them is no news.
+  const others = opts.excludeRun ? m.facts.filter((f) => f.run !== opts.excludeRun) : m.facts;
   // Rank first, then re-check: only facts still true of today's files are offered.
-  const candidates = ranked(m.facts, query, limit * 3).map((e) => e.text);
+  const candidates = ranked(others, query, limit * 3).map((e) => e.text);
   const still = (await checkCitations(workspace, candidates)).valid.slice(0, limit);
   // A lesson about files that are gone, or from long ago, no longer applies.
   const fresh = await liveLessons(workspace, m.lessons);

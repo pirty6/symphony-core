@@ -289,7 +289,9 @@ export function workspaceTools(): ToolSpec[] {
           : [];
         const r = await checkCitations(ctx.workspace, findings);
         // What held is remembered for later runs (re-checked whenever it is recalled).
-        await rememberFacts(ctx.workspace, r.valid, undefined, ctx.runId).catch(() => 0);
+        await rememberFacts(ctx.memoryRoot ?? ctx.workspace, r.valid, undefined, ctx.runId).catch(
+          () => 0,
+        );
         return {
           valid: r.valid,
           invalid: r.invalid.map((i) => `${i.finding} ✗ ${i.reason}`),
@@ -301,22 +303,30 @@ export function workspaceTools(): ToolSpec[] {
     {
       name: 'memory.recall',
       description:
-        'Facts from earlier runs that still hold in the workspace (re-checked now) and lessons from earlier fix/implement runs, ranked by the words they share with `query`: { facts, lessons }.',
+        'Facts from earlier runs that still hold in the workspace (re-checked now) and lessons from earlier runs, ranked by the words they share with `query`: { facts, lessons }.',
       outputs: ['facts', 'lessons'],
-      run: (args, ctx) => recall(ctx.workspace, String(args.query ?? '')),
+      run: (args, ctx) =>
+        recall(ctx.workspace, String(args.query ?? ''), 12, {
+          ...(ctx.memoryRoot ? { store: ctx.memoryRoot } : {}),
+          ...(ctx.runId ? { excludeRun: ctx.runId } : {}),
+        }),
     },
     {
       name: 'memory.lesson',
       description:
-        'Remember how a fix or implement run ended: { kind: "fixed" | "failed" | "implemented", problem, cause, files, failure }. Returns { saved }.',
+        'Remember how a run ended: { kind: "fixed" | "failed" | "implemented" | "answered" | …, problem, cause, files, failure }. Returns { saved }.',
       outputs: ['saved'],
       run: async (args, ctx) => {
         const files = Array.isArray(args.files) ? args.files.map(String) : [];
+        const kind = String(args.kind ?? 'fixed');
+        const problem = String(args.problem ?? '').slice(0, 300);
+        // A lesson is a lead, not a report: keep it short.
+        const cause = String(args.cause ?? '').slice(0, 600);
         const text =
-          args.kind === 'failed'
-            ? `FAILED to fix "${String(args.problem ?? '')}": ${String(args.failure ?? 'unknown')}`
-            : `${args.kind === 'implemented' ? 'Implemented' : 'Fixed'} "${String(args.problem ?? '')}": ${String(args.cause ?? '')} (files: ${files.join(', ')})`;
-        await rememberLesson(ctx.workspace, text, files);
+          kind === 'failed'
+            ? `FAILED to fix "${problem}": ${String(args.failure ?? 'unknown').slice(0, 600)}`
+            : `${kind.charAt(0).toUpperCase()}${kind.slice(1)} "${problem}": ${cause}${files.length ? ` (files: ${files.join(', ')})` : ''}`;
+        await rememberLesson(ctx.memoryRoot ?? ctx.workspace, text, files);
         return { saved: true };
       },
     },

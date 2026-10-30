@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -223,6 +223,34 @@ describe('memory tools', () => {
       'config.js:1 — the default port is one above DEFAULTS `DEFAULTS.port + 1`',
     ]);
     expect(r.lessons[0]).toMatch(/Fixed "wrong default port": off by one \(files: config.js\)$/);
+  });
+
+  it('a run in a worktree reads and adds to your workspace memory; it does not recall its own facts', async () => {
+    const home = dir();
+    const tree = dir();
+    for (const d of [home, tree])
+      writeFileSync(join(d, 'config.js'), 'export const port = DEFAULTS.port + 1;\n');
+    const fact = 'config.js:1 — the port is one above DEFAULTS `DEFAULTS.port + 1`';
+    const inTree = { ...ctx(tree), memoryRoot: home, runId: 'run-a' };
+    await tool('evidence.check').run({ findings: [fact] }, inTree);
+    await tool('memory.lesson').run(
+      { kind: 'answered', problem: 'which port?', cause: 'one above' },
+      inTree,
+    );
+    // Kept in your workspace, not in the worktree that is deleted.
+    expect(existsSync(join(home, '.symphony', 'memory.json'))).toBe(true);
+    expect(existsSync(join(tree, '.symphony', 'memory.json'))).toBe(false);
+    const own = (await tool('memory.recall').run({ query: 'port DEFAULTS' }, inTree)) as {
+      facts: string[];
+      lessons: string[];
+    };
+    expect(own.facts).toEqual([]);
+    expect(own.lessons[0]).toMatch(/Answered "which port\?": one above$/);
+    const next = (await tool('memory.recall').run(
+      { query: 'port DEFAULTS' },
+      { ...inTree, runId: 'run-b' },
+    )) as { facts: string[] };
+    expect(next.facts).toEqual([fact]);
   });
 });
 

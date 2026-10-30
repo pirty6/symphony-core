@@ -87,7 +87,7 @@ export const MEMORY_NOTE =
 /** Remember how the run ended, for later runs. */
 export function rememberLessonNode(
   id: string,
-  kind: 'fixed' | 'failed' | 'implemented',
+  kind: 'fixed' | 'failed' | 'implemented' | 'answered',
   inputs: Readonly<Record<string, string>>,
 ): ScoreNode {
   return {

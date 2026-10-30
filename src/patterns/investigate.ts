@@ -8,6 +8,7 @@ import {
   MEMORY_STATE,
   MERGE_FINDINGS,
   recallMemory,
+  rememberLessonNode,
 } from './phases/evidence.js';
 
 const hypotheses = hypothesesPhase({
@@ -918,6 +919,8 @@ export const investigate: Pattern = {
         },
       ],
     },
+    // What was asked and the answer's opening, as a lead for later questions like it.
+    rememberLessonNode('learnAnswer', 'answered', { problem: 'question', cause: 'answer' }),
     {
       id: 'settled',
       kind: 'condition',
@@ -1028,7 +1031,8 @@ export const investigate: Pattern = {
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
-    { id: 'attachParts-settled', from: 'attachParts', to: 'settled' },
+    { id: 'attachParts-learn', from: 'attachParts', to: 'learnAnswer' },
+    { id: 'learn-settled', from: 'learnAnswer', to: 'settled' },
     { id: 'settled-done', from: 'settled', to: 'done', branch: 'then' },
     { id: 'settled-doubts', from: 'settled', to: 'doubts', branch: 'else' },
   ],
@@ -1036,6 +1040,7 @@ export const investigate: Pattern = {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
       recall: () => ({ facts: [], lessons: [] }),
+      learnAnswer: () => ({ saved: true }),
       ...Object.fromEntries(
         ['checkTriage', 'checkDeep', 'checkExperiment', 'checkSource', 'checkChase'].map((id) => [
           id,
