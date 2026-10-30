@@ -65,6 +65,12 @@ export interface Provider {
 
 export const SUBMIT_TOOL = 'submit_result';
 
+/**
+ * Abort reason for "stop this step, but keep what it has": a provider ends the call and
+ * returns the answer the AI already submitted (if any) instead of throwing AbortError.
+ */
+export const KEEP_ANSWER = 'keep-answer';
+
 export interface PromptSources {
   /** MCP servers connected for this node. */
   readonly mcpServers?: readonly string[];

@@ -9,6 +9,7 @@
  * engine applies it. stop() aborts the live AI call and cancels the run.
  */
 import { stepTimeLimitMs } from './limits.js';
+import { KEEP_ANSWER } from './provider.js';
 import {
   advance,
   createEngine,
@@ -17,6 +18,7 @@ import {
   type EngineState,
 } from '../core/engine.js';
 import { RUN_SCHEMA_VERSION } from '../core/migrate.js';
+import { MAX_AGENTS } from '../core/types.js';
 import { scriptedResolution } from '../core/scripted.js';
 import type {
   AgentPause,
@@ -77,7 +79,16 @@ export type RunMessage =
       readonly performance: Performance;
       readonly savedTo?: string;
     }
-  | ({ readonly seq: number; readonly type: 'next' } & NextPerformance);
+  | ({ readonly seq: number; readonly type: 'next' } & NextPerformance)
+  | {
+      readonly seq: number;
+      readonly type: 'overtime';
+      readonly nodeId: string;
+      /** How long the step has run when asked. */
+      readonly afterMs: number;
+      /** asking: a human decides; then waiting (keep going), stopping (keep what it has) or ended. */
+      readonly state: 'asking' | 'waiting' | 'stopping' | 'ended';
+    };
 
 /** What a run hands on when it finishes (the maestro hands on the score it composed). */
 export interface NextPerformance {
@@ -119,10 +130,16 @@ export interface RunOptions {
   /** fanOut: how many parts of a step play at the same time (default 4). */
   readonly parallel?: number;
   /**
-   * Longest an AI step may take (default 15 minutes). A step that runs out is
-   * aborted and counts as an attempt with no result: retried, then stuck for a human.
+   * Longest an AI step (or one part of a fanned-out step) may take before it is
+   * stopped (default 15 minutes). What it already submitted is kept; with nothing
+   * submitted it counts as an attempt with no result: retried, then stuck for a human.
    */
   readonly stepTimeoutMs?: number;
+  /**
+   * At the time limit, ask a human (answerOvertime) instead of stopping the step:
+   * keep waiting another limit, or stop it keeping what it has.
+   */
+  readonly askOnOvertime?: boolean;
   /** Also save (through onSave) after every step, so an interrupted run can be resumed. */
   readonly checkpoint?: boolean;
   /** Continue from a restored engine (restoreEngine) instead of starting fresh. */
@@ -169,6 +186,9 @@ export class Run {
   private approvalWaiter: ((a: HumanAnswer | undefined) => void) | undefined;
   private recoveryWaiter: ((a: RecoveryAnswer | undefined) => void) | undefined;
   private abort: AbortController | undefined;
+  private overtimeWaiter: ((a: 'wait' | 'stop') => void) | undefined;
+  /** A step over its time limit, waiting for a human to say wait or stop. */
+  overtime: { readonly nodeId: string; readonly afterMs: number } | undefined;
   private finished: Promise<Performance> | undefined;
   private edits: EditsResult | undefined;
 
@@ -247,6 +267,59 @@ export class Run {
     if (!this.approvalWaiter) return 'no approval is pending';
     this.approvalWaiter(answer);
     return undefined;
+  }
+
+  /** A step is over its time limit: keep waiting, or stop it and keep what it has. */
+  answerOvertime(action: 'wait' | 'stop'): string | undefined {
+    if (!this.overtimeWaiter) return 'no step is over its time limit';
+    this.overtimeWaiter(action);
+    return undefined;
+  }
+
+  /**
+   * Time a step (or a part): at each limit either stop it, keeping what it has, or,
+   * with askOnOvertime, ask a human and wait. Returns a function that ends the watch.
+   */
+  private watch(nodeId: string, stop: () => void, ask: boolean): () => void {
+    const limit = this.opts.stepTimeoutMs ?? stepTimeLimitMs();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let rounds = 0;
+    let ended = false;
+    const settle = (state: 'waiting' | 'stopping' | 'ended') => {
+      this.overtimeWaiter = undefined;
+      this.overtime = undefined;
+      this.push({ type: 'overtime', nodeId, afterMs: limit * rounds, state });
+    };
+    const fire = () => {
+      if (ended) return;
+      rounds += 1;
+      if (!ask) {
+        this.emitInfo(
+          nodeId,
+          `over the ${Math.round(limit / 60_000)} min limit: stopped, keeping what it had`,
+        );
+        stop();
+        return;
+      }
+      this.overtime = { nodeId, afterMs: limit * rounds };
+      this.push({ type: 'overtime', nodeId, afterMs: limit * rounds, state: 'asking' });
+      this.overtimeWaiter = (a) => {
+        settle(a === 'stop' ? 'stopping' : 'waiting');
+        if (a === 'stop') stop();
+        else timer = setTimeout(fire, limit);
+      };
+    };
+    timer = setTimeout(fire, limit);
+    return () => {
+      ended = true;
+      clearTimeout(timer);
+      if (this.overtimeWaiter) settle('ended');
+    };
+  }
+
+  private emitInfo(nodeId: string, text: string): void {
+    const attempt = this.engine?.pause?.kind === 'agent' ? this.engine.pause.attempt : 1;
+    this.push({ type: 'provider', nodeId, attempt, event: { type: 'info', text } });
   }
 
   /** Answer a stuck step: retry it (with a hint or another tier) or stop the run. */
@@ -347,35 +420,68 @@ export class Run {
     pause: AgentPause,
     signal: AbortSignal,
   ): Promise<{ result: unknown; transcript: AiTranscript }> {
-    const { parts, ...single } = pause;
+    const { parts, partsDone, ...single } = pause;
     const all = parts ?? [];
     const out: { result: unknown; transcript: AiTranscript }[] = [];
+    const note = (output: string): AiTranscript => ({
+      provider: this.opts.provider.name,
+      prompt: pause.directive,
+      output,
+      toolCalls: [],
+    });
+    // Parts that passed at an earlier attempt are not played again.
+    const todo = all.map((_, i) => i).filter((i) => !partsDone?.[i]);
+    for (const [i, kept] of (partsDone ?? []).entries())
+      if (kept) out[i] = { result: kept, transcript: note('(kept from an earlier attempt)') };
+    if (todo.length < all.length)
+      this.emitInfo(
+        pause.nodeId,
+        `${all.length - todo.length} of ${all.length} parts kept from the last attempt; playing the other ${todo.length}`,
+      );
+    // Each part has its own clock; with a human watching, the whole step has one (runAgent).
+    const ownClock = !this.opts.askOnOvertime;
     let next = 0;
     const worker = async () => {
-      while (next < all.length && !signal.aborted) {
-        const i = next++;
+      while (next < todo.length && !signal.aborted) {
+        const i = todo[next++]!;
         const part = all[i]!;
-        out[i] = await this.play({ ...single, input: part }, signal, {
+        const ctrl = new AbortController();
+        const follow = () => ctrl.abort(signal.reason);
+        signal.addEventListener('abort', follow, { once: true });
+        const unwatch = ownClock
+          ? this.watch(pause.nodeId, () => ctrl.abort(KEEP_ANSWER), false)
+          : () => undefined;
+        out[i] = await this.play({ ...single, input: part }, ctrl.signal, {
           take: i + 1,
           state: { ...this.engine.state, ...part },
-        }).catch((e: Error) => {
-          if (e.name === 'AbortError') throw e;
-          return {
-            result: undefined,
-            transcript: {
-              provider: this.opts.provider.name,
-              prompt: pause.directive,
-              output: `provider error: ${e.message}`,
-              toolCalls: [],
-            },
-          };
-        });
+        })
+          .catch((e: Error) => {
+            if (e.name === 'AbortError' && ctrl.signal.reason !== KEEP_ANSWER) throw e;
+            return {
+              result: undefined,
+              transcript: note(
+                e.name === 'AbortError'
+                  ? 'stopped at the time limit before it submitted'
+                  : `provider error: ${e.message}`,
+              ),
+            };
+          })
+          .finally(() => {
+            unwatch();
+            signal.removeEventListener('abort', follow);
+          });
       }
     };
-    await Promise.all(
-      Array.from({ length: Math.min(this.opts.parallel ?? DEFAULT_PARALLEL, all.length) }, worker),
+    const width = Math.min(
+      pause.parallel ?? this.opts.parallel ?? DEFAULT_PARALLEL,
+      MAX_AGENTS,
+      Math.max(1, todo.length),
     );
-    if (signal.aborted) throw new DOMException('aborted', 'AbortError');
+    await Promise.all(Array.from({ length: width }, worker));
+    // Stopped at the time limit: finished parts count; the rest are retried.
+    if (signal.aborted && signal.reason !== KEEP_ANSWER)
+      throw new DOMException('aborted', 'AbortError');
+    for (const i of todo) out[i] ??= { result: undefined, transcript: note('not played: stopped') };
     const transcripts = out.map((o) => o.transcript);
     const model = transcripts.find((t) => t.model)?.model;
     return {
@@ -419,10 +525,18 @@ export class Run {
     const signal = this.abort.signal;
     const limit = this.opts.stepTimeoutMs ?? stepTimeLimitMs();
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      this.abort?.abort();
-    }, limit);
+    // Parts keep their own clocks unless a human watches the whole step.
+    const unwatch =
+      pause.parts && !this.opts.askOnOvertime
+        ? () => undefined
+        : this.watch(
+            pause.nodeId,
+            () => {
+              timedOut = true;
+              this.abort?.abort(KEEP_ANSWER);
+            },
+            this.opts.askOnOvertime === true,
+          );
     let result: unknown;
     let transcript: AiTranscript;
     try {
@@ -448,13 +562,13 @@ export class Run {
         provider: this.opts.provider.name,
         prompt: pause.directive,
         output: timedOut
-          ? `timed out: the step took longer than ${Math.round(limit / 1000)}s and was stopped`
+          ? `timed out: the step took longer than ${Math.round(limit / 1000)}s and was stopped before it submitted`
           : `provider error: ${(e as Error).message}`,
         toolCalls: [],
       };
       this.emitFor(pause)({ type: 'info', text: transcript.output });
     } finally {
-      clearTimeout(timer);
+      unwatch();
       this.abort = undefined;
     }
     await this.gate(pause.nodeId, 'after', result);

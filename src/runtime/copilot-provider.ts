@@ -17,7 +17,6 @@ import { acceptance, isProviderBlock } from '../core/engine.js';
 import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
 import { addUsage } from '../core/usage.js';
 import { checkCitations } from './evidence.js';
-import { stepTimeLimitMs } from './limits.js';
 import { modelSettings } from './repertoire.js';
 import type { AgentPause, Complexity, Role, TokenUsage, ToolCallRecord } from '../core/types.js';
 import type {
@@ -31,6 +30,7 @@ import {
   buildAgentPrompt,
   buildIntegrationPrompt,
   decidePermission,
+  KEEP_ANSWER,
   extractJson,
   SUBMIT_TOOL,
 } from './provider.js';
@@ -591,12 +591,16 @@ export class CopilotProvider implements Provider {
       await session.disconnect().catch(() => {});
       throw abortError();
     }
-    const timeoutMs = this.opts.timeoutMs ?? stepTimeLimitMs() + 60_000;
-    const timer = setTimeout(() => {
-      failure = `timed out after ${timeoutMs} ms`;
-      void session.abort().catch(() => {});
-      settle();
-    }, timeoutMs);
+    // The driver times steps (and may let a human keep one going); this is only a backstop.
+    const timeoutMs = this.opts.timeoutMs;
+    const timer =
+      timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            failure = `timed out after ${timeoutMs} ms`;
+            void session.abort().catch(() => {});
+            settle();
+          }, timeoutMs);
     try {
       await session.send({ prompt: run.prompt });
       await idle;
@@ -606,7 +610,12 @@ export class CopilotProvider implements Provider {
       off();
       await session.disconnect().catch(() => {});
     }
-    if (run.signal.aborted) throw abortError();
+    if (run.signal.aborted) {
+      // Stopped at the time limit: what the AI already submitted still counts.
+      if (run.signal.reason !== KEEP_ANSWER) throw abortError();
+      failure = 'stopped at the time limit; what it had submitted is kept';
+      run.onEvent({ type: 'info', text: failure });
+    }
     if (failure && !output) output = `[${failure}]`;
     // Without a GitHub account the CLI answers with an error message, not a model reply.
     if (toolCalls.length === 0 && NOT_SIGNED_IN.test(output)) throw new SetupError(SIGN_IN_HELP);

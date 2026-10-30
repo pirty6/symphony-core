@@ -122,6 +122,11 @@ function printMessage(m: RunMessage, write: (s: string) => void): void {
     );
     return;
   }
+  if (m.type === 'overtime') {
+    if (m.state === 'asking')
+      write(`\n${c.yellow(`⏱  '${m.nodeId}' has run ${Math.round(m.afterMs / 60_000)} min`)}\n`);
+    return;
+  }
   const e = m.event;
   switch (e.type) {
     case 'node-entered':

@@ -5,7 +5,7 @@ import { replayPerformance, restoreEngine, RestoreError } from '../core/replay.j
 import type { Pattern, SavedRun } from '../core/types.js';
 import { fix, hangman } from '../patterns/index.js';
 import { performScore, Run, type RunMessage, type RunStatus } from './driver.js';
-import type { AgentRequest, AgentResponse, Provider } from './provider.js';
+import { KEEP_ANSWER, type AgentRequest, type AgentResponse, type Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
 import { registry } from './tools.js';
 import { repertoireFrom } from './repertoire.js';
@@ -765,6 +765,138 @@ describe('step time limit', () => {
     );
     run.stop();
     expect((await done).outcome).toBe('cancelled');
+  });
+});
+
+describe('time limit: keep what it has, or ask', () => {
+  const word = {
+    updates: { word: 'planet' },
+    verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+  };
+  /** Submits a valid answer at once, then keeps working until stopped. */
+  const slow = (calls: { n: number }): Provider => ({
+    name: 'slow',
+    runAgent: (req) =>
+      new Promise<AgentResponse>((resolve, reject) => {
+        calls.n += 1;
+        req.signal.addEventListener('abort', () =>
+          req.signal.reason === KEEP_ANSWER
+            ? resolve({
+                result: word,
+                transcript: { provider: 'slow', prompt: '', output: 'kept', toolCalls: [] },
+              })
+            : reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+        );
+      }),
+    draft: () => Promise.reject(new Error('n/a')),
+  });
+
+  it('unattended, a step stopped at the limit keeps the answer it submitted', async () => {
+    const calls = { n: 0 };
+    const run = new Run({ score: hangmanScore, provider: slow(calls), stepTimeoutMs: 20, clock });
+    const done = run.start();
+    await waitFor(run, statusIs('awaiting-approval'));
+    // Accepted the first time: no retry for a step that had already answered.
+    expect(calls.n).toBe(1);
+    expect(run.engine.state.word).toBe('planet');
+    run.stop();
+    await done;
+  });
+
+  it('with someone watching, it asks: keep waiting, or stop and keep what it has', async () => {
+    const calls = { n: 0 };
+    const run = new Run({
+      score: hangmanScore,
+      provider: slow(calls),
+      stepTimeoutMs: 20,
+      askOnOvertime: true,
+      clock,
+    });
+    const done = run.start();
+    await waitFor(run, (m) => m.type === 'overtime' && m.state === 'asking');
+    expect(run.overtime).toMatchObject({ nodeId: 'pick', afterMs: 20 });
+    expect(run.answerOvertime('wait')).toBeUndefined();
+    // Asked again one limit later; the step was never cut off meanwhile.
+    await waitFor(run, (m) => m.type === 'overtime' && m.state === 'asking' && m.afterMs === 40);
+    expect(run.answerOvertime('stop')).toBeUndefined();
+    await waitFor(run, statusIs('awaiting-approval'));
+    expect(calls.n).toBe(1);
+    expect(run.engine.state.word).toBe('planet');
+    expect(run.answerOvertime('wait')).toBe('no step is over its time limit');
+    run.stop();
+    await done;
+  });
+});
+
+describe('fan-out retry', () => {
+  const reader: Pattern = {
+    name: 'reader',
+    description: 'reads in parts',
+    requiredContext: ['files'],
+    state: [
+      { name: 'files', type: 'string[]' },
+      { name: 'agents', type: 'number', initial: 2 },
+      { name: 'read', type: 'string[]' },
+    ],
+    start: 'start',
+    nodes: [
+      { id: 'start', kind: 'start', label: 'Start' },
+      {
+        id: 'readAll',
+        kind: 'agent',
+        role: 'assessor',
+        label: 'Read',
+        directive: 'read',
+        reads: ['files'],
+        writes: ['read'],
+        fanOut: { over: 'files', per: 1, agents: 'agents' },
+        checks: [{ expr: 'subset(files, read)', message: 'Read every file.' }],
+      },
+      { id: 'end', kind: 'end', label: 'End', outcome: 'success' },
+    ],
+    edges: [
+      { id: 'a', from: 'start', to: 'readAll' },
+      { id: 'b', from: 'readAll', to: 'end' },
+    ],
+  };
+
+  it('plays again only the part that failed, as many at once as the AI chose', async () => {
+    const asked: string[] = [];
+    let running = 0;
+    let most = 0;
+    let failedC = false;
+    const provider: Provider = {
+      name: 'parts',
+      runAgent: async (req) => {
+        const file = (req.pause.input.files as string[])[0]!;
+        asked.push(file);
+        running += 1;
+        most = Math.max(most, running);
+        await new Promise((r) => setTimeout(r, 5));
+        running -= 1;
+        // c fails the first time only.
+        const read = file === 'c' && !failedC ? ((failedC = true), []) : [file];
+        return {
+          result: {
+            updates: { read },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: file },
+          },
+          transcript: { provider: 'parts', prompt: '', output: file, toolCalls: [] },
+        };
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const score = compileScore(reader, {
+      goal: 'g',
+      context: { files: ['a', 'b', 'c', 'd'] },
+      generatedAt: 't',
+    });
+    const perf = await new Run({ score, provider, clock }).start();
+    expect(perf.outcome).toBe('success');
+    expect(asked.toSorted()).toEqual(['a', 'b', 'c', 'c', 'd']);
+    expect(most).toBe(2);
+    expect(perf.finalState.read).toEqual(['a', 'b', 'c', 'd']);
+    expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
   });
 });
 
