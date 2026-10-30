@@ -90,8 +90,18 @@ describe('chainNext with backlog items', () => {
     expect(started[0]!.score.context).toMatchObject({
       request: 'add a flag',
       testCommand: 'npm test',
+      hint: expect.stringMatching(
+        /^One item \(1 of 2\) of a backlog.*change only what this item needs/,
+      ),
     });
-    expect(started[0]!.chain).toEqual([item('show requests'), 'review']);
+    expect(started[0]!.chain).toEqual([
+      {
+        pattern: 'implement',
+        goal: 'show requests',
+        context: { testCommand: 'npm test', hint: expect.stringMatching(/\(2 of 2\)/) },
+      },
+      'review',
+    ]);
   });
 
   it('an item plays after a failed or partial item, with its own request (not the last result)', async () => {

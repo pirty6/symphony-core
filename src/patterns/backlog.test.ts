@@ -30,7 +30,15 @@ describe('backlog', () => {
     expect(r.state.outcome).toBe('success');
     expect(end).toBe('queued');
     expect(steps).toEqual(
-      ITEMS.map((goal) => ({ pattern: 'implement', goal, context: { testCommand: 'npm test' } })),
+      ITEMS.map((goal, i) => ({
+        pattern: 'implement',
+        goal,
+        context: {
+          testCommand: 'npm test',
+          // Where it comes from, and to leave the other items to their own runs.
+          hint: `One item (${i + 1} of ${ITEMS.length}) of a backlog from docs/improvements.md; the others are done in their own runs, so change only what this item needs.`,
+        },
+      })),
     );
   });
 
