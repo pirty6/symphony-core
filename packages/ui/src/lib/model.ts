@@ -225,6 +225,8 @@ export interface RunView {
   readonly replay?: { readonly reproduced?: boolean; readonly issues: readonly string[]; readonly file?: string }
   /** The maestro handed on a composed score. */
   readonly next?: NextPerformance
+  /** A step over its time limit, waiting for you: keep waiting, or stop it keeping what it has. */
+  readonly overtime?: { readonly nodeId: string; readonly afterMs: number }
 }
 
 export const IDLE_VIEW: RunView = { mode: 'idle', status: 'idle', frames: [], cursor: null, streams: [] }
@@ -349,6 +351,10 @@ export function applyMessage(v: RunView, m: RunMessage): RunView {
       return { ...v, performance: m.performance, ...(m.savedTo ? { savedTo: m.savedTo } : {}) }
     case 'next':
       return { ...v, next: m }
+    case 'overtime': {
+      const { overtime: _o, ...rest } = v
+      return m.state === 'asking' ? { ...rest, overtime: { nodeId: m.nodeId, afterMs: m.afterMs } } : rest
+    }
   }
 }
 

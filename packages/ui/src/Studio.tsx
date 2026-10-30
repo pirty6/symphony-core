@@ -57,7 +57,7 @@ import {
   type PatternMeta,
   type RunView,
 } from './lib/model'
-import { AiTakes, ApprovalCard, RecoveryCard, EdgeEditor, GateCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
+import { AiTakes, ApprovalCard, RecoveryCard, EdgeEditor, GateCard, OvertimeCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
 import { Library } from './panels/Library'
 import { ResultPreview, ResultReader } from './panels/Result'
 import { PatternPanel } from './panels/PatternPanel'
@@ -818,6 +818,7 @@ export default function Studio() {
           </div>
         )}
         <GateCard view={view} onResume={() => control('resume')} onStep={() => control('step')} onStop={() => control('stop')} />
+        <OvertimeCard view={view} onAnswer={(action) => control(action)} />
         <ApprovalCard view={view} onAnswer={(a) => sendAnswer((id) => api.approve(id, a))} />
         <RecoveryCard view={view} onAnswer={(a) => sendAnswer((id) => api.recover(id, a))} />
         {resultBanner}

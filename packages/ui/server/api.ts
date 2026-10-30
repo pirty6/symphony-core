@@ -233,6 +233,8 @@ export function createApi(opts: ApiOptions) {
         return file
       },
       checkpoint: true,
+      // You are watching: at the time limit you decide whether a step keeps going.
+      askOnOvertime: true,
       ...(settings.restore ? { restore: settings.restore } : {}),
       ...(next ? { next } : {}),
     })
@@ -487,6 +489,16 @@ export function createApi(opts: ApiOptions) {
             case 'stepMode':
               run.setStepMode(body.on === true)
               break
+            case 'keepWaiting':
+            case 'stopStep': {
+              // A step over its time limit: keep waiting, or stop it keeping what it has.
+              const error = run.answerOvertime(body.action === 'stopStep' ? 'stop' : 'wait')
+              if (error) {
+                send(res, 409, { error })
+                return true
+              }
+              break
+            }
             default:
               send(res, 400, { error: `unknown action '${String(body.action)}'` })
               return true
