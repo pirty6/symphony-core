@@ -1,4 +1,4 @@
-import type { Pattern } from '../core/types.js';
+import { MAX_AGENTS, type Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import {
   checkFindings,
@@ -113,11 +113,17 @@ export const investigate: Pattern = {
         type: 'string[]',
         description: 'Experiments to run: command, what it measures',
       },
+      {
+        name: 'agents',
+        type: 'number',
+        initial: 4,
+        description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
+      },
       { name: 'batchSize', type: 'number', initial: 25 },
       {
         name: 'batchWave',
         type: 'number',
-        // batchSize × the parallel calls a step runs at once (4): no slot sits idle.
+        // batchSize × agents (set after planning): no slot sits idle.
         initial: 100,
         description: 'Files per triage round, split into parallel calls of batchSize',
       },
@@ -294,9 +300,17 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'assessor',
       label: 'Plan research',
-      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side. Otherwise leave \`parts\` empty.`,
+      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side. Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): 1-2 for a narrow question about a few files, 3-4 for a typical one, 5-${MAX_AGENTS} when the evidence is large (a big repository, many pages) or \`parts\` has many subjects; more agents finish sooner but each one costs a call.`,
       reads: ['question', 'hint', 'sourceNames', 'sourceInfo'],
-      writes: ['subQuestions', 'searchTerms', 'useSources', 'skipSources', 'skipReasons', 'parts'],
+      writes: [
+        'subQuestions',
+        'searchTerms',
+        'useSources',
+        'skipSources',
+        'skipReasons',
+        'parts',
+        'agents',
+      ],
       retries: 2,
       checks: [
         {
@@ -326,6 +340,10 @@ export const investigate: Pattern = {
           expr: `len(parts) != 1 && len(parts) <= ${MAX_PARTS}`,
           message: `List 2 to ${MAX_PARTS} independent subjects in parts, or none.`,
         },
+        {
+          expr: `agents >= 1 && agents <= ${MAX_AGENTS}`,
+          message: `Set agents to a whole number from 1 to ${MAX_AGENTS}.`,
+        },
       ],
     },
     {
@@ -337,6 +355,9 @@ export const investigate: Pattern = {
           field: 'pendingSources',
           expr: 'without(unique(useSources), ["workspace", "web", "experiment"])',
         },
+        // Each wave fills every sub-agent the plan asked for.
+        { field: 'batchWave', expr: 'batchSize * agents' },
+        { field: 'deepWave', expr: 'deepBatchSize * agents' },
       ],
     },
     {
@@ -481,7 +502,7 @@ export const investigate: Pattern = {
         'Open EVERY file in `batch` (view each one; for long files look through all of it, not just the top). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
         AGAINST,
       reads: ['hypotheses', 'question', 'subQuestions', 'batch'],
-      fanOut: { over: 'batch', per: 'batchSize' },
+      fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
       writes: ['triaged', 'batchRelevant', 'newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -539,7 +560,7 @@ export const investigate: Pattern = {
         'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
         AGAINST,
       reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch'],
-      fanOut: { over: 'deepBatch', per: 'deepBatchSize' },
+      fanOut: { over: 'deepBatch', per: 'deepBatchSize', agents: 'agents' },
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
       cites: 'newFindings',
       retries: 2,
@@ -800,7 +821,7 @@ export const investigate: Pattern = {
       label: 'Answer each part',
       // One call per part, side by side: each stays on its own subject over the shared
       // evidence, instead of one call answering everything and drifting or running out.
-      fanOut: { over: 'parts', per: 1 },
+      fanOut: { over: 'parts', per: 1, agents: 'agents' },
       directive:
         'Answer `question` for the ONE subject in `parts` only, using only `findings`. ' +
         CITE_BY_ID +
@@ -1044,6 +1065,8 @@ export const investigate: Pattern = {
             skipSources: skip,
             skipReasons: skip.map((n) => `${n} cannot explain where code validates answers`),
             parts: [],
+            // The demo keeps the number of sub-agents it was given (4 by default).
+            agents: typeof s.agents === 'number' ? s.agents : 4,
           },
           verdict: v('planned'),
         };
