@@ -1,4 +1,5 @@
 import type { Pattern } from '../core/types.js';
+import { CITE_BY_ID, citesFindings } from './phases/evidence.js';
 
 const v = (reason: string, confidence = 0.85) => ({
   outcome: 'applied' as const,
@@ -37,13 +38,19 @@ export const analyze: Pattern = {
   ],
   requiredContext: ['question', 'data'],
   goalFrom: 'question',
+  // What a chained run (or you) gets: the answer, its limits and the numbered evidence.
+  result: ['conclusion', 'caveats', 'findings'],
   improvisation: 2,
   maxSteps: 200,
   state: [
     { name: 'question', type: 'string', description: 'What to learn from the data' },
     { name: 'data', type: 'string', description: 'Path, table or description of the data' },
     { name: 'profile', type: 'string', description: 'Shape, columns, types, gaps, basic stats' },
-    { name: 'findings', type: 'string[]', description: 'Every result so far, with numbers' },
+    {
+      name: 'findings',
+      type: 'string[]',
+      description: 'Every result so far, with numbers, numbered F1, F2…',
+    },
     { name: 'newFindings', type: 'string[]' },
     { name: 'nextAnalysis', type: 'string', description: 'The analysis to run next' },
     { name: 'rationale', type: 'string', description: 'Why that analysis, or why stop' },
@@ -62,7 +69,7 @@ export const analyze: Pattern = {
       role: 'executor',
       label: 'Profile the data',
       directive:
-        'Load `data` with a short script (Python, SQL or the shell, whatever fits) and profile it: row count, columns and types, missing values, ranges, obvious data-quality issues. Never modify the source data; write scratch files only under .symphony/scratch/. Put the profile in `profile` and notable facts, each with numbers, in `newFindings`.',
+        'Load `data` with a short script (Python, SQL or the shell, whatever fits) and profile it: row count, columns and types, missing values, ranges, obvious data-quality issues. Never modify the source data; write scratch files only under .symphony/scratch/. Put the profile in `profile` and notable facts in `newFindings`, each as "analysis | <the command or script you ran> — fact with its numbers".',
       reads: ['question', 'data'],
       writes: ['profile', 'newFindings'],
     },
@@ -70,7 +77,7 @@ export const analyze: Pattern = {
       id: 'mergeProfile',
       kind: 'compute',
       label: 'Record profile',
-      assign: [{ field: 'findings', expr: 'findings + newFindings' }],
+      assign: [{ field: 'findings', expr: 'findings + numbered(newFindings, len(findings) + 1)' }],
     },
     {
       id: 'budget',
@@ -99,8 +106,8 @@ export const analyze: Pattern = {
       visitsFrom: 'maxAnalyses + 2',
       label: 'Run analysis',
       directive:
-        'Run `nextAnalysis` against `data` with a script under .symphony/scratch/ (never modify the source data). Put the key output (tables or numbers, trimmed) in `result` and each insight, with its numbers, in `newFindings`.',
-      reads: ['data', 'profile', 'nextAnalysis'],
+        'Run `nextAnalysis` against `data` with a script under .symphony/scratch/ (never modify the source data); it serves `question`. Put the key output (tables or numbers, trimmed) in `result` and each insight in `newFindings` as "analysis | <the command or script you ran> — insight with its numbers", so it can be re-run.',
+      reads: ['question', 'data', 'profile', 'nextAnalysis'],
       writes: ['result', 'newFindings'],
     },
     {
@@ -109,7 +116,7 @@ export const analyze: Pattern = {
       label: 'Record analysis',
       assign: [
         { field: 'analyses', expr: 'append(analyses, nextAnalysis)' },
-        { field: 'findings', expr: 'findings + newFindings' },
+        { field: 'findings', expr: 'findings + numbered(newFindings, len(findings) + 1)' },
       ],
     },
     {
@@ -117,10 +124,11 @@ export const analyze: Pattern = {
       kind: 'agent',
       role: 'assessor',
       label: 'Conclude',
-      directive:
-        'Answer `question` from `findings` only, citing the numbers. List in `caveats` the data-quality issues, assumptions and open questions that limit the conclusion.',
+      directive: `Answer \`question\` from \`findings\` only, with their numbers. ${CITE_BY_ID} List in \`caveats\` the data-quality issues, assumptions and open questions that limit the conclusion.`,
       reads: ['question', 'profile', 'findings', 'analyses'],
       writes: ['conclusion', 'caveats'],
+      retries: 2,
+      checks: [citesFindings('conclusion')],
     },
     { id: 'done', kind: 'end', label: 'Concluded', outcome: 'success' },
   ],
@@ -148,7 +156,10 @@ export const analyze: Pattern = {
       profile: () => ({
         updates: {
           profile: '12,480 rows; columns date, region, plan, revenue, churned; 0.4% missing region',
-          newFindings: ['Revenue is 61% from the EU region', '0.4% of rows have no region'],
+          newFindings: [
+            'analysis | python profile.py sales.csv — revenue is 61% from the EU region',
+            'analysis | python profile.py sales.csv — 0.4% of rows have no region',
+          ],
         },
         verdict: v('profiled'),
       }),
@@ -164,14 +175,16 @@ export const analyze: Pattern = {
       analyze: (s) => ({
         updates: {
           result: `${String(s.nextAnalysis)}: computed`,
-          newFindings: [`${String(s.nextAnalysis)}: EU down 8% month over month`],
+          newFindings: [
+            `analysis | python cut.py "${String(s.nextAnalysis)}" — EU down 8% month over month`,
+          ],
         },
         verdict: v('analysis run'),
       }),
       conclude: () => ({
         updates: {
           conclusion:
-            'Revenue fell because EU enterprise churn rose 3 points; other regions were flat.',
+            'Revenue fell because EU enterprise churn rose 3 points [F3]; the EU is 61% of revenue [F1]; other regions were flat.',
           caveats: ['0.4% of rows lack a region', 'One quarter of data; no seasonality check'],
         },
         verdict: v('concluded'),
