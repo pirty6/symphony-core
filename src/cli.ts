@@ -12,6 +12,7 @@
  *   resume <run.json> | fork <run.json> --at N   continue from a checkpoint
  *   runs                                   saved runs
  */
+import { type Adaptation, summarizeComposed } from './core/draft.js';
 import 'dotenv/config';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
@@ -187,9 +188,17 @@ export function unattendedApproval(provider: ProviderName): 'demo-answer' | 'sto
 function describeGate(state: Readonly<Record<string, unknown>>): string {
   const p = state.normalized as Pattern | undefined;
   if (!p?.nodes) return '';
+  const summary = summarizeComposed(state);
+  const fresh = summary?.kind === 'new' || summary?.kind === 'rewritten';
   const lines = [
     `  ${c.bold(`score '${p.name}'`)} · complexity ${String(state.complexity)} · round ${String(state.round)}`,
-    `  ${p.nodes.map((n) => n.id).join(' → ')}`,
+    ...(summary ? [`  ${summary.headline}`] : []),
+    // A tested library pattern's steps are known; list them only for a new or rewritten one.
+    ...(fresh || !summary
+      ? [`  ${p.nodes.map((n) => n.id).join(' → ')}`]
+      : summary.guided.length
+        ? [c.dim(`  guidance on: ${summary.guided.join(', ')}`)]
+        : []),
     ...((state.debateNotes as string[] | undefined) ?? []).map((n) => c.dim(`  ${n}`)),
     c.dim(`  inputs ${JSON.stringify(state.childContext ?? {})}`),
   ];
@@ -808,8 +817,19 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
       console.log(
         `\n${c.bold(`♪ composed '${child.pattern.name}'`)} ${c.dim(`complexity ${child.score.complexity}`)}`,
       );
-      for (const n of child.pattern.nodes)
-        console.log(`  ${n.id.padEnd(14)} ${n.kind.padEnd(10)} ${n.label}`);
+      const summary = summarizeComposed(perf.finalState);
+      if (summary) console.log(`  ${summary.headline}`);
+      if (!summary || summary.kind === 'new' || summary.kind === 'rewritten') {
+        for (const n of child.pattern.nodes)
+          console.log(`  ${n.id.padEnd(14)} ${n.kind.padEnd(10)} ${n.label}`);
+      } else {
+        // The tested pattern's steps are known (`show <pattern>`); print what changed.
+        const a = (perf.finalState.adaptation ?? {}) as Adaptation;
+        for (const [id, text] of Object.entries(a.directives ?? {}))
+          console.log(`  ${c.bold(id)}: ${text}`);
+        for (const [k, x] of Object.entries(a.initial ?? {}))
+          console.log(`  ${k} = ${JSON.stringify(x)}`);
+      }
       return 0;
     }
     console.log(
