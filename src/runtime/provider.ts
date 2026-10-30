@@ -246,6 +246,10 @@ const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'test',
   '[',
   'read',
+  'awk',
+  'gawk',
+  'mawk',
+  'nawk',
 ]);
 const READ_ONLY_GIT: ReadonlySet<string> = new Set([
   'diff',
@@ -386,6 +390,23 @@ const GIT_CONFIG_READS: ReadonlySet<string> = new Set([
   '-l',
 ]);
 
+const AWKS: ReadonlySet<string> = new Set(['awk', 'gawk', 'mawk', 'nawk']);
+
+/**
+ * awk reads, unless its program runs a command (system, pipes, getline from a
+ * command) or writes a file (print/printf >); a program file (-f) is not seen.
+ */
+function awkRefusal(cmd: string, args: readonly string[]): string | undefined {
+  if (args.some((a) => a === '-f' || a.startsWith('--file') || /^-[^-]*f/.test(a)))
+    return `\`${cmd} -f\` (runs a program file the check cannot see)`;
+  const program = args.join(' ');
+  if (/\bsystem\s*\(|\bgetline\b|\bfflush\b|\bclose\s*\(/.test(program))
+    return `\`${cmd}\` with system, getline, fflush or close (runs commands)`;
+  if (/(^|[^|])\|(?!\|)/.test(program)) return `\`${cmd}\` with a pipe (runs a command)`;
+  if (/\bprintf?\b[^;}]*>/.test(program)) return `\`${cmd}\` print > (writes a file)`;
+  return undefined;
+}
+
 /** Why one command of a line is not read-only, or undefined when it is. */
 function segmentRefusal(segment: string): string | undefined {
   // Subshell and group brackets around a command change nothing about what it does.
@@ -416,6 +437,7 @@ function segmentRefusal(segment: string): string | undefined {
   if (!READ_ONLY_COMMANDS.has(cmd)) return `\`${cmd}\` (not on the read-only list)`;
   const args = t.slice(1);
   if (args.some((a) => a.startsWith('--output'))) return `\`${cmd} --output\` (writes a file)`;
+  if (AWKS.has(cmd)) return awkRefusal(cmd, args);
   if (cmd === 'sort')
     return args.some((a) => a === '-o' || a.startsWith('-o'))
       ? '`sort -o` (writes a file)'
