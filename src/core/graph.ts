@@ -138,15 +138,42 @@ export function depths(graph: PatternGraph): Map<string, number> {
   const bodies = loopBodies(graph);
   const owner = new Map<string, string>();
   for (const [c, ids] of bodies) for (const id of ids) owner.set(id, c);
-  const depth = new Map<string, number>([[graph.start, 0]]);
-  const queue = [graph.start];
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    for (const e of graph.edges.filter((x) => x.from === id)) {
-      if (!depth.has(e.to) && !owner.has(e.to)) {
-        depth.set(e.to, depth.get(id)! + 1);
-        queue.push(e.to);
+  // Longest path from start, ignoring edges that loop back: a node sits below every step
+  // that can lead into it, so a shortcut (e.g. a tier that skips the debate) never pulls a
+  // later step above the steps that also feed it.
+  const out = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    if (owner.has(e.to)) continue;
+    out.set(e.from, [...(out.get(e.from) ?? []), e.to]);
+  }
+  const order: string[] = [];
+  const state = new Map<string, 'open' | 'done'>();
+  const forward = new Set<string>();
+  const visit = (root: string) => {
+    const stack: { id: string; i: number }[] = [{ id: root, i: 0 }];
+    state.set(root, 'open');
+    while (stack.length > 0) {
+      const top = stack.at(-1)!;
+      const next = (out.get(top.id) ?? [])[top.i++];
+      if (next === undefined) {
+        state.set(top.id, 'done');
+        order.push(top.id);
+        stack.pop();
+      } else if (state.get(next) !== 'open') {
+        forward.add(`${top.id}\u0000${next}`);
+        if (!state.has(next)) {
+          state.set(next, 'open');
+          stack.push({ id: next, i: 0 });
+        }
       }
+    }
+  };
+  visit(graph.start);
+  const depth = new Map<string, number>([[graph.start, 0]]);
+  for (const id of order.toReversed()) {
+    const d = depth.get(id) ?? 0;
+    for (const to of out.get(id) ?? []) {
+      if (forward.has(`${id}\u0000${to}`) && (depth.get(to) ?? -1) < d + 1) depth.set(to, d + 1);
     }
   }
   for (const [id, c] of owner) if (depth.has(c)) depth.set(id, depth.get(c)!);
