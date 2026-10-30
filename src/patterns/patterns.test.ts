@@ -154,5 +154,12 @@ describe('pattern library', () => {
     expect(routePrompt('display the address book')).toBeUndefined();
     expect(routePrompt('update the database schema docs')).toBeUndefined();
     expect(routePrompt('hello')).toBeUndefined();
+    // The opening verb names what is asked, even when other patterns are mentioned after it.
+    expect(
+      routePrompt(
+        'investigate how to improve the investigate, fix, refactor, implement, backlog, review and analyze algorithms',
+      )?.name,
+    ).toBe('investigate');
+    expect(routePrompt('review how we fix and refactor code')?.name).toBe('review');
   });
 });
