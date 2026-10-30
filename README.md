@@ -162,7 +162,7 @@ Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the V
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
 state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + -`,
-`len empty includes lower append if chars subset take drop first unique without pick`, and
+`len empty includes lower append if chars subset take drop first unique without pick join`, and
 `verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
@@ -360,6 +360,13 @@ the listing adapts to the question: "is this on the internet?", "does this work 
 8. **Answer**: cites evidence and ends with a coverage report: files triaged and excluded, pages
    read, experiments run, sources searched and skipped, what is still unknown. It must give a
    ruling (CONFIRMED, REFUTED or UNKNOWN, with evidence) on every hypothesis.
+   **Several subjects** ("how can A, B and C be improved", "compare X, Y and Z"): the plan lists
+   them in `parts` (2 to 8). Evidence is still gathered once for all of them; then **Answer each
+   part** plays one call per subject at the same time (at most 4), each on its own subject, and the
+   answer becomes a summary across them. The skeptic and reconciler see the parts too, and the
+   engine attaches every part after the summary at the end. This is cheaper than one investigation
+   per subject (evidence gathering is about 90% of an investigation's cost, measured on recent runs)
+   and keeps what the subjects share in one place.
 9. **Challenge the answer**, scaled by complexity:
 
    | Complexity | Who | Does |
@@ -589,7 +596,7 @@ solved rate or citation validity.
   implement and a refactor checked by hidden tests the AI never saw, and an investigate whose
   docs say 8080 while the code says 8081. It records solved, citations valid, tokens, time and
   models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline on
-  correctness. `--task routing` adds 20 maestro requests (compose only) judged in code on the
+  correctness. `--task routing` adds 21 maestro requests (compose only) judged in code on the
   pattern chosen, a complexity band and the chained pattern; `rehearse maestro --fields
   chosen,complexity` measures how often routing agrees with itself.
 - **Checked evidence.** Findings are written `path:line — fact \`quote\``. A **Check citations**

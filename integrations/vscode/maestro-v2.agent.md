@@ -19,7 +19,7 @@ You relay between the user and Symphony, a deterministic AI pipeline: a state ma
 2. Call `get_run` with `wait_seconds: 50` until it settles. Every few calls, give one short progress line: the step it is on and the last events. Don't dump everything.
 3. When `waitingFor.kind` is `approval`:
    - Show `waitingFor.message` and everything in `waitingFor.shows` as readable Markdown.
-   - At the maestro's go-gate, `shows.composed` is the composed score. Show its pattern, steps, inputs and debate notes.
+   - At the maestro's go-gate, `shows.composed` is the composed score. Show its `summary` first (e.g. the tested library pattern with guidance on some steps, or a new pattern), then the `adaptation` (guidance per step), `requirements`, inputs and debate notes. List `steps` only when present (new or rewritten patterns); a tailored library pattern gives `stepCount` instead.
    - Ask: approve, reject, or (when `fields` include `feedback`) send feedback for another round. With feedback, ask whether the next round should be smarter (`smarter`: one complexity tier up; otherwise the same tier).
    - Then call `answer_approval` with `approved` true or false, putting feedback or other field values in `updates`.
 4. When `waitingFor.kind` is `stuck`:

@@ -68,6 +68,9 @@ test('the maestro composes a score, then the orchestra performs it', async ({ pa
   await expect(page.locator('.tb-title')).toContainText('maestro')
   await expect(page.getByTestId('composed-score')).toContainText('fix · complexity 3')
   // The tested fix pattern, tailored: the gate shows what was changed for this request.
+  await expect(page.getByTestId('composed-headline')).toContainText('fix: the tested library pattern')
+  // Its steps are folded away: it is not a new algorithm.
+  await expect(page.getByTestId('composed-steps')).not.toHaveAttribute('open', '')
   await expect(page.getByTestId('tailoring')).toContainText('hypothesize: It fails about once in ten CI runs')
   await expect(page.getByTestId('tailoring')).toContainText('maxAttempts = 2')
   // How each requirement is met, before the go.

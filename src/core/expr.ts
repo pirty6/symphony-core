@@ -46,7 +46,8 @@ type FnName =
   | 'unnumbered'
   | 'ids'
   | 'refs'
-  | 'pick';
+  | 'pick'
+  | 'join';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -69,6 +70,7 @@ const FNS: Record<FnName, number> = {
   ids: 1,
   refs: 1,
   pick: 2,
+  join: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -373,6 +375,11 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
             const i = Number(String(p).trim());
             return Number.isInteger(i) && i >= 1 && i <= x.length ? [x[i - 1]] : [];
           });
+        }
+        case 'join': {
+          // join(list, sep): strings only, so nothing is silently stringified.
+          if (typeof args[1] !== 'string') throw new ExprError('join() needs a separator string');
+          return strings('join', x).join(args[1]);
         }
         case 'numbered': {
           const start = args[1];

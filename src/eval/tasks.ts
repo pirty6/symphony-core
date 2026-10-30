@@ -477,6 +477,13 @@ export const ROUTES: readonly Route[] = [
     pattern: ['backlog'],
     complexity: [2, 4],
   },
+  // Several subjects, one question: investigate answers them side by side (parts), not backlog.
+  {
+    request:
+      'Investigate how to improve the fix, refactor, review and analyze patterns: correctness, performance, token use and context drift.',
+    pattern: ['investigate'],
+    complexity: [3, 4],
+  },
   // hangman is a demo game, never a route: a game request has no pattern of its own.
   { request: "Let's play a game of hangman.", pattern: ['new'], complexity: [1, 4] },
 ];

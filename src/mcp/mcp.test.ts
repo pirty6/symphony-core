@@ -116,11 +116,13 @@ describe('Symphony MCP server', () => {
     });
     // The chat can show what was composed before saying go.
     expect(
-      (go.waitingFor as unknown as { shows: { composed: { pattern: string; steps: string[] } } })
-        .shows.composed,
+      (go.waitingFor as unknown as { shows: { composed: Record<string, unknown> } }).shows.composed,
     ).toMatchObject({
       pattern: 'fix',
-      steps: expect.arrayContaining(['apply: Edit']),
+      // The tested pattern, tailored: a step count and what changed, not every step again.
+      kind: 'tailored',
+      summary: expect.stringMatching(/^fix: the tested library pattern \(\d+ steps/),
+      stepCount: expect.any(Number),
       adaptation: { initial: { maxAttempts: 2 } },
       requirements: [expect.stringMatching(/^R1: \w+ — /)],
     });

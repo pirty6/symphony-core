@@ -10,7 +10,7 @@ const demo = investigate.demo!;
 function runWith(
   use: string[],
   approvals: DemoScript['approvals'] = demo.approvals,
-  over: Partial<DemoScript> & { context?: Record<string, unknown> } = {},
+  over: Partial<DemoScript> & { context?: Record<string, unknown>; parts?: string[] } = {},
 ) {
   const script: DemoScript = {
     ...demo,
@@ -29,6 +29,7 @@ function runWith(
             useSources: use,
             skipSources: skip,
             skipReasons: skip.map(() => 'not needed for this question'),
+            parts: over.parts ?? [],
           },
           verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
         };
@@ -343,5 +344,36 @@ describe('investigate always ends: research rounds are bounded', () => {
       demo,
     );
     expect(normal.state.state.unresolvedObjections).toEqual([]);
+  });
+});
+
+describe('investigate answers several subjects side by side', () => {
+  const ALGOS = ['fix', 'refactor', 'review'];
+  it('gathers evidence once, answers each part in its own call, and attaches every part', () => {
+    const { r, ran } = runWith(['workspace'], demo.approvals, { parts: ALGOS });
+    expect(r.state.outcome).toBe('success');
+    // Evidence is gathered once, not once per part.
+    expect(ran.filter((n) => n === 'plan')).toHaveLength(1);
+    const step = r.state.steps.find((st) => st.nodeId === 'answerParts')!;
+    expect(step.input?.parts).toEqual(ALGOS);
+    expect(r.state.state.partAnswers).toEqual(ALGOS.map((a) => expect.stringMatching(`^## ${a}`)));
+    // The summary comes first; every part follows it verbatim, in order.
+    const answer = String(r.state.state.answer);
+    const at = ALGOS.map((a) => answer.indexOf(`## ${a}\n`));
+    expect(at.every((i) => i > answer.indexOf('---'))).toBe(true);
+    expect(at).toEqual(at.toSorted((a, b) => a - b));
+  });
+
+  it('one subject is a single answer, as before', () => {
+    const { r, ran } = runWith(['workspace']);
+    expect(ran).not.toContain('answerParts');
+    expect(String(r.state.state.answer)).not.toContain('---');
+  });
+
+  it('rejects a plan with exactly one part', () => {
+    const { r } = runWith(['workspace'], demo.approvals, { parts: ['fix'] });
+    const plan = r.state.steps.find((st) => st.nodeId === 'plan');
+    expect(JSON.stringify(plan?.attempts ?? r.state.pause)).toMatch(/2 to 8 independent subjects/);
+    expect(r.state.outcome).not.toBe('success');
   });
 });

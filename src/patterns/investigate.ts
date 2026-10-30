@@ -20,9 +20,13 @@ const challenge = challengePhase({
   draft: 'answer',
   gaps: 'gaps',
   reopen: 'chase',
-  done: 'done',
+  done: 'attachParts',
   research: ['subQuestions', 'sourceInfo', 'useSources', 'hint'],
+  alongside: ['partAnswers'],
 });
+
+/** Most independent parts one investigation answers side by side. */
+export const MAX_PARTS = 8;
 
 const AGAINST =
   ' Look for evidence for AND against every entry of `hypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]".';
@@ -70,6 +74,17 @@ export const investigate: Pattern = {
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
       { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
+      {
+        name: 'parts',
+        type: 'string[]',
+        description:
+          'Independent subjects the question asks about alike (e.g. several modules), each answered on its own from the shared evidence; empty = one answer',
+      },
+      {
+        name: 'partAnswers',
+        type: 'string[]',
+        description: 'One section per part, answered side by side',
+      },
       { name: 'searchTerms', type: 'string[]', description: 'Queries for search-based sources' },
       { name: 'useSources', type: 'string[]', description: 'Sources to use' },
       { name: 'skipSources', type: 'string[]', description: 'Sources not used' },
@@ -279,10 +294,9 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'assessor',
       label: 'Plan research',
-      directive:
-        'Plan a thorough investigation of `question` (use `hint` if set). Split it into concrete sub-questions. Then decide, for EVERY source in `sourceInfo`, whether it can hold evidence for this question: put it in `useSources` or in `skipSources` with one reason per skip in `skipReasons`. Match the evidence to the question: questions about this codebase need `workspace`; questions about the outside world (libraries, standards, other projects) need `web`; questions about behaviour or performance (does it work, why is it slow, which is faster) need `experiment` to reproduce or measure; why-questions about code usually need `git-history`. Prefer using a source over skipping it. Write `searchTerms` as concrete queries for web, GitHub, history and MCP searches.',
+      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side. Otherwise leave \`parts\` empty.`,
       reads: ['question', 'hint', 'sourceNames', 'sourceInfo'],
-      writes: ['subQuestions', 'searchTerms', 'useSources', 'skipSources', 'skipReasons'],
+      writes: ['subQuestions', 'searchTerms', 'useSources', 'skipSources', 'skipReasons', 'parts'],
       retries: 2,
       checks: [
         {
@@ -308,6 +322,10 @@ export const investigate: Pattern = {
             'Give exactly one reason in skipReasons per entry in skipSources, in the same order.',
         },
         { expr: 'len(useSources) > 0', message: 'Use at least one source.' },
+        {
+          expr: `len(parts) != 1 && len(parts) <= ${MAX_PARTS}`,
+          message: `List 2 to ${MAX_PARTS} independent subjects in parts, or none.`,
+        },
       ],
     },
     {
@@ -770,6 +788,35 @@ export const investigate: Pattern = {
       ],
     },
     {
+      id: 'multiPart',
+      kind: 'condition',
+      label: 'Several parts?',
+      expression: 'len(parts) > 1',
+    },
+    {
+      id: 'answerParts',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Answer each part',
+      // One call per part, side by side: each stays on its own subject over the shared
+      // evidence, instead of one call answering everything and drifting or running out.
+      fanOut: { over: 'parts', per: 1 },
+      directive:
+        'Answer `question` for the ONE subject in `parts` only, using only `findings`. ' +
+        CITE_BY_ID +
+        ' Findings in `unverified` could not be verified: do not rely on them. Write exactly one `partAnswers` entry: a Markdown section that starts with "## " and the subject, says what the evidence shows about it and what follows from it (for the question asked), and cites finding ids. Stay on your subject: say what holds for every subject in one closing line starting "Shared:" rather than at length. No coverage section; the overall answer has it.',
+      reads: ['question', 'parts', 'subQuestions', 'hint', 'findings', 'gaps', 'unverified'],
+      writes: ['partAnswers'],
+      retries: 2,
+      checks: [
+        {
+          expr: 'len(partAnswers) == len(parts)',
+          message: 'Write exactly one partAnswers entry per subject in parts.',
+        },
+        citesFindings('partAnswers'),
+      ],
+    },
+    {
       id: 'answer',
       kind: 'agent',
       role: 'assessor',
@@ -777,7 +824,7 @@ export const investigate: Pattern = {
       directive:
         'Answer `question` using only `findings`. ' +
         CITE_BY_ID +
-        ' Findings the engine could not verify are in `unverified`: do not rely on them. End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), items that could not be read in full and why (`notRead`, `notReadReasons`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered.',
+        ' Findings the engine could not verify are in `unverified`: do not rely on them. End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), items that could not be read in full and why (`notRead`, `notReadReasons`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared, then coverage; correct a part here if newer findings contradict it.',
       reads: [
         'question',
         'subQuestions',
@@ -795,6 +842,8 @@ export const investigate: Pattern = {
         'hypotheses',
         'disagreements',
         'unverified',
+        'parts',
+        'partAnswers',
       ],
       writes: ['answer', 'openQuestions', 'rulings'],
       verifyBelow: 0.6,
@@ -819,6 +868,18 @@ export const investigate: Pattern = {
     },
     ...hypotheses.nodes,
     ...challenge.nodes,
+    {
+      id: 'attachParts',
+      kind: 'compute',
+      label: 'Attach part answers',
+      // The engine, not the AI, puts every part in the result, after the (challenged) summary.
+      assign: [
+        {
+          field: 'answer',
+          expr: 'if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer)',
+        },
+      ],
+    },
     { id: 'done', kind: 'end', label: 'Answered' },
   ],
   edges: [
@@ -910,14 +971,18 @@ export const investigate: Pattern = {
     { id: 'chase-checkChase', from: 'chase', to: 'checkChase' },
     { id: 'checkChase-mergeChase', from: 'checkChase', to: 'mergeChase' },
     { id: 'mergeChase-assess', from: 'mergeChase', to: 'assess', label: 're-assess' },
-    { id: 'confident-answer', from: 'confident', to: 'answer', branch: 'then' },
+    { id: 'confident-multiPart', from: 'confident', to: 'multiPart', branch: 'then' },
     { id: 'confident-clarify', from: 'confident', to: 'clarify', branch: 'else' },
     { id: 'clarify-useHint', from: 'clarify', to: 'useHint', branch: 'approved' },
-    { id: 'clarify-answer', from: 'clarify', to: 'answer', branch: 'rejected' },
+    { id: 'clarify-multiPart', from: 'clarify', to: 'multiPart', branch: 'rejected' },
+    { id: 'multiPart-answerParts', from: 'multiPart', to: 'answerParts', branch: 'then' },
+    { id: 'multiPart-answer', from: 'multiPart', to: 'answer', branch: 'else' },
+    { id: 'answerParts-answer', from: 'answerParts', to: 'answer' },
     { id: 'useHint-chase', from: 'useHint', to: 'chase' },
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
+    { id: 'attachParts-done', from: 'attachParts', to: 'done' },
   ],
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
@@ -978,6 +1043,7 @@ export const investigate: Pattern = {
             useSources: names.filter((n) => !skip.includes(n)),
             skipSources: skip,
             skipReasons: skip.map((n) => `${n} cannot explain where code validates answers`),
+            parts: [],
           },
           verdict: v('planned'),
         };
@@ -1063,6 +1129,14 @@ export const investigate: Pattern = {
           ],
         },
         verdict: v('gap closed'),
+      }),
+      answerParts: (s) => ({
+        updates: {
+          partAnswers: ((s.parts as string[]) ?? []).map(
+            (part) => `## ${part}\n\nWhat the evidence shows about ${part} [F1].`,
+          ),
+        },
+        verdict: v('answered each part'),
       }),
       answer: (s) => ({
         updates: {

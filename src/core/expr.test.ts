@@ -81,6 +81,8 @@ describe('evalExpr values', () => {
     ['unnumbered(["F3 a.ts:1 — x", "plain"])', ['a.ts:1 — x', 'plain']],
     ['ids(["F3 a.ts:1 — x", "no id", "F10 c"])', ['F3', 'F10']],
     ['pick(["a", "b", "c"], ["3", " 1", "9", "x", 2])', ['c', 'a', 'b']],
+    ['join(guessed, ", ")', 'a, e'],
+    ['join([], "-")', ''],
     ['refs("Port 8081 [F2], see F10 and F2; not FF2 or F2x")', ['F2', 'F10']],
     ['refs(["[F1]", "F1 and F3"])', ['F1', 'F3']],
     ['subset(refs("[F1][F2]"), ids(numbered(["a", "b"], 1)))', true],
@@ -97,6 +99,8 @@ describe('evalExpr values', () => {
     expect(() => ev('take(guessed, -1)')).toThrow(ExprError);
     expect(() => ev('take(word, 1)')).toThrow(ExprError);
     expect(() => ev('without(guessed, word)')).toThrow(ExprError);
+    expect(() => ev('join([1, 2], ",")')).toThrow(/list of strings/);
+    expect(() => ev('join(guessed, 1)')).toThrow(/separator/);
   });
 
   it('rejects mixed-type arithmetic', () => {

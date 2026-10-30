@@ -4,6 +4,7 @@
  * caller polls it: what it is doing, what it is waiting for (an approval, a
  * stuck step), and its result. Humans answer through the chat.
  */
+import { summarizeComposed } from '../core/draft.js';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { type ChainStep, resultText } from '../core/chain.js';
@@ -68,10 +69,18 @@ function composedSummary(state: Readonly<Record<string, unknown>>) {
     | { name?: string; description?: string; nodes?: { id: string; label: string; kind: string }[] }
     | undefined;
   if (!p?.nodes) return undefined;
+  const summary = summarizeComposed(state);
+  const fresh = summary?.kind === 'new' || summary?.kind === 'rewritten';
   return {
     pattern: p.name,
+    // "the tested library pattern (67 steps), with guidance on 13 AI steps" vs a new one.
+    summary: summary?.headline,
+    kind: summary?.kind,
     description: p.description,
-    steps: p.nodes.filter((n) => n.kind !== 'start').map((n) => `${n.id}: ${n.label}`),
+    // A tested library pattern's steps are known: list them only when they are new.
+    ...(fresh || !summary
+      ? { steps: p.nodes.filter((n) => n.kind !== 'start').map((n) => `${n.id}: ${n.label}`) }
+      : { stepCount: summary.steps }),
     // How the tested library pattern was tailored (empty for new or rewritten scores).
     ...(tailored(state.adaptation) ? { adaptation: state.adaptation } : {}),
     inputs: state.childContext,

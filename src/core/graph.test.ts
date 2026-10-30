@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fix, hangman, investigate } from '../patterns/index.js';
+import { fix, hangman, investigate, maestro } from '../patterns/index.js';
 import {
   graphToPattern,
   groupFrames,
@@ -29,6 +29,27 @@ describe('patternToGraph', () => {
     expect(a).toEqual(layout(fix));
     expect(a.get('start')!.y).toBe(0);
     expect(a.get('diagnose')!.y).toBeGreaterThan(0);
+  });
+
+  it('draws a step below every step that feeds it, even when a shortcut reaches it sooner', () => {
+    // Tier 1 skips the debate (debate -> validate), but validate still follows the conductor.
+    const a = layout(maestro);
+    const y = (id: string) => a.get(id)!.y;
+    const chain = [
+      'propose',
+      'revise',
+      'validate',
+      'valid',
+      'hasRequirements',
+      'cover',
+      'covered',
+      'context',
+      'gate',
+    ];
+    for (let i = 1; i < chain.length; i++) expect(y(chain[i]!)).toBeGreaterThan(y(chain[i - 1]!));
+    const g = patternToGraph(maestro);
+    expect(g.edges.find((e) => e.id === 'revise-validate')!.data.back).toBe(false);
+    expect(g.edges.find((e) => e.id === 'hasRequirements-cover')!.data.back).toBe(false);
   });
 
   it('keeps explicit positions', () => {

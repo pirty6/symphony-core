@@ -157,11 +157,14 @@ export interface ChallengeConfig {
   readonly done: string;
   /** Fields the second investigator may use to research on its own (sources, sub-questions). */
   readonly research: readonly string[];
+  /** Fields the skeptic, pragmatist and reconciler read with the draft (e.g. per-part answers). */
+  readonly alongside?: readonly string[];
 }
 
 /** Attack the draft conclusion; send real objections back to research; reconcile a second opinion. */
 export function challengePhase(cfg: ChallengeConfig): Fragment {
   const { subject, evidence, draft, gaps, reopen, done } = cfg;
+  const alongside = cfg.alongside ?? [];
   return {
     state: debateState(
       'complexity',
@@ -209,7 +212,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         isolated: true,
         label: 'Skeptic',
         directive: `You are the SKEPTIC. Attack \`${draft}\` as the answer to \`${subject}\`, using only \`${evidence}\` and \`hypotheses\`. You are not a contrarian: each \`objections\` entry must be CONCRETE and checkable — a claim not backed by a cited item of \`${evidence}\`, a hypothesis dismissed without evidence against it, an alternative explanation the evidence also fits, or a path nobody followed (a caller, a config, a version, an environment). Say what research would settle it. An empty list is fine and better than invented concerns; no style comments.`,
-        reads: [subject, draft, evidence, 'hypotheses', 'rulings'],
+        reads: [subject, draft, ...alongside, evidence, 'hypotheses', 'rulings'],
         writes: ['objections'],
         retries: 2,
         complexityShift: 1,
@@ -233,7 +236,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         isolated: true,
         label: 'Pragmatist',
         directive: `You are the PRAGMATIST. For EVERY entry of \`objections\` write one \`objectionTriage\` entry, in order: "<objection, abbreviated>: REAL | THEORETICAL — <one-sentence reason>". REAL means it could change the answer to \`${subject}\` and research can settle it; THEORETICAL means it is unlikely or would not change the answer. Copy the REAL ones, verbatim, into \`realObjections\`. You are neither defending the draft nor siding with the skeptic.`,
-        reads: [subject, draft, 'objections', evidence],
+        reads: [subject, draft, ...alongside, 'objections', evidence],
         writes: ['objectionTriage', 'realObjections'],
         retries: 2,
         checks: [
@@ -309,7 +312,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         isolated: true,
         label: 'Reconcile',
         directive: `Two investigators answered \`${subject}\` independently: \`${draft}\` and \`secondOpinion\`. Rewrite \`${draft}\` as the reconciled answer, keeping only claims backed by cited evidence from either, and update \`rulings\` (one per hypothesis, "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence"). List every point where they disagreed, and how it was settled or why it is still open, in \`disagreements\`.`,
-        reads: [subject, draft, 'secondOpinion', evidence, 'hypotheses', 'rulings'],
+        reads: [subject, draft, ...alongside, 'secondOpinion', evidence, 'hypotheses', 'rulings'],
         writes: [draft, 'rulings', 'disagreements'],
         retries: 2,
         complexityShift: 1,
