@@ -243,12 +243,28 @@ export function summarize(results: readonly EvalResult[]): EvalSummary {
 
 const rate = (a: number, b: number) => (b === 0 ? 0 : a / b);
 
-/** Fewer tasks solved, or more invalid citations, per run than the baseline. */
+/** Input tokens per run may grow this much over the baseline before it counts as worse. */
+export const COST_SLACK = 1.25;
+
+/**
+ * Why a run is worse than its baseline (empty = not worse): fewer tasks solved, more
+ * invalid citations, no citations checked where the baseline had some (nothing
+ * checked is not "all valid"), or a quarter more input tokens per run.
+ */
+export function regressions(s: EvalSummary, b: EvalSummary): string[] {
+  const out: string[] = [];
+  if (rate(s.solved, s.runs) < rate(b.solved, b.runs)) out.push('fewer tasks solved');
+  if (rate(s.citationsInvalid, s.citationsChecked) > rate(b.citationsInvalid, b.citationsChecked))
+    out.push('more invalid citations');
+  if (s.citationsChecked === 0 && b.citationsChecked > 0) out.push('no citations checked');
+  const perRun = (x: EvalSummary) => rate(x.inputTokens, x.runs);
+  if (perRun(b) > 0 && perRun(s) > perRun(b) * COST_SLACK)
+    out.push(`input tokens per run up ${Math.round((perRun(s) / perRun(b) - 1) * 100)}%`);
+  return out;
+}
+
 export function worseThan(s: EvalSummary, b: EvalSummary): boolean {
-  return (
-    rate(s.solved, s.runs) < rate(b.solved, b.runs) ||
-    rate(s.citationsInvalid, s.citationsChecked) > rate(b.citationsInvalid, b.citationsChecked)
-  );
+  return regressions(s, b).length > 0;
 }
 
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n));
@@ -282,6 +298,7 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   const top = costliest(s.byNode, 5);
   if (top.length > 0)
     lines.push(`costliest steps: ${top.map((t) => `${t.node} (${t.text})`).join('; ')}`);
-  if (b && worseThan(s, b)) lines.push('⚠ worse than the baseline on correctness');
+  const worse = b ? regressions(s, b) : [];
+  if (worse.length > 0) lines.push(`⚠ worse than the baseline: ${worse.join(', ')}`);
   return lines.join('\n');
 }

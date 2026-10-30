@@ -189,7 +189,7 @@ describe('evidence.check', () => {
       {
         findings: [
           'a.js:1 — exports the port `port = 8081`',
-          'a.js:1 — the port is `8080`',
+          'a.js:1 — the port is `port = 8080`',
           'web | https://example.com — a page',
         ],
       },
@@ -197,7 +197,8 @@ describe('evidence.check', () => {
     );
     expect(out).toEqual({
       valid: ['a.js:1 — exports the port `port = 8081`', 'web | https://example.com — a page'],
-      invalid: ['a.js:1 — the port is `8080` ✗ the quote `8080` is not at a.js:1'],
+      invalid: ['a.js:1 — the port is `port = 8080` ✗ the quote `port = 8080` is not at a.js:1'],
+      checked: 2,
     });
   });
 });

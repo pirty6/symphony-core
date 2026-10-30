@@ -595,8 +595,8 @@ solved rate or citation validity.
 - **`symphony eval`** (`src/eval/`): small fixture repos with a known right answer: two fixes, an
   implement and a refactor checked by hidden tests the AI never saw, and an investigate whose
   docs say 8080 while the code says 8081. It records solved, citations valid, tokens, time and
-  models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline on
-  correctness. `--task routing` adds 21 maestro requests (compose only) judged in code on the
+  models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline: fewer
+  solved, more invalid citations, none checked, or 25% more input tokens per run. `--task routing` adds 21 maestro requests (compose only) judged in code on the
   pattern chosen, a complexity band and the chained pattern; `rehearse maestro --fields
   chosen,complexity` measures how often routing agrees with itself.
 - **Checked evidence.** Findings are written `path:line — fact \`quote\``. A **Check citations**
@@ -604,6 +604,11 @@ solved rate or citation validity.
   quote are real (the rest go to `unverified`); the Copilot provider also sends wrong citations
   back in-session while the AI still has the files open (`cites`). Recorded findings get ids
   (F1, F2…) and answers, root causes and designs must cite existing ids (`refs`, `ids`).
+  The citation is found wherever it sits and however it is written (bold, backticks, "a.ts line
+  3", "a.ts | line 3"), so dressing it up cannot skip the check; quotes need 8+ characters and
+  ranges at most 26 lines. A finding that cites nothing (no path:line, URL, "source | location",
+  commit or issue) is rejected. `evidence.check` reports how many it `checked`, and the eval
+  never counts zero checked as all valid.
 - **The step's own checks run in-session** too ("at least 3 hypotheses"), so a bad answer is fixed
   while the AI still has its context instead of costing a fresh attempt.
 - **Malformed answers are repaired before they are judged.** Claude models sometimes send

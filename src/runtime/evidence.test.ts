@@ -84,4 +84,48 @@ describe('checkCitations', () => {
     ]);
     expect(r.invalid).toEqual([]);
   });
+
+  it('finds the citation however it is written, so dressing it up cannot skip the check', async () => {
+    const invented = '`this line is invented`';
+    const r = await checkCitations(ws, [
+      `As shown in src/config.js:3 the default is 3000 ${invented}`,
+      `**src/config.js:3** — default ${invented}`,
+      `\`src/config.js\`:3 — default ${invented}`,
+      `src/config.js line 3 — default ${invented}`,
+      `src/config.js | line 3 — default ${invented}`,
+      `[H2 against] src/config.js (line 3) — default ${invented}`,
+    ]);
+    expect(r.valid).toEqual([]);
+    expect(r.checked).toBe(6);
+    expect(r.invalid.every((x) => /is not at src\/config.js:3/.test(x.reason))).toBe(true);
+    // The same forms with the real line pass.
+    const ok = await checkCitations(ws, [
+      'the default lives at **src/config.js:3** `port: Number(process.env.PORT ?? 8080)`',
+      'src/config.js line 3 — `port: Number(process.env.PORT ?? 8080)`',
+    ]);
+    expect(ok.invalid).toEqual([]);
+  });
+
+  it('rejects quotes too short to prove anything, ranges as wide as the file, and claims that cite nothing', async () => {
+    const r = await checkCitations(ws, [
+      'src/config.js:3 — reads the port `port`',
+      'README.md:1-200 — the studio runs on 5173 `open the studio`',
+      'The engine probably validates answers before applying them',
+    ]);
+    expect(r.valid).toEqual([]);
+    expect(r.invalid.map((x) => x.reason)).toEqual([
+      expect.stringMatching(/^no quote/),
+      expect.stringMatching(/spans 200 lines/),
+      expect.stringMatching(/^cites nothing/),
+    ]);
+    // Other sources still pass: a URL, "source | location — fact", a commit, an issue.
+    const other = await checkCitations(ws, [
+      'https://nodejs.org/api/process.html — env values are strings',
+      'experiment | npm test — 0 state changes (3 runs)',
+      'commit 1a2b3c4d — added the default',
+      'PR #42 — reviewers asked for the default',
+    ]);
+    expect(other.invalid).toEqual([]);
+    expect(other.checked).toBe(0);
+  });
 });

@@ -282,7 +282,7 @@ export function workspaceTools(): ToolSpec[] {
       name: 'evidence.check',
       description:
         'Check cited findings against the workspace: a "path:line — fact `quote`" must name a real file and line, and the quote must be there. { valid, invalid } (invalid entries end with why).',
-      outputs: ['valid', 'invalid'],
+      outputs: ['valid', 'invalid', 'checked'],
       run: async (args, ctx) => {
         const findings = Array.isArray(args.findings)
           ? args.findings.filter((f): f is string => typeof f === 'string')
@@ -290,7 +290,12 @@ export function workspaceTools(): ToolSpec[] {
         const r = await checkCitations(ctx.workspace, findings);
         // What held is remembered for later runs (re-checked whenever it is recalled).
         await rememberFacts(ctx.workspace, r.valid, undefined, ctx.runId).catch(() => 0);
-        return { valid: r.valid, invalid: r.invalid.map((i) => `${i.finding} ✗ ${i.reason}`) };
+        return {
+          valid: r.valid,
+          invalid: r.invalid.map((i) => `${i.finding} ✗ ${i.reason}`),
+          // How many cited a workspace file and were checked: 0 is not "all valid".
+          checked: r.checked,
+        };
       },
     },
     {
