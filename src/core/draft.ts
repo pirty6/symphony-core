@@ -329,7 +329,7 @@ Optional "groups": [{id,label,description?,nodes:[node ids]}] name the phases of
 
 Expressions (guards, conditions, compute): state keys by name, literals, == != < <= > >= && || ! + -,
 functions len(x) empty(x) includes(list,v) lower(s) append(list,v) if(c,a,b) chars(s) subset(a,b),
-numbered(list,start) unnumbered(list) ids(list) refs(text) (evidence ids "F<n>"),
+join(list,sep) numbered(list,start) unnumbered(list) ids(list) refs(text) (evidence ids "F<n>"),
 and verdict.outcome / verdict.confidence of the last agent. Must be boolean for guards/conditions.
 
 Rules: every node reachable from start; an end reachable from every node; edges are tried in order and
