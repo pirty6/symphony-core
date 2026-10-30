@@ -179,6 +179,8 @@ interface PlayOptions {
   readonly fresh?: boolean;
   /** Continue a restored run (resume / fork). */
   readonly restore?: RunOptions['restore'];
+  /** --complexity as given: backlog items otherwise rate their own complexity. */
+  readonly complexity?: Complexity;
 }
 
 /**
@@ -428,10 +430,13 @@ async function playChain(
     const given = parseContext(chained.get(name) ?? [], pattern);
     const prev = { score: current.score, performance: perf };
     const { goal, context } = stepContext(pattern, step, prev, given);
+    // A chained pattern goes on at the same tier; a backlog item is its own request and
+    // rates its own complexity, unless you chose one.
+    const complexity = typeof step === 'string' ? current.score.complexity : o.complexity;
     const score = compileScore(pattern, {
       goal,
       context,
-      complexity: current.score.complexity,
+      ...(complexity ? { complexity } : {}),
       improvisation: current.score.improvisation,
     });
     const left = queue.filter((s) => typeof s !== 'string').length;
@@ -518,6 +523,9 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
         step: values.step,
         breakpoints: values.break ?? [],
         save: !values['no-save'],
+        ...(complexityOf(values.complexity)
+          ? { complexity: complexityOf(values.complexity)! }
+          : {}),
         ...(rl ? { rl } : {}),
       },
       splitContext(values.context, then).chained,
