@@ -86,6 +86,57 @@ describe('fanOut: one AI call per chunk, merged in chunk order', () => {
     expect(short.state.pause?.feedback).toEqual(['expected 3 part results, got 1']);
   });
 
+  it('a retry plays only the parts that failed, keeping the ones that passed', () => {
+    let r = createEngine(score, { startedAt: 't' });
+    // Part 2 is malformed; part 3 misses a file of its chunk (its own check fails).
+    r = submit(r, { parts: [answer(['a', 'b']), { updates: { read: 'c' } }, answer([])] });
+    const retry = r.state.pause as AgentPause;
+    expect(retry.partsDone?.map((p) => p?.updates.read ?? null)).toEqual([['a', 'b'], null, null]);
+    // Only the missing parts are sent; the kept one fills its slot.
+    const done = submit(r, { parts: [null, answer(['c', 'd']), answer(['e'])] });
+    expect(done.state.outcome).toBe('success');
+    expect(done.state.steps.find((st) => st.nodeId === 'readAll')!.updates).toMatchObject({
+      read: ['a', 'b', 'c', 'd', 'e'],
+    });
+    expect(replayPerformance(score, toPerformance(done.state)).divergence.reproduced).toBe(true);
+  });
+
+  it('keeps nothing when every part passed but the merged answer was rejected', () => {
+    const doubting = compileScore(
+      {
+        ...reader,
+        nodes: reader.nodes.map((n) => (n.id === 'readAll' ? { ...n, verifyBelow: 0.8 } : n)),
+      },
+      { goal: 'g', context: { files: ['a', 'b', 'c'] }, generatedAt: 't' },
+    );
+    let r = createEngine(doubting, { startedAt: 't' });
+    r = advance(doubting, r.state, {
+      kind: 'agent',
+      pauseId: r.state.pause!.pauseId,
+      result: { parts: [answer(['a', 'b'], 0.5), answer(['c'])] },
+      at: 't',
+    });
+    expect((r.state.pause as AgentPause).partsDone).toBeUndefined();
+  });
+
+  it('plays as many parts at once as the agents field says, at most 6', () => {
+    const agents = (n: number) =>
+      compileScore(
+        {
+          ...reader,
+          state: [...reader.state, { name: 'agents', type: 'number', initial: n }],
+          nodes: reader.nodes.map((x) =>
+            x.id === 'readAll' ? { ...x, fanOut: { over: 'files', per: 1, agents: 'agents' } } : x,
+          ),
+        },
+        { goal: 'g', context: { files: ['a', 'b', 'c'] }, generatedAt: 't' },
+      );
+    const parallel = (n: number) => (createEngine(agents(n)).state.pause as AgentPause).parallel;
+    expect(parallel(2)).toBe(2);
+    expect(parallel(40)).toBe(6);
+    expect(parallel(0)).toBe(1);
+  });
+
   it('a list that fits in one chunk is a single ordinary call', () => {
     const one = compileScore(reader, { goal: 'g', context: { files: ['a'] }, generatedAt: 't' });
     expect((createEngine(one).state.pause as AgentPause).parts).toBeUndefined();
@@ -102,7 +153,7 @@ describe('fanOut: one AI call per chunk, merged in chunk order', () => {
           ...node,
           reads: [],
           writes: ['read', 'summary'],
-          fanOut: { over: 'files', per: 'files' },
+          fanOut: { over: 'files', per: 'files', agents: 'summary' },
         } as typeof node,
         reader.nodes[2]!,
       ],
@@ -113,6 +164,7 @@ describe('fanOut: one AI call per chunk, merged in chunk order', () => {
         "fanOut.over 'files' must be a list field it reads",
         'fanOut.per must be a positive whole number or a number field',
         "fanOut steps merge lists: 'summary' must be a list field",
+        "fanOut.agents 'summary' must be a number field",
       ]),
     );
     expect(validatePattern(reader).errors).toEqual([]);

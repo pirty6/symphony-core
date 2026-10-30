@@ -194,7 +194,9 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         if (n.fanOut) {
           const typeOf = (name: string) => g.state.find((f) => f.name === name)?.type;
           const isList = (name: string) => String(typeOf(name) ?? '').endsWith('[]');
-          const { over, per } = n.fanOut;
+          const { over, per, agents } = n.fanOut;
+          if (agents !== undefined && typeOf(agents) !== 'number')
+            errors.push({ ...at, message: `fanOut.agents '${agents}' must be a number field` });
           if (!n.reads.includes(over) || !isList(over))
             errors.push({ ...at, message: `fanOut.over '${over}' must be a list field it reads` });
           if (

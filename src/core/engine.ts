@@ -20,6 +20,7 @@ import { evalExpr, evaluateGuard, parseExpr } from './expr.js';
 import { hashOf } from './hash.js';
 import { solosActive, takesFor } from './jazz.js';
 import { checkAgentResult, checkValue, validateUpdates, type Checked } from './schema.js';
+import { MAX_AGENTS } from './types.js';
 import type {
   AcceptanceCheck,
   AgentNode,
@@ -288,7 +289,49 @@ function partsOf(
   for (let i = 0; i < list.length; i += per) {
     parts.push({ ...input, [node.fanOut.over]: list.slice(i, i + per) });
   }
-  return parts.length > 1 ? { parts } : {};
+  const agents = node.fanOut.agents ? state[node.fanOut.agents] : undefined;
+  const parallel =
+    typeof agents === 'number' && Number.isFinite(agents)
+      ? Math.min(MAX_AGENTS, Math.max(1, Math.round(agents)))
+      : undefined;
+  return parts.length > 1 ? { parts, ...(parallel ? { parallel } : {}) } : {};
+}
+
+/** One part's answer, checked as if it were the whole step (shape, then the step's checks). */
+function checkPart(
+  raw: unknown,
+  pause: AgentPause,
+  i: number,
+  state: Readonly<Record<string, unknown>>,
+): Checked<NodeResult> {
+  const c = checkAgentResult(raw, pause.outputSchema);
+  if (!c.ok || !pause.checks?.length) return c;
+  return acceptance(pause.checks, { ...state, ...pause.parts![i] }, c.value);
+}
+
+/**
+ * Parts that passed at an earlier attempt of this step, so a retry plays only the rest.
+ * Derived from the recorded attempts (replay gets the same). When every part passed,
+ * the merged answer itself was rejected, so nothing is kept.
+ */
+function partsDoneOf(
+  parts: readonly Readonly<Record<string, unknown>>[],
+  pause: AgentPause,
+  attempts: Ctx['attempts'],
+  state: Readonly<Record<string, unknown>>,
+): (NodeResult | null)[] | undefined {
+  const done: (NodeResult | null)[] = parts.map(() => null);
+  for (const a of attempts) {
+    const got = (a.result as { parts?: unknown } | null | undefined)?.parts;
+    if (!Array.isArray(got) || got.length !== parts.length) continue;
+    got.forEach((p, i) => {
+      if (p === undefined || p === null) return;
+      const c = checkPart(p, { ...pause, parts }, i, state);
+      if (c.ok) done[i] = c.value;
+    });
+  }
+  const kept = done.filter(Boolean).length;
+  return kept > 0 && kept < parts.length ? done : undefined;
 }
 
 /**
@@ -300,8 +343,10 @@ function checkParts(
   pause: AgentPause,
   transcript: AiTranscript | undefined,
 ): Checked<NodeResult> | undefined {
-  const parts = (raw as { parts?: unknown } | null | undefined)?.parts;
-  if (!pause.parts || !Array.isArray(parts)) return undefined;
+  const given = (raw as { parts?: unknown } | null | undefined)?.parts;
+  if (!pause.parts || !Array.isArray(given)) return undefined;
+  // A part kept from an earlier attempt need not be sent again.
+  const parts = given.map((p, i) => p ?? pause.partsDone?.[i] ?? undefined);
   if (parts.length !== pause.parts.length) {
     return {
       ok: false,
@@ -361,7 +406,7 @@ function makePause(
     16,
   );
   if (node.kind === 'agent') {
-    return {
+    const pause: AgentPause = {
       kind: 'agent',
       pauseId,
       step: ctx.step,
@@ -396,6 +441,11 @@ function makePause(
       ...(feedback ? { feedback } : {}),
       moveKey,
     };
+    const done =
+      pause.parts && ctx.attempts.length > 0
+        ? partsDoneOf(pause.parts, pause, ctx.attempts, ctx.state)
+        : undefined;
+    return done ? { ...pause, partsDone: done } : pause;
   }
   if (node.kind === 'tool') {
     return {
