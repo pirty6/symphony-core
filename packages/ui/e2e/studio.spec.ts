@@ -365,3 +365,21 @@ test('the minimap lights up where the run is, as the diagram does', async ({ pag
   await expect(minimap.locator('.react-flow__minimap-node.minimap-paused')).toHaveCSS('fill', 'rgb(52, 211, 153)')
   await expect(minimap.locator('.react-flow__minimap-node.minimap-done').first()).toBeAttached()
 })
+
+test('during a run, nodes and closed phases can be moved, but nothing can be connected', async ({ page }) => {
+  await open(page, 'investigate')
+  await page.getByLabel('step mode').check()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('gate-card')).toBeVisible()
+  const phase = page.locator('.react-flow__node[data-id="planPhase"]')
+  const before = await phase.evaluate((el) => (el as HTMLElement).style.transform)
+  const box = (await phase.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 200, box.y + 40, { steps: 8 })
+  await page.mouse.up()
+  await expect.poll(() => phase.evaluate((el) => (el as HTMLElement).style.transform)).not.toBe(before)
+  // Connections stay as the pattern says: no handle accepts a new edge while it plays.
+  await expect(page.locator('.react-flow__handle.connectable')).toHaveCount(0)
+  await page.getByTestId('gate-card').getByRole('button', { name: '⏹ Stop' }).click()
+})

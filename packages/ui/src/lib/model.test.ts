@@ -102,6 +102,11 @@ describe('phases on the canvas', () => {
       expect(ids).toContain(e.target)
     }
     expect(d.edges.some((e) => e.source === 'hypothesesPhase' && e.target === 'listPhase')).toBe(true)
+    // Phases can be dragged; where you put one is kept, for this view only.
+    const moved = phaseDisplay(data, steps, new Set(), frame, { moved: new Map([['listPhase', { x: 900, y: 7 }]]) })
+    const at = moved.nodes.find((n) => n.id === 'listPhase')!
+    expect(at.position).toEqual({ x: 900, y: 7 })
+    expect(at.draggable).not.toBe(false)
   })
 
   it('frames opened phases behind their steps', () => {

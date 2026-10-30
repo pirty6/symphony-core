@@ -630,7 +630,12 @@ export function phaseDisplay(
   decorated: { nodes: readonly FlowNode[]; edges: readonly FlowEdge[] },
   expanded: ReadonlySet<string>,
   frame: Frame,
-  handlers: { onExpand?: (id: string) => void; onCollapse?: (id: string) => void } = {},
+  handlers: {
+    onExpand?: (id: string) => void
+    onCollapse?: (id: string) => void
+    /** Where you dragged nodes of this view (display only: the pattern is unchanged). */
+    moved?: ReadonlyMap<string, { x: number; y: number }>
+  } = {},
 ): { nodes: CanvasNode[]; edges: FlowEdge[]; phaseOf: Map<string, string>; collapsed: boolean } {
   const groups = pattern.groups ?? []
   const phaseOf = new Map<string, string>()
@@ -640,7 +645,10 @@ export function phaseDisplay(
   const byId = new Map(decorated.nodes.map((n) => [n.id, n]))
   const edgeById = new Map(decorated.edges.map((e) => [e.id, e]))
   const view = anyCollapsed ? phaseView(pattern, expanded) : undefined
-  const positions = new Map(view ? view.nodes.map((n) => [n.id, n.position]) : decorated.nodes.map((n) => [n.id, n.position]))
+  const moved = handlers.moved ?? new Map<string, { x: number; y: number }>()
+  const positions = new Map(
+    view ? view.nodes.map((n) => [n.id, moved.get(n.id) ?? n.position]) : decorated.nodes.map((n) => [n.id, n.position]),
+  )
 
   const frames: CanvasNode[] = groupFrames(
     pattern,
@@ -662,7 +670,7 @@ export function phaseDisplay(
   const nodes: CanvasNode[] = view.nodes.flatMap((v): CanvasNode[] => {
     if (v.kind === 'node') {
       const n = byId.get(v.id)
-      return n ? [{ ...n, position: { ...v.position }, draggable: false }] : []
+      return n ? [{ ...n, position: { ...(moved.get(v.id) ?? v.position) } }] : []
     }
     const g = v.group!
     for (const id of g.nodes) phaseOf.set(id, g.id)
@@ -687,7 +695,7 @@ export function phaseDisplay(
       ...(current ? { current } : {}),
       ...(handlers.onExpand ? { onExpand: handlers.onExpand } : {}),
     }
-    return [{ id: g.id, type: 'phase', position: { ...v.position }, data, draggable: false }]
+    return [{ id: g.id, type: 'phase', position: { ...(moved.get(g.id) ?? v.position) }, data }]
   })
 
   const edges: FlowEdge[] = view.edges.map((v) => {
