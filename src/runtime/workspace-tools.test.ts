@@ -130,13 +130,17 @@ describe('tests.run reuse', () => {
     const first = await tool('tests.run').run(args, ctx(d));
     const again = await tool('tests.run').run(args, ctx(d));
     expect(again.output).toMatch(/\(reused: the workspace is unchanged/);
-    expect(readFileSync(counter, 'utf8')).toBe('ran\n');
+    const runs = () =>
+      readFileSync(counter, 'utf8')
+        .split(/\r?\n/)
+        .filter((l) => l.trim()).length;
+    expect(runs()).toBe(1);
     writeFileSync(join(d, 'a.txt'), 'two\n');
     await tool('tests.run').run(args, ctx(d));
-    expect(readFileSync(counter, 'utf8')).toBe('ran\nran\n');
+    expect(runs()).toBe(2);
     // Without reuse every call runs.
     await tool('tests.run').run({ command: args.command }, ctx(d));
-    expect(readFileSync(counter, 'utf8')).toBe('ran\nran\nran\n');
+    expect(runs()).toBe(3);
     expect(first.passed).toBe(true);
   });
 });
