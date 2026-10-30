@@ -80,6 +80,29 @@ describe('debate phases in investigate', () => {
     expect(ran('challenge')).toBe((state.maxDebateRounds as number) + 1);
   });
 
+  it('a routine problem needs 2 hypotheses, a harder one 3', () => {
+    const two = (rated: number): DemoScript => ({
+      ...demo,
+      agents: {
+        ...agents,
+        hypothesize: (s, v) => ({
+          ...agents.hypothesize!(s, v),
+          updates: {
+            hypotheses: [
+              'H1: a | confirm if x | refute if y',
+              'H2: none of these | confirm if z | refute if w',
+            ],
+            ratedComplexity: rated,
+          },
+        }),
+      },
+    });
+    const hypothesesRejected = (r: ReturnType<typeof play>['r']) =>
+      r.state.events.some((e) => e.type === 'response-rejected' && e.nodeId === 'hypothesize');
+    expect(hypothesesRejected(play(1, two(1)).r)).toBe(false);
+    expect(hypothesesRejected(play(2, two(2)).r)).toBe(true);
+  });
+
   it('rejects hypotheses that are too few and an answer that skips a ruling', () => {
     let first = true;
     let proposals = 0;
