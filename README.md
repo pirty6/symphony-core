@@ -161,7 +161,7 @@ Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the V
 ### Expressions
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
-state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + -`,
+state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + - *`,
 `len empty includes lower append if chars subset take drop first unique without pick join`, and
 `verdict.outcome` / `verdict.confidence` of the last agent.
 

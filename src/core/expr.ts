@@ -25,7 +25,7 @@ export type Expr =
   | { readonly t: 'call'; readonly fn: FnName; readonly args: readonly Expr[] }
   | { readonly t: 'list'; readonly items: readonly Expr[] };
 
-type BinOp = '&&' | '||' | '==' | '!=' | '<' | '<=' | '>' | '>=' | '+' | '-';
+type BinOp = '&&' | '||' | '==' | '!=' | '<' | '<=' | '>' | '>=' | '+' | '-' | '*';
 type FnName =
   | 'len'
   | 'empty'
@@ -111,6 +111,7 @@ const OPS = [
   ']',
   '+',
   '-',
+  '*',
   '{',
   '}',
 ];
@@ -266,7 +267,8 @@ export function parseExpr(src: string): Expr {
     }
     return primary();
   };
-  const addExpr = binary(['+', '-'], unary);
+  const mulExpr = binary(['*'], unary);
+  const addExpr = binary(['+', '-'], mulExpr);
   const cmpExpr = binary(['==', '!=', '<', '<=', '>', '>='], addExpr, true);
   const andExpr = binary(['&&'], cmpExpr);
   const orExpr: () => Expr = binary(['||'], andExpr);
@@ -427,9 +429,9 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           `'+' needs two numbers, strings or lists, got ${typeof l} and ${typeof r}`,
         );
       }
-      if (e.op === '-') {
-        if (typeof l === 'number' && typeof r === 'number') return l - r;
-        throw new ExprError(`'-' needs two numbers, got ${typeof l} and ${typeof r}`);
+      if (e.op === '-' || e.op === '*') {
+        if (typeof l === 'number' && typeof r === 'number') return e.op === '-' ? l - r : l * r;
+        throw new ExprError(`'${e.op}' needs two numbers, got ${typeof l} and ${typeof r}`);
       }
       if (e.op === '==') return deepEqual(l, r);
       if (e.op === '!=') return !deepEqual(l, r);
