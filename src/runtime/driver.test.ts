@@ -318,6 +318,50 @@ describe('Run', () => {
     expect(perf.finalState).toEqual({ files: ['real-1.ts'] });
   });
 
+  it('tools get the whole tool context: a worktree run keeps memory in your workspace', async () => {
+    const seen: unknown[] = [];
+    const p: Pattern = {
+      name: 't',
+      description: 'd',
+      requiredContext: [],
+      state: [{ name: 'files', type: 'string[]' }],
+      start: 's',
+      nodes: [
+        { id: 's', kind: 'start', label: 'S' },
+        { id: 'list', kind: 'tool', label: 'L', tool: 'repo.files', output: { files: 'files' } },
+        { id: 'e', kind: 'end', label: 'E' },
+      ],
+      edges: [
+        { id: '1', from: 's', to: 'list' },
+        { id: '2', from: 'list', to: 'e' },
+      ],
+    };
+    const tools = registry([
+      {
+        name: 'repo.files',
+        description: 'd',
+        outputs: ['files'],
+        run: async (_a, ctx) => {
+          seen.push(ctx.memoryRoot);
+          return { files: [] };
+        },
+      },
+    ]);
+    const live: Provider = {
+      name: 'live',
+      runAgent: async () => Promise.reject(new Error('unused')),
+      draft: async () => Promise.reject(new Error('unused')),
+    };
+    await new Run({
+      score: compileScore(p, { goal: 'g', generatedAt: 't' }),
+      provider: live,
+      tools,
+      toolContext: { workspace: '/tree', repoRoot: '/r', memoryRoot: '/home' },
+      clock,
+    }).start();
+    expect(seen).toEqual(['/home']);
+  });
+
   it('runs tool nodes through the registry, gated and recorded', async () => {
     const p = {
       name: 't',

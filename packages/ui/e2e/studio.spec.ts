@@ -373,6 +373,8 @@ test('during a run, nodes and closed phases can be moved, but nothing can be con
   await page.getByLabel('step mode').check()
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('gate-card')).toBeVisible()
+  // Bring every node into view first (the window may be small).
+  await page.locator('.react-flow__controls-fitview').click()
   const phase = page.locator('.react-flow__node[data-id="planPhase"]')
   const before = await phase.evaluate((el) => (el as HTMLElement).style.transform)
   const box = (await phase.boundingBox())!

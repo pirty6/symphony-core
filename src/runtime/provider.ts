@@ -3,7 +3,7 @@
  * a recording) to perform one agent node. Plus the pure pieces every
  * provider shares: the prompt, result extraction and the role policy.
  */
-import { preloadSection, type PreloadedFile } from './preload.js';
+import { preloadSection, type PreloadedFile } from './preload-prompt.js';
 import type { AgentPause, AiTranscript, Role } from '../core/types.js';
 
 export type ProviderEvent =

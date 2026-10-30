@@ -5,8 +5,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import type { AgentPause, Pattern } from '../core/types.js';
 import { validatePattern } from '../core/validate.js';
+import { defaultTools } from './builtin-tools.js';
 import { Run } from './driver.js';
-import { MAX_FILE_CHARS, preloadFiles, preloadSection } from './preload.js';
+import { MAX_FILE_CHARS, preloadFiles } from './preload.js';
+import { preloadSection } from './preload-prompt.js';
 import { buildAgentPrompt, type AgentRequest, type Provider } from './provider.js';
 
 const ws = mkdtempSync(join(tmpdir(), 'symphony-preload-'));
@@ -95,6 +97,7 @@ describe('a step with preload', () => {
     const perf = await new Run({
       score,
       provider,
+      tools: defaultTools({ probeGitHub: false, mcp: { includeUser: false } }),
       toolContext: { workspace: ws, repoRoot: ws },
     }).start();
     expect(perf.outcome).toBe('success');

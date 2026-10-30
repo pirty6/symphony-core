@@ -119,6 +119,7 @@ describe('sources.catalog', () => {
       'repo.files',
       'sources.catalog',
       'tests.run',
+      'files.read',
       'git.diff',
       'evidence.check',
       'memory.recall',

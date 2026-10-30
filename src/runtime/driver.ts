@@ -10,7 +10,7 @@
  */
 import { stepTimeLimitMs } from './limits.js';
 import { KEEP_ANSWER } from './provider.js';
-import { preloadFiles, type PreloadedFile } from './preload.js';
+import type { PreloadedFile } from './preload-prompt.js';
 import {
   advance,
   createEngine,
@@ -380,14 +380,29 @@ export class Run {
     });
   }
 
-  /** pause.preload: read the listed workspace files whole, for the prompt. */
+  /** What tools get: the run's context (memoryRoot too), its id and a signal. */
+  private toolContext(signal: AbortSignal) {
+    return {
+      ...this.opts.toolContext,
+      workspace: this.opts.toolContext?.workspace ?? '.',
+      repoRoot: this.opts.toolContext?.repoRoot ?? '.',
+      signal,
+      runId: this.id,
+    };
+  }
+
+  /** pause.preload: read the listed workspace files whole (the files.read tool), for the prompt. */
   private async preload(
     pause: AgentPause,
     onEvent: (e: ProviderEvent) => void,
   ): Promise<PreloadedFile[]> {
     const list = pause.preload ? pause.input[pause.preload] : undefined;
-    if (!Array.isArray(list) || list.length === 0) return [];
-    const files = await preloadFiles(this.opts.toolContext?.workspace ?? '.', list);
+    const read = this.opts.tools?.get('files.read');
+    if (!Array.isArray(list) || list.length === 0 || !read) return [];
+    const out = await read
+      .run({ paths: list }, this.toolContext(new AbortController().signal))
+      .catch(() => ({ files: [] }));
+    const files = (Array.isArray(out.files) ? out.files : []) as PreloadedFile[];
     const lines = files.reduce((n, f) => n + f.lines, 0);
     if (files.length > 0)
       onEvent({
@@ -629,12 +644,7 @@ export class Run {
     emit(`running tool ${pause.tool}`);
     let res: Resolution;
     try {
-      const raw = await tools.get(pause.tool)!.run(pause.args, {
-        workspace: this.opts.toolContext?.workspace ?? '.',
-        repoRoot: this.opts.toolContext?.repoRoot ?? '.',
-        signal: this.abort.signal,
-        runId: this.id,
-      });
+      const raw = await tools.get(pause.tool)!.run(pause.args, this.toolContext(this.abort.signal));
       const updates = mapToolOutput(pause.output, raw);
       emit(
         Object.entries(updates)

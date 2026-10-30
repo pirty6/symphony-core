@@ -13,6 +13,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { ToolContext, ToolSpec } from './tools.js';
+import { preloadFiles } from './preload.js';
 
 const git = promisify(execFile);
 
@@ -299,6 +300,15 @@ export function workspaceTools(): ToolSpec[] {
         if (key) remember(key, result);
         return result;
       },
+    },
+    {
+      name: 'files.read',
+      description:
+        'Read workspace files whole, with line numbers, for a prompt (a step that preloads its files): { files: [{ path, text, lines, omitted? }] }.',
+      outputs: ['files'],
+      run: async (args, ctx) => ({
+        files: await preloadFiles(ctx.workspace, Array.isArray(args.paths) ? args.paths : []),
+      }),
     },
     {
       name: 'git.diff',
