@@ -81,10 +81,11 @@ export const review: Pattern = {
       role: 'assessor',
       label: 'Find issues',
       directive:
-        'Review the changes to the files in `files` (yours only) for `target`: read each diff hunk and the code around it. Look for bugs, security problems and logic errors; ignore style. Write one issue per `newFindings` entry as "path:line — problem `exact quote of that line`", only for issues you can point to. List in `reviewed` every file of `files` you read. An empty `newFindings` is right when the changes are sound. If you could not read the changes at all, say so with verdict outcome "failed".',
+        'Review the changes to the files in `files` (yours only) for `target`: each file is given to you whole at the end of this prompt; read its diff hunks (git diff) against it. Look for bugs, security problems and logic errors; ignore style. Write one issue per `newFindings` entry as "path:line — problem `exact quote of that line`", only for issues you can point to. List in `reviewed` every file of `files` you read. An empty `newFindings` is right when the changes are sound. If you could not read the changes at all, say so with verdict outcome "failed".',
       reads: ['target', 'hint', 'diffSummary', 'files'],
       writes: ['newFindings', 'reviewed'],
       cites: 'newFindings',
+      preload: 'files',
       fanOut: { over: 'files', per: 'filesPerAgent', agents: 'agents' },
       retries: 2,
       checks: [

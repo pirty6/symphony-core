@@ -646,6 +646,13 @@ solved rate or citation validity.
 - **Time limit per step** (15 min, `SYMPHONY_STEP_TIMEOUT_S`): a hung call is retried, then waits
   for a human like any stuck step. Mechanical steps already play a tier lower (smaller model,
   lower reasoning effort) through `complexityShift`.
+- **Files read by the engine (`preload`).** A step that reads a known list of files (investigate's
+  deep read, review's per-file review) gets each workspace file whole, with line numbers, in its
+  prompt, instead of paging through it with tool calls. It reads everything in one turn and
+  cannot skip part of a file (a file over 120k characters says which lines were left out); it
+  still follows references and history with tools, and still lists every item it read. On the
+  largest recorded run the deep read made about 48 model calls per part (1,531 in all) and used
+  142M input tokens, while the whole text of the 113 files it read is about 357k tokens.
 - **Lean findings.** investigate's assess, gap chaser, part answers and debaters read
   `findingsBrief`: each finding with its id and location, its (already checked) quote left out
   and capped at 240 characters. On the largest recorded run (3,285 findings) that is 30% fewer

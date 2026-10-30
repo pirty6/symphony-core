@@ -10,6 +10,7 @@
  */
 import { stepTimeLimitMs } from './limits.js';
 import { KEEP_ANSWER } from './provider.js';
+import { preloadFiles, type PreloadedFile } from './preload.js';
 import {
   advance,
   createEngine,
@@ -365,15 +366,35 @@ export class Run {
       state?: Readonly<Record<string, unknown>>;
     } = {},
   ): Promise<{ result: unknown; transcript: AiTranscript }> {
+    const onEvent = this.emitFor(pause, extra.integrate ? 0 : extra.take);
+    const files = await this.preload(pause, onEvent);
     return this.opts.provider.runAgent({
       pause,
       state: this.engine.state,
       visit: (this.engine.visits[pause.nodeId] ?? 1) - 1,
       signal,
-      onEvent: this.emitFor(pause, extra.integrate ? 0 : extra.take),
+      onEvent,
       ...(this.opts.scratch ? { scratchDir: this.opts.scratch.dir } : {}),
+      ...(files.length ? { files } : {}),
       ...extra,
     });
+  }
+
+  /** pause.preload: read the listed workspace files whole, for the prompt. */
+  private async preload(
+    pause: AgentPause,
+    onEvent: (e: ProviderEvent) => void,
+  ): Promise<PreloadedFile[]> {
+    const list = pause.preload ? pause.input[pause.preload] : undefined;
+    if (!Array.isArray(list) || list.length === 0) return [];
+    const files = await preloadFiles(this.opts.toolContext?.workspace ?? '.', list);
+    const lines = files.reduce((n, f) => n + f.lines, 0);
+    if (files.length > 0)
+      onEvent({
+        type: 'info',
+        text: `the engine read ${files.length} file(s) in full (${lines} lines) into the prompt`,
+      });
+    return files;
   }
 
   /** Classical: the same move of the same song replays the recorded notes. */

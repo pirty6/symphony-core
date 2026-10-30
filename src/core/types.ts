@@ -98,6 +98,13 @@ export interface AgentNode extends NodeBase {
    * checked one by one and merged in chunk order, so the result does not depend
    * on which call finished first. Every field the step writes must be a list.
    */
+  /**
+   * A string[] field this step reads that lists workspace files (URLs are left to the
+   * AI): the runtime reads each file whole and puts its text, with line numbers, in the
+   * prompt. The AI reads everything it was given in one turn instead of paging through
+   * it with tool calls, and cannot skip part of a file.
+   */
+  readonly preload?: string;
   readonly fanOut?: {
     readonly over: string;
     readonly per: number | string;
@@ -397,6 +404,8 @@ export interface AgentPause {
   readonly partsDone?: readonly (NodeResult | null)[];
   /** fanOut: how many parts may play at once (fanOut.agents), 1..MAX_AGENTS. */
   readonly parallel?: number;
+  /** AgentNode.preload: the input field listing files the runtime reads into the prompt. */
+  readonly preload?: string;
   /** Independent takes to play before integrating (1 = a single take). */
   readonly takes: number;
   /** Present at an active solo point: the routes the AI may choose from. */

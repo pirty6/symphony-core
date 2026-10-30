@@ -71,6 +71,7 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(isComplexity(raw.complexity) ? { complexity: raw.complexity } : {}),
         ...(raw.isolated === true ? { isolated: true } : {}),
         ...(typeof raw.cites === 'string' && raw.cites ? { cites: raw.cites } : {}),
+        ...(typeof raw.preload === 'string' && raw.preload ? { preload: raw.preload } : {}),
         ...(typeof raw.verifyBelow === 'number' ? { verifyBelow: raw.verifyBelow } : {}),
         ...(raw.otherModel === true ? { otherModel: true } : {}),
         ...fanOutOf(raw.fanOut),

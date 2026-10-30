@@ -3,6 +3,7 @@
  * a recording) to perform one agent node. Plus the pure pieces every
  * provider shares: the prompt, result extraction and the role policy.
  */
+import { preloadSection, type PreloadedFile } from './preload.js';
 import type { AgentPause, AiTranscript, Role } from '../core/types.js';
 
 export type ProviderEvent =
@@ -37,6 +38,8 @@ export interface AgentRequest {
   readonly integrate?: readonly unknown[];
   /** This run's scratch folder, deleted when the run ends. */
   readonly scratchDir?: string;
+  /** pause.preload: the listed workspace files, read whole by the runtime. */
+  readonly files?: readonly PreloadedFile[];
 }
 
 export interface AgentResponse {
@@ -76,6 +79,8 @@ export interface PromptSources {
   readonly mcpServers?: readonly string[];
   /** This run's scratch folder (executors write temporary files only there). */
   readonly scratchDir?: string;
+  /** pause.preload: the files to put in the prompt, whole. */
+  readonly files?: readonly PreloadedFile[];
 }
 
 /** Inputs and context are compact JSON: pretty-printing made them about 1.5x longer. */
@@ -165,6 +170,8 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
   if (Object.keys(context).length > 0) {
     lines.push('', '## Context', '```json', JSON.stringify(context), '```');
   }
+  if (pause.preload && sources.files?.length)
+    lines.push(...preloadSection(pause.preload, sources.files));
   if (pause.feedback && pause.feedback.length > 0) {
     lines.push(
       '',

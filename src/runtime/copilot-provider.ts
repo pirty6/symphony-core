@@ -755,6 +755,7 @@ export class CopilotProvider implements Provider {
       : buildAgentPrompt(pause, {
           mcpServers: Object.keys(mcpServers),
           ...(req.scratchDir ? { scratchDir: req.scratchDir } : {}),
+          ...(req.files ? { files: req.files } : {}),
         });
     const startedAt = this.opts.clock?.();
     const tier = pause.otherModel
