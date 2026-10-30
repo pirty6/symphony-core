@@ -360,6 +360,13 @@ the listing adapts to the question: "is this on the internet?", "does this work 
 8. **Answer**: cites evidence and ends with a coverage report: files triaged and excluded, pages
    read, experiments run, sources searched and skipped, what is still unknown. It must give a
    ruling (CONFIRMED, REFUTED or UNKNOWN, with evidence) on every hypothesis.
+   **Several subjects** ("how can A, B and C be improved", "compare X, Y and Z"): the plan lists
+   them in `parts` (2 to 8). Evidence is still gathered once for all of them; then **Answer each
+   part** plays one call per subject at the same time (at most 4), each on its own subject, and the
+   answer becomes a summary across them. The skeptic and reconciler see the parts too, and the
+   engine attaches every part after the summary at the end. This is cheaper than one investigation
+   per subject (evidence gathering is about 90% of an investigation's cost, measured on recent runs)
+   and keeps what the subjects share in one place.
 9. **Challenge the answer**, scaled by complexity:
 
    | Complexity | Who | Does |
