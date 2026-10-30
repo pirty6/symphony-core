@@ -16,6 +16,9 @@ function play(complexity: Complexity, script: DemoScript = demo) {
   return { r, ran, state: r.state.state };
 }
 
+const hypothesesRejected = (r: ReturnType<typeof play>['r']) =>
+  r.state.events.some((e) => e.type === 'response-rejected' && e.nodeId === 'hypothesize');
+
 describe('debate phases in investigate', () => {
   it('complexity 1: hypotheses only, no debate', () => {
     const { r, ran } = play(1);
@@ -97,8 +100,6 @@ describe('debate phases in investigate', () => {
         }),
       },
     });
-    const hypothesesRejected = (r: ReturnType<typeof play>['r']) =>
-      r.state.events.some((e) => e.type === 'response-rejected' && e.nodeId === 'hypothesize');
     expect(hypothesesRejected(play(1, two(1)).r)).toBe(false);
     expect(hypothesesRejected(play(2, two(2)).r)).toBe(true);
   });
