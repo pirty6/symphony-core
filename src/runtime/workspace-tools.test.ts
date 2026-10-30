@@ -245,6 +245,24 @@ describe('memory tools', () => {
     expect(r.lessons[0]).toMatch(/Fixed "wrong default port": off by one \(files: config.js\)$/);
   });
 
+  it('a fact whose line moved is pointed at its new line, not dropped', async () => {
+    const d = dir();
+    writeFileSync(join(d, 'config.js'), 'export const port = DEFAULTS.port + 1;\n');
+    const fact = 'config.js:1 — the port is one above DEFAULTS `DEFAULTS.port + 1`';
+    await tool('evidence.check').run({ findings: [fact] }, { ...ctx(d), runId: 'old' });
+    // Lines are added above it, more than the check's slack.
+    writeFileSync(
+      join(d, 'config.js'),
+      `${'// config\n'.repeat(8)}export const port = DEFAULTS.port + 1;\n`,
+    );
+    const r = (await tool('memory.recall').run({ query: 'port DEFAULTS' }, ctx(d))) as {
+      facts: string[];
+    };
+    expect(r.facts).toEqual(['config.js:9 — the port is one above DEFAULTS `DEFAULTS.port + 1`']);
+    // Remembered at its new line.
+    expect(readFileSync(join(d, '.symphony', 'memory.json'), 'utf8')).toContain('config.js:9 —');
+  });
+
   it('a run in a worktree reads and adds to your workspace memory; it does not recall its own facts', async () => {
     const home = dir();
     const tree = dir();

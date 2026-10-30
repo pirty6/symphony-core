@@ -230,6 +230,22 @@ async function liveLessons(workspace: string, lessons: readonly Entry[]): Promis
   return lessons.filter((_, i) => live[i]);
 }
 
+/**
+ * The fact pointed at the line its quote is on now, when the quote moved within the
+ * same file and appears there exactly once; otherwise undefined.
+ */
+export async function reanchor(workspace: string, fact: string): Promise<string | undefined> {
+  const at = /^([\w@./-]+\.[A-Za-z0-9]+):(\d+)(?:-\d+)?/.exec(fact);
+  const quote = /`([^`]{8,})`/.exec(fact)?.[1]?.replace(/\s+/g, ' ').trim();
+  if (!at || !quote) return undefined;
+  const text = await readFile(join(workspace, at[1]!), 'utf8').catch(() => undefined);
+  if (text === undefined) return undefined;
+  const hits = text
+    .split('\n')
+    .flatMap((line, i) => (line.replace(/\s+/g, ' ').includes(quote) ? [i + 1] : []));
+  return hits.length === 1 ? `${at[1]}:${hits[0]}${fact.slice(at[0].length)}` : undefined;
+}
+
 /** Facts that still hold and lessons that share words with the query, best first. */
 export async function recall(
   workspace: string,
@@ -242,7 +258,26 @@ export async function recall(
   const others = opts.excludeRun ? m.facts.filter((f) => f.run !== opts.excludeRun) : m.facts;
   // Rank first, then re-check: only facts still true of today's files are offered.
   const candidates = ranked(others, query, limit * 3).map((e) => e.text);
-  const still = (await checkCitations(workspace, candidates)).valid.slice(0, limit);
+  const checked = await checkCitations(workspace, candidates);
+  // A fact whose quoted line only moved is still true: point it at the line it is on now.
+  const moved = new Map<string, string>();
+  for (const { finding } of checked.invalid) {
+    const now = await reanchor(workspace, finding);
+    if (now) moved.set(finding, now);
+  }
+  const again = moved.size ? (await checkCitations(workspace, [...moved.values()])).valid : [];
+  const still = [...checked.valid, ...again].slice(0, limit);
+  if (again.length > 0) {
+    const fixed = new Map([...moved].filter(([, now]) => again.includes(now)));
+    await update(opts.store ?? workspace, (mem) => ({
+      ...mem,
+      facts: tidyFacts(
+        mem.facts.map((f) =>
+          fixed.has(f.text) ? Object.assign({}, f, { text: fixed.get(f.text)! }) : f,
+        ),
+      ),
+    })).catch(() => undefined);
+  }
   // A lesson about files that are gone, or from long ago, no longer applies.
   const fresh = await liveLessons(workspace, m.lessons);
   const lessons = ranked(fresh, query, Math.ceil(limit / 2)).map(
