@@ -28,6 +28,8 @@ export interface EvalTask {
   readonly goal?: string;
   readonly inputs: Readonly<Record<string, unknown>>;
   readonly files: Readonly<Record<string, string>>;
+  /** Written after the fixture is committed: uncommitted work (e.g. for a review). */
+  readonly changes?: Readonly<Record<string, string>>;
   readonly check: (ctx: EvalContext) => Promise<EvalCheck>;
 }
 
@@ -139,6 +141,8 @@ export function requirementCoverage(
 
 const PKG = '{ "name": "fixture", "type": "module", "scripts": { "test": "node --test" } }\n';
 const IGNORE = '.symphony/\nnode_modules/\n';
+const SUM_RIGHT =
+  '/** Sum of the numbers from 1 to n. */\nexport function sumTo(n) {\n  let total = 0;\n  for (let i = 1; i <= n; i++) total += i;\n  return total;\n}\n';
 const TEST_HEAD = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n";
 
 /** A task whose check runs the visible tests plus a hidden one the AI never saw. */
@@ -345,6 +349,107 @@ export const EVAL_TASKS: readonly EvalTask[] = [
       'test/sum.test.js': `${TEST_HEAD}import { sumTo } from '../src/sum.js';\ntest('sumTo includes n', () => assert.equal(sumTo(4), 10));\n`,
     },
     check: async ({ outcome, state }) => requirementCoverage(outcome, state, [/\btests?\b/i]),
+  },
+  {
+    // A review of uncommitted work with one real bug: found, cited, and not called clean.
+    id: 'review-off-by-one',
+    pattern: 'review',
+    inputs: { target: 'the uncommitted changes in the working tree (git diff)' },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/sum.js': SUM_RIGHT,
+      'src/greet.js': 'export const greet = (name) => `Hello, ${name}!`;\n',
+    },
+    changes: {
+      'src/sum.js': SUM_RIGHT.replace('i <= n', 'i < n'),
+      'src/greet.js':
+        '/** Greets someone by name. */\nexport const greet = (name) => `Hello, ${name}!`;\n',
+    },
+    check: async ({ outcome, state }) => {
+      const findings = ((state.findings as string[] | undefined) ?? []).join('\n');
+      const hit = /src\/sum\.js:\d+/.test(findings);
+      return {
+        pass: outcome === 'success' && hit,
+        notes: [
+          `outcome ${outcome}`,
+          hit ? 'found the bug in src/sum.js' : 'missing: no finding cites src/sum.js',
+        ],
+      };
+    },
+  },
+  {
+    // An analysis judged on its answer and on citing the numbers it rests on.
+    id: 'analyze-top-region',
+    pattern: 'analyze',
+    inputs: {
+      question: 'Which region had the highest total revenue, and by how much over the next one?',
+      data: 'data/sales.csv',
+    },
+    files: {
+      '.gitignore': IGNORE,
+      'data/sales.csv':
+        [
+          'date,region,revenue',
+          '2026-01-05,EU,1200',
+          '2026-01-06,US,900',
+          '2026-01-07,EU,800',
+          '2026-01-08,APAC,700',
+          '2026-01-09,US,600',
+          '2026-01-10,APAC,650',
+        ].join('\n') + '\n',
+    },
+    check: async ({ outcome, state }) => {
+      const conclusion = String(state.conclusion ?? '');
+      const notes = [
+        ...(/\bEU\b/.test(conclusion) ? [] : ['fail: the conclusion does not name EU (2000)']),
+        ...(/\b500\b/.test(conclusion) ? [] : ['fail: the margin over US (500) is missing']),
+        ...(/\[F\d+\]/.test(conclusion) ? [] : ['missing: the conclusion cites no finding']),
+      ];
+      return {
+        pass: outcome === 'success' && notes.length === 0,
+        notes: [`outcome ${outcome}`, ...(notes.length ? notes : ['EU by 500, cited'])],
+      };
+    },
+  },
+  {
+    // A backlog judged on what it extracts: each real item once, the done one skipped.
+    id: 'backlog-extract',
+    pattern: 'backlog',
+    inputs: { source: 'docs/improvements.md' },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/sum.js': SUM_RIGHT,
+      'src/greet.js': 'export const greet = (name) => `Hello, ${name}!`;\n',
+      'docs/improvements.md':
+        [
+          '# Improvements',
+          '',
+          '- sumTo should throw a RangeError for negative n (src/sum.js).',
+          '- greet should trim the name before greeting (src/greet.js).',
+          '- sumTo should include n itself (already done).',
+        ].join('\n') + '\n',
+    },
+    check: async ({ outcome, state }) => {
+      const items = (state.items as string[] | undefined) ?? [];
+      const notes = [
+        ...(items.length === 2 ? [] : [`fail: ${items.length} items, expected 2`]),
+        ...(items.some((i) => /sum/i.test(i) && /negative|RangeError/i.test(i))
+          ? []
+          : ['missing: the negative-n item']),
+        ...(items.some((i) => /greet/i.test(i) && /trim/i.test(i))
+          ? []
+          : ['missing: the trim item']),
+      ];
+      return {
+        pass: outcome === 'success' && notes.length === 0,
+        notes: [
+          `outcome ${outcome}`,
+          ...(notes.length ? notes : ['2 items, the done one skipped']),
+        ],
+      };
+    },
   },
 ];
 

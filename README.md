@@ -593,8 +593,10 @@ Every change here was measured with `symphony eval` and kept only if it did not 
 solved rate or citation validity.
 
 - **`symphony eval`** (`src/eval/`): small fixture repos with a known right answer: two fixes, an
-  implement and a refactor checked by hidden tests the AI never saw, and an investigate whose
-  docs say 8080 while the code says 8081. It records solved, citations valid, tokens, time and
+  implement and a refactor checked by hidden tests the AI never saw, an investigate whose
+  docs say 8080 while the code says 8081, a review of uncommitted work with one real bug, an
+  analysis of a small CSV (the answer and its margin, cited), and a backlog judged on the items
+  it extracts (each real one once, the done one skipped). It records solved, citations valid, tokens, time and
   models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline: fewer
   solved, more invalid citations, none checked, or 25% more input tokens per run. `--task routing` adds 21 maestro requests (compose only) judged in code on the
   pattern chosen, a complexity band and the chained pattern; `rehearse maestro --fields
@@ -665,6 +667,10 @@ solved rate or citation validity.
   answers, now repaired before they are judged.
 - **`runs --prune`** (`compact.ts`) only deals with old saved runs, not with prompt context.
 - **Drift in the composed score** is what the requirement ledger addresses.
+- **Experiments and analyses stay one at a time.** investigate's experiments often time
+  things, and timings taken side by side skew each other; analyze picks each next analysis from
+  what the last one found. Review reads its files in parallel instead, and investigate's triage,
+  deep reads and parts do.
 - **Past compositions for the classifier** are the composition memory: only approved ones are
   stored, and they are precedent, not a cache.
 

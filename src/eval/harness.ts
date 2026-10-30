@@ -77,6 +77,7 @@ async function runTask(
   const workspace = await mkdtemp(join(tmpdir(), `symphony-eval-${task.id}-`));
   try {
     await buildFixture(workspace, task.files);
+    if (task.changes) await writeFiles(workspace, task.changes);
     // The task's workspace only: no MCP servers, no user configuration.
     const extras = await runtimeExtras(workspace, o.repoRoot, { ...o.env, SYMPHONY_MCP: 'off' });
     const score = compileScore(pattern, {
@@ -108,7 +109,7 @@ async function runTask(
       : [];
     // Findings describe the code before any edit: check them against the fixture as given.
     const pristine = await mkdtemp(join(tmpdir(), `symphony-eval-${task.id}-orig-`));
-    const cited = await writeFiles(pristine, task.files)
+    const cited = await writeFiles(pristine, { ...task.files, ...task.changes })
       .then(() => checkCitations(pristine, findings))
       .finally(() => rm(pristine, { recursive: true, force: true }));
     const models = [

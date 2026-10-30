@@ -252,6 +252,23 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
       },
     },
   }),
+  'review-off-by-one': () => ({
+    state: {
+      findings: ['F1 src/sum.js:4 — the loop stops before n `for (let i = 1; i < n; i++)`'],
+      report: 'HIGH: sumTo leaves out n [F1]',
+    },
+  }),
+  'analyze-top-region': () => ({
+    state: { conclusion: 'EU had the highest revenue, 2000, 500 more than the US [F2].' },
+  }),
+  'backlog-extract': () => ({
+    state: {
+      items: [
+        'In src/sum.js, make sumTo throw a RangeError for negative n.',
+        'In src/greet.js, trim the name before greeting.',
+      ],
+    },
+  }),
   'investigate-default-port': () => ({
     state: { answer: 'It listens on 8081: loadConfig in src/config.js uses DEFAULTS.port + 1.' },
   }),
