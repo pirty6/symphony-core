@@ -181,6 +181,8 @@ export const implement: Pattern = {
       kind: 'tool',
       label: 'Run tests first',
       tool: 'tests.run',
+      // An unchanged workspace (e.g. the next backlog item) reuses the last baseline.
+      args: { reuse: true },
       inputs: { command: 'testCommand' },
       output: { passed: 'baselinePassed', output: 'baselineOutput' },
     },

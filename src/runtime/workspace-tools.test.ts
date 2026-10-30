@@ -121,6 +121,26 @@ setInterval(() => {}, 1000);`,
   });
 });
 
+describe('tests.run reuse', () => {
+  it('a baseline on an unchanged workspace is reused; any change runs it again', async () => {
+    const d = dir();
+    const counter = join(root, `runs-${n}`);
+    writeFileSync(join(d, 'a.txt'), 'one\n');
+    const args = { command: `echo ran >> ${counter}`, reuse: true };
+    const first = await tool('tests.run').run(args, ctx(d));
+    const again = await tool('tests.run').run(args, ctx(d));
+    expect(again.output).toMatch(/\(reused: the workspace is unchanged/);
+    expect(readFileSync(counter, 'utf8')).toBe('ran\n');
+    writeFileSync(join(d, 'a.txt'), 'two\n');
+    await tool('tests.run').run(args, ctx(d));
+    expect(readFileSync(counter, 'utf8')).toBe('ran\nran\n');
+    // Without reuse every call runs.
+    await tool('tests.run').run({ command: args.command }, ctx(d));
+    expect(readFileSync(counter, 'utf8')).toBe('ran\nran\nran\n');
+    expect(first.passed).toBe(true);
+  });
+});
+
 describe('git.diff', () => {
   it('works in a repository with no commits yet', async () => {
     const d = dir();

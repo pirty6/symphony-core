@@ -168,6 +168,30 @@ export type WorkspaceDiff = {
   readonly files: readonly string[];
 };
 
+/** Baseline test results by workspace state; a few dozen at most. */
+const REUSED = new Map<string, Readonly<Record<string, unknown>>>();
+function remember(key: string, result: Readonly<Record<string, unknown>>): void {
+  REUSED.set(key, result);
+  if (REUSED.size > 50) REUSED.delete(REUSED.keys().next().value!);
+}
+
+/** The command plus everything that could change its result: HEAD and the working changes. */
+async function workspaceKey(ctx: ToolContext, command: string): Promise<string | undefined> {
+  try {
+    // No commits yet: no HEAD, and the working changes are everything.
+    const head = await git('git', ['rev-parse', '--verify', '-q', 'HEAD'], {
+      cwd: ctx.workspace,
+    }).then(
+      (r) => r.stdout.trim(),
+      () => '',
+    );
+    const { hash } = await workspaceDiff(ctx);
+    return `${ctx.workspace}\0${command}\0${head}\0${hash}`;
+  } catch {
+    return undefined;
+  }
+}
+
 /** git's id for the empty tree. */
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MAX_DIFF = 30_000;
@@ -262,7 +286,18 @@ export function workspaceTools(): ToolSpec[] {
           );
         }
         const timeout = typeof args.timeoutMs === 'number' ? args.timeoutMs : TEST_TIMEOUT_MS;
-        return runCommand(command, ctx, timeout);
+        if (args.reuse !== true) return runCommand(command, ctx, timeout);
+        // A baseline: the same command on the very same workspace gives the same answer.
+        const key = await workspaceKey(ctx, command);
+        const known = key ? REUSED.get(key) : undefined;
+        if (known)
+          return {
+            ...known,
+            output: `${String(known.output)}\n(reused: the workspace is unchanged since this command last ran)`,
+          };
+        const result = await runCommand(command, ctx, timeout);
+        if (key) remember(key, result);
+        return result;
       },
     },
     {
