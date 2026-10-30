@@ -12,6 +12,7 @@ import {
   outlinePattern,
   parseDraft,
   patternToTypeScript,
+  summarizeComposed,
 } from './draft.js';
 import type { Pattern } from './types.js';
 
@@ -210,5 +211,31 @@ describe('patternToTypeScript', () => {
         checks: [{ expr: 'subset(files, seen)', message: 'all' }],
       });
     }
+  });
+});
+
+describe('summarizeComposed', () => {
+  const steps = fix.nodes.length - 1;
+  const ai = fix.nodes.filter((n) => n.kind === 'agent').length;
+  const base = { normalized: fix, chosen: 'fix', draft: {} };
+
+  it('says a tailored library pattern is the tested pattern, not a new one', () => {
+    const s = summarizeComposed({
+      ...base,
+      adaptation: { directives: { diagnose: 'x', plan: 'y' }, initial: { maxAttempts: 3 } },
+    })!;
+    expect(s).toMatchObject({ kind: 'tailored', steps, aiSteps: ai, guided: ['diagnose', 'plan'] });
+    expect(s.headline).toBe(
+      `fix: the tested library pattern (${steps} steps, ${ai} AI), with guidance for this request on 2 AI steps and 1 setting changed; its steps are unchanged`,
+    );
+  });
+
+  it('tells apart the pattern as is, a rewrite and a new pattern', () => {
+    expect(summarizeComposed({ ...base, adaptation: {} })!.kind).toBe('library');
+    expect(summarizeComposed({ ...base, draft: { name: 'fix' } })!.kind).toBe('rewritten');
+    expect(summarizeComposed({ ...base, chosen: 'new' })!.headline).toMatch(
+      /a new pattern composed/,
+    );
+    expect(summarizeComposed({})).toBeUndefined();
   });
 });

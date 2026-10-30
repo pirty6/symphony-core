@@ -221,6 +221,62 @@ export interface Adaptation {
   readonly initial?: Readonly<Record<string, unknown>>;
 }
 
+/** What the go-gate says about a composed score: the tested pattern (tailored or as is), or not. */
+export interface ComposedSummary {
+  readonly kind: 'tailored' | 'library' | 'rewritten' | 'new';
+  readonly name: string;
+  /** Steps after start, and how many of them are AI steps. */
+  readonly steps: number;
+  readonly aiSteps: number;
+  /** AI steps given guidance for this request, and settings given new initial values. */
+  readonly guided: readonly string[];
+  readonly settings: readonly string[];
+  readonly headline: string;
+}
+
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+
+/**
+ * Summarize the maestro's composed score from its state (`normalized`, `chosen`,
+ * `adaptation`, `draft`), so a tailored library pattern does not read as a new algorithm.
+ */
+export function summarizeComposed(
+  state: Readonly<Record<string, unknown>>,
+): ComposedSummary | undefined {
+  const p = state.normalized as
+    | { name?: unknown; nodes?: readonly { kind?: unknown }[] }
+    | undefined;
+  if (!p || !Array.isArray(p.nodes)) return undefined;
+  const name = typeof p.name === 'string' ? p.name : 'score';
+  const steps = p.nodes.filter((n) => n.kind !== 'start').length;
+  const aiSteps = p.nodes.filter((n) => n.kind === 'agent').length;
+  const a = (state.adaptation ?? {}) as Adaptation;
+  const guided = Object.keys(a.directives ?? {});
+  const settings = Object.keys(a.initial ?? {});
+  const draft = state.draft;
+  const rewritten = !!draft && typeof draft === 'object' && Object.keys(draft as object).length > 0;
+  const kind: ComposedSummary['kind'] =
+    state.chosen === 'new'
+      ? 'new'
+      : rewritten
+        ? 'rewritten'
+        : guided.length > 0 || settings.length > 0
+          ? 'tailored'
+          : 'library';
+  const size = `${plural(steps, 'step')}, ${aiSteps} AI`;
+  const changes = [
+    ...(guided.length ? [`guidance for this request on ${plural(guided.length, 'AI step')}`] : []),
+    ...(settings.length ? [`${plural(settings.length, 'setting')} changed`] : []),
+  ].join(' and ');
+  const headline = {
+    tailored: `${name}: the tested library pattern (${size}), with ${changes}; its steps are unchanged`,
+    library: `${name}: the tested library pattern as is (${size})`,
+    rewritten: `${name}: rewritten from the library pattern for this request (${size})`,
+    new: `${name}: a new pattern composed for this request (${size})`,
+  }[kind];
+  return { kind, name, steps, aiSteps, guided, settings, headline };
+}
+
 const MAX_GUIDANCE = 2000;
 
 /** Apply an adaptation; any part that does not fit the pattern is an error, nothing is guessed. */

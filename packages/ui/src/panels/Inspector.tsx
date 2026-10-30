@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { TOOL_OUTPUTS } from '@core/catalog'
+import { summarizeComposed } from '@core/draft'
 import type { Frame } from '@core/replay'
 import { parseFieldInput } from '@core/schema'
 import type { ScoreEdge, ScoreNode, StateField } from '@core/types'
@@ -325,7 +326,7 @@ function Tailoring({ adaptation }: { adaptation: unknown }) {
   if (guidance.length === 0 && settings.length === 0) return null
   return (
     <div className="tailoring" data-testid="tailoring">
-      <div className="muted">Tailored for this request (the steps above are the tested pattern):</div>
+      <div className="muted">Tailored for this request (guidance added to these steps; the steps themselves are the tested pattern):</div>
       <ul>
         {guidance.map(([step, text]) => (
           <li key={step}>
@@ -347,22 +348,29 @@ function ComposedScore({ state }: { state: Readonly<Record<string, unknown>> }) 
   if (!p?.nodes) return null
   const notes = (state.debateNotes as string[] | undefined) ?? []
   const missing = (state.contextNotes as string[] | undefined) ?? []
+  const summary = summarizeComposed(state)
+  // A tested library pattern's steps are known: fold them away so it does not read as new.
+  const fresh = summary?.kind === 'new' || summary?.kind === 'rewritten'
   return (
     <div className="composed" data-testid="composed-score">
       <div>
         <b>{p.name}</b> · complexity {String(state.complexity)} · round {String(state.round)}
         {state.chosen === 'new' ? ' · new pattern' : ''}
       </div>
+      {summary && <p data-testid="composed-headline">{summary.headline}</p>}
       <p className="muted">{p.description}</p>
-      <ol className="composed-steps">
-        {p.nodes
-          .filter((n) => n.kind !== 'start')
-          .map((n) => (
-            <li key={n.id}>
-              {n.label} <small className="muted">{n.kind === 'agent' ? n.role : n.kind}</small>
-            </li>
-          ))}
-      </ol>
+      <details open={fresh} data-testid="composed-steps">
+        <summary>{fresh ? 'Steps' : `Show the ${summary?.steps ?? ''} tested steps`}</summary>
+        <ol className="composed-steps">
+          {p.nodes
+            .filter((n) => n.kind !== 'start')
+            .map((n) => (
+              <li key={n.id}>
+                {n.label} <small className="muted">{n.kind === 'agent' ? n.role : n.kind}</small>
+              </li>
+            ))}
+        </ol>
+      </details>
       <Tailoring adaptation={state.adaptation} />
       {notes.length > 0 && (
         <ul className="debate-notes">
