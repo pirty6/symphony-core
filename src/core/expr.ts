@@ -47,7 +47,8 @@ type FnName =
   | 'ids'
   | 'refs'
   | 'pick'
-  | 'join';
+  | 'join'
+  | 'withIds';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -71,6 +72,7 @@ const FNS: Record<FnName, number> = {
   refs: 1,
   pick: 2,
   join: 2,
+  withIds: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -377,6 +379,11 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
             const i = Number(String(p).trim());
             return Number.isInteger(i) && i >= 1 && i <= x.length ? [x[i - 1]] : [];
           });
+        }
+        case 'withIds': {
+          // withIds(findings, refs(answer)): the numbered entries whose id is listed, in order.
+          const wanted = new Set(strings('withIds', args[1]));
+          return strings('withIds', x).filter((s) => wanted.has(LEADING_ID.exec(s)?.[1] ?? ''));
         }
         case 'join': {
           // join(list, sep): strings only, so nothing is silently stringified.

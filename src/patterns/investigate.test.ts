@@ -393,3 +393,17 @@ describe('investigate sizes its parallel work from the plan', () => {
     expect(JSON.stringify(plan?.attempts ?? bad.state.pause)).toMatch(/from 1 to 6/);
   });
 });
+
+describe('investigate hands on its evidence', () => {
+  it('the result carries the findings the answer cites, with their ids', () => {
+    const { r } = runWith(['workspace']);
+    const cited = r.state.state.citedFindings as string[];
+    expect(cited.length).toBeGreaterThan(0);
+    expect(
+      cited.every(
+        (f) => /^F\d+ /.test(f) && String(r.state.state.answer).includes(`[${f.split(' ')[0]}]`),
+      ),
+    ).toBe(true);
+    expect(investigate.result).toContain('citedFindings');
+  });
+});

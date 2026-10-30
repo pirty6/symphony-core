@@ -85,6 +85,7 @@ describe('evalExpr values', () => {
     ['2 + 3 * 4', 14],
     ['(2 + 3) * 4', 20],
     ['join([], "-")', ''],
+    ['withIds(["F1 a", "F2 b", "F3 c"], ["F3", "F1", "F9"])', ['F1 a', 'F3 c']],
     ['refs("Port 8081 [F2], see F10 and F2; not FF2 or F2x")', ['F2', 'F10']],
     ['refs(["[F1]", "F1 and F3"])', ['F1', 'F3']],
     ['subset(refs("[F1][F2]"), ids(numbered(["a", "b"], 1)))', true],

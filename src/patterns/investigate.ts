@@ -64,7 +64,15 @@ export const investigate: Pattern = {
     'Answer a question thoroughly with the evidence it needs: repo files (big repos are searched first), web pages, experiments, history, GitHub, dependencies, MCP. Nothing listed is skipped; every claim is cited.',
   verbTriggers: ['investigate', 'explain', 'why', 'how does', 'find out', 'research'],
   requiredContext: ['question'],
-  result: ['answer', 'rulings', 'openQuestions', 'disagreements', 'unresolvedObjections'],
+  result: [
+    'answer',
+    'rulings',
+    'openQuestions',
+    'disagreements',
+    'unresolvedObjections',
+    // The evidence the answer rests on, so a chained run (fix, refactor…) need not find it again.
+    'citedFindings',
+  ],
   goalFrom: 'question',
   maxSteps: 5000,
   state: withState(
@@ -74,6 +82,11 @@ export const investigate: Pattern = {
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
       { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
+      {
+        name: 'citedFindings',
+        type: 'string[]',
+        description: 'The findings the answer cites, with their ids',
+      },
       {
         name: 'parts',
         type: 'string[]',
@@ -895,6 +908,10 @@ export const investigate: Pattern = {
       label: 'Attach part answers',
       // The engine, not the AI, puts every part in the result, after the (challenged) summary.
       assign: [
+        {
+          field: 'citedFindings',
+          expr: 'withIds(findings, refs(answer + " " + join(partAnswers, " ")))',
+        },
         {
           field: 'answer',
           expr: 'if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer)',
