@@ -162,7 +162,7 @@ Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the V
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
 state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + - *`,
-`len empty includes lower append if chars subset take drop first unique without pick join withIds`, and
+`len empty includes lower append if chars subset take drop first unique without pick join withIds brief`, and
 `verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
@@ -644,6 +644,11 @@ solved rate or citation validity.
 - **Time limit per step** (15 min, `SYMPHONY_STEP_TIMEOUT_S`): a hung call is retried, then waits
   for a human like any stuck step. Mechanical steps already play a tier lower (smaller model,
   lower reasoning effort) through `complexityShift`.
+- **Lean findings.** investigate's assess, gap chaser, part answers and debaters read
+  `findingsBrief`: each finding with its id and location, its (already checked) quote left out
+  and capped at 240 characters. On the largest recorded run (3,285 findings) that is 30% fewer
+  characters in the block that made up 86-96% of those prompts. The final answer still reads them
+  in full.
 - **Compact JSON in prompts.** Inputs are sent unindented: about 3-4% fewer prompt characters
   (measured on 549 recorded Copilot prompts), less than the 1.5x a pretty-printing estimate
   suggests, because most of a prompt's JSON is long strings.

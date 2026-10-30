@@ -48,7 +48,8 @@ type FnName =
   | 'refs'
   | 'pick'
   | 'join'
-  | 'withIds';
+  | 'withIds'
+  | 'brief';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -73,6 +74,7 @@ const FNS: Record<FnName, number> = {
   pick: 2,
   join: 2,
   withIds: 2,
+  brief: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -378,6 +380,19 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           return (args[1] as unknown[]).flatMap((p) => {
             const i = Number(String(p).trim());
             return Number.isInteger(i) && i >= 1 && i <= x.length ? [x[i - 1]] : [];
+          });
+        }
+        case 'brief': {
+          // brief(findings, 240): each entry without its `quotes` (already checked), at most n chars.
+          const n = args[1];
+          if (typeof n !== 'number' || n < 8)
+            throw new ExprError('brief() needs a length of 8 or more');
+          return strings('brief', x).map((s) => {
+            const t = s
+              .replace(/`[^`]*`/g, '')
+              .replace(/\s+/g, ' ')
+              .trim();
+            return t.length > n ? `${t.slice(0, n - 1)}…` : t;
           });
         }
         case 'withIds': {

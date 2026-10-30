@@ -17,7 +17,8 @@ const hypotheses = hypothesesPhase({
 });
 const challenge = challengePhase({
   subject: 'question',
-  evidence: 'findings',
+  // The debaters read findings without their (already checked) quotes.
+  evidence: 'findingsBrief',
   draft: 'answer',
   gaps: 'gaps',
   reopen: 'chase',
@@ -749,8 +750,8 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Find gaps',
       directive:
-        'For EACH sub-question, decide whether `findings` answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Set `confidence` (0..1) that the findings fully answer `question`.',
-      reads: ['question', 'subQuestions', 'findings', 'skipSources', 'skipReasons'],
+        'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Set `confidence` (0..1) that the findings fully answer `question`.',
+      reads: ['question', 'subQuestions', 'findingsBrief', 'skipSources', 'skipReasons'],
       writes: ['gaps', 'confidence'],
       retries: 2,
       checks: [
@@ -775,7 +776,7 @@ export const investigate: Pattern = {
       directive:
         'Close every gap in `gaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
-      reads: ['hypotheses', 'question', 'gaps', 'hint', 'findings', 'sourceInfo', 'consulted'],
+      reads: ['hypotheses', 'question', 'gaps', 'hint', 'findingsBrief', 'sourceInfo', 'consulted'],
       writes: ['queries', 'newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -837,10 +838,10 @@ export const investigate: Pattern = {
       // evidence, instead of one call answering everything and drifting or running out.
       fanOut: { over: 'parts', per: 1, agents: 'agents' },
       directive:
-        'Answer `question` for the ONE subject in `parts` only, using only `findings`. ' +
+        'Answer `question` for the ONE subject in `parts` only, using only `findingsBrief` (the findings, quotes left out). ' +
         CITE_BY_ID +
         ' Findings in `unverified` could not be verified: do not rely on them. Write exactly one `partAnswers` entry: a Markdown section that starts with "## " and the subject, says what the evidence shows about it and what follows from it (for the question asked), and cites finding ids. Stay on your subject: say what holds for every subject in one closing line starting "Shared:" rather than at length. No coverage section; the overall answer has it.',
-      reads: ['question', 'parts', 'subQuestions', 'hint', 'findings', 'gaps', 'unverified'],
+      reads: ['question', 'parts', 'subQuestions', 'hint', 'findingsBrief', 'gaps', 'unverified'],
       writes: ['partAnswers'],
       retries: 2,
       checks: [
