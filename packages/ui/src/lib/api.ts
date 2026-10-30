@@ -29,6 +29,8 @@ export interface SavedSummary {
   readonly steps: number
   /** Played by the offline demo: hidden from the list unless asked for. */
   readonly demo?: boolean
+  /** What the run cost, when the provider reported it. */
+  readonly usage?: { readonly inputTokens: number; readonly outputTokens: number; readonly calls: number; readonly premiumRequests?: number }
 }
 
 export interface ContinueRunRequest {

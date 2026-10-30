@@ -1017,7 +1017,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       const shown = rest.includes('--all') ? all : all.filter((r) => !r.demo);
       for (const r of shown)
         console.log(
-          `${r.startedAt}  ${r.pattern.padEnd(12)} ${r.outcome.padEnd(10)} ${join(dir, r.file)}${r.demo ? c.dim('  (demo)') : ''}`,
+          `${r.startedAt}  ${r.pattern.padEnd(12)} ${r.outcome.padEnd(10)} ${join(dir, r.file)}${r.demo ? c.dim('  (demo)') : ''}${r.usage ? c.dim(`  ${Math.round(r.usage.inputTokens / 1000)}k in · ${r.usage.calls} calls`) : ''}`,
         );
       const hidden = all.length - shown.length;
       if (hidden > 0) console.log(c.dim(`${hidden} offline-demo runs hidden (--all to show them)`));
