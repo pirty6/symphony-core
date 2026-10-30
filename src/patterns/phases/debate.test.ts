@@ -73,7 +73,9 @@ describe('debate phases in investigate', () => {
       },
     };
     const { r, ran, state } = play(2, relentless);
-    expect(r.state.outcome).toBe('success');
+    // It ends, and says so: an answer with objections still open is partial.
+    expect(r.state.outcome).toBe('partial');
+    expect(r.state.cursor).toBe('doubts');
     expect(state.debateRounds).toBe(state.maxDebateRounds);
     expect(ran('challenge')).toBe((state.maxDebateRounds as number) + 1);
   });

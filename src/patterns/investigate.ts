@@ -901,7 +901,15 @@ export const investigate: Pattern = {
         },
       ],
     },
-    { id: 'done', kind: 'end', label: 'Answered' },
+    {
+      id: 'settled',
+      kind: 'condition',
+      label: 'Settled?',
+      // Open objections or low confidence are said in the outcome, not only in the text.
+      expression: 'len(unresolvedObjections) == 0 && confidence >= 0.5',
+    },
+    { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
+    { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
   ],
   edges: [
     { id: 'start-recall', from: 'start', to: 'recall' },
@@ -1003,7 +1011,9 @@ export const investigate: Pattern = {
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
-    { id: 'attachParts-done', from: 'attachParts', to: 'done' },
+    { id: 'attachParts-settled', from: 'attachParts', to: 'settled' },
+    { id: 'settled-done', from: 'settled', to: 'done', branch: 'then' },
+    { id: 'settled-doubts', from: 'settled', to: 'doubts', branch: 'else' },
   ],
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
