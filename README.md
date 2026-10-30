@@ -596,7 +596,7 @@ solved rate or citation validity.
   implement and a refactor checked by hidden tests the AI never saw, and an investigate whose
   docs say 8080 while the code says 8081. It records solved, citations valid, tokens, time and
   models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline on
-  correctness. `--task routing` adds 20 maestro requests (compose only) judged in code on the
+  correctness. `--task routing` adds 21 maestro requests (compose only) judged in code on the
   pattern chosen, a complexity band and the chained pattern; `rehearse maestro --fields
   chosen,complexity` measures how often routing agrees with itself.
 - **Checked evidence.** Findings are written `path:line — fact \`quote\``. A **Check citations**

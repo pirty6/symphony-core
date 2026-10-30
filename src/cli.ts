@@ -1030,7 +1030,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
   eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time
-      --task routing           20 maestro requests: right pattern, complexity band and chain (compose only)
+      --task routing           21 maestro requests: right pattern, complexity band and chain (compose only)
   runs --prune [--dry-run]     delete demo runs >7 days, compact runs >30 days (still replayable)
 
 Studio (visual): npm start`);
