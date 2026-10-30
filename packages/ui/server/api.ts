@@ -273,6 +273,14 @@ export function createApi(opts: ApiOptions) {
     const { run: saved, issues } = await loadRun(file)
     if (issues.length) throw new CompileError(issues.map((message) => ({ message })))
     const kind = body.kind === 'forked' ? 'forked' : 'resumed'
+    if (kind === 'resumed') {
+      // The same run, played by this server: one copy, never two writing the same file.
+      const same = [...savedFiles].filter(([, f]) => f === file).map(([id]) => runs.get(id))
+      const playing = same.find((r) => r && !TERMINAL.has(r.status))
+      if (playing) return playing
+      // An ended copy is replaced by the resumed one in the list of runs.
+      for (const r of same) if (r) runs.delete(r.id)
+    }
     const perf = saved.performance
     const last = perf.steps.at(-1)?.step ?? 0
     if (kind === 'resumed' && perf.outcome !== 'in-progress' && perf.outcome !== 'cancelled') {
