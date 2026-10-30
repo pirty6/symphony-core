@@ -77,6 +77,7 @@ export function testFirstPhase(cfg: TestFirstConfig): Fragment {
       role: 'executor',
       label: 'Write tests first',
       maxVisits: RED_VISITS,
+      visitsFrom: '(maxRedAttempts + 1) * 3',
       retries: 2,
       directive: `Write ONLY the tests in \`testsToAdd\`, so that every entry of \`acceptanceCriteria\` is checked by a test, following the project's test conventions. Do NOT implement \`${cfg.subject}\` and do not change any non-test file: the tests for new behaviour must fail now, because it does not exist yet, and the engine checks that the suite fails. A criterion that existing behaviour stays the same is a guard: its test passes now, and that is right. Test the behaviour the criteria describe (inputs and observable output), not implementation details, so any correct implementation passes. List every file you changed in \`testFiles\`. If \`redFeedback\` is set, your last tests were not accepted: fix what it says (see \`wrongRed\` and \`redOutput\`).`,
       reads: [
@@ -100,6 +101,7 @@ export function testFirstPhase(cfg: TestFirstConfig): Fragment {
       tool: 'git.diff',
       output: { diff: 'diff', hash: 'diffHash', files: 'changedFiles' },
       maxVisits: RED_VISITS,
+      visitsFrom: '(maxRedAttempts + 1) * 3',
     },
     {
       id: 'onlyTests',
@@ -119,6 +121,7 @@ export function testFirstPhase(cfg: TestFirstConfig): Fragment {
       inputs: { command: 'testCommand' },
       output: { passed: 'testsPassed', output: 'redOutput' },
       maxVisits: RED_VISITS,
+      visitsFrom: '(maxRedAttempts + 1) * 3',
     },
     { id: 'isRed', kind: 'condition', label: 'Red?', expression: '!testsPassed' },
     retry(
@@ -131,6 +134,7 @@ export function testFirstPhase(cfg: TestFirstConfig): Fragment {
       role: 'assessor',
       label: 'Failing for the right reason?',
       maxVisits: RED_VISITS,
+      visitsFrom: '(maxRedAttempts + 1) * 3',
       retries: 2,
       directive:
         'The tests in `testFiles` were written before the implementation and the suite fails (`redOutput`). For EVERY entry of `acceptanceCriteria`, in order, write one `redReport` entry "C<n>: RED | GUARD | NOT RED — test name — why". RED: a test for new behaviour fails for the right reason, the behaviour is missing (wrong or no output, an unknown option, a function or module that does not exist yet). GUARD: the criterion is that existing behaviour stays the same, and its test passes now (that is right, it guards the change). NOT RED: anything else. Wrong reasons: a syntax or type error in the test itself, a broken import of a test helper, a typo, a test for new behaviour that passes now or would pass with a wrong implementation, other tests that were already failing, or a criterion no test checks. Copy every NOT RED entry, with what is wrong, into `wrongRed` (empty when every criterion is RED or GUARD).',
@@ -182,6 +186,7 @@ export function testFirstPhase(cfg: TestFirstConfig): Fragment {
       inputs: { paths: 'testFiles' },
       output: { hash: 'testsHash' },
       maxVisits: RED_VISITS,
+      visitsFrom: '(maxRedAttempts + 1) * 3',
     },
     {
       id: 'redBase',

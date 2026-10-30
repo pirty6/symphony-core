@@ -478,21 +478,46 @@ function makePause(
     shows: node.shows ?? [],
     outputSchema: fieldsOf(score, node.writes),
     ...(feedback ? { feedback } : {}),
+    ...(node.unattended ? { unattended: node.unattended } : {}),
     moveKey,
   };
+}
+
+/** maxVisits, raised by visitsFrom when a counter on the state is larger. */
+function visitCap(node: ScoreNode, state: Readonly<Record<string, unknown>>): number | undefined {
+  if (!node.visitsFrom) return node.maxVisits;
+  let from: unknown;
+  try {
+    from = evalExpr(parseExpr(node.visitsFrom), state);
+  } catch {
+    from = undefined;
+  }
+  return typeof from === 'number' && Number.isFinite(from)
+    ? Math.max(node.maxVisits ?? 0, Math.ceil(from))
+    : node.maxVisits;
 }
 
 /** Run deterministic nodes until a pause or a terminal state. */
 function drive(score: ExecutableScore, ctx: Ctx): void {
   while (ctx.kind === 'running') {
     const node = nodeOf(score, ctx.cursor);
+    // A limit ends the run partial, keeping its state, instead of throwing the work away.
     if (ctx.step >= score.maxSteps) {
-      fail(ctx, `maxSteps (${score.maxSteps}) exceeded`, node.id);
+      finish(
+        ctx,
+        'partial',
+        `stopped at the step limit (maxSteps ${score.maxSteps}) at '${node.id}'; the work so far is kept`,
+      );
       return;
     }
     const visits = (ctx.visits[node.id] ?? 0) + 1;
-    if (node.maxVisits !== undefined && visits > node.maxVisits) {
-      fail(ctx, `node '${node.id}' exceeded maxVisits (${node.maxVisits})`, node.id);
+    const cap = visitCap(node, ctx.state);
+    if (cap !== undefined && visits > cap) {
+      finish(
+        ctx,
+        'partial',
+        `stopped at a limit: '${node.id}' reached maxVisits (${cap}); the work so far is kept`,
+      );
       return;
     }
     const hashBefore = stateHashOf(ctx.state, ctx.env);
@@ -878,12 +903,9 @@ function resolveAgent(
     stateHash: stateHashOf(ctx.state, ctx.env),
   });
   if (verdict.shouldTerminate) {
-    const outcome =
-      verdict.outcome === 'applied'
-        ? 'success'
-        : verdict.outcome === 'failed'
-          ? 'failed'
-          : 'partial';
+    // Success is the pattern's to declare, at an end: stopping early skips the steps and
+    // checks still ahead, so the run is at best partial.
+    const outcome = verdict.outcome === 'failed' ? 'failed' : 'partial';
     finish(ctx, outcome, `'${node.id}' terminated: ${verdict.reason}`, res.at);
     return;
   }

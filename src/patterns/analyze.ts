@@ -84,6 +84,7 @@ export const analyze: Pattern = {
       role: 'assessor',
       solo: true,
       maxVisits: 12,
+      visitsFrom: 'maxAnalyses + 2',
       label: 'Decide next move',
       directive:
         'Given the `question`, the `profile` and the `findings` so far, decide the single most informative analysis to run next and write it as a concrete, runnable instruction in `nextAnalysis` (what to compute, grouped by what, filtered how). Do not repeat anything in `analyses`. Explain the choice in `rationale`.',
@@ -95,6 +96,7 @@ export const analyze: Pattern = {
       kind: 'agent',
       role: 'executor',
       maxVisits: 12,
+      visitsFrom: 'maxAnalyses + 2',
       label: 'Run analysis',
       directive:
         'Run `nextAnalysis` against `data` with a script under .symphony/scratch/ (never modify the source data). Put the key output (tables or numbers, trimmed) in `result` and each insight, with its numbers, in `newFindings`.',

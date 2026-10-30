@@ -168,6 +168,8 @@ export type WorkspaceDiff = {
   readonly files: readonly string[];
 };
 
+/** git's id for the empty tree. */
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MAX_DIFF = 30_000;
 
 /** Cut a long diff, naming every file whose changes were cut off (nothing dropped silently). */
@@ -204,17 +206,22 @@ export async function workspaceDiff(
         signal: ctx.signal,
       })
     ).stdout;
+  // A repository without commits yet has no HEAD: compare with the empty tree.
+  const base = await run(['rev-parse', '--verify', '-q', 'HEAD']).then(
+    () => 'HEAD',
+    () => EMPTY_TREE,
+  );
   const diff = await run([
     '--no-pager',
     'diff',
-    'HEAD',
+    base,
     '--no-color',
     '--no-ext-diff',
     '--',
     ...where,
     NOT_THE_EDIT,
   ]);
-  const changed = (await run(['diff', 'HEAD', '--name-only', '--', ...where, NOT_THE_EDIT]))
+  const changed = (await run(['diff', base, '--name-only', '--', ...where, NOT_THE_EDIT]))
     .split('\n')
     .filter(Boolean);
   const untracked = (

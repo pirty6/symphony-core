@@ -35,6 +35,9 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
     id,
     label: label ?? id,
     ...(posInt(raw.maxVisits) ? { maxVisits: posInt(raw.maxVisits)! } : {}),
+    ...(typeof raw.visitsFrom === 'string' && raw.visitsFrom.trim()
+      ? { visitsFrom: raw.visitsFrom }
+      : {}),
   };
   switch (raw.kind) {
     case 'start':
@@ -119,6 +122,9 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         message: str(raw.message) ?? label ?? id,
         writes: strList(raw.writes),
         ...(strList(raw.shows).length ? { shows: strList(raw.shows) } : {}),
+        ...(raw.unattended === 'reject' || raw.unattended === 'approve'
+          ? { unattended: raw.unattended }
+          : {}),
       };
     default:
       errors.push(`nodes[${i}] (${id}) has unknown kind '${String(raw.kind)}'`);

@@ -51,6 +51,11 @@ interface NodeBase {
   readonly label: string;
   /** Hard cap on how many times this node may be entered in one run. */
   readonly maxVisits?: number;
+  /**
+   * A number expression on the state (e.g. 'maxAnalyses + 2') that raises maxVisits
+   * when a counter you can set is larger, so raising the counter cannot hit the cap.
+   */
+  readonly visitsFrom?: string;
 }
 
 /** Entry point. Pure routing. */
@@ -136,6 +141,12 @@ export interface ApprovalNode extends NodeBase {
   readonly writes: readonly string[];
   /** State keys to show the human before they decide. */
   readonly shows?: readonly string[];
+  /**
+   * What a run with nobody to ask (auto-approve, the offline demo) answers here when
+   * its script does not say: approve (default), or reject for a gate that must not be
+   * passed without a person (e.g. accepting a change the review blocked).
+   */
+  readonly unattended?: 'approve' | 'reject';
 }
 
 /**
@@ -412,6 +423,8 @@ export interface ApprovalPause {
   readonly shows: readonly string[];
   readonly outputSchema: readonly StateField[];
   readonly feedback?: readonly string[];
+  /** ApprovalNode.unattended. */
+  readonly unattended?: 'approve' | 'reject';
   readonly moveKey: string;
 }
 

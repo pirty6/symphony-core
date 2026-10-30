@@ -122,6 +122,17 @@ setInterval(() => {}, 1000);`,
 });
 
 describe('git.diff', () => {
+  it('works in a repository with no commits yet', async () => {
+    const d = dir();
+    const before = await workspaceDiff(ctx(d));
+    expect(before.files).toEqual([]);
+    writeFileSync(join(d, 'a.txt'), 'one\n');
+    execFileSync('git', ['-C', d, 'add', '.']);
+    const staged = await workspaceDiff(ctx(d));
+    expect(staged.files).toEqual(['a.txt']);
+    expect(staged.hash).not.toBe(before.hash);
+  });
+
   it('hashes every change against HEAD, untracked files included, without touching the index', async () => {
     const d = dir();
     writeFileSync(join(d, 'a.txt'), 'one\n');

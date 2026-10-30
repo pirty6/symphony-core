@@ -81,7 +81,7 @@ export function scriptedResolution(
     };
   }
   const answer = demo?.approvals?.[pause.nodeId]?.(engine.state, visit) ?? {
-    approved: true,
+    approved: pause.unattended !== 'reject',
     updates: Object.fromEntries(pause.outputSchema.map((f) => [f.name, zeroValue(f.type)])),
   };
   return {

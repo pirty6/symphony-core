@@ -124,6 +124,20 @@ describe('pattern library', () => {
     expect(r.state.cursor).toBe('fixed');
   });
 
+  it('raising a counter never hits a hard-coded cap (analyze with 14 analyses)', () => {
+    const p = findPattern('analyze')!;
+    const r = runScripted(
+      compileScore(p, {
+        goal: 'g',
+        context: { ...p.demo!.context!, maxAnalyses: 14 },
+        improvisation: 0,
+      }),
+      p.demo,
+    );
+    expect(r.state.outcome).toBe('success');
+    expect(r.state.state.analyses).toHaveLength(14);
+  });
+
   it('runs a pattern without demo scripts using placeholders', () => {
     const p = findPattern('review')!;
     const r = runScripted(compileScore(p, { goal: 'g', context: { target: 'x' } }), undefined);

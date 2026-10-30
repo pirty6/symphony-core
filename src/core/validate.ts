@@ -153,6 +153,11 @@ export function validateGraph(g: PatternGraph): ValidationReport {
     if (!ID.test(n.id)) errors.push({ ...at, message: `invalid node id '${n.id}'` });
     if (nodes.has(n.id)) errors.push({ ...at, message: `duplicate node id '${n.id}'` });
     nodes.set(n.id, n);
+    if (n.visitsFrom !== undefined) {
+      checkExpr(n.visitsFrom, new Set(g.state.map((f) => f.name)), at, 'visitsFrom', errors);
+      if (n.maxVisits === undefined)
+        errors.push({ ...at, message: 'visitsFrom raises maxVisits: set maxVisits as the floor' });
+    }
     if (n.maxVisits !== undefined && (!Number.isInteger(n.maxVisits) || n.maxVisits < 1)) {
       errors.push({ ...at, message: 'maxVisits must be a positive integer' });
     }
