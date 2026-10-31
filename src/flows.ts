@@ -91,6 +91,9 @@ export function flowBlock(name: string): string {
   ].join('\n');
 }
 
+/** A doc as LF text, however it was checked out (Windows checkouts may use CRLF). */
+export const readDoc = (file: string): string => readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+
 /** The doc with every flow block regenerated. */
 export function updateFlows(markdown: string): string {
   return markdown.replace(BLOCK, (_, name: string) => flowBlock(name));
@@ -98,7 +101,7 @@ export function updateFlows(markdown: string): string {
 
 if (process.argv[1]?.endsWith('flows.ts')) {
   for (const file of FLOW_DOCS) {
-    const before = readFileSync(file, 'utf8');
+    const before = readDoc(file);
     const after = updateFlows(before);
     if (after !== before) writeFileSync(file, after);
     console.log(`${after === before ? 'up to date' : 'updated'}: ${file}`);
