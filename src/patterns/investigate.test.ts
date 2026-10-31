@@ -254,7 +254,12 @@ describe('open questions', () => {
     );
     expect(r.state.outcome).toBe('success');
     const gap = (r.state.state.subQuestions as string[])[0];
-    expect(r.state.state.openQuestions).toEqual([gap, 'my own wording of it']);
+    // The gap verbatim, the AI's own wording, and the sub-answer that says it is open.
+    expect(r.state.state.openQuestions).toEqual([
+      gap,
+      'my own wording of it',
+      expect.stringMatching(/^S1: OPEN — /),
+    ]);
   });
 });
 
@@ -299,6 +304,7 @@ describe('investigate only records evidence that holds', () => {
           updates: {
             answer: 'It is validated in the engine [F999].',
             openQuestions: [],
+            subAnswers: ((s.subQuestions as string[]) ?? []).map((_, i) => `S${i + 1}: OPEN — x`),
             rulings: ((s.hypotheses as string[]) ?? []).map(
               (h) => `${h.split(':')[0]}: UNKNOWN — x`,
             ),
@@ -486,5 +492,41 @@ describe('investigate coverage', () => {
       /\n## Coverage\n\n- Files not triaged: .+\n- Pages read: .+\n- Experiments run: none\n/,
     );
     expect(answer.match(/## Coverage/g)).toHaveLength(1);
+  });
+});
+
+const answerRejections = (r: { state: { events: readonly { type: string; nodeId?: string }[] } }) =>
+  JSON.stringify(
+    r.state.events.filter((e) => e.type === 'response-rejected' && e.nodeId === 'answer'),
+  );
+
+describe('investigate answers every sub-question', () => {
+  it('one sub-answer per sub-question, each cited or said to be open; none skipped', () => {
+    const skipping = (subAnswers: (s: Readonly<Record<string, unknown>>) => string[]) =>
+      runWith(['workspace'], demo.approvals, {
+        agents: {
+          ...demo.agents,
+          answer: (s, n) => {
+            const good = demo.agents!.answer!(s, n);
+            return n === 0
+              ? { ...good, updates: { ...good.updates, subAnswers: subAnswers(s) } }
+              : good;
+          },
+        },
+      }).r;
+    // Missing (the plan here has a single sub-question).
+    expect(answerRejections(skipping(() => []))).toMatch(/one subAnswers entry per sub-question/);
+    // Neither cited nor open.
+    expect(
+      answerRejections(
+        skipping((s) => (s.subQuestions as string[]).map((_, i) => `S${i + 1}: it is fine`)),
+      ),
+    ).toMatch(/citing findings, or/);
+    const ok = runWith(['workspace']).r;
+    expect(ok.state.state.subAnswers).toEqual(
+      (ok.state.state.subQuestions as string[]).map((_, i) =>
+        expect.stringMatching(new RegExp(`^S${i + 1}: `)),
+      ),
+    );
   });
 });

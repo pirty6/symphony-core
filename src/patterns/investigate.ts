@@ -108,6 +108,8 @@ export const investigate: Pattern = {
     'citedFindings',
     // Why a partial answer is partial.
     'doubts',
+    // Each sub-question, answered (cited) or said to be open.
+    'subAnswers',
   ],
   goalFrom: 'question',
   maxSteps: 5000,
@@ -119,6 +121,11 @@ export const investigate: Pattern = {
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
       { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
+      {
+        name: 'subAnswers',
+        type: 'string[]',
+        description: 'One per sub-question, in order: "S1: answer [F3]" or "S1: OPEN — why"',
+      },
       {
         name: 'doubts',
         type: 'string[]',
@@ -985,7 +992,7 @@ export const investigate: Pattern = {
       directive:
         'Answer `question` using only `findings`. ' +
         CITE_BY_ID +
-        ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
+        ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). In `subAnswers`, give one entry per entry of `subQuestions`, in order: "S<n>: <its answer in one or two sentences> [F…]" citing the findings it rests on, or "S<n>: OPEN — <what is missing>" when the findings do not answer it. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
       reads: [
         'question',
         'hint',
@@ -1009,13 +1016,28 @@ export const investigate: Pattern = {
         // The objections it must answer when it was challenged.
         'realObjections',
       ],
-      writes: ['answer', 'openQuestions', 'rulings'],
+      writes: ['answer', 'openQuestions', 'rulings', 'subAnswers'],
       verifyBelow: 0.6,
       retries: 2,
       complexityShift: 1,
       checks: [
         { expr: 'len(answer) > 0', message: 'Write the answer.' },
         citesFindings('answer'),
+        // Every sub-question is answered with evidence, or said to be open: none is skipped.
+        {
+          expr: 'len(subAnswers) == len(subQuestions)',
+          message: 'Give exactly one subAnswers entry per sub-question, in order.',
+        },
+        {
+          // (No backslashes in expressions: "[[]" is a literal "[".)
+          expr: 'len(unmatched(subAnswers, "^S[0-9]+: (OPEN([^A-Za-z]|$)|.*[[]F[0-9]+)")) == 0',
+          message:
+            'Write each subAnswers entry as "S<n>: answer [F…]" citing findings, or "S<n>: OPEN — what is missing".',
+        },
+        {
+          expr: 'subset(refs(subAnswers), ids(findings))',
+          message: 'subAnswers may cite only ids that exist in findings.',
+        },
         {
           expr: 'len(rulings) == len(hypotheses)',
           message:
@@ -1029,7 +1051,11 @@ export const investigate: Pattern = {
       label: 'List open questions',
       // The engine, not the AI, guarantees every remaining gap is reported verbatim.
       assign: [
-        { field: 'openQuestions', expr: 'unique(gaps + openQuestions + unresolvedObjections)' },
+        {
+          field: 'openQuestions',
+          // Sub-questions the answer says are open are open questions, word for word.
+          expr: 'unique(gaps + openQuestions + unresolvedObjections + without(subAnswers, unmatched(subAnswers, "^S[0-9]+: OPEN([^A-Za-z]|$)")))',
+        },
       ],
     },
     ...hypotheses.nodes,
@@ -1375,6 +1401,12 @@ export const investigate: Pattern = {
             '3. **Safety**: an assessor can never write keys it was not given (`updates.x is not writable here`).',
           ].join('\n'),
           openQuestions: (s.gaps as string[]) ?? [],
+          // One per sub-question: answered with a citation, or open when it is still a gap.
+          subAnswers: ((s.subQuestions as string[]) ?? []).map((q, i) =>
+            ((s.gaps as string[]) ?? []).includes(q)
+              ? `S${i + 1}: OPEN — ${q} is not settled by the findings`
+              : `S${i + 1}: answered by the validation path [F1]`,
+          ),
           rulings: ((s.hypotheses as string[]) ?? []).map((h, i) =>
             i === 0
               ? `${h.split(':')[0]}: CONFIRMED — src/core/engine.ts resolveAgent validates before applying`
