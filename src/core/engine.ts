@@ -753,10 +753,11 @@ function resolveRecovery(
       { input, attempts: ctx.attempts, recoveries: ctx.recoveries, at: res.at },
       hashBefore,
     );
-    fail(
+    // Stopped at a step that could not answer: the work so far is kept, the run is partial.
+    finish(
       ctx,
-      `'${node.id}' gave no valid response after ${ctx.attempts.length} attempt(s): ${pause.feedback.join('; ')}`,
-      node.id,
+      'partial',
+      `'${node.id}' gave no valid response after ${ctx.attempts.length} attempt(s), and the run was stopped there; the work so far is kept: ${pause.feedback.join('; ')}`,
       res.at,
     );
     return;

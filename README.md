@@ -662,6 +662,12 @@ solved rate or citation validity.
   (measured on 549 recorded Copilot prompts), less than the 1.5x a pretty-printing estimate
   suggests, because most of a prompt's JSON is long strings.
 
+- **Partial means "the work so far is kept, with what is missing said".** Limits, an AI stopping
+  early, a stop at a step that cannot answer, and an investigate answer with REAL objections
+  still open at the debate cap all end partial. A chain goes on after a partial run (the next
+  pattern gets the answer and its `doubts`, and has its own gates); the eval never counts a
+  partial run as solved. Engine 1.2.0: older saved runs replay with that noted.
+
 **Decided, and left alone (until the eval says otherwise):**
 
 - **Debate depth.** Raising the debate thresholds saved 16% of prompt characters but its effect

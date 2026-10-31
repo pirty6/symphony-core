@@ -143,7 +143,7 @@ describe('pattern library', () => {
     const r = runScripted(compileScore(p, { goal: 'g', context: { target: 'x' } }), undefined);
     // Placeholder answers review nothing: the run ends, and never as a clean review.
     expect(['done', 'failed']).toContain(r.state.kind);
-    expect(r.state.outcome).toBe('failed');
+    expect(r.state.outcome).not.toBe('success');
   });
 
   it('review ends honestly: a failed analysis is not "looks good"', () => {

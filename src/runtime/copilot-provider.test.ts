@@ -1129,7 +1129,7 @@ describe('CopilotProvider + engine: malformed submissions', () => {
       autoApprove: true,
     });
     const perf = await run.start();
-    expect(perf.outcome).toBe('failed');
+    expect(perf.outcome).toBe('partial');
     expect(sessions).toHaveLength(3);
     const rejected = perf.events.filter((e) => e.type === 'response-rejected');
     expect(rejected).toHaveLength(3);

@@ -119,6 +119,14 @@ describe('chainNext with backlog items', () => {
     expect(await items.next!(end('cancelled'))).toBeUndefined();
     expect([...plain.started, ...items.started]).toEqual([]);
   });
+
+  it('a chained pattern plays after a partial run: it gets the answer and its doubts', async () => {
+    const after = hook(['fix']);
+    await after.next!(
+      end('partial', { answer: 'probably the cache', doubts: ['one objection open'] }),
+    );
+    expect(after.started.map((s) => s.score.pattern)).toEqual(['fix']);
+  });
 });
 
 describe('the hint carries on', () => {

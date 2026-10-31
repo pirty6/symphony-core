@@ -305,9 +305,9 @@ describe('eval tasks', () => {
         const right = await t.check({ workspace: dir, outcome: 'success', state });
         expect(right.notes.join('; ')).not.toMatch(/fail|missing/);
         expect(right.pass).toBe(true);
-        // A run that did not succeed never counts as solved, even with the right files.
-        if (t.pattern !== 'investigate')
-          expect((await t.check({ workspace: dir, outcome: 'failed', state })).pass).toBe(false);
+        // A run that did not succeed never counts as solved, even with the right answer.
+        for (const outcome of ['failed', 'partial'])
+          expect((await t.check({ workspace: dir, outcome, state })).pass).toBe(false);
         expect(existsSync(join(dir, '.git'))).toBe(true);
       } finally {
         await rm(dir, { recursive: true, force: true });

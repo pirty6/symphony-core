@@ -223,7 +223,8 @@ describe('items that cannot be read', () => {
         verdict,
       })),
     );
-    expect(r.state.outcome).toBe('failed');
+    // Stopped at the step that could not answer, keeping the findings so far.
+    expect(r.state.outcome).toBe('partial');
     expect(r.state.reason).toMatch(/Account for EVERY item of deepBatch/);
   });
 });

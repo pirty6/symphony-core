@@ -53,7 +53,8 @@ export function followUps(score: ExecutableScore, performance: Performance): Cha
  * so they keep going after a failed item. Stopping a run stops the rest.
  */
 export function playsAfter(step: ChainStep, outcome: PerformanceOutcome): boolean {
-  if (outcome === 'success') return true;
+  // A partial run hands on what it has, its doubts included; the next pattern has its own gates.
+  if (outcome === 'success' || outcome === 'partial') return true;
   return typeof step !== 'string' && outcome !== 'cancelled' && outcome !== 'in-progress';
 }
 
