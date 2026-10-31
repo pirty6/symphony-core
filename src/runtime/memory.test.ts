@@ -87,6 +87,23 @@ describe('memory across runs', () => {
     expect((await recall(ws, 'page skips an item')).lessons.join()).not.toMatch(/old/);
   });
 
+  it('a lesson keeps its run and file hashes; once a cited file changes it is not recalled', async () => {
+    const ws = workspace();
+    const store = workspace();
+    writeFileSync(join(ws, 'src', 'paginate.ts'), 'export const page = 1;\n');
+    const lesson = 'Answered "how does paginate count pages": from one';
+    await rememberLesson(store, lesson, ['src/paginate.ts'], undefined, {
+      run: 'r1',
+      workspace: ws,
+    });
+    const saved = JSON.parse(readFileSync(memoryPath(store), 'utf8')).lessons[0];
+    expect(saved.run).toBe('r1');
+    expect(Object.keys(saved.hashes)).toEqual(['src/paginate.ts']);
+    expect((await recall(ws, 'paginate count pages', 12, { store })).lessons).toHaveLength(1);
+    writeFileSync(join(ws, 'src', 'paginate.ts'), 'export const page = 0;\n');
+    expect((await recall(ws, 'paginate count pages', 12, { store })).lessons).toEqual([]);
+  });
+
   it('stores facts without run annotations, one per path:line, the newest', async () => {
     const ws = workspace();
     expect(cleanFact('src/a.ts:3 — reads `arr[0]` first [H2 against] [F7]')).toBe(

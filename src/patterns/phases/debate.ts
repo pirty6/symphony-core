@@ -182,6 +182,8 @@ export interface ChallengeConfig {
   readonly resetOnReopen?: string;
   /** A string[] of parts of the subject (e.g. sub-questions): each objection names the one it bears on, "S<n>: …". */
   readonly about?: string;
+  /** false: checked findings are not remembered as they come (the pattern remembers what it cites). */
+  readonly rememberChecked?: boolean;
 }
 
 /** A triage reason that names its ground: an F-id or the S<n> it would change (no backslashes). */
@@ -405,7 +407,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         ],
       },
       // The second opinion's evidence is checked and numbered like the rest, so it can be cited.
-      checkFindings('checkSecond'),
+      checkFindings('checkSecond', 'newFindings', cfg.rememberChecked ?? true),
       {
         id: 'mergeSecond',
         kind: 'compute',

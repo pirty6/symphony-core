@@ -228,6 +228,25 @@ describe('evidence.check', () => {
 });
 
 describe('memory tools', () => {
+  it('remember: false checks without remembering; memory.facts remembers only what it is given', async () => {
+    const d = dir();
+    writeFileSync(
+      join(d, 'config.js'),
+      'export const port = DEFAULTS.port + 1;\nexport const host = "h";\n',
+    );
+    const read = 'config.js:2 — the host is h `export const host = "h"`';
+    const cited = 'F2 config.js:1 — the default port is one above DEFAULTS `DEFAULTS.port + 1`';
+    const out = await tool('evidence.check').run({ findings: [read], remember: false }, ctx(d));
+    expect(out.valid).toEqual([read]);
+    const recalled = async (q: string) =>
+      ((await tool('memory.recall').run({ query: q }, ctx(d))) as { facts: string[] }).facts;
+    expect(await recalled('what is the host?')).toEqual([]);
+    expect(await tool('memory.facts').run({ findings: [cited] }, ctx(d))).toEqual({ saved: 1 });
+    expect(await recalled('what is the default port?')).toEqual([
+      'config.js:1 — the default port is one above DEFAULTS `DEFAULTS.port + 1`',
+    ]);
+  });
+
   it('what one run verified, the next run recalls; lessons too', async () => {
     const d = dir();
     writeFileSync(join(d, 'config.js'), 'export const port = DEFAULTS.port + 1;\n');

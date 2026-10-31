@@ -8,6 +8,7 @@ import {
   MEMORY_STATE,
   MERGE_FINDINGS,
   recallMemory,
+  rememberCitedNode,
   rememberLessonNode,
 } from './phases/evidence.js';
 
@@ -30,6 +31,7 @@ const challenge = challengePhase({
   resetOnReopen: 'gapRounds',
   // Each objection names the sub-question it bears on.
   about: 'subQuestions',
+  rememberChecked: false,
 });
 
 /** Most independent parts one investigation answers side by side. */
@@ -637,7 +639,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkTriage'),
+    checkFindings('checkTriage', 'newFindings', false),
     {
       id: 'mergeTriage',
       kind: 'compute',
@@ -722,7 +724,7 @@ export const investigate: Pattern = {
         { field: 'unreadRetries', expr: 'unreadRetries + 1' },
       ],
     },
-    checkFindings('checkDeep'),
+    checkFindings('checkDeep', 'newFindings', false),
     {
       id: 'mergeDeep',
       kind: 'compute',
@@ -787,7 +789,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkParallel'),
+    checkFindings('checkParallel', 'newFindings', false),
     {
       id: 'mergeParallel',
       kind: 'compute',
@@ -830,7 +832,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkExperiment'),
+    checkFindings('checkExperiment', 'newFindings', false),
     {
       id: 'mergeExperiment',
       kind: 'compute',
@@ -889,7 +891,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkSource'),
+    checkFindings('checkSource', 'newFindings', false),
     {
       id: 'mergeSource',
       kind: 'compute',
@@ -966,7 +968,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkChase'),
+    checkFindings('checkChase', 'newFindings', false),
     {
       id: 'mergeChase',
       kind: 'compute',
@@ -1140,10 +1142,11 @@ export const investigate: Pattern = {
         },
       ],
     },
-    // What was asked, how it ended, the answer's opening and what stayed open: a lead for
-    // later questions like it, stale once its cited files are gone.
+    // Only a settled answer teaches: what was asked and how it ended, a lead for later questions
+    // like it, stale once its cited files change. An unsettled one leaves no lesson.
     rememberLessonNode('learnAnswer', 'answered', LESSON_INPUTS, { outcome: 'success' }),
-    rememberLessonNode('learnDoubts', 'answered', LESSON_INPUTS, { outcome: 'partial' }),
+    // The facts later runs get are the ones this answer used, not everything read on the way.
+    rememberCitedNode('rememberCited', 'citedFindings'),
     { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
     { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
   ],
@@ -1255,16 +1258,16 @@ export const investigate: Pattern = {
     { id: 'attachParts-settled', from: 'attachParts', to: 'settled' },
     { id: 'settled-learn', from: 'settled', to: 'learnAnswer', branch: 'then' },
     { id: 'settled-note', from: 'settled', to: 'noteDoubts', branch: 'else' },
-    { id: 'learn-done', from: 'learnAnswer', to: 'done' },
-    { id: 'note-learn', from: 'noteDoubts', to: 'learnDoubts' },
-    { id: 'learnDoubts-doubts', from: 'learnDoubts', to: 'doubts' },
+    { id: 'learn-cited', from: 'learnAnswer', to: 'rememberCited' },
+    { id: 'cited-done', from: 'rememberCited', to: 'done' },
+    { id: 'note-doubts', from: 'noteDoubts', to: 'doubts' },
   ],
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
       recall: () => ({ facts: [], lessons: [] }),
       learnAnswer: () => ({ saved: true }),
-      learnDoubts: () => ({ saved: true }),
+      rememberCited: (s) => ({ saved: ((s.citedFindings as string[]) ?? []).length }),
       ...Object.fromEntries(
         [
           'checkTriage',

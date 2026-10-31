@@ -342,10 +342,12 @@ export function workspaceTools(): ToolSpec[] {
           ? args.findings.filter((f): f is string => typeof f === 'string')
           : [];
         const r = await checkCitations(ctx.workspace, findings);
-        // What held is remembered for later runs (re-checked whenever it is recalled).
-        await rememberFacts(ctx.memoryRoot ?? ctx.workspace, r.valid, undefined, ctx.runId).catch(
-          () => 0,
-        );
+        // What held is remembered for later runs (re-checked whenever it is recalled), unless
+        // the pattern remembers only what its answer used (remember: false, then memory.facts).
+        if (args.remember !== false)
+          await rememberFacts(ctx.memoryRoot ?? ctx.workspace, r.valid, undefined, ctx.runId).catch(
+            () => 0,
+          );
         return {
           valid: r.valid,
           invalid: r.invalid.map((i) => `${i.finding} ✗ ${i.reason}`),
@@ -353,6 +355,22 @@ export function workspaceTools(): ToolSpec[] {
           checked: r.checked,
         };
       },
+    },
+    {
+      name: 'memory.facts',
+      description:
+        'Remember checked findings for later runs (only quoted path:line ones; re-checked when recalled): { findings } → { saved }.',
+      outputs: ['saved'],
+      run: async (args, ctx) => ({
+        saved: await rememberFacts(
+          ctx.memoryRoot ?? ctx.workspace,
+          Array.isArray(args.findings)
+            ? args.findings.filter((f): f is string => typeof f === 'string')
+            : [],
+          undefined,
+          ctx.runId,
+        ).catch(() => 0),
+      }),
     },
     {
       name: 'memory.recall',
@@ -389,7 +407,12 @@ export function workspaceTools(): ToolSpec[] {
           kind === 'failed'
             ? `FAILED to fix "${problem}": ${plain(args.failure ?? 'unknown').slice(0, 500)}`
             : `${kind.charAt(0).toUpperCase()}${kind.slice(1)}${doubtful ? ' (with open doubts)' : ''} "${problem}": ${cause}${open.length ? ` Open: ${open.join('; ')}` : ''}${files.length ? ` (files: ${files.join(', ')})` : ''}`;
-        return { saved: await rememberLesson(ctx.memoryRoot ?? ctx.workspace, text, files) };
+        return {
+          saved: await rememberLesson(ctx.memoryRoot ?? ctx.workspace, text, files, undefined, {
+            workspace: ctx.workspace,
+            ...(ctx.runId ? { run: ctx.runId } : {}),
+          }),
+        };
       },
     },
   ];

@@ -518,6 +518,22 @@ describe('investigate searches sources side by side', () => {
   });
 });
 
+describe('investigate remembers what its answer used', () => {
+  it('checks do not remember as they go; a settled answer remembers its cited findings', () => {
+    const score = compileScore(investigate, { goal: 'g', context: demo.context! });
+    const checks = score.nodes.filter((n) => n.kind === 'tool' && n.tool === 'evidence.check');
+    expect(checks.length).toBeGreaterThan(5);
+    for (const c of checks) expect(c).toMatchObject({ args: { remember: false } });
+    const { r } = runWith(['workspace']);
+    expect(r.state.outcome).toBe('success');
+    const node = score.nodes.find((n) => n.id === 'rememberCited');
+    expect(node).toMatchObject({ tool: 'memory.facts', inputs: { findings: 'citedFindings' } });
+    const cited = (r.state.state.citedFindings as string[]).length;
+    expect(cited).toBeGreaterThan(0);
+    expect(r.state.state.factsSaved).toBe(cited);
+  });
+});
+
 describe('investigate keeps a tally per hypothesis', () => {
   it('the engine counts [H# for/against] tags after each merge; no hypothesis is dropped', () => {
     const { r } = runWith(['workspace']);

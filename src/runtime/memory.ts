@@ -18,6 +18,7 @@
  * Recall ranks by the words shared with the question, rarer words weighing more;
  * nothing here decides an answer: steps still have to find and cite their own evidence.
  */
+import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { checkCitations } from './evidence.js';
@@ -26,9 +27,18 @@ interface Entry {
   readonly text: string;
   readonly at: string;
   readonly files?: readonly string[];
-  /** The run that added it (facts), so one run's share can be capped. */
+  /** The run that added it, so one run's share can be capped and a lesson traced. */
   readonly run?: string;
+  /** Lessons: a hash of each file as it was, so an edit since makes the lesson stale. */
+  readonly hashes?: Readonly<Record<string, string>>;
 }
+
+/** A short content hash of a workspace file, or undefined when it cannot be read. */
+const fileHash = (workspace: string, path: string): Promise<string | undefined> =>
+  readFile(join(workspace, path)).then(
+    (b) => createHash('sha256').update(b).digest('hex').slice(0, 16),
+    () => undefined,
+  );
 
 /** An approved maestro composition. */
 export interface Composition {
@@ -187,18 +197,30 @@ export async function rememberFacts(
   return added;
 }
 
-/** Remember a lesson; says whether it was saved. */
+/**
+ * Remember a lesson; says whether it was saved. With `opts.workspace` (where `files`
+ * live, when the store is elsewhere) each file's hash is kept: recall skips the lesson
+ * once one of them changes.
+ */
 export async function rememberLesson(
-  workspace: string,
+  store: string,
   text: string,
   files: readonly string[],
   at = new Date().toISOString(),
+  opts: { readonly run?: string; readonly workspace?: string } = {},
 ): Promise<boolean> {
   if (!text.trim()) return false;
-  await update(workspace, (m) => ({
-    ...m,
-    lessons: merge(m.lessons, [{ text, files, at }], MAX_LESSONS),
-  }));
+  const hashes: Record<string, string> = {};
+  for (const f of files) {
+    const h = await fileHash(opts.workspace ?? store, f);
+    if (h) hashes[f] = h;
+  }
+  const entry: Entry = Object.assign(
+    { text, files, at },
+    opts.run ? { run: opts.run } : {},
+    Object.keys(hashes).length ? { hashes } : {},
+  );
+  await update(store, (m) => ({ ...m, lessons: merge(m.lessons, [entry], MAX_LESSONS) }));
   return true;
 }
 
@@ -251,7 +273,11 @@ async function liveLessons(workspace: string, lessons: readonly Entry[]): Promis
           ),
         ),
       );
-      return there.every(Boolean);
+      if (!there.every(Boolean)) return false;
+      // A file edited since the lesson was written: what it said may no longer hold.
+      const hashes = Object.entries(l.hashes ?? {});
+      const now = await Promise.all(hashes.map(([f]) => fileHash(workspace, f)));
+      return hashes.every(([, h], i) => now[i] === h);
     }),
   );
   return lessons.filter((_, i) => live[i]);
@@ -305,7 +331,7 @@ export async function recall(
       ),
     })).catch(() => undefined);
   }
-  // A lesson about files that are gone, or from long ago, no longer applies.
+  // A lesson about files that are gone or changed, or from long ago, no longer applies.
   const fresh = await liveLessons(workspace, m.lessons);
   const lessons = ranked(fresh, query, Math.ceil(limit / 2)).map(
     (e) => `${e.at.slice(0, 10)} | ${e.text}`,
