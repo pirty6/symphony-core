@@ -521,6 +521,11 @@ describe('investigate coverage', () => {
       /\n## Coverage\n\n- Files not triaged: .+\n- Pages read: .+\n- Experiments run: none\n/,
     );
     expect(answer.match(/## Coverage/g)).toHaveLength(1);
+    const findings = r.state.state.findings as string[];
+    const onTrust = findings.filter((f) => !/[\w@.-]+\.[A-Za-z0-9]+:\d/.test(f)).length;
+    expect(answer).toContain(
+      `- Findings not checked against a file (web pages, other sources): ${onTrust} of ${findings.length}`,
+    );
   });
 });
 

@@ -40,6 +40,9 @@ const listed = (field: string, none: string) =>
   `if(len(${field}) == 0, "${none}", join(take(${field}, 15), "; ") + if(len(${field}) > 15, " … (all in ${field})", ""))`;
 
 /** The coverage section, written by the engine from what it recorded (not by the AI). */
+/** A finding citing a workspace file ("src/a.ts:3"), the kind evidence.check verifies. */
+const FILE_CITE = '[A-Za-z0-9_@.-]+[.][A-Za-z0-9]+:[0-9]';
+
 const COVERAGE = [
   '"## Coverage\n\n- Files not triaged: "',
   listed('excludedFiles', 'none'),
@@ -53,6 +56,9 @@ const COVERAGE = [
   listed('consulted', 'none'),
   '"\n- Sources skipped: "',
   listed('skipReasons', 'none'),
+  // Only path:line findings are checked against the files; the rest (web, other sources) are taken on trust.
+  '"\n- Findings not checked against a file (web pages, other sources): "',
+  `text(len(findings) - count(findings, "${FILE_CITE}")) + " of " + text(len(findings))`,
 ].join(' + ');
 
 const LESSON_INPUTS = {
