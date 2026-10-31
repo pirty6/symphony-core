@@ -120,6 +120,7 @@ async function load(workspace: string, forWrite = false): Promise<MemoryFile> {
     if (forWrite)
       throw new Error(
         `${memoryPath(workspace)} is not valid JSON; not overwriting it: ${(e as Error).message}`,
+        { cause: e },
       );
     return { facts: [], lessons: [] };
   }

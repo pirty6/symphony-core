@@ -169,6 +169,15 @@ export type WorkspaceDiff = {
   readonly files: readonly string[];
 };
 
+/** A lesson is a lead, not a report: plain text, without this run's finding ids or headings. */
+function plain(s: unknown): string {
+  return String(s ?? '')
+    .replace(/\[(?:F\d+[,\s]*)+\]/g, '')
+    .replace(/^#+\s.*$/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Baseline test results by workspace state; a few dozen at most. */
 const REUSED = new Map<string, Readonly<Record<string, unknown>>>();
 function remember(key: string, result: Readonly<Record<string, unknown>>): void {
@@ -373,13 +382,6 @@ export function workspaceTools(): ToolSpec[] {
         ].slice(0, 12);
         const kind = String(args.kind ?? 'fixed');
         const problem = String(args.problem ?? '').slice(0, 300);
-        // A lesson is a lead, not a report: short, without this run's finding ids.
-        const plain = (s: unknown) =>
-          String(s ?? '')
-            .replace(/\[(?:F\d+[,\s]*)+\]/g, '')
-            .replace(/^#+\s.*$/gm, '')
-            .replace(/\s+/g, ' ')
-            .trim();
         const cause = plain(args.cause).slice(0, 500);
         const open = (Array.isArray(args.open) ? args.open : []).slice(0, 3).map(plain);
         const doubtful = args.outcome === 'partial';
