@@ -407,8 +407,8 @@ test('the sub-agents of a fanned-out step show as nodes beside it, each with its
   await expect(page.getByTestId('subagent-1')).toBeVisible()
   await expect(page.getByTestId('subagent-2')).toBeVisible()
   await expect(page.getByTestId('subagent-1')).toHaveAttribute('data-state', /done|running/)
-  // Two sub-agents, two parts each per wave.
-  await expect(page.getByTestId('subagent-1')).toContainText(/Sub-agent 1\/4/)
+  // Two sub-agents, three parts each per wave: all five demo files in one wave.
+  await expect(page.getByTestId('subagent-1')).toContainText(/Sub-agent 1\/5/)
   // A sub-agent shows its step's AI output.
   await page.getByTestId('subagent-1').click()
   await expect(page.getByRole('button', { name: 'AI output', exact: true })).toHaveClass(/\bon\b/)

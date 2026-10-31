@@ -285,17 +285,18 @@ describe('sub-agents on the canvas', () => {
       if (m.type === 'part' && m.state === 'done') break
     }
     expect(v.parts!.nodeId).toBe('triage')
-    // Two sub-agents at a time; a wave holds twice as many parts.
-    expect(v.parts!.states).toEqual(['done', 'running', 'waiting', 'waiting'])
+    // Two sub-agents at a time; a wave holds three times as many parts (here every file: 5).
+    expect(v.parts!.states).toEqual(['done', 'running', 'waiting', 'waiting', 'waiting'])
     const anchor = { id: 'triage', type: 'agent', position: { x: 100, y: 200 }, data: {} } as never
     const { nodes, edges } = subAgentNodes(v.parts, [anchor], new Map())
-    expect(nodes.map((n) => n.id)).toEqual(['sub:triage:1', 'sub:triage:2', 'sub:triage:3', 'sub:triage:4'])
+    expect(nodes.map((n) => n.id)).toEqual(['sub:triage:1', 'sub:triage:2', 'sub:triage:3', 'sub:triage:4', 'sub:triage:5'])
     expect(nodes.every((n) => n.position.x > 100)).toBe(true)
     expect(edges.map((e) => [e.source, e.target, e.animated])).toEqual([
       ['triage', 'sub:triage:1', false],
       ['triage', 'sub:triage:2', true],
       ['triage', 'sub:triage:3', false],
       ['triage', 'sub:triage:4', false],
+      ['triage', 'sub:triage:5', false],
     ])
     // Inside a closed phase, they hang off the phase.
     const phase = { id: 'triagePhase', type: 'phase', position: { x: 0, y: 0 }, data: {} } as never
