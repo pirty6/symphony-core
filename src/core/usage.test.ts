@@ -4,6 +4,7 @@ import {
   costliest,
   formatUsage,
   performanceUsage,
+  growth,
   rejectionUsage,
   transcriptUsage,
 } from './usage.js';
@@ -48,6 +49,26 @@ describe('token usage', () => {
     expect(total).toEqual(u(950, 95, 5));
     expect(byNode.plan).toEqual(u(150, 15, 2));
     expect(Object.keys(byNode)).toEqual(['plan', 'answer']);
+  });
+
+  it('per visit, and which steps grow visit by visit', () => {
+    const steps = [
+      step('assess', { transcript: t(u(40_000, 10)) }),
+      step('chase', { transcript: t(u(90_000, 10)) }),
+      step('assess', { transcript: t(u(120_000, 10)) }),
+      step('assess', { transcript: t(u(210_000, 10)) }),
+      step('chase', { transcript: t(u(80_000, 10)) }),
+    ];
+    const { byVisit } = performanceUsage({ steps });
+    expect(byVisit.map((v) => [v.nodeId, v.usage.inputTokens])).toEqual([
+      ['assess', 40_000],
+      ['chase', 90_000],
+      ['assess', 120_000],
+      ['assess', 210_000],
+      ['chase', 80_000],
+    ]);
+    // chase shrank: only assess grows.
+    expect(growth(byVisit)).toEqual(['assess: 40k → 120k → 210k in']);
   });
 
   it('answers replayed from the repertoire cost nothing this run', () => {
