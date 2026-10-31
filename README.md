@@ -647,7 +647,7 @@ solved rate or citation validity.
   for a human like any stuck step. Mechanical steps already play a tier lower (smaller model,
   lower reasoning effort) through `complexityShift`.
 - **Files read by the engine (`preload`).** A step that reads a known list of files (investigate's
-  deep read, review's per-file review) gets each workspace file whole, with line numbers, in its
+  triage and deep read, review's per-file review) gets each workspace file whole, with line numbers, in its
   prompt, instead of paging through it with tool calls. It reads everything in one turn and
   cannot skip part of a file (a file over 120k characters says which lines were left out); it
   still follows references and history with tools, and still lists every item it read. On the

@@ -389,7 +389,7 @@ describe('investigate sizes its parallel work from the plan', () => {
   it('the plan picks how many sub-agents read at once (at most 6)', () => {
     const { r } = runWith(['workspace'], demo.approvals, { parallel: 2 });
     expect(r.state.outcome).toBe('success');
-    expect(r.state.state).toMatchObject({ agents: 2, batchWave: 50, deepWave: 8 });
+    expect(r.state.state).toMatchObject({ agents: 2, batchWave: 40, deepWave: 16 });
     const bad = runWith(['workspace'], demo.approvals, { parallel: 9 }).r;
     const plan = bad.state.steps.find((st) => st.nodeId === 'plan');
     expect(JSON.stringify(plan?.attempts ?? bad.state.pause)).toMatch(/from 1 to 6/);

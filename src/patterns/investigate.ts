@@ -163,7 +163,8 @@ export const investigate: Pattern = {
         initial: 4,
         description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
       },
-      { name: 'batchSize', type: 'number', initial: 25 },
+      // Files per sub-agent: read whole in its prompt, so fewer than when it paged through them.
+      { name: 'batchSize', type: 'number', initial: 10 },
       {
         name: 'batchWave',
         type: 'number',
@@ -407,9 +408,9 @@ export const investigate: Pattern = {
           field: 'pendingSources',
           expr: 'without(unique(useSources), ["workspace", "web", "experiment"])',
         },
-        // Each wave fills every sub-agent the plan asked for.
-        { field: 'batchWave', expr: 'batchSize * agents' },
-        { field: 'deepWave', expr: 'deepBatchSize * agents' },
+        // Each wave gives every sub-agent the plan asked for two parts, one after the other.
+        { field: 'batchWave', expr: 'batchSize * agents * 2' },
+        { field: 'deepWave', expr: 'deepBatchSize * agents * 2' },
       ],
     },
     {
@@ -561,9 +562,11 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Triage files',
       directive:
-        'Open EVERY file in `batch` (view each one; for long files look through all of it, not just the top). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
+        'Read EVERY file in `batch`: each one is given to you whole, with line numbers, at the end of this prompt (read all of it there, not just the top; open a file with tools only if it says lines were left out). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
         AGAINST,
       reads: ['hypotheses', 'question', 'hint', 'subQuestions', 'batch'],
+      // The engine reads the batch whole: one turn per part instead of a tool call per page.
+      preload: 'batch',
       fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
       writes: ['triaged', 'batchRelevant', 'newFindings'],
       cites: 'newFindings',

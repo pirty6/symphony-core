@@ -37,6 +37,12 @@ describe('preloadFiles', () => {
     expect(files[2]!.text).toMatch(/binary/);
   });
 
+  it('gives each file once, however often it is listed', async () => {
+    expect(
+      (await preloadFiles(ws, ['src/a.ts', 'src/a.ts:2', 'src/a.ts#L1-2'])).map((f) => f.path),
+    ).toEqual(['src/a.ts']);
+  });
+
   it('a file too big for one prompt says which lines were left out', async () => {
     const [big] = await preloadFiles(ws, ['big.txt']);
     expect(big!.text.length).toBeLessThanOrEqual(MAX_FILE_CHARS);
