@@ -35,6 +35,7 @@ import type {
   ExecutableScore,
   Pattern,
   Performance,
+  PreloadRecord,
   Resolution,
   SavedRun,
 } from '../core/types.js';
@@ -182,6 +183,9 @@ export interface HumanAnswer {
 export type RecoveryAnswer = Omit<Recovery, 'at'>;
 
 let counter = 0;
+
+/** A URL, not a workspace path: the step fetches it itself. */
+const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 export class Run {
   readonly id: string;
@@ -381,7 +385,7 @@ export class Run {
   ): Promise<{ result: unknown; transcript: AiTranscript }> {
     const onEvent = this.emitFor(pause, extra.integrate ? 0 : extra.take);
     const files = await this.preload(pause, onEvent);
-    return this.opts.provider.runAgent({
+    const played = await this.opts.provider.runAgent({
       pause,
       state: this.engine.state,
       visit: (this.engine.visits[pause.nodeId] ?? 1) - 1,
@@ -391,6 +395,15 @@ export class Run {
       ...(files.length ? { files } : {}),
       ...extra,
     });
+    if (files.length === 0) return played;
+    // The record says what the engine put in the prompt, without the text itself.
+    const preloaded = files.map((f) => {
+      const entry: PreloadRecord = { path: f.path, lines: f.lines };
+      if (f.omitted) Object.assign(entry, { omitted: f.omitted });
+      if (f.error) Object.assign(entry, { error: f.error });
+      return entry;
+    });
+    return { ...played, transcript: { ...played.transcript, preloaded } };
   }
 
   /** What tools get: the run's context (memoryRoot too), its id and a signal. */
@@ -414,13 +427,20 @@ export class Run {
     if (!Array.isArray(list) || list.length === 0 || !read) return [];
     const out = await read
       .run({ paths: list }, this.toolContext(new AbortController().signal))
-      .catch(() => ({ files: [] }));
+      .catch((e: unknown) => {
+        // The step still runs; it is told, file by file, to read them with tools.
+        const error = `read failed: ${e instanceof Error ? e.message : String(e)}`;
+        const paths = list.filter((p): p is string => typeof p === 'string' && !URL_LIKE.test(p));
+        return { files: paths.map((path) => ({ path, text: `(${error})`, lines: 0, error })) };
+      });
     const files = (Array.isArray(out.files) ? out.files : []) as PreloadedFile[];
-    const lines = files.reduce((n, f) => n + f.lines, 0);
+    const shown = files.filter((f) => !f.error);
+    const lines = shown.reduce((n, f) => n + f.lines, 0);
+    const failed = files.filter((f) => f.error);
     if (files.length > 0)
       onEvent({
         type: 'info',
-        text: `the engine read ${files.length} file(s) in full (${lines} lines) into the prompt`,
+        text: `the engine read ${shown.length} file(s) in full (${lines} lines) into the prompt${failed.length ? `; ${failed.length} could not be read (${failed.map((f) => `${f.path}: ${f.error}`).join(', ')}): the step reads them with tools` : ''}`,
       });
     return files;
   }

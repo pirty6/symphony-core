@@ -30,14 +30,21 @@ export async function preloadFiles(
     if (seen.has(path)) continue;
     seen.add(path);
     const full = resolve(workspace, path);
-    if (isAbsolute(path) || relative(workspace, full).startsWith('..')) continue;
-    const raw = await readFile(full).catch(() => undefined);
-    if (!raw) {
-      out.push({ path, text: '(not found in the workspace)', lines: 0 });
+    // Said, not dropped: the AI reads what the engine could not.
+    const failed = (error: string) => out.push({ path, text: `(${error})`, lines: 0, error });
+    if (isAbsolute(path) || relative(workspace, full).startsWith('..')) {
+      failed('outside the workspace');
+      continue;
+    }
+    const raw = await readFile(full).catch((e: NodeJS.ErrnoException) =>
+      e.code === 'ENOENT' ? 'not found in the workspace' : `read failed: ${e.code ?? e.message}`,
+    );
+    if (typeof raw === 'string') {
+      failed(raw);
       continue;
     }
     if (raw.includes(0)) {
-      out.push({ path, text: '(binary file: not shown)', lines: 0 });
+      failed('binary file');
       continue;
     }
     const all = raw.toString('utf8').split('\n');

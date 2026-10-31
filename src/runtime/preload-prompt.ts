@@ -7,6 +7,8 @@ export interface PreloadedFile {
   readonly lines: number;
   /** Lines left out for size (read them with tools), if any: [from, to]. */
   readonly omitted?: readonly [number, number];
+  /** Why the file is not shown (the AI reads it with tools instead). */
+  readonly error?: string;
 }
 
 /** The prompt section for preloaded files. */
@@ -16,10 +18,17 @@ export function preloadSection(field: string, files: readonly PreloadedFile[]): 
     '',
     `## Files of \`${field}\`, read in full by the engine`,
     `Each workspace file of \`${field}\` is below, whole, with line numbers ("12| text"). Read it here and do not open it again with tools: use tools only to follow references out of it (imports, callers, tests, config, history) and for items not shown here (URLs). Quote the text after "N| " when you cite a line.`,
-    ...files.flatMap((f) => [
-      '',
-      `=== ${f.path} (${f.lines} lines)${f.omitted ? ` — lines ${f.omitted[0]}-${f.omitted[1]} left out for size: read them with tools` : ''} ===`,
-      f.text,
-    ]),
+    ...files.flatMap((f) =>
+      f.error
+        ? [
+            '',
+            `=== ${f.path} — could not be read by the engine (${f.error}): read it with tools ===`,
+          ]
+        : [
+            '',
+            `=== ${f.path} (${f.lines} lines)${f.omitted ? ` — lines ${f.omitted[0]}-${f.omitted[1]} left out for size: read them with tools` : ''} ===`,
+            f.text,
+          ],
+    ),
   ];
 }

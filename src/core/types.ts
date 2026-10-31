@@ -325,6 +325,17 @@ export interface AiTranscript {
   readonly musician?: Musician;
   /** Tokens the provider reported for this answer (all model calls of the session). */
   readonly usage?: TokenUsage;
+  /** Files the engine read whole into the prompt (AgentNode.preload): which, how much, what failed. */
+  readonly preloaded?: readonly PreloadRecord[];
+}
+
+export interface PreloadRecord {
+  readonly path: string;
+  readonly lines: number;
+  /** Lines left out for size: [from, to]. */
+  readonly omitted?: readonly [number, number];
+  /** Why it is not in the prompt (missing, binary, outside the workspace, the read failed). */
+  readonly error?: string;
 }
 
 export interface TokenUsage {
