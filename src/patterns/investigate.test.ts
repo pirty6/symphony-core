@@ -121,8 +121,10 @@ describe('investigate adapts its evidence to the question', () => {
   it('performance question: designs experiments and runs them after approval', () => {
     const { r, ran } = runWith(['workspace', 'web', 'experiment']);
     expect(ran).toEqual(
-      expect.arrayContaining(['designExperiments', 'allowExperiments', 'experiment']),
+      expect.arrayContaining(['designExperiments', 'allowExperiments', 'parallelExperiment']),
     );
+    // Nothing timed: no experiment waits for another.
+    expect(ran).not.toContain('experiment');
     expect(r.state.state.ran).toHaveLength(1);
     // Recorded findings carry the id the engine gave them.
     expect((r.state.state.findings as string[]).some((f) => /^F\d+ experiment \|/.test(f))).toBe(
@@ -137,6 +139,7 @@ describe('investigate adapts its evidence to the question', () => {
     });
     expect(ran).toContain('allowExperiments');
     expect(ran).not.toContain('experiment');
+    expect(ran).not.toContain('parallelExperiment');
     expect(r.state.outcome).toBe('success');
     expect(r.state.state.ran).toEqual([]);
   });
@@ -440,5 +443,26 @@ describe('investigate asks for a hint once', () => {
       expect(
         (investigate.nodes.find((n) => n.id === id) as unknown as { reads: string[] }).reads,
       ).toContain('hint');
+  });
+});
+
+describe('investigate experiments', () => {
+  it('timed experiments run one at a time after the others ran side by side', () => {
+    const exps = ['a — time the cold start', 'b — does it crash?', 'c — does it leak?'];
+    const { r, ran } = runWith(['experiment'], demo.approvals, {
+      agents: {
+        ...demo.agents,
+        designExperiments: () => ({
+          updates: { experiments: exps, timedExperiments: [exps[0]!] },
+          verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+        }),
+      },
+      context: { agents: 2 },
+    });
+    const side = r.state.steps.find((st) => st.nodeId === 'parallelExperiment')!;
+    expect(side.input?.parallelExperiments).toEqual([exps[1], exps[2]]);
+    expect(ran.filter((n) => n === 'experiment')).toHaveLength(1);
+    expect(ran.indexOf('parallelExperiment')).toBeLessThan(ran.indexOf('experiment'));
+    expect((r.state.state.ran as string[]).toSorted()).toEqual([...exps].toSorted());
   });
 });

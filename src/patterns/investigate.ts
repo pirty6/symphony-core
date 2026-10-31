@@ -147,6 +147,17 @@ export const investigate: Pattern = {
         description: 'Experiments to run: command, what it measures',
       },
       {
+        name: 'timedExperiments',
+        type: 'string[]',
+        description: 'The experiments that time something: run one at a time, never side by side',
+      },
+      {
+        name: 'parallelExperiments',
+        type: 'string[]',
+        description: 'The other experiments, run side by side',
+      },
+      { name: 'maxExperiments', type: 'number', initial: 12 },
+      {
         name: 'agents',
         type: 'number',
         initial: 4,
@@ -288,6 +299,10 @@ export const investigate: Pattern = {
         'hasExperiments',
         'allowExperiments',
         'queueExperiments',
+        'hasParallel',
+        'parallelExperiment',
+        'checkParallel',
+        'mergeParallel',
         'experimentsLeft',
         'takeExperiment',
         'experiment',
@@ -505,11 +520,21 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Design experiments',
       directive:
-        'Design the experiments that would answer the behaviour or performance parts of `question`: each entry of `experiments` is one experiment as "command(s) to run — what it measures or reproduces — how to read the result". Make them fair and repeatable (same inputs, warm-up, at least 3 timed repetitions for performance). Never anything that edits tracked files, installs globally, or needs secrets.',
-      reads: ['question', 'subQuestions', 'sourceInfo'],
-      writes: ['experiments'],
+        'Design the experiments that would answer the behaviour or performance parts of `question`: each entry of `experiments` is one experiment as "command(s) to run — what it measures or reproduces — how to read the result". Make them fair and repeatable (same inputs, warm-up, at least 3 timed repetitions for performance). Never anything that edits tracked files, installs globally, or needs secrets. At most `maxExperiments`, the most telling first. Copy into `timedExperiments`, verbatim, every experiment that measures time or speed: those run one at a time, since timings taken side by side skew each other; the rest run in parallel.',
+      reads: ['question', 'hint', 'subQuestions', 'sourceInfo', 'maxExperiments'],
+      writes: ['experiments', 'timedExperiments'],
       retries: 2,
-      checks: [{ expr: 'len(experiments) > 0', message: 'Design at least one experiment.' }],
+      checks: [
+        { expr: 'len(experiments) > 0', message: 'Design at least one experiment.' },
+        {
+          expr: 'len(experiments) <= maxExperiments',
+          message: 'Keep the most telling experiments, at most maxExperiments.',
+        },
+        {
+          expr: 'subset(timedExperiments, experiments)',
+          message: 'timedExperiments must be copied verbatim from experiments.',
+        },
+      ],
     },
     {
       id: 'filesLeft',
@@ -666,12 +691,49 @@ export const investigate: Pattern = {
       id: 'queueExperiments',
       kind: 'compute',
       label: 'Queue experiments',
-      assign: [{ field: 'pendingExperiments', expr: 'experiments' }],
+      assign: [
+        { field: 'parallelExperiments', expr: 'without(experiments, timedExperiments)' },
+        { field: 'pendingExperiments', expr: 'timedExperiments' },
+      ],
+    },
+    {
+      id: 'hasParallel',
+      kind: 'condition',
+      label: 'Untimed experiments?',
+      expression: 'len(parallelExperiments) > 0',
+    },
+    {
+      id: 'parallelExperiment',
+      kind: 'agent',
+      role: 'executor',
+      label: 'Run experiments side by side',
+      // One sub-agent per experiment that times nothing, as many at once as the plan chose.
+      fanOut: { over: 'parallelExperiments', per: 1, agents: 'agents' },
+      directive:
+        'Run the ONE experiment in `parallelExperiments` in the workspace. Other experiments run at the same time: do not modify tracked files, and keep scripts and output in a subfolder of the scratch folder named in your instructions that no one else uses (e.g. named after your experiment). Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings` as "experiment | <command> — result". If it cannot run, say exactly why in `newFindings`.',
+      reads: ['question', 'parallelExperiments'],
+      writes: ['queries', 'newFindings'],
+      cites: 'newFindings',
+      retries: 1,
+      checks: [
+        { expr: 'len(queries) > 0', message: 'Record the commands you ran in queries.' },
+        {
+          expr: 'len(newFindings) > 0',
+          message: 'Report the results (or why the experiment could not run) in newFindings.',
+        },
+      ],
+    },
+    checkFindings('checkParallel'),
+    {
+      id: 'mergeParallel',
+      kind: 'compute',
+      label: 'Record experiments',
+      assign: [...MERGE_FINDINGS, { field: 'ran', expr: 'ran + parallelExperiments' }],
     },
     {
       id: 'experimentsLeft',
       kind: 'condition',
-      label: 'Experiments left?',
+      label: 'Timed experiments left?',
       expression: 'len(pendingExperiments) > 0',
     },
     {
@@ -688,7 +750,8 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'executor',
       maxVisits: 20,
-      label: 'Run experiment',
+      visitsFrom: 'maxExperiments + 2',
+      label: 'Run timed experiment',
       directive:
         'Run `currentExperiment` in the workspace. Do not modify tracked files: put any scripts and output only in the scratch folder named in your instructions. For timings, warm up once and report the median of at least 3 runs with the raw numbers. Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings`. If it cannot run, say exactly why in `newFindings`.',
       reads: ['question', 'currentExperiment'],
@@ -1039,7 +1102,12 @@ export const investigate: Pattern = {
       branch: 'rejected',
       label: 'skipped',
     },
-    { id: 'queueExperiments-left', from: 'queueExperiments', to: 'experimentsLeft' },
+    { id: 'queueExperiments-parallel', from: 'queueExperiments', to: 'hasParallel' },
+    { id: 'hasParallel-run', from: 'hasParallel', to: 'parallelExperiment', branch: 'then' },
+    { id: 'hasParallel-left', from: 'hasParallel', to: 'experimentsLeft', branch: 'else' },
+    { id: 'parallel-check', from: 'parallelExperiment', to: 'checkParallel' },
+    { id: 'checkParallel-merge', from: 'checkParallel', to: 'mergeParallel' },
+    { id: 'mergeParallel-left', from: 'mergeParallel', to: 'experimentsLeft' },
     { id: 'experimentsLeft-take', from: 'experimentsLeft', to: 'takeExperiment', branch: 'then' },
     {
       id: 'experimentsLeft-sourcesLeft',
@@ -1088,7 +1156,14 @@ export const investigate: Pattern = {
       learnAnswer: () => ({ saved: true }),
       learnDoubts: () => ({ saved: true }),
       ...Object.fromEntries(
-        ['checkTriage', 'checkDeep', 'checkExperiment', 'checkSource', 'checkChase'].map((id) => [
+        [
+          'checkTriage',
+          'checkDeep',
+          'checkParallel',
+          'checkExperiment',
+          'checkSource',
+          'checkChase',
+        ].map((id) => [
           id,
           (s: Readonly<Record<string, unknown>>) => ({ valid: s.newFindings, invalid: [] }),
         ]),
@@ -1161,8 +1236,16 @@ export const investigate: Pattern = {
           experiments: [
             'npm test -- src/core/engine.test.ts — does an invalid answer change state? — expect 0 changes',
           ],
+          timedExperiments: [],
         },
         verdict: v('designed'),
+      }),
+      parallelExperiment: () => ({
+        updates: {
+          queries: ['npm test -- src/core/engine.test.ts'],
+          newFindings: ['experiment | npm test — 0 state changes after an invalid answer (3 runs)'],
+        },
+        verdict: v('ran'),
       }),
       experiment: (s) => ({
         updates: {
