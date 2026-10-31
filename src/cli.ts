@@ -22,7 +22,14 @@ import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
 import { formatReport, runEval, summarize, worseThan, type EvalReport } from './eval/harness.js';
 import { EVAL_TASKS, ROUTING_TASKS } from './eval/tasks.js';
-import { type ChainStep, followUps, playsAfter, stepContext, stepPattern } from './core/chain.js';
+import {
+  type ChainStep,
+  followUps,
+  playsAfter,
+  resultText,
+  stepContext,
+  stepPattern,
+} from './core/chain.js';
 import { formatUsage, performanceUsage, rejectionUsage } from './core/usage.js';
 import { describeEdits } from './core/edits.js';
 import { agreement, compareRuns } from './core/compare.js';
@@ -332,7 +339,12 @@ async function play(
   process.off('SIGINT', stop);
   const saved = run.messages.find((m) => m.type === 'performance');
   if (saved?.type === 'performance' && saved.savedTo) console.log(c.dim(`saved ${saved.savedTo}`));
-  if (!o.quiet) console.log(c.dim(`final state ${JSON.stringify(perf.finalState).slice(0, 2000)}`));
+  if (!o.quiet) {
+    // A declared result is the run's report (maestro: what it chose and why); else the raw state.
+    const report = resultText(score, perf.finalState);
+    if (report) console.log(`\n${report}`);
+    else console.log(c.dim(`final state ${JSON.stringify(perf.finalState).slice(0, 2000)}`));
+  }
   const used = performanceUsage(perf).total;
   if (used.calls > 0) console.log(c.dim(`tokens: ${formatUsage(used)}`));
   const rejected = rejectionUsage(perf);
