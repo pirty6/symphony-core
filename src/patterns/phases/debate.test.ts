@@ -84,7 +84,7 @@ describe('debate phases in investigate', () => {
         ...agents,
         challenge: (s, v) => ({
           ...agents.challenge!(s, v),
-          updates: { objections: [`objection ${v}`] },
+          updates: { objections: [`S1: objection ${v}`] },
         }),
       },
     };
@@ -110,7 +110,7 @@ describe('debate phases in investigate', () => {
         ...agents,
         challenge: (s, v) => ({
           ...agents.challenge!(s, v),
-          updates: { objections: [`objection ${v}`, `nit ${v}`] },
+          updates: { objections: [`S1: objection ${v}`, `S0: nit ${v}`] },
         }),
         triageObjections: (s, v) => {
           const objections = s.objections as string[];
@@ -131,10 +131,55 @@ describe('debate phases in investigate', () => {
     const real = play(3, objecting(true));
     expect(real.r.state.outcome).toBe('partial');
     // Only the REAL one is open; the nit is not.
-    expect(real.state.unresolvedObjections).toEqual([`objection ${real.state.maxDebateRounds}`]);
+    expect(real.state.unresolvedObjections).toEqual([
+      `S1: objection ${real.state.maxDebateRounds}`,
+    ]);
     const theoretical = play(3, objecting(false));
     expect(theoretical.r.state.outcome).toBe('success');
     expect(theoretical.state.unresolvedObjections).toEqual([]);
+  });
+
+  it('objections name their sub-question, and stay open through research until it settles them', () => {
+    const untagged: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        challenge: (s, v) => ({
+          ...agents.challenge!(s, v),
+          updates: { objections: v === 0 ? ['no sub-question named'] : [] },
+        }),
+      },
+    };
+    const rejected = play(2, untagged).r.state.events.some(
+      (e) =>
+        e.type === 'response-rejected' && e.nodeId === 'challenge' && /S1: …/.test(e.errors.join()),
+    );
+    expect(rejected).toBe(true);
+    // An objection the research did not settle stays a gap (assess may keep it now).
+    let assessed = 0;
+    const unsettled: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        assess: (s, v) => {
+          const open = (s.openObjections as string[]) ?? [];
+          return open.length && assessed++ === 0
+            ? { ...agents.assess!(s, v), updates: { gaps: [open[0]!], confidence: 0.8 } }
+            : agents.assess!(s, v);
+        },
+      },
+    };
+    const { r, state } = play(2, unsettled);
+    expect(state.openObjections).toEqual([expect.stringMatching(/^S2: /)]);
+    const kept = r.state.steps.filter(
+      (st) =>
+        st.nodeId === 'assess' &&
+        (st.updates?.gaps as string[] | undefined)?.[0]?.startsWith('S2: '),
+    );
+    expect(kept).toHaveLength(1);
+    expect(
+      r.state.events.some((e) => e.type === 'response-rejected' && e.nodeId === 'assess'),
+    ).toBe(false);
   });
 
   it('a skeptic raises at most 5 objections a round', () => {
@@ -144,7 +189,7 @@ describe('debate phases in investigate', () => {
         ...agents,
         challenge: (s, v) => ({
           ...agents.challenge!(s, v),
-          updates: { objections: ['a', 'b', 'c', 'd', 'e', 'f'] },
+          updates: { objections: ['S1: a', 'S1: b', 'S1: c', 'S1: d', 'S1: e', 'S1: f'] },
         }),
       },
     };

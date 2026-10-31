@@ -28,6 +28,8 @@ const challenge = challengePhase({
   alongside: ['partAnswers', 'subQuestions', 'notRead', 'unverified'],
   // A debate round gets its own gap-research budget instead of the one already spent.
   resetOnReopen: 'gapRounds',
+  // Each objection names the sub-question it bears on.
+  about: 'subQuestions',
 });
 
 /** Most independent parts one investigation answers side by side. */
@@ -864,14 +866,22 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Find gaps',
       directive:
-        'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Set `confidence` (0..1) that the findings fully answer `question`.',
-      reads: ['question', 'hint', 'subQuestions', 'findingsBrief', 'skipSources', 'skipReasons'],
+        'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Do the same for every entry of `openObjections` (objections to the last answer, sent back to research) that the findings do not yet settle. Set `confidence` (0..1) that the findings fully answer `question`.',
+      reads: [
+        'question',
+        'hint',
+        'subQuestions',
+        'openObjections',
+        'findingsBrief',
+        'skipSources',
+        'skipReasons',
+      ],
       writes: ['gaps', 'confidence'],
       retries: 2,
       checks: [
         {
-          expr: 'subset(gaps, subQuestions)',
-          message: 'gaps must be copied exactly from subQuestions.',
+          expr: 'subset(gaps, subQuestions + openObjections)',
+          message: 'gaps must be copied exactly from subQuestions or openObjections.',
         },
       ],
     },
@@ -1389,7 +1399,7 @@ export const investigate: Pattern = {
           objections:
             visit === 0
               ? [
-                  'The answer says a rejected answer keeps the same move key, but no finding cites it: check moveKeyOf in src/core/engine.ts',
+                  'S2: The answer says a rejected answer keeps the same move key, but no finding cites it: check moveKeyOf in src/core/engine.ts',
                 ]
               : [],
         },
