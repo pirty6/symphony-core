@@ -25,8 +25,9 @@ import { describeEdits } from '@core/edits'
 import { DataEdge } from './canvas/DataEdge'
 import { FlowNode } from './canvas/FlowNode'
 import { FrameNode, PhaseNode } from './canvas/PhaseNode'
+import { SubAgentNode } from './canvas/SubAgentNode'
 import { api, errorText, isNetworkError, isRunGone, RUN_GONE, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
-import {
+import { subAgentItems, subAgentNodes,
   IDLE_VIEW,
   applyMessage,
   currentFrame,
@@ -64,7 +65,7 @@ import { PatternPanel } from './panels/PatternPanel'
 import { Timeline } from './panels/Timeline'
 import { Toolbar, type RunSettings, type Tiers } from './panels/Toolbar'
 
-const nodeTypes = { start: FlowNode, agent: FlowNode, compute: FlowNode, condition: FlowNode, approval: FlowNode, tool: FlowNode, end: FlowNode, phase: PhaseNode, frame: FrameNode }
+const nodeTypes = { start: FlowNode, agent: FlowNode, compute: FlowNode, condition: FlowNode, approval: FlowNode, tool: FlowNode, end: FlowNode, phase: PhaseNode, frame: FrameNode, subagent: SubAgentNode }
 const edgeTypes = { data: DataEdge }
 const defaultEdgeOptions: DefaultEdgeOptions = { type: 'data', markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 } }
 const BLANK: PatternMeta = { name: 'my-flow', description: 'A new flow', requiredContext: [], verbTriggers: [], state: [] }
@@ -309,8 +310,16 @@ export default function Studio() {
       const size = n.type === 'phase' || n.type === 'frame' ? phaseSizes.get(n.id) : undefined
       return size ? { ...n, measured: size } : n
     })
-    return { ...shown, nodes: sized }
-  }, [nodes, edges, frame, breakpoints, editable, issues, view.gate, origins, toggleBreakpoint, meta.state, pattern, expanded, openPhase, closePhase, phaseSizes, moved])
+    // The sub-agents of the latest fanned-out step, beside it, while the run is on screen.
+    const playing = view.mode === 'live' && !['done', 'failed', 'cancelled'].includes(view.status)
+    const subs = playing ? subAgentNodes(view.parts, sized, shown.phaseOf, subAgentItems(view.pause, view.parts?.nodeId ?? '')) : { nodes: [], edges: [] }
+    // Nodes that are not steps keep their measured size here, or they are measured again forever.
+    const subNodes = subs.nodes.map((n) => {
+      const size = phaseSizes.get(n.id)
+      return size ? { ...n, measured: size } : n
+    })
+    return { ...shown, nodes: [...sized, ...subNodes], edges: [...shown.edges, ...subs.edges] }
+  }, [nodes, edges, frame, breakpoints, editable, issues, view.gate, view.mode, view.status, view.parts, view.pause, origins, toggleBreakpoint, meta.state, pattern, expanded, openPhase, closePhase, phaseSizes, moved])
 
   const onCanvasNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -758,6 +767,12 @@ export default function Studio() {
           onNodeClick={(_, n) => {
             if (n.type === 'frame') return
             if (n.type === 'phase') return openPhase(n.id)
+            // A sub-agent: its output is its step's, take by take.
+            if (n.type === 'subagent') {
+              setSelected(String((n.data as { parent: string }).parent))
+              setTab('ai')
+              return
+            }
             setSelected(n.id)
             setTab(editable ? 'node' : 'ai')
           }}

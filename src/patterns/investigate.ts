@@ -8,6 +8,7 @@ import {
   MEMORY_STATE,
   MERGE_FINDINGS,
   recallMemory,
+  rememberCitedNode,
   rememberLessonNode,
 } from './phases/evidence.js';
 
@@ -24,14 +25,56 @@ const challenge = challengePhase({
   reopen: 'chase',
   done: 'attachParts',
   research: ['subQuestions', 'sourceInfo', 'useSources', 'hint'],
-  alongside: ['partAnswers'],
+  // The skeptic sees what was asked, what could not be read and what did not check out.
+  alongside: ['partAnswers', 'subQuestions', 'notRead', 'unverified', 'hypothesisStatus'],
+  // A debate round gets its own gap-research budget instead of the one already spent.
+  resetOnReopen: 'gapRounds',
+  // Each objection names the sub-question it bears on.
+  about: 'subQuestions',
+  rememberChecked: false,
 });
 
 /** Most independent parts one investigation answers side by side. */
 export const MAX_PARTS = 8;
 
+/** Lists the coverage report shows; long ones end with a pointer to the full field. */
+const listed = (field: string, none: string) =>
+  `if(len(${field}) == 0, "${none}", join(take(${field}, 15), "; ") + if(len(${field}) > 15, " … (all in ${field})", ""))`;
+
+/** The coverage section, written by the engine from what it recorded (not by the AI). */
+/** A finding citing a workspace file ("src/a.ts:3"), the kind evidence.check verifies. */
+const FILE_CITE = '[A-Za-z0-9_@.-]+[.][A-Za-z0-9]+:[0-9]';
+
+const COVERAGE = [
+  '"## Coverage\n\n- Files not triaged: "',
+  listed('excludedFiles', 'none'),
+  '"\n- Pages read: "',
+  listed('pages', 'none'),
+  '"\n- Experiments run: "',
+  listed('ran', 'none'),
+  '"\n- Could not read in full: "',
+  listed('notRead', 'nothing'),
+  '"\n- Sources searched: "',
+  listed('consulted', 'none'),
+  '"\n- Sources skipped: "',
+  listed('skipReasons', 'none'),
+  // Only path:line findings are checked against the files; the rest (web, other sources) are taken on trust.
+  '"\n- Findings not checked against a file (web pages, other sources): "',
+  `text(len(findings) - count(findings, "${FILE_CITE}")) + " of " + text(len(findings))`,
+].join(' + ');
+
+const LESSON_INPUTS = {
+  problem: 'question',
+  cause: 'answer',
+  files: 'citedFindings',
+  open: 'openQuestions',
+} as const;
+
+/** Re-counted after every merge of findings: the tally the next readers steer by. */
+const STATUS = { field: 'hypothesisStatus', expr: 'stances(findings, hypotheses)' };
+
 const AGAINST =
-  ' Look for evidence for AND against every entry of `hypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]".';
+  ' Look for evidence for AND against every entry of `hypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]". `hypothesisStatus` counts those tags so far: look hardest at the hypotheses it marks untested or challenged.';
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -60,6 +103,10 @@ const RELEVANT = /engine|schema|validate/;
  *   Close gaps       unanswered sub-questions get targeted research, then a human hint
  *   Answer           cited, with a coverage report
  */
+/** Unreadable items another fetch will not fix: PDFs and binaries, by path or by the reason given. */
+const NO_RETRY =
+  'unique(positions(notRead, "[.][Pp][Dd][Ff]([?#]|$)") + positions(notReadReasons, "[Bb]inary|PDF|[.]pdf"))';
+
 export const investigate: Pattern = {
   name: 'investigate',
   description:
@@ -74,6 +121,10 @@ export const investigate: Pattern = {
     'unresolvedObjections',
     // The evidence the answer rests on, so a chained run (fix, refactor…) need not find it again.
     'citedFindings',
+    // Why a partial answer is partial.
+    'doubts',
+    // Each sub-question, answered (cited) or said to be open.
+    'subAnswers',
   ],
   goalFrom: 'question',
   maxSteps: 5000,
@@ -81,9 +132,20 @@ export const investigate: Pattern = {
     [
       { name: 'question', type: 'string', description: 'What to find out' },
       { name: 'hint', type: 'string', description: 'Optional human clarification' },
+      { name: 'hintAsked', type: 'boolean', description: 'A person was asked for a hint once' },
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
       { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
+      {
+        name: 'subAnswers',
+        type: 'string[]',
+        description: 'One per sub-question, in order: "S1: answer [F3]" or "S1: OPEN — why"',
+      },
+      {
+        name: 'doubts',
+        type: 'string[]',
+        description: 'Why the answer ended with open doubts (empty when it is settled)',
+      },
       {
         name: 'citedFindings',
         type: 'string[]',
@@ -129,17 +191,29 @@ export const investigate: Pattern = {
         description: 'Experiments to run: command, what it measures',
       },
       {
+        name: 'timedExperiments',
+        type: 'string[]',
+        description: 'The experiments that time something: run one at a time, never side by side',
+      },
+      {
+        name: 'parallelExperiments',
+        type: 'string[]',
+        description: 'The other experiments, run side by side',
+      },
+      { name: 'maxExperiments', type: 'number', initial: 12 },
+      {
         name: 'agents',
         type: 'number',
-        initial: 4,
+        initial: MAX_AGENTS,
         description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
       },
-      { name: 'batchSize', type: 'number', initial: 25 },
+      // Files per sub-agent: read whole in its prompt, so fewer than when it paged through them.
+      { name: 'batchSize', type: 'number', initial: 10 },
       {
         name: 'batchWave',
         type: 'number',
         // batchSize × agents (set after planning): no slot sits idle.
-        initial: 100,
+        initial: 180,
         description: 'Files per triage round, split into parallel calls of batchSize',
       },
       { name: 'pendingFiles', type: 'string[]' },
@@ -151,7 +225,7 @@ export const investigate: Pattern = {
       {
         name: 'deepWave',
         type: 'number',
-        initial: 16,
+        initial: 72,
         description: 'Items per deep-read round, split into parallel calls of deepBatchSize',
       },
       { name: 'pendingDeep', type: 'string[]' },
@@ -183,6 +257,17 @@ export const investigate: Pattern = {
       { name: 'notReadReasons', type: 'string[]', description: 'Why, per notRead item' },
       { name: 'unreadRetries', type: 'number' },
       {
+        name: 'hypothesisStatus',
+        type: 'string[]',
+        description:
+          'Per hypothesis, findings tagged for and against it (engine-counted); none is dropped',
+      },
+      {
+        name: 'noRetryAt',
+        type: 'number[]',
+        description: 'Positions in notRead that another fetch cannot help (PDF, binary)',
+      },
+      {
         name: 'maxUnreadRetries',
         type: 'number',
         initial: 1,
@@ -192,7 +277,11 @@ export const investigate: Pattern = {
       { name: 'currentExperiment', type: 'string', description: 'Experiment to run now' },
       { name: 'ran', type: 'string[]', description: 'Experiments run' },
       { name: 'pendingSources', type: 'string[]' },
-      { name: 'currentSource', type: 'string', description: 'Source to search now' },
+      {
+        name: 'currentSources',
+        type: 'string[]',
+        description: 'Sources to search now, one sub-agent each',
+      },
       { name: 'queries', type: 'string[]', description: 'Queries, commands and tool calls made' },
       { name: 'consulted', type: 'string[]', description: 'Sources searched' },
       { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
@@ -270,6 +359,10 @@ export const investigate: Pattern = {
         'hasExperiments',
         'allowExperiments',
         'queueExperiments',
+        'hasParallel',
+        'parallelExperiment',
+        'checkParallel',
+        'mergeParallel',
         'experimentsLeft',
         'takeExperiment',
         'experiment',
@@ -315,7 +408,7 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'assessor',
       label: 'Plan research',
-      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side. Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): 1-2 for a narrow question about a few files, 3-4 for a typical one, 5-${MAX_AGENTS} when the evidence is large (a big repository, many pages) or \`parts\` has many subjects; more agents finish sooner but each one costs a call.`,
+      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side. Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): ${MAX_AGENTS} unless the question is narrow, 1-3 for one about a few files; parallel calls finish sooner at the same total reading, and an idle slot only costs time.`,
       reads: ['question', 'hint', 'sourceNames', 'sourceInfo'],
       writes: [
         'subQuestions',
@@ -370,9 +463,9 @@ export const investigate: Pattern = {
           field: 'pendingSources',
           expr: 'without(unique(useSources), ["workspace", "web", "experiment"])',
         },
-        // Each wave fills every sub-agent the plan asked for.
-        { field: 'batchWave', expr: 'batchSize * agents' },
-        { field: 'deepWave', expr: 'deepBatchSize * agents' },
+        // Each wave gives every sub-agent three parts, one after the other: fewer pauses between waves.
+        { field: 'batchWave', expr: 'batchSize * agents * 3' },
+        { field: 'deepWave', expr: 'deepBatchSize * agents * 3' },
       ],
     },
     {
@@ -487,11 +580,21 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Design experiments',
       directive:
-        'Design the experiments that would answer the behaviour or performance parts of `question`: each entry of `experiments` is one experiment as "command(s) to run — what it measures or reproduces — how to read the result". Make them fair and repeatable (same inputs, warm-up, at least 3 timed repetitions for performance). Never anything that edits tracked files, installs globally, or needs secrets.',
-      reads: ['question', 'subQuestions', 'sourceInfo'],
-      writes: ['experiments'],
+        'Design the experiments that would answer the behaviour or performance parts of `question`: each entry of `experiments` is one experiment as "command(s) to run — what it measures or reproduces — how to read the result". Make them fair and repeatable (same inputs, warm-up, at least 3 timed repetitions for performance). Never anything that edits tracked files, installs globally, or needs secrets. At most `maxExperiments`, the most telling first. Copy into `timedExperiments`, verbatim, every experiment that measures time or speed: those run one at a time, since timings taken side by side skew each other; the rest run in parallel.',
+      reads: ['question', 'hint', 'subQuestions', 'sourceInfo', 'maxExperiments'],
+      writes: ['experiments', 'timedExperiments'],
       retries: 2,
-      checks: [{ expr: 'len(experiments) > 0', message: 'Design at least one experiment.' }],
+      checks: [
+        { expr: 'len(experiments) > 0', message: 'Design at least one experiment.' },
+        {
+          expr: 'len(experiments) <= maxExperiments',
+          message: 'Keep the most telling experiments, at most maxExperiments.',
+        },
+        {
+          expr: 'subset(timedExperiments, experiments)',
+          message: 'timedExperiments must be copied verbatim from experiments.',
+        },
+      ],
     },
     {
       id: 'filesLeft',
@@ -514,9 +617,11 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Triage files',
       directive:
-        'Open EVERY file in `batch` (view each one; for long files look through all of it, not just the top). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
+        'Read EVERY file in `batch`: each one is given to you whole, with line numbers, at the end of this prompt (read all of it there, not just the top; open a file with tools only if it says lines were left out). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
         AGAINST,
-      reads: ['hypotheses', 'question', 'subQuestions', 'batch'],
+      reads: ['hypotheses', 'hypothesisStatus', 'question', 'hint', 'subQuestions', 'batch'],
+      // The engine reads the batch whole: one turn per part instead of a tool call per page.
+      preload: 'batch',
       fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
       writes: ['triaged', 'batchRelevant', 'newFindings'],
       cites: 'newFindings',
@@ -534,7 +639,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkTriage'),
+    checkFindings('checkTriage', 'newFindings', false),
     {
       id: 'mergeTriage',
       kind: 'compute',
@@ -542,6 +647,7 @@ export const investigate: Pattern = {
       assign: [
         { field: 'relevantFiles', expr: 'relevantFiles + batchRelevant' },
         ...MERGE_FINDINGS,
+        STATUS,
       ],
     },
     {
@@ -576,7 +682,7 @@ export const investigate: Pattern = {
         AGAINST,
       // The engine reads the workspace files of the batch whole: one turn, nothing skipped.
       preload: 'deepBatch',
-      reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch'],
+      reads: ['hypotheses', 'hypothesisStatus', 'question', 'hint', 'subQuestions', 'deepBatch'],
       fanOut: { over: 'deepBatch', per: 'deepBatchSize', agents: 'agents' },
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
       cites: 'newFindings',
@@ -603,26 +709,29 @@ export const investigate: Pattern = {
       kind: 'condition',
       label: 'Retry unreadable?',
       // Rate limits and timeouts often clear by the end of deep reading: one more try, then report.
-      expression: 'len(notRead) > 0 && unreadRetries < maxUnreadRetries',
+      // A PDF or binary fails the same way every time: only the rest are worth another try.
+      expression: `len(notRead) > len(${NO_RETRY}) && unreadRetries < maxUnreadRetries`,
     },
     {
       id: 'requeueUnread',
       kind: 'compute',
       label: 'Queue unreadable again',
       assign: [
-        { field: 'pendingDeep', expr: 'notRead' },
-        { field: 'notRead', expr: '[]' },
-        { field: 'notReadReasons', expr: '[]' },
+        { field: 'noRetryAt', expr: NO_RETRY },
+        { field: 'pendingDeep', expr: 'without(notRead, pick(notRead, noRetryAt))' },
+        { field: 'notReadReasons', expr: 'pick(notReadReasons, noRetryAt)' },
+        { field: 'notRead', expr: 'pick(notRead, noRetryAt)' },
         { field: 'unreadRetries', expr: 'unreadRetries + 1' },
       ],
     },
-    checkFindings('checkDeep'),
+    checkFindings('checkDeep', 'newFindings', false),
     {
       id: 'mergeDeep',
       kind: 'compute',
       label: 'Record deep read',
       assign: [
         ...MERGE_FINDINGS,
+        STATUS,
         { field: 'notRead', expr: 'notRead + unreadable' },
         { field: 'notReadReasons', expr: 'notReadReasons + unreadableReasons' },
         { field: 'unreadable', expr: '[]' },
@@ -648,12 +757,49 @@ export const investigate: Pattern = {
       id: 'queueExperiments',
       kind: 'compute',
       label: 'Queue experiments',
-      assign: [{ field: 'pendingExperiments', expr: 'experiments' }],
+      assign: [
+        { field: 'parallelExperiments', expr: 'without(experiments, timedExperiments)' },
+        { field: 'pendingExperiments', expr: 'timedExperiments' },
+      ],
+    },
+    {
+      id: 'hasParallel',
+      kind: 'condition',
+      label: 'Untimed experiments?',
+      expression: 'len(parallelExperiments) > 0',
+    },
+    {
+      id: 'parallelExperiment',
+      kind: 'agent',
+      role: 'executor',
+      label: 'Run experiments side by side',
+      // One sub-agent per experiment that times nothing, as many at once as the plan chose.
+      fanOut: { over: 'parallelExperiments', per: 1, agents: 'agents' },
+      directive:
+        'Run the ONE experiment in `parallelExperiments` in the workspace. Other experiments run at the same time: do not modify tracked files, and keep scripts and output in a subfolder of the scratch folder named in your instructions that no one else uses (e.g. named after your experiment). Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings` as "experiment | <command> — result". If it cannot run, say exactly why in `newFindings`.',
+      reads: ['question', 'parallelExperiments'],
+      writes: ['queries', 'newFindings'],
+      cites: 'newFindings',
+      retries: 1,
+      checks: [
+        { expr: 'len(queries) > 0', message: 'Record the commands you ran in queries.' },
+        {
+          expr: 'len(newFindings) > 0',
+          message: 'Report the results (or why the experiment could not run) in newFindings.',
+        },
+      ],
+    },
+    checkFindings('checkParallel', 'newFindings', false),
+    {
+      id: 'mergeParallel',
+      kind: 'compute',
+      label: 'Record experiments',
+      assign: [...MERGE_FINDINGS, STATUS, { field: 'ran', expr: 'ran + parallelExperiments' }],
     },
     {
       id: 'experimentsLeft',
       kind: 'condition',
-      label: 'Experiments left?',
+      label: 'Timed experiments left?',
       expression: 'len(pendingExperiments) > 0',
     },
     {
@@ -670,7 +816,8 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'executor',
       maxVisits: 20,
-      label: 'Run experiment',
+      visitsFrom: 'maxExperiments + 2',
+      label: 'Run timed experiment',
       directive:
         'Run `currentExperiment` in the workspace. Do not modify tracked files: put any scripts and output only in the scratch folder named in your instructions. For timings, warm up once and report the median of at least 3 runs with the raw numbers. Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings`. If it cannot run, say exactly why in `newFindings`.',
       reads: ['question', 'currentExperiment'],
@@ -685,12 +832,12 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkExperiment'),
+    checkFindings('checkExperiment', 'newFindings', false),
     {
       id: 'mergeExperiment',
       kind: 'compute',
       label: 'Record experiment',
-      assign: [...MERGE_FINDINGS, { field: 'ran', expr: 'append(ran, currentExperiment)' }],
+      assign: [...MERGE_FINDINGS, STATUS, { field: 'ran', expr: 'append(ran, currentExperiment)' }],
     },
     {
       id: 'sourcesLeft',
@@ -703,8 +850,9 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Next source',
       assign: [
-        { field: 'currentSource', expr: 'first(pendingSources)' },
-        { field: 'pendingSources', expr: 'drop(pendingSources, 1)' },
+        // As many sources as there are sub-agents, searched side by side.
+        { field: 'currentSources', expr: 'take(pendingSources, agents)' },
+        { field: 'pendingSources', expr: 'drop(pendingSources, agents)' },
       ],
     },
     {
@@ -714,18 +862,22 @@ export const investigate: Pattern = {
       label: 'Search source',
       capabilities: ['web', 'mcp'],
       directive:
-        'Search `currentSource` (see `sourceInfo` for how to use it) for evidence on every sub-question, using `searchTerms` and your own follow-up queries. Be exhaustive: look at several results, read full pages, threads, issues and diffs, and follow links. Record every query, command or tool call in `queries`, and every relevant fact as "source | location (URL, issue/PR #, commit, tool) — fact" in `newFindings`. If the source has nothing relevant, add one finding saying what you searched.' +
+        'Search the ONE source in `currentSources` (see `sourceInfo` for how to use it) for evidence on every sub-question, using `searchTerms` and your own follow-up queries. Be exhaustive: look at several results, read full pages, threads, issues and diffs, and follow links. Record every query, command or tool call in `queries`, and every relevant fact as "source | location (URL, issue/PR #, commit, tool) — fact" in `newFindings`. If the source has nothing relevant, add one finding saying what you searched.' +
         AGAINST,
       reads: [
         'hypotheses',
+        'hypothesisStatus',
         'question',
+        'hint',
         'subQuestions',
         'searchTerms',
-        'currentSource',
+        'currentSources',
         'sourceInfo',
       ],
       writes: ['queries', 'newFindings'],
       cites: 'newFindings',
+      // Sources are independent: one sub-agent each.
+      fanOut: { over: 'currentSources', per: 1, agents: 'agents' },
       retries: 2,
       checks: [
         {
@@ -739,12 +891,16 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkSource'),
+    checkFindings('checkSource', 'newFindings', false),
     {
       id: 'mergeSource',
       kind: 'compute',
       label: 'Record source',
-      assign: [...MERGE_FINDINGS, { field: 'consulted', expr: 'append(consulted, currentSource)' }],
+      assign: [
+        ...MERGE_FINDINGS,
+        STATUS,
+        { field: 'consulted', expr: 'consulted + currentSources' },
+      ],
     },
     {
       id: 'assess',
@@ -752,14 +908,23 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Find gaps',
       directive:
-        'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Set `confidence` (0..1) that the findings fully answer `question`.',
-      reads: ['question', 'subQuestions', 'findingsBrief', 'skipSources', 'skipReasons'],
+        'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Do the same for every entry of `openObjections` (objections to the last answer, sent back to research) that the findings do not yet settle. A hypothesis that `hypothesisStatus` marks untested is a gap only if a sub-question needs it settled. Set `confidence` (0..1) that the findings fully answer `question`.',
+      reads: [
+        'question',
+        'hint',
+        'subQuestions',
+        'openObjections',
+        'hypothesisStatus',
+        'findingsBrief',
+        'skipSources',
+        'skipReasons',
+      ],
       writes: ['gaps', 'confidence'],
       retries: 2,
       checks: [
         {
-          expr: 'subset(gaps, subQuestions)',
-          message: 'gaps must be copied exactly from subQuestions.',
+          expr: 'subset(gaps, subQuestions + openObjections)',
+          message: 'gaps must be copied exactly from subQuestions or openObjections.',
         },
       ],
     },
@@ -778,7 +943,16 @@ export const investigate: Pattern = {
       directive:
         'Close every gap in `gaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
-      reads: ['hypotheses', 'question', 'gaps', 'hint', 'findingsBrief', 'sourceInfo', 'consulted'],
+      reads: [
+        'hypotheses',
+        'hypothesisStatus',
+        'question',
+        'gaps',
+        'hint',
+        'findingsBrief',
+        'sourceInfo',
+        'consulted',
+      ],
       writes: ['queries', 'newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -794,18 +968,18 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkChase'),
+    checkFindings('checkChase', 'newFindings', false),
     {
       id: 'mergeChase',
       kind: 'compute',
       label: 'Record gap research',
-      assign: [...MERGE_FINDINGS, { field: 'gapRounds', expr: 'gapRounds + 1' }],
+      assign: [...MERGE_FINDINGS, STATUS, { field: 'gapRounds', expr: 'gapRounds + 1' }],
     },
     {
       id: 'confident',
       kind: 'condition',
       label: 'Good enough?',
-      expression: 'confidence >= 0.7 || !empty(hint)',
+      expression: 'confidence >= 0.7 || !empty(hint) || hintAsked',
     },
     {
       id: 'clarify',
@@ -821,7 +995,8 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Use hint',
       assign: [
-        { field: 'hint', expr: 'if(empty(hint), "(no hint given)", hint)' },
+        // Asked once; an empty hint stays empty rather than a placeholder passing as one.
+        { field: 'hintAsked', expr: 'true' },
         { field: 'gapRounds', expr: '0' },
       ],
     },
@@ -838,7 +1013,8 @@ export const investigate: Pattern = {
       label: 'Answer each part',
       // One call per part, side by side: each stays on its own subject over the shared
       // evidence, instead of one call answering everything and drifting or running out.
-      fanOut: { over: 'parts', per: 1, agents: 'agents' },
+      // The parts share everything but their subject: the first one warms the prompt cache.
+      fanOut: { over: 'parts', per: 1, agents: 'agents', warm: true },
       directive:
         'Answer `question` for the ONE subject in `parts` only, using only `findingsBrief` (the findings, quotes left out). ' +
         CITE_BY_ID +
@@ -862,9 +1038,10 @@ export const investigate: Pattern = {
       directive:
         'Answer `question` using only `findings`. ' +
         CITE_BY_ID +
-        ' Findings the engine could not verify are in `unverified`: do not rely on them. End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), items that could not be read in full and why (`notRead`, `notReadReasons`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared, then coverage; correct a part here if newer findings contradict it.',
+        ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). In `subAnswers`, give one entry per entry of `subQuestions`, in order: "S<n>: <its answer in one or two sentences> [F…]" citing the findings it rests on, or "S<n>: OPEN — <what is missing>" when the findings do not answer it. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it, and say why when a ruling goes against the tally in `hypothesisStatus`. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
       reads: [
         'question',
+        'hint',
         'subQuestions',
         'findings',
         'gaps',
@@ -878,18 +1055,36 @@ export const investigate: Pattern = {
         'notReadReasons',
         'confidence',
         'hypotheses',
+        'hypothesisStatus',
         'disagreements',
         'unverified',
         'parts',
         'partAnswers',
+        // The objections it must answer when it was challenged.
+        'realObjections',
       ],
-      writes: ['answer', 'openQuestions', 'rulings'],
+      writes: ['answer', 'openQuestions', 'rulings', 'subAnswers'],
       verifyBelow: 0.6,
       retries: 2,
       complexityShift: 1,
       checks: [
         { expr: 'len(answer) > 0', message: 'Write the answer.' },
         citesFindings('answer'),
+        // Every sub-question is answered with evidence, or said to be open: none is skipped.
+        {
+          expr: 'len(subAnswers) == len(subQuestions)',
+          message: 'Give exactly one subAnswers entry per sub-question, in order.',
+        },
+        {
+          // (No backslashes in expressions: "[[]" is a literal "[".)
+          expr: 'len(unmatched(subAnswers, "^S[0-9]+: (OPEN([^A-Za-z]|$)|.*[[]F[0-9]+)")) == 0',
+          message:
+            'Write each subAnswers entry as "S<n>: answer [F…]" citing findings, or "S<n>: OPEN — what is missing".',
+        },
+        {
+          expr: 'subset(refs(subAnswers), ids(findings))',
+          message: 'subAnswers may cite only ids that exist in findings.',
+        },
         {
           expr: 'len(rulings) == len(hypotheses)',
           message:
@@ -902,28 +1097,34 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'List open questions',
       // The engine, not the AI, guarantees every remaining gap is reported verbatim.
-      assign: [{ field: 'openQuestions', expr: 'unique(gaps + openQuestions)' }],
+      assign: [
+        {
+          field: 'openQuestions',
+          // Sub-questions the answer says are open are open questions, word for word.
+          expr: 'unique(gaps + openQuestions + unresolvedObjections + without(subAnswers, unmatched(subAnswers, "^S[0-9]+: OPEN([^A-Za-z]|$)")))',
+        },
+      ],
     },
     ...hypotheses.nodes,
     ...challenge.nodes,
     {
       id: 'attachParts',
       kind: 'compute',
-      label: 'Attach part answers',
-      // The engine, not the AI, puts every part in the result, after the (challenged) summary.
+      label: 'Finish the answer',
+      // The engine, not the AI, puts every part in the result, after the (challenged) summary,
+      // and every objection still open at the debate cap among the open questions.
       assign: [
+        { field: 'openQuestions', expr: 'unique(openQuestions + unresolvedObjections)' },
         {
           field: 'citedFindings',
           expr: 'withIds(findings, refs(answer + " " + join(partAnswers, " ")))',
         },
         {
           field: 'answer',
-          expr: 'if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer)',
+          expr: `if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer) + "\n\n" + ${COVERAGE}`,
         },
       ],
     },
-    // What was asked and the answer's opening, as a lead for later questions like it.
-    rememberLessonNode('learnAnswer', 'answered', { problem: 'question', cause: 'answer' }),
     {
       id: 'settled',
       kind: 'condition',
@@ -931,6 +1132,22 @@ export const investigate: Pattern = {
       // Open objections or low confidence are said in the outcome, not only in the text.
       expression: 'len(unresolvedObjections) == 0 && confidence >= 0.5',
     },
+    {
+      id: 'noteDoubts',
+      kind: 'compute',
+      label: 'Say why it is unsettled',
+      assign: [
+        {
+          field: 'doubts',
+          expr: 'if(len(unresolvedObjections) > 0, ["Objections were still open when the debate reached its cap (maxDebateRounds): see unresolvedObjections"], []) + if(confidence < 0.5, ["Confidence that the findings answer the question stayed below 0.5"], [])',
+        },
+      ],
+    },
+    // Only a settled answer teaches: what was asked and how it ended, a lead for later questions
+    // like it, stale once its cited files change. An unsettled one leaves no lesson.
+    rememberLessonNode('learnAnswer', 'answered', LESSON_INPUTS, { outcome: 'success' }),
+    // The facts later runs get are the ones this answer used, not everything read on the way.
+    rememberCitedNode('rememberCited', 'citedFindings'),
     { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
     { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
   ],
@@ -999,7 +1216,12 @@ export const investigate: Pattern = {
       branch: 'rejected',
       label: 'skipped',
     },
-    { id: 'queueExperiments-left', from: 'queueExperiments', to: 'experimentsLeft' },
+    { id: 'queueExperiments-parallel', from: 'queueExperiments', to: 'hasParallel' },
+    { id: 'hasParallel-run', from: 'hasParallel', to: 'parallelExperiment', branch: 'then' },
+    { id: 'hasParallel-left', from: 'hasParallel', to: 'experimentsLeft', branch: 'else' },
+    { id: 'parallel-check', from: 'parallelExperiment', to: 'checkParallel' },
+    { id: 'checkParallel-merge', from: 'checkParallel', to: 'mergeParallel' },
+    { id: 'mergeParallel-left', from: 'mergeParallel', to: 'experimentsLeft' },
     { id: 'experimentsLeft-take', from: 'experimentsLeft', to: 'takeExperiment', branch: 'then' },
     {
       id: 'experimentsLeft-sourcesLeft',
@@ -1034,18 +1256,29 @@ export const investigate: Pattern = {
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
-    { id: 'attachParts-learn', from: 'attachParts', to: 'learnAnswer' },
-    { id: 'learn-settled', from: 'learnAnswer', to: 'settled' },
-    { id: 'settled-done', from: 'settled', to: 'done', branch: 'then' },
-    { id: 'settled-doubts', from: 'settled', to: 'doubts', branch: 'else' },
+    { id: 'attachParts-settled', from: 'attachParts', to: 'settled' },
+    { id: 'settled-learn', from: 'settled', to: 'learnAnswer', branch: 'then' },
+    { id: 'settled-note', from: 'settled', to: 'noteDoubts', branch: 'else' },
+    { id: 'learn-cited', from: 'learnAnswer', to: 'rememberCited' },
+    { id: 'cited-done', from: 'rememberCited', to: 'done' },
+    { id: 'note-doubts', from: 'noteDoubts', to: 'doubts' },
   ],
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
       recall: () => ({ facts: [], lessons: [] }),
       learnAnswer: () => ({ saved: true }),
+      rememberCited: (s) => ({ saved: ((s.citedFindings as string[]) ?? []).length }),
       ...Object.fromEntries(
-        ['checkTriage', 'checkDeep', 'checkExperiment', 'checkSource', 'checkChase'].map((id) => [
+        [
+          'checkTriage',
+          'checkDeep',
+          'checkParallel',
+          'checkExperiment',
+          'checkSource',
+          'checkChase',
+          'checkSecond',
+        ].map((id) => [
           id,
           (s: Readonly<Record<string, unknown>>) => ({ valid: s.newFindings, invalid: [] }),
         ]),
@@ -1101,7 +1334,7 @@ export const investigate: Pattern = {
             skipReasons: skip.map((n) => `${n} cannot explain where code validates answers`),
             parts: [],
             // The demo keeps the number of sub-agents it was given (4 by default).
-            agents: typeof s.agents === 'number' ? s.agents : 4,
+            agents: typeof s.agents === 'number' ? s.agents : MAX_AGENTS,
           },
           verdict: v('planned'),
         };
@@ -1118,8 +1351,16 @@ export const investigate: Pattern = {
           experiments: [
             'npm test -- src/core/engine.test.ts — does an invalid answer change state? — expect 0 changes',
           ],
+          timedExperiments: [],
         },
         verdict: v('designed'),
+      }),
+      parallelExperiment: () => ({
+        updates: {
+          queries: ['npm test -- src/core/engine.test.ts'],
+          newFindings: ['experiment | npm test — 0 state changes after an invalid answer (3 runs)'],
+        },
+        verdict: v('ran'),
       }),
       experiment: (s) => ({
         updates: {
@@ -1151,7 +1392,7 @@ export const investigate: Pattern = {
               f.startsWith('http')
                 ? `${f} — state machines apply transitions only on valid input`
                 : f.endsWith('schema.ts')
-                  ? `${f}:115 — validateNodeResult checks verdict and typed updates`
+                  ? `${f}:115 — validateNodeResult checks verdict and typed updates [H1 for, H3 against]`
                   : `${f}:1 — reviewed fully`,
             ),
           },
@@ -1161,10 +1402,10 @@ export const investigate: Pattern = {
       sweep: (s) => ({
         updates: {
           queries: [
-            `${String(s.currentSource)}: ${((s.searchTerms as string[]) ?? [])[0] ?? 'question'}`,
+            `${String((s.currentSources as string[])[0])}: ${((s.searchTerms as string[]) ?? [])[0] ?? 'question'}`,
           ],
           newFindings: [
-            `${String(s.currentSource)} | search — consistent with validate-before-apply design`,
+            `${String((s.currentSources as string[])[0])} | search — consistent with validate-before-apply design`,
           ],
         },
         verdict: v('searched'),
@@ -1183,7 +1424,7 @@ export const investigate: Pattern = {
         updates: {
           queries: ['git log -S validateNodeResult'],
           newFindings: [
-            'git-history | commit "feat(core): score/performance types and response validation" — validation added with the engine',
+            'git-history | commit "feat(core): score/performance types and response validation" — validation added with the engine [H2 against]',
           ],
         },
         verdict: v('gap closed'),
@@ -1206,14 +1447,14 @@ export const investigate: Pattern = {
             '1. **Determinism**: `advance()` is pure, so a rejected answer leaves the state hash unchanged and a retry gets the same move key.',
             '2. **Auditability**: each rejected attempt is recorded with its errors in the Performance, so a replay reproduces the failure too.',
             '3. **Safety**: an assessor can never write keys it was not given (`updates.x is not writable here`).',
-            '',
-            '## Coverage',
-            '',
-            `- Files triaged: ${((s.triaged as string[]) ?? []).length}; read completely: ${((s.examined as string[]) ?? []).length}`,
-            `- Web pages read: ${((s.pages as string[]) ?? []).length}; experiments run: ${((s.ran as string[]) ?? []).length}`,
-            `- Sources searched: ${((s.consulted as string[]) ?? []).join(', ') || 'none'}; skipped: ${((s.skipSources as string[]) ?? []).join(', ') || 'none'}`,
           ].join('\n'),
           openQuestions: (s.gaps as string[]) ?? [],
+          // One per sub-question: answered with a citation, or open when it is still a gap.
+          subAnswers: ((s.subQuestions as string[]) ?? []).map((q, i) =>
+            ((s.gaps as string[]) ?? []).includes(q)
+              ? `S${i + 1}: OPEN — ${q} is not settled by the findings`
+              : `S${i + 1}: answered by the validation path [F1]`,
+          ),
           rulings: ((s.hypotheses as string[]) ?? []).map((h, i) =>
             i === 0
               ? `${h.split(':')[0]}: CONFIRMED — src/core/engine.ts resolveAgent validates before applying`
@@ -1238,7 +1479,7 @@ export const investigate: Pattern = {
           objections:
             visit === 0
               ? [
-                  'The answer says a rejected answer keeps the same move key, but no finding cites it: check moveKeyOf in src/core/engine.ts',
+                  'S2: The answer says a rejected answer keeps the same move key, but no finding cites it: check moveKeyOf in src/core/engine.ts',
                 ]
               : [],
         },
@@ -1247,7 +1488,7 @@ export const investigate: Pattern = {
       triageObjections: (s) => ({
         updates: {
           objectionTriage: ((s.objections as string[]) ?? []).map(
-            (o) => `${o.slice(0, 40)}…: REAL — it is a claim in the answer`,
+            (o) => `${o.slice(0, 40)}…: REAL — no finding backs this claim, and it would change S2`,
           ),
           realObjections: (s.objections as string[]) ?? [],
         },
@@ -1257,6 +1498,9 @@ export const investigate: Pattern = {
         updates: {
           secondOpinion:
             'The engine validates (src/core/engine.ts resolveAgent → checkAgentResult). H1 confirmed; H2 and H3 refuted.',
+          newFindings: [
+            'src/core/engine.ts:1 — resolveAgent checks the answer before applying it [H1 for, H3 against]',
+          ],
         },
         verdict: v('independent answer'),
       }),

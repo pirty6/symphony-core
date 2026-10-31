@@ -122,6 +122,7 @@ describe('sources.catalog', () => {
       'files.read',
       'git.diff',
       'evidence.check',
+      'memory.facts',
       'memory.recall',
       'memory.lesson',
       'patterns.list',

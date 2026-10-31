@@ -3,6 +3,7 @@ import { compileScore } from '../core/compile.js';
 import { runScripted } from '../core/scripted.js';
 import type { DemoScript, Pattern } from '../core/types.js';
 import { TIER_NAMES } from '../core/catalog.js';
+import { resultText } from '../core/chain.js';
 import { analyze, composedScore, fix, maestro, maestroThen } from './index.js';
 
 const demo = maestro.demo!;
@@ -507,6 +508,35 @@ const asking = (_s: Readonly<Record<string, unknown>>, visit: number) => ({
   updates: { feedback: `round ${visit + 1}: also check the retry logic`, smarter: true },
 });
 
+describe('maestro logs what it did', () => {
+  it('the result says the pattern, how it was chosen, the complexity and the rounds, not only the request', () => {
+    const score = compileScore(maestro, {
+      goal: 'compose',
+      context: { request: 'Fix the flaky login test' },
+      complexity: 2,
+      generatedAt: 't',
+    });
+    const r = runScripted(score, demo, { at: 't' });
+    const log = r.state.state.composition as string[];
+    expect(log[0]).toMatch(/^Pattern: fix \(the tested library pattern/);
+    expect(log).toContain('Verb triggers suggested: fix');
+    expect(
+      log.some((l) => /^Complexity: 2 \(you set it; the classifier rated [1-4]\)$/.test(l)),
+    ).toBe(true);
+    expect(log.some((l) => /^Rounds: 1 of 6$/.test(l))).toBe(true);
+    expect(resultText(score, r.state.state)).toMatch(/Pattern: fix/);
+  });
+
+  it('a run that gives up still logs what it tried', () => {
+    const score = compileScore(maestro, { goal: 'compose', context: { request: 'x' } });
+    const s = score.nodes.find((n) => n.id === 'logGaveUp');
+    expect(s).toBeDefined();
+    expect(score.edges.find((e) => e.from === 'roundsLeft' && e.branch === 'else')?.to).toBe(
+      'logGaveUp',
+    );
+  });
+});
+
 describe('maestro never drops go-gate feedback', () => {
   it('feedback at the last round ends partial, keeping the draft and the feedback, and performs nothing', () => {
     const { score, r } = run('Fix the flaky login test', {}, { approvals: { gate: asking } });
@@ -520,7 +550,8 @@ describe('maestro never drops go-gate feedback', () => {
     expect(s.normalized).toMatchObject({ name: 'fix' });
     expect(nodesRun(r)).not.toContain('remember');
     expect(composedScore(score, s)).toBeUndefined();
-    expect(maestro.result).toEqual(['unappliedFeedback']);
+    expect(maestro.result).toContain('unappliedFeedback');
+    expect(maestro.result).toContain('composition');
   });
 
   it('empty feedback at the last round still performs', () => {
@@ -719,7 +750,7 @@ describe('maestro keeps a requirement ledger (replaying run 05-02-16)', () => {
     expect(s.coverage).toHaveLength(3);
     // The go-gate showed how each requirement is met.
     expect(maestro.nodes.find((n) => n.id === 'gate')).toMatchObject({
-      shows: ['coverage', 'uncovered'],
+      shows: ['composition', 'coverage', 'uncovered'],
     });
   });
 

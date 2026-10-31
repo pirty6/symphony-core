@@ -12,6 +12,7 @@ import type { Pattern, SavedRun, TokenUsage } from '../core/types.js';
 import {
   addUsage,
   costliest,
+  growth,
   formatUsage,
   performanceUsage,
   rejectionUsage,
@@ -33,6 +34,8 @@ export interface EvalResult {
   readonly tokens: TokenUsage;
   /** Tokens per step of the run (rejected attempts included). */
   readonly byNode?: Readonly<Record<string, TokenUsage>>;
+  /** Steps whose input grew visit by visit ("assess: 40k → 120k in"). */
+  readonly growing?: readonly string[];
   readonly models: readonly string[];
   /** Workspace citations among the run's findings: how many were checked, how many held. */
   readonly citations: { readonly checked: number; readonly invalid: number };
@@ -130,6 +133,7 @@ async function runTask(
       steps: perf.steps.length,
       tokens: performanceUsage(perf).total,
       byNode: performanceUsage(perf).byNode,
+      growing: growth(performanceUsage(perf).byVisit),
       rejected: (({ attempts, attemptUsage, textUpdates }) => ({
         attempts,
         premiumRequests: attemptUsage.premiumRequests ?? 0,
@@ -299,6 +303,10 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   const top = costliest(s.byNode, 5);
   if (top.length > 0)
     lines.push(`costliest steps: ${top.map((t) => `${t.node} (${t.text})`).join('; ')}`);
+  const growing = report.results
+    .flatMap((r) => (r.growing ?? []).map((g) => `${r.task} ${g}`))
+    .slice(0, 5);
+  if (growing.length > 0) lines.push(`growing context: ${growing.join('; ')}`);
   const worse = b ? regressions(s, b) : [];
   if (worse.length > 0) lines.push(`⚠ worse than the baseline: ${worse.join(', ')}`);
   return lines.join('\n');

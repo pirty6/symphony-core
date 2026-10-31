@@ -169,7 +169,7 @@ describe('Run', () => {
       clock,
       autoApprove: true,
     }).start();
-    expect(perf.outcome).toBe('failed');
+    expect(perf.outcome).toBe('partial');
     expect(perf.reason).toMatch(/no valid response after 3 attempt/);
     expect(perf.steps.at(-1)?.attempts?.[0]?.transcript?.output).toMatch(/network down/);
     expect(perf.steps.at(-1)?.recoveries).toEqual([{ action: 'stop', by: 'scripted', at: 't' }]);

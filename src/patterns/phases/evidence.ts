@@ -25,12 +25,14 @@ export const EVIDENCE_STATE: readonly StateField[] = [
 ];
 
 /** Check the step's new findings against the workspace; failures go to rejectedFindings. */
-export function checkFindings(id: string, field = 'newFindings'): ScoreNode {
+export function checkFindings(id: string, field = 'newFindings', remember = true): ScoreNode {
   return {
     id,
     kind: 'tool',
     label: 'Check citations',
     tool: 'evidence.check',
+    // remember: false when the pattern keeps only the findings its answer cites (rememberCited).
+    ...(remember ? {} : { args: { remember: false } }),
     inputs: { findings: field },
     output: { valid: field, invalid: 'rejectedFindings' },
     maxVisits: 200,
@@ -73,6 +75,7 @@ export const MEMORY_STATE: readonly StateField[] = [
     type: 'boolean',
     description: 'Whether the outcome of this run was remembered',
   },
+  { name: 'factsSaved', type: 'number', description: 'Cited findings remembered for later runs' },
 ];
 
 /** Bring back what earlier runs learned that bears on `query`. */
@@ -92,17 +95,30 @@ export const MEMORY_NOTE =
   ' `knownFacts` (when present) were true in earlier runs and still match the files today, and `pastLessons` say how earlier runs ended: use them as leads to check, never as evidence on their own.';
 
 /** Remember how the run ended, for later runs. */
+/** Remember the findings an answer cites, for later runs: only what was used, only on success. */
+export function rememberCitedNode(id: string, field: string): ScoreNode {
+  return {
+    id,
+    kind: 'tool',
+    label: 'Remember cited facts',
+    tool: 'memory.facts',
+    inputs: { findings: field },
+    output: { saved: 'factsSaved' },
+  };
+}
+
 export function rememberLessonNode(
   id: string,
   kind: 'fixed' | 'failed' | 'implemented' | 'answered',
   inputs: Readonly<Record<string, string>>,
+  args: Readonly<Record<string, unknown>> = {},
 ): ScoreNode {
   return {
     id,
     kind: 'tool',
     label: kind === 'failed' ? 'Remember the failure' : 'Remember the outcome',
     tool: 'memory.lesson',
-    args: { kind },
+    args: { kind, ...args },
     inputs,
     output: { saved: 'lessonSaved' },
   };

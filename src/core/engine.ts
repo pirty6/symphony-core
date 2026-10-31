@@ -284,17 +284,25 @@ function partsOf(
   const list = state[node.fanOut.over];
   const per = typeof node.fanOut.per === 'number' ? node.fanOut.per : state[node.fanOut.per];
   if (!Array.isArray(list) || typeof per !== 'number' || per < 1) return {};
-  const input = pick(state, node.reads);
+  const { over } = node.fanOut;
+  // What the parts share first, the part's own slice last: the prompts share a longer
+  // prefix, which the provider's prompt cache reuses.
+  const shared = Object.entries(pick(state, node.reads)).filter(([k]) => k !== over);
   const parts: Readonly<Record<string, unknown>>[] = [];
   for (let i = 0; i < list.length; i += per) {
-    parts.push({ ...input, [node.fanOut.over]: list.slice(i, i + per) });
+    parts.push(Object.fromEntries([...shared, [over, list.slice(i, i + per)]]));
   }
   const agents = node.fanOut.agents ? state[node.fanOut.agents] : undefined;
   const parallel =
     typeof agents === 'number' && Number.isFinite(agents)
       ? Math.min(MAX_AGENTS, Math.max(1, Math.round(agents)))
       : undefined;
-  return parts.length > 1 ? { parts, ...(parallel ? { parallel } : {}) } : {};
+  if (parts.length < 2) return {};
+  return Object.assign(
+    { parts },
+    parallel ? { parallel } : {},
+    node.fanOut.warm ? { warmFirst: true } : {},
+  );
 }
 
 /** One part's answer, checked as if it were the whole step (shape, then the step's checks). */
@@ -753,10 +761,11 @@ function resolveRecovery(
       { input, attempts: ctx.attempts, recoveries: ctx.recoveries, at: res.at },
       hashBefore,
     );
-    fail(
+    // Stopped at a step that could not answer: the work so far is kept, the run is partial.
+    finish(
       ctx,
-      `'${node.id}' gave no valid response after ${ctx.attempts.length} attempt(s): ${pause.feedback.join('; ')}`,
-      node.id,
+      'partial',
+      `'${node.id}' gave no valid response after ${ctx.attempts.length} attempt(s), and the run was stopped there; the work so far is kept: ${pause.feedback.join('; ')}`,
       res.at,
     );
     return;

@@ -30,10 +30,10 @@ describe('pattern library', () => {
 
   it('investigate covers every file, every chosen source and closes gaps', () => {
     const p = findPattern('investigate')!;
-    // Small batches, one batch per round: the loop takes several rounds.
+    // Small batches, one sub-agent: a round triages three files, so the loop takes several rounds.
     const score = compileScore(p, {
       goal: 'g',
-      context: { ...p.demo!.context!, batchSize: 2, agents: 1 },
+      context: { ...p.demo!.context!, batchSize: 1, agents: 1 },
     });
     const r = runScripted(score, p.demo);
     expect(r.state.outcome).toBe('success');
@@ -42,7 +42,7 @@ describe('pattern library', () => {
       .filter((s) => s.nodeId === 'triage')
       .flatMap((s) => s.updates?.triaged as string[]);
     expect(triaged.toSorted()).toEqual((r.state.state.repoFiles as string[]).toSorted());
-    expect(steps.filter((s) => s.nodeId === 'triage')).toHaveLength(3);
+    expect(steps.filter((s) => s.nodeId === 'triage')).toHaveLength(2);
     // By default a round plays several batches at once (fanOut) and covers the same files.
     const wide = runScripted(
       compileScore(p, { goal: 'g', context: { ...p.demo!.context!, batchSize: 2 } }),
@@ -143,7 +143,7 @@ describe('pattern library', () => {
     const r = runScripted(compileScore(p, { goal: 'g', context: { target: 'x' } }), undefined);
     // Placeholder answers review nothing: the run ends, and never as a clean review.
     expect(['done', 'failed']).toContain(r.state.kind);
-    expect(r.state.outcome).toBe('failed');
+    expect(r.state.outcome).not.toBe('success');
   });
 
   it('review ends honestly: a failed analysis is not "looks good"', () => {

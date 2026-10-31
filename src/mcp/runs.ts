@@ -14,6 +14,7 @@ import { zeroValue } from '../core/schema.js';
 import {
   addUsage,
   costliest,
+  growth,
   formatUsage,
   performanceUsage,
   rejectionUsage,
@@ -182,6 +183,8 @@ export function usageOf(
   return {
     ...(mine.total.premiumRequests ? { premiumRequests: mine.total.premiumRequests } : {}),
     byStep: Object.fromEntries(costliest(mine.byNode).map((t) => [t.node, t.text])),
+    // Steps whose input grows visit by visit: where re-sent context piles up.
+    ...(growth(mine.byVisit).length ? { growing: growth(mine.byVisit) } : {}),
     ...(rejected.attempts || rejected.textUpdates
       ? {
           rejected: `${rejected.attempts} attempts (${formatUsage(rejected.attemptUsage)})${rejected.textUpdates ? ` · ${rejected.textUpdates} answers sent updates as text` : ''}`,

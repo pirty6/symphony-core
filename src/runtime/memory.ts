@@ -18,6 +18,7 @@
  * Recall ranks by the words shared with the question, rarer words weighing more;
  * nothing here decides an answer: steps still have to find and cite their own evidence.
  */
+import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { checkCitations } from './evidence.js';
@@ -26,9 +27,18 @@ interface Entry {
   readonly text: string;
   readonly at: string;
   readonly files?: readonly string[];
-  /** The run that added it (facts), so one run's share can be capped. */
+  /** The run that added it, so one run's share can be capped and a lesson traced. */
   readonly run?: string;
+  /** Lessons: a hash of each file as it was, so an edit since makes the lesson stale. */
+  readonly hashes?: Readonly<Record<string, string>>;
 }
+
+/** A short content hash of a workspace file, or undefined when it cannot be read. */
+const fileHash = (workspace: string, path: string): Promise<string | undefined> =>
+  readFile(join(workspace, path)).then(
+    (b) => createHash('sha256').update(b).digest('hex').slice(0, 16),
+    () => undefined,
+  );
 
 /** An approved maestro composition. */
 export interface Composition {
@@ -58,6 +68,8 @@ export const MAX_FACTS_PER_RUN = 200;
 /** Lessons older than this are not recalled. */
 export const LESSON_DAYS = 90;
 const MAX_COMPOSITIONS = 200;
+/** Least relevance a recalled entry needs (a rare shared word scores about 2-7). */
+export const MIN_SCORE = 1;
 const QUOTED_CITATION = /^[\w@./-]+\.[A-Za-z0-9]+:\d+(?:-\d+)?\b.*`[^`]{4,}`/;
 
 export const memoryPath = (workspace: string) => join(workspace, '.symphony', 'memory.json');
@@ -92,16 +104,34 @@ function tidyFacts(facts: readonly Entry[]): Entry[] {
   return out;
 }
 
-async function load(workspace: string): Promise<MemoryFile> {
+/**
+ * The store, or an empty one when there is none yet. A store that cannot be read
+ * (corrupt, unreadable) is empty for reading, but never overwritten: writing it
+ * would lose everything it holds.
+ */
+async function load(workspace: string, forWrite = false): Promise<MemoryFile> {
+  let raw: string;
   try {
-    const m = JSON.parse(await readFile(memoryPath(workspace), 'utf8')) as Partial<MemoryFile>;
+    raw = await readFile(memoryPath(workspace), 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT' || !forWrite)
+      return { facts: [], lessons: [] };
+    throw e;
+  }
+  try {
+    const m = JSON.parse(raw) as Partial<MemoryFile>;
     // Stores written before the hygiene rules are tidied as they are read.
     return {
       facts: tidyFacts(m.facts ?? []),
       lessons: m.lessons ?? [],
       compositions: m.compositions ?? [],
     };
-  } catch {
+  } catch (e) {
+    if (forWrite)
+      throw new Error(
+        `${memoryPath(workspace)} is not valid JSON; not overwriting it: ${(e as Error).message}`,
+        { cause: e },
+      );
     return { facts: [], lessons: [] };
   }
 }
@@ -119,7 +149,7 @@ async function save(workspace: string, m: MemoryFile): Promise<void> {
 const queues = new Map<string, Promise<unknown>>();
 function update(workspace: string, change: (m: MemoryFile) => MemoryFile): Promise<void> {
   const prev = queues.get(workspace) ?? Promise.resolve();
-  const next = prev.then(async () => save(workspace, change(await load(workspace))));
+  const next = prev.then(async () => save(workspace, change(await load(workspace, true))));
   queues.set(
     workspace,
     next.catch(() => undefined),
@@ -167,17 +197,31 @@ export async function rememberFacts(
   return added;
 }
 
+/**
+ * Remember a lesson; says whether it was saved. With `opts.workspace` (where `files`
+ * live, when the store is elsewhere) each file's hash is kept: recall skips the lesson
+ * once one of them changes.
+ */
 export async function rememberLesson(
-  workspace: string,
+  store: string,
   text: string,
   files: readonly string[],
   at = new Date().toISOString(),
-): Promise<void> {
-  if (!text.trim()) return;
-  await update(workspace, (m) => ({
-    ...m,
-    lessons: merge(m.lessons, [{ text, files, at }], MAX_LESSONS),
-  }));
+  opts: { readonly run?: string; readonly workspace?: string } = {},
+): Promise<boolean> {
+  if (!text.trim()) return false;
+  const hashes: Record<string, string> = {};
+  for (const f of files) {
+    const h = await fileHash(opts.workspace ?? store, f);
+    if (h) hashes[f] = h;
+  }
+  const entry: Entry = Object.assign(
+    { text, files, at },
+    opts.run ? { run: opts.run } : {},
+    Object.keys(hashes).length ? { hashes } : {},
+  );
+  await update(store, (m) => ({ ...m, lessons: merge(m.lessons, [entry], MAX_LESSONS) }));
+  return true;
 }
 
 const words = (s: string) =>
@@ -199,16 +243,21 @@ function ranked<E extends Entry>(entries: readonly E[], query: string, limit: nu
   const df = new Map<string, number>();
   for (const bag of bags) for (const w of bag) if (q.has(w)) df.set(w, (df.get(w) ?? 0) + 1);
   const weight = (w: string) => Math.log(1 + entries.length / (df.get(w) ?? 1));
-  return entries
-    .map((e, i) => ({
-      e,
-      i,
-      score: [...bags[i]!].filter((w) => q.has(w)).reduce((sum, w) => sum + weight(w), 0),
-    }))
-    .filter((x) => x.score > 0)
-    .toSorted((a, b) => b.score - a.score || a.i - b.i)
-    .slice(0, limit)
-    .map((x) => x.e);
+  return (
+    entries
+      .map((e, i) => ({
+        e,
+        i,
+        score: [...bags[i]!].filter((w) => q.has(w)).reduce((sum, w) => sum + weight(w), 0),
+      }))
+      // One very common word shared is noise, not a lead (a small store cannot tell rare words).
+      .filter(
+        (x) => x.score > 0 && x.score >= Math.min(MIN_SCORE, 0.5 * Math.log(1 + entries.length)),
+      )
+      .toSorted((a, b) => b.score - a.score || a.i - b.i)
+      .slice(0, limit)
+      .map((x) => x.e)
+  );
 }
 
 async function liveLessons(workspace: string, lessons: readonly Entry[]): Promise<Entry[]> {
@@ -224,7 +273,11 @@ async function liveLessons(workspace: string, lessons: readonly Entry[]): Promis
           ),
         ),
       );
-      return there.every(Boolean);
+      if (!there.every(Boolean)) return false;
+      // A file edited since the lesson was written: what it said may no longer hold.
+      const hashes = Object.entries(l.hashes ?? {});
+      const now = await Promise.all(hashes.map(([f]) => fileHash(workspace, f)));
+      return hashes.every(([, h], i) => now[i] === h);
     }),
   );
   return lessons.filter((_, i) => live[i]);
@@ -278,7 +331,7 @@ export async function recall(
       ),
     })).catch(() => undefined);
   }
-  // A lesson about files that are gone, or from long ago, no longer applies.
+  // A lesson about files that are gone or changed, or from long ago, no longer applies.
   const fresh = await liveLessons(workspace, m.lessons);
   const lessons = ranked(fresh, query, Math.ceil(limit / 2)).map(
     (e) => `${e.at.slice(0, 10)} | ${e.text}`,

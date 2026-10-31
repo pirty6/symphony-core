@@ -6,8 +6,12 @@
  */
 import type { SavedRun } from './types.js';
 
-/** Bump when advance() could take a different path for the same recorded answers. */
-export const ENGINE_VERSION = '1.1.0';
+/**
+ * Bump when advance() could take a different path for the same recorded answers.
+ * 1.2.0: limits, an AI stopping early and a stop at a stuck step end partial (were
+ * failed or success); fan-out retries keep the parts that passed.
+ */
+export const ENGINE_VERSION = '1.2.0';
 
 /** The run format this engine writes. */
 export const RUN_SCHEMA_VERSION = 3;

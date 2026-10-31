@@ -16,6 +16,13 @@
  */
 import { MEMORY_NOTE } from './evidence.js';
 import type { ScoreEdge, ScoreGroup, ScoreNode, StateField } from '../../core/types.js';
+import {
+  checkFindings,
+  CITE_BY_ID,
+  citesFindings,
+  EVIDENCE_STATE,
+  MERGE_FINDINGS,
+} from './evidence.js';
 import { applyRating, RATING_CHECK, RATING_DIRECTIVE, RATING_STATE } from './complexity.js';
 
 export interface Fragment {
@@ -100,6 +107,9 @@ export interface HypothesesConfig {
   readonly context: readonly string[];
 }
 
+/** The hypothesis that the question's framing is wrong (no backslashes: expressions drop them). */
+const NULL_HYPOTHESIS = '[Nn]one of (these|the above)|[Pp]remise[^|]*wrong';
+
 /** Competing explanations before any evidence is gathered. */
 export function hypothesesPhase(cfg: HypothesesConfig): Fragment {
   return {
@@ -137,6 +147,13 @@ export function hypothesesPhase(cfg: HypothesesConfig): Fragment {
             expr: 'len(unique(hypotheses)) == len(hypotheses)',
             message: 'Each hypothesis must be distinct.',
           },
+          {
+            // Without a rival that the framing itself is wrong, the evidence can only pick among
+            // the proposer's favourites.
+            expr: `count(hypotheses, "${NULL_HYPOTHESIS}") >= 1`,
+            message:
+              'Include one hypothesis that says "none of these" or that the premise is wrong.',
+          },
         ],
       },
       applyRating(),
@@ -161,7 +178,19 @@ export interface ChallengeConfig {
   readonly research: readonly string[];
   /** Fields the skeptic, pragmatist and reconciler read with the draft (e.g. per-part answers). */
   readonly alongside?: readonly string[];
+  /** A counter of the research loop to reset when objections reopen it (its own budget per round). */
+  readonly resetOnReopen?: string;
+  /** A string[] of parts of the subject (e.g. sub-questions): each objection names the one it bears on, "S<n>: …". */
+  readonly about?: string;
+  /** false: checked findings are not remembered as they come (the pattern remembers what it cites). */
+  readonly rememberChecked?: boolean;
 }
+
+/** A triage reason that names its ground: an F-id or the S<n> it would change (no backslashes). */
+const TRIAGE_REASON = '(REAL|THEORETICAL).*[^A-Za-z0-9][SF][0-9]+';
+
+/** Most objections one skeptic round may raise: the debate converges instead of growing. */
+export const MAX_OBJECTIONS = 5;
 
 /** Attack the draft conclusion; send real objections back to research; reconcile a second opinion. */
 export function challengePhase(cfg: ChallengeConfig): Fragment {
@@ -178,7 +207,22 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       'secondOpinion',
       'disagreements',
       'unresolvedObjections',
-    ),
+    ).concat([
+      // The second opinion's evidence joins the numbered findings (a pattern's own definitions win).
+      {
+        name: 'openObjections',
+        type: 'string[]',
+        description: 'Objections sent back to research, kept until research settles them',
+      },
+      {
+        name: 'pastObjections',
+        type: 'string[]',
+        description: 'Objections raised in earlier debate rounds',
+      },
+      { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
+      { name: 'findings', type: 'string[]', description: 'All checked evidence, numbered F1, F2…' },
+      ...EVIDENCE_STATE,
+    ]),
     entry: 'useSkeptic',
     group: {
       id: 'challengePhase',
@@ -188,7 +232,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         'useSkeptic',
         'challenge',
         'hasObjections',
-        'atCap',
+        'roundsLeft',
         'keepOpen',
         'usePragmatist',
         'triageObjections',
@@ -197,6 +241,8 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         'reopen',
         'useSecond',
         'second',
+        'checkSecond',
+        'mergeSecond',
         'reconcile',
       ],
     },
@@ -213,17 +259,52 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         role: 'assessor',
         isolated: true,
         label: 'Skeptic',
-        directive: `You are the SKEPTIC. Attack \`${draft}\` as the answer to \`${subject}\`, using only \`${evidence}\` and \`hypotheses\`. You are not a contrarian: each \`objections\` entry must be CONCRETE and checkable — a claim not backed by a cited item of \`${evidence}\`, a hypothesis dismissed without evidence against it, an alternative explanation the evidence also fits, or a path nobody followed (a caller, a config, a version, an environment). Say what research would settle it. An empty list is fine and better than invented concerns; no style comments.`,
-        reads: [subject, draft, ...alongside, evidence, 'hypotheses', 'rulings'],
+        directive: `You are the SKEPTIC. Attack \`${draft}\` as the answer to \`${subject}\`, using only \`${evidence}\` and \`hypotheses\`. You are not a contrarian: each \`objections\` entry must be CONCRETE and checkable — a claim not backed by a cited item of \`${evidence}\`, a hypothesis dismissed without evidence against it, an alternative explanation the evidence also fits, or a path nobody followed (a caller, a config, a version, an environment). Say what research would settle it. An empty list is fine and better than invented concerns; no style comments. Give at most ${MAX_OBJECTIONS}, the ones most likely to change the answer first, and merge objections one piece of research would settle together. \`pastObjections\` were raised in earlier rounds and researched (\`openObjections\` are the ones research was sent to settle, \`objectionTriage\` how the last round's were judged): check whether the evidence now settles them, and raise one again only with evidence it did not have then (name the new F-ids).${cfg.about ? ` Start each one with the entry of \`${cfg.about}\` it bears on, by position: "S1: …" for the first (S0 for ${subject} as a whole).` : ''}`,
+        reads: [
+          subject,
+          draft,
+          ...alongside,
+          evidence,
+          'hypotheses',
+          'rulings',
+          'pastObjections',
+          'openObjections',
+          'objectionTriage',
+        ],
         writes: ['objections'],
         retries: 2,
         complexityShift: 1,
+        checks: [
+          {
+            expr: 'len(without(objections, pastObjections)) == len(objections)',
+            message:
+              'Do not repeat an objection of pastObjections word for word: raise it again only with the new evidence that reopens it.',
+          },
+          {
+            expr: `len(objections) <= ${MAX_OBJECTIONS}`,
+            message: `Give at most ${MAX_OBJECTIONS} objections: the ones most likely to change the answer, merged where one piece of research settles several.`,
+          },
+          ...(cfg.about
+            ? [
+                {
+                  expr: 'len(unmatched(objections, "^S[0-9]+: ")) == 0',
+                  message: `Start every objection with the entry of ${cfg.about} it bears on: "S1: …" (S0 for the whole).`,
+                },
+              ]
+            : []),
+        ],
       },
       {
         id: 'hasObjections',
         kind: 'condition',
-        label: 'Objections left?',
-        expression: 'len(objections) > 0 && debateRounds < maxDebateRounds',
+        label: 'Objections?',
+        expression: 'len(objections) > 0',
+      },
+      {
+        id: 'roundsLeft',
+        kind: 'condition',
+        label: 'Research them? (rounds left)',
+        expression: 'debateRounds < maxDebateRounds',
       },
       {
         id: 'usePragmatist',
@@ -237,7 +318,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         role: 'assessor',
         isolated: true,
         label: 'Pragmatist',
-        directive: `You are the PRAGMATIST. For EVERY entry of \`objections\` write one \`objectionTriage\` entry, in order: "<objection, abbreviated>: REAL | THEORETICAL — <one-sentence reason>". REAL means it could change the answer to \`${subject}\` and research can settle it; THEORETICAL means it is unlikely or would not change the answer. Copy the REAL ones, verbatim, into \`realObjections\`. You are neither defending the draft nor siding with the skeptic.`,
+        directive: `You are the PRAGMATIST. For EVERY entry of \`objections\` write one \`objectionTriage\` entry, in order: "<objection, abbreviated>: REAL | THEORETICAL — <one-sentence reason>". REAL means it could change the answer to \`${subject}\` and research can settle it; THEORETICAL means it is unlikely or would not change the answer. Copy the REAL ones, verbatim, into \`realObjections\`. You are neither defending the draft nor siding with the skeptic.${cfg.about ? ` Each reason names what it rests on: the finding(s) by F-id, or the entry of \`${cfg.about}\` (S<n>) it would change.` : ''}`,
         reads: [subject, draft, ...alongside, 'objections', evidence],
         writes: ['objectionTriage', 'realObjections'],
         retries: 2,
@@ -250,20 +331,26 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
             expr: 'subset(realObjections, objections)',
             message: 'realObjections must be copied verbatim from objections.',
           },
+          ...(cfg.about
+            ? [
+                {
+                  expr: `len(unmatched(objectionTriage, "${TRIAGE_REASON}")) == 0`,
+                  message: `After REAL or THEORETICAL, name what the reason rests on: an F-id of ${evidence} or the S<n> it would change.`,
+                },
+                {
+                  expr: `subset(refs(objectionTriage), ids(${evidence}))`,
+                  message: `Cite only F-ids that are in ${evidence}.`,
+                },
+              ]
+            : []),
         ],
-      },
-      {
-        id: 'atCap',
-        kind: 'condition',
-        label: 'Still objecting at the cap?',
-        expression: 'len(objections) > 0',
       },
       {
         id: 'keepOpen',
         kind: 'compute',
         label: 'Report open objections',
-        // Out of rounds, not out of objections: say so in the result instead of dropping them.
-        assign: [{ field: 'unresolvedObjections', expr: 'objections' }],
+        // Out of rounds, not out of objections: the REAL ones are said in the result, not dropped.
+        assign: [{ field: 'unresolvedObjections', expr: 'realObjections' }],
       },
       {
         id: 'keepAll',
@@ -283,7 +370,12 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         label: 'Research objections',
         assign: [
           { field: gaps, expr: 'realObjections' },
+          // Kept until research settles them: the next assessment cannot quietly drop them.
+          { field: 'openObjections', expr: 'realObjections' },
+          // The next skeptic sees what was already raised, not a blank slate.
+          { field: 'pastObjections', expr: 'pastObjections + objections' },
           { field: 'debateRounds', expr: 'debateRounds + 1' },
+          ...(cfg.resetOnReopen ? [{ field: cfg.resetOnReopen, expr: '0' }] : []),
         ],
       },
       {
@@ -300,12 +392,27 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         label: 'Second investigator',
         // Another model family: its mistakes are less likely to be the first one's.
         otherModel: true,
-        directive: `You are an INDEPENDENT second investigator. Answer \`${subject}\` yourself, from scratch, without seeing the first investigator's answer or evidence. Test every entry of \`hypotheses\` against the sources yourself and cite what you find (path:line, URL, issue/PR #, commit). Write your conclusion, with citations and a verdict per hypothesis, in \`secondOpinion\`.`,
+        directive: `You are an INDEPENDENT second investigator. Answer \`${subject}\` yourself, from scratch, without seeing the first investigator's answer or evidence. Test every entry of \`hypotheses\` against the sources yourself. Record every piece of evidence you rely on in \`newFindings\` ("path:line — fact \`quote\`", or "source | location — fact"): it is checked like the first investigator's. Write your conclusion, with a verdict per hypothesis, in \`secondOpinion\`.`,
         reads: [subject, 'hypotheses', ...cfg.research],
-        writes: ['secondOpinion'],
+        writes: ['secondOpinion', 'newFindings'],
+        cites: 'newFindings',
         retries: 2,
         complexityShift: 1,
-        checks: [{ expr: 'len(secondOpinion) > 0', message: 'Write your conclusion.' }],
+        checks: [
+          { expr: 'len(secondOpinion) > 0', message: 'Write your conclusion.' },
+          {
+            expr: 'len(newFindings) > 0',
+            message: 'Record the evidence you rely on in newFindings.',
+          },
+        ],
+      },
+      // The second opinion's evidence is checked and numbered like the rest, so it can be cited.
+      checkFindings('checkSecond', 'newFindings', cfg.rememberChecked ?? true),
+      {
+        id: 'mergeSecond',
+        kind: 'compute',
+        label: 'Record its evidence',
+        assign: [...MERGE_FINDINGS],
       },
       {
         id: 'reconcile',
@@ -313,8 +420,17 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         role: 'assessor',
         isolated: true,
         label: 'Reconcile',
-        directive: `Two investigators answered \`${subject}\` independently: \`${draft}\` and \`secondOpinion\`. Rewrite \`${draft}\` as the reconciled answer, keeping only claims backed by cited evidence from either, and update \`rulings\` (one per hypothesis, "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence"). List every point where they disagreed, and how it was settled or why it is still open, in \`disagreements\`.`,
-        reads: [subject, draft, ...alongside, 'secondOpinion', evidence, 'hypotheses', 'rulings'],
+        directive: `Two investigators answered \`${subject}\` independently: \`${draft}\` and \`secondOpinion\`. Rewrite \`${draft}\` as the reconciled answer, keeping only claims backed by evidence from either (both are in \`${evidence}\` now). ${CITE_BY_ID} Then update \`rulings\` (one per hypothesis, "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence"). List every point where they disagreed, and how it was settled or why it is still open, in \`disagreements\`.`,
+        reads: [
+          subject,
+          draft,
+          ...alongside,
+          'secondOpinion',
+          evidence,
+          ...(evidence === 'findings' || evidence === 'findingsBrief' ? [] : ['findingsBrief']),
+          'hypotheses',
+          'rulings',
+        ],
         writes: [draft, 'rulings', 'disagreements'],
         retries: 2,
         complexityShift: 1,
@@ -323,6 +439,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
             expr: 'len(rulings) == len(hypotheses)',
             message: 'Give exactly one ruling per hypothesis.',
           },
+          citesFindings(draft),
         ],
       },
     ],
@@ -336,9 +453,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         to: 'usePragmatist',
         branch: 'then',
       },
-      { id: 'hasObjections-atCap', from: 'hasObjections', to: 'atCap', branch: 'else' },
-      { id: 'atCap-keepOpen', from: 'atCap', to: 'keepOpen', branch: 'then' },
-      { id: 'atCap-useSecond', from: 'atCap', to: 'useSecond', branch: 'else' },
+      { id: 'hasObjections-useSecond', from: 'hasObjections', to: 'useSecond', branch: 'else' },
       { id: 'keepOpen-useSecond', from: 'keepOpen', to: 'useSecond' },
       {
         id: 'usePragmatist-triage',
@@ -349,12 +464,16 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       { id: 'usePragmatist-keepAll', from: 'usePragmatist', to: 'keepAll', branch: 'else' },
       { id: 'triage-anyReal', from: 'triageObjections', to: 'anyReal' },
       { id: 'keepAll-anyReal', from: 'keepAll', to: 'anyReal' },
-      { id: 'anyReal-reopen', from: 'anyReal', to: 'reopen', branch: 'then' },
+      { id: 'anyReal-roundsLeft', from: 'anyReal', to: 'roundsLeft', branch: 'then' },
+      { id: 'roundsLeft-reopen', from: 'roundsLeft', to: 'reopen', branch: 'then' },
+      { id: 'roundsLeft-keepOpen', from: 'roundsLeft', to: 'keepOpen', branch: 'else' },
       { id: 'anyReal-useSecond', from: 'anyReal', to: 'useSecond', branch: 'else' },
       { id: 'reopen-research', from: 'reopen', to: reopen, label: 'research objections' },
       { id: 'useSecond-second', from: 'useSecond', to: 'second', branch: 'then' },
       { id: 'useSecond-done', from: 'useSecond', to: done, branch: 'else' },
-      { id: 'second-reconcile', from: 'second', to: 'reconcile' },
+      { id: 'second-check', from: 'second', to: 'checkSecond' },
+      { id: 'checkSecond-merge', from: 'checkSecond', to: 'mergeSecond' },
+      { id: 'mergeSecond-reconcile', from: 'mergeSecond', to: 'reconcile' },
       { id: 'reconcile-done', from: 'reconcile', to: done },
     ],
   };

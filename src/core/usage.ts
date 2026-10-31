@@ -47,21 +47,45 @@ export function transcriptUsage(t: AiTranscript | undefined): TokenUsage {
   );
 }
 
-/** Every AI answer of a run (rejected attempts included), per node and in total. */
+/** One visit of a step: what it cost then (byNode adds every visit together). */
+export interface VisitUsage {
+  readonly nodeId: string;
+  readonly step: number;
+  readonly usage: TokenUsage;
+}
+
+/** Every AI answer of a run (rejected attempts included), per node, per visit and in total. */
 export function performanceUsage(perf: Pick<Performance, 'steps'>): {
   readonly total: TokenUsage;
   readonly byNode: Readonly<Record<string, TokenUsage>>;
+  readonly byVisit: readonly VisitUsage[];
 } {
   let total = NO_USAGE;
   const byNode: Record<string, TokenUsage> = {};
+  const byVisit: VisitUsage[] = [];
   for (const s of perf.steps) {
     const answers = [...(s.attempts ?? []).map((a) => a.transcript), s.transcript];
     const u = answers.reduce((sum, t) => addUsage(sum, transcriptUsage(t)), NO_USAGE);
     if (u.calls === 0) continue;
     byNode[s.nodeId] = addUsage(byNode[s.nodeId] ?? NO_USAGE, u);
+    byVisit.push({ nodeId: s.nodeId, step: s.step, usage: u });
     total = addUsage(total, u);
   }
-  return { total, byNode };
+  return { total, byNode, byVisit };
+}
+
+/**
+ * Steps visited more than once whose input grows visit by visit, worst first, as
+ * "assess: 40k → 120k → 210k in": where re-sent context piles up.
+ */
+export function growth(byVisit: readonly VisitUsage[], n = 5): string[] {
+  const per = new Map<string, number[]>();
+  for (const v of byVisit) per.set(v.nodeId, [...(per.get(v.nodeId) ?? []), v.usage.inputTokens]);
+  return [...per]
+    .filter(([, ins]) => ins.length > 1 && ins.at(-1)! > ins[0]!)
+    .toSorted(([, a], [, b]) => b.at(-1)! / Math.max(1, b[0]!) - a.at(-1)! / Math.max(1, a[0]!))
+    .slice(0, n)
+    .map(([id, ins]) => `${id}: ${ins.map(k).join(' → ')} in`);
 }
 
 /**
@@ -106,16 +130,42 @@ export function formatUsage(u: TokenUsage): string {
   return `${k(u.inputTokens)} in${u.cacheReadTokens ? ` (${k(u.cacheReadTokens)} cached)` : ''} · ${k(u.outputTokens)} out · ${u.calls} calls${time}${cost}${compacted}`;
 }
 
-/** The steps that cost most (premium requests, then input tokens), each with its usage. */
+const pct = (part: number, whole: number) => (whole > 0 ? Math.round((100 * part) / whole) : 0);
+
+/**
+ * The steps that cost most (premium requests, then input tokens), each with its usage and
+ * its share of the run: of the cost (premium requests, else input tokens) and of model time.
+ */
 export function costliest(
   byNode: Readonly<Record<string, TokenUsage>>,
   limit = 8,
-): Array<{ readonly node: string; readonly usage: TokenUsage; readonly text: string }> {
+): Array<{
+  readonly node: string;
+  readonly usage: TokenUsage;
+  readonly text: string;
+  /** Percent of the cost (premium requests when known, else input tokens). */
+  readonly share: number;
+  /** Percent of the time spent in the model, when the provider reported it. */
+  readonly timeShare?: number;
+}> {
+  const all = Object.values(byNode);
+  const premium = all.reduce((n, u) => n + (u.premiumRequests ?? 0), 0);
+  const input = all.reduce((n, u) => n + u.inputTokens, 0);
+  const ms = all.reduce((n, u) => n + (u.apiMs ?? 0), 0);
   return Object.entries(byNode)
     .toSorted(
       ([, a], [, b]) =>
         (b.premiumRequests ?? 0) - (a.premiumRequests ?? 0) || b.inputTokens - a.inputTokens,
     )
     .slice(0, limit)
-    .map(([node, usage]) => ({ node, usage, text: formatUsage(usage) }));
+    .map(([node, usage]) => {
+      const share =
+        premium > 0 ? pct(usage.premiumRequests ?? 0, premium) : pct(usage.inputTokens, input);
+      const timeShare = ms > 0 ? pct(usage.apiMs ?? 0, ms) : undefined;
+      const of = `${share}% of the cost${timeShare !== undefined ? `, ${timeShare}% of model time` : ''}`;
+      return Object.assign(
+        { node, usage, share, text: `${of}: ${formatUsage(usage)}` },
+        timeShare !== undefined ? { timeShare } : {},
+      );
+    });
 }
