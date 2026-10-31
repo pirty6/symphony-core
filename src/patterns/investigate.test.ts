@@ -466,3 +466,13 @@ describe('investigate experiments', () => {
     expect((r.state.state.ran as string[]).toSorted()).toEqual([...exps].toSorted());
   });
 });
+
+describe('investigate searches sources side by side', () => {
+  it('each round takes as many sources as there are sub-agents', () => {
+    const { r } = runWith(['git-history', 'prior-runs'], demo.approvals, { parallel: 2 });
+    const sweeps = r.state.steps.filter((st) => st.nodeId === 'sweep');
+    expect(sweeps).toHaveLength(1);
+    expect(sweeps[0]!.input?.currentSources).toEqual(['git-history', 'prior-runs']);
+    expect(r.state.state.consulted).toEqual(['git-history', 'prior-runs']);
+  });
+});

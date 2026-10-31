@@ -221,7 +221,11 @@ export const investigate: Pattern = {
       { name: 'currentExperiment', type: 'string', description: 'Experiment to run now' },
       { name: 'ran', type: 'string[]', description: 'Experiments run' },
       { name: 'pendingSources', type: 'string[]' },
-      { name: 'currentSource', type: 'string', description: 'Source to search now' },
+      {
+        name: 'currentSources',
+        type: 'string[]',
+        description: 'Sources to search now, one sub-agent each',
+      },
       { name: 'queries', type: 'string[]', description: 'Queries, commands and tool calls made' },
       { name: 'consulted', type: 'string[]', description: 'Sources searched' },
       { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
@@ -784,8 +788,9 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Next source',
       assign: [
-        { field: 'currentSource', expr: 'first(pendingSources)' },
-        { field: 'pendingSources', expr: 'drop(pendingSources, 1)' },
+        // As many sources as there are sub-agents, searched side by side.
+        { field: 'currentSources', expr: 'take(pendingSources, agents)' },
+        { field: 'pendingSources', expr: 'drop(pendingSources, agents)' },
       ],
     },
     {
@@ -795,7 +800,7 @@ export const investigate: Pattern = {
       label: 'Search source',
       capabilities: ['web', 'mcp'],
       directive:
-        'Search `currentSource` (see `sourceInfo` for how to use it) for evidence on every sub-question, using `searchTerms` and your own follow-up queries. Be exhaustive: look at several results, read full pages, threads, issues and diffs, and follow links. Record every query, command or tool call in `queries`, and every relevant fact as "source | location (URL, issue/PR #, commit, tool) — fact" in `newFindings`. If the source has nothing relevant, add one finding saying what you searched.' +
+        'Search the ONE source in `currentSources` (see `sourceInfo` for how to use it) for evidence on every sub-question, using `searchTerms` and your own follow-up queries. Be exhaustive: look at several results, read full pages, threads, issues and diffs, and follow links. Record every query, command or tool call in `queries`, and every relevant fact as "source | location (URL, issue/PR #, commit, tool) — fact" in `newFindings`. If the source has nothing relevant, add one finding saying what you searched.' +
         AGAINST,
       reads: [
         'hypotheses',
@@ -803,11 +808,13 @@ export const investigate: Pattern = {
         'hint',
         'subQuestions',
         'searchTerms',
-        'currentSource',
+        'currentSources',
         'sourceInfo',
       ],
       writes: ['queries', 'newFindings'],
       cites: 'newFindings',
+      // Sources are independent: one sub-agent each.
+      fanOut: { over: 'currentSources', per: 1, agents: 'agents' },
       retries: 2,
       checks: [
         {
@@ -826,7 +833,7 @@ export const investigate: Pattern = {
       id: 'mergeSource',
       kind: 'compute',
       label: 'Record source',
-      assign: [...MERGE_FINDINGS, { field: 'consulted', expr: 'append(consulted, currentSource)' }],
+      assign: [...MERGE_FINDINGS, { field: 'consulted', expr: 'consulted + currentSources' }],
     },
     {
       id: 'assess',
@@ -1287,10 +1294,10 @@ export const investigate: Pattern = {
       sweep: (s) => ({
         updates: {
           queries: [
-            `${String(s.currentSource)}: ${((s.searchTerms as string[]) ?? [])[0] ?? 'question'}`,
+            `${String((s.currentSources as string[])[0])}: ${((s.searchTerms as string[]) ?? [])[0] ?? 'question'}`,
           ],
           newFindings: [
-            `${String(s.currentSource)} | search — consistent with validate-before-apply design`,
+            `${String((s.currentSources as string[])[0])} | search — consistent with validate-before-apply design`,
           ],
         },
         verdict: v('searched'),
