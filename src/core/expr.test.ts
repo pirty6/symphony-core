@@ -90,6 +90,14 @@ describe('evalExpr values', () => {
     ['"round " + text(2) + ", ok " + text(true)', 'round 2, ok true'],
     ['count(["a.ts:1", "web | x", "b.ts:2"], "^[a-z.]+:[0-9]")', 2],
     ['positions(["x", "binary", "y", "pdf"], "binary|pdf")', [2, 4]],
+    [
+      'stances(["F1 a.ts:1 — x [H1 for, H2 against]", "F2 b.ts:2 — y [h2 against]", "F3 c — z"], ["H1: a | c", "H2: b | c", "H3: none of these"])',
+      [
+        'H1: 1 for, 0 against',
+        'H2: 0 for, 2 against — challenged',
+        'H3: 0 for, 0 against — untested',
+      ],
+    ],
     ['pick(["a", "b", "c"], unique(positions(["1", "2", "3"], "1|3") + [3]))', ['a', 'c']],
     [
       'brief(["F1 a.ts:3 — the port `port = 8080`", "F2 long claim here", "F3 short"], 12)',

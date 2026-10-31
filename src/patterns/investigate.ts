@@ -25,7 +25,7 @@ const challenge = challengePhase({
   done: 'attachParts',
   research: ['subQuestions', 'sourceInfo', 'useSources', 'hint'],
   // The skeptic sees what was asked, what could not be read and what did not check out.
-  alongside: ['partAnswers', 'subQuestions', 'notRead', 'unverified'],
+  alongside: ['partAnswers', 'subQuestions', 'notRead', 'unverified', 'hypothesisStatus'],
   // A debate round gets its own gap-research budget instead of the one already spent.
   resetOnReopen: 'gapRounds',
   // Each objection names the sub-question it bears on.
@@ -68,8 +68,11 @@ const LESSON_INPUTS = {
   open: 'openQuestions',
 } as const;
 
+/** Re-counted after every merge of findings: the tally the next readers steer by. */
+const STATUS = { field: 'hypothesisStatus', expr: 'stances(findings, hypotheses)' };
+
 const AGAINST =
-  ' Look for evidence for AND against every entry of `hypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]".';
+  ' Look for evidence for AND against every entry of `hypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]". `hypothesisStatus` counts those tags so far: look hardest at the hypotheses it marks untested or challenged.';
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -251,6 +254,12 @@ export const investigate: Pattern = {
       },
       { name: 'notReadReasons', type: 'string[]', description: 'Why, per notRead item' },
       { name: 'unreadRetries', type: 'number' },
+      {
+        name: 'hypothesisStatus',
+        type: 'string[]',
+        description:
+          'Per hypothesis, findings tagged for and against it (engine-counted); none is dropped',
+      },
       {
         name: 'noRetryAt',
         type: 'number[]',
@@ -608,7 +617,7 @@ export const investigate: Pattern = {
       directive:
         'Read EVERY file in `batch`: each one is given to you whole, with line numbers, at the end of this prompt (read all of it there, not just the top; open a file with tools only if it says lines were left out). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
         AGAINST,
-      reads: ['hypotheses', 'question', 'hint', 'subQuestions', 'batch'],
+      reads: ['hypotheses', 'hypothesisStatus', 'question', 'hint', 'subQuestions', 'batch'],
       // The engine reads the batch whole: one turn per part instead of a tool call per page.
       preload: 'batch',
       fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
@@ -636,6 +645,7 @@ export const investigate: Pattern = {
       assign: [
         { field: 'relevantFiles', expr: 'relevantFiles + batchRelevant' },
         ...MERGE_FINDINGS,
+        STATUS,
       ],
     },
     {
@@ -670,7 +680,7 @@ export const investigate: Pattern = {
         AGAINST,
       // The engine reads the workspace files of the batch whole: one turn, nothing skipped.
       preload: 'deepBatch',
-      reads: ['hypotheses', 'question', 'hint', 'subQuestions', 'deepBatch'],
+      reads: ['hypotheses', 'hypothesisStatus', 'question', 'hint', 'subQuestions', 'deepBatch'],
       fanOut: { over: 'deepBatch', per: 'deepBatchSize', agents: 'agents' },
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
       cites: 'newFindings',
@@ -719,6 +729,7 @@ export const investigate: Pattern = {
       label: 'Record deep read',
       assign: [
         ...MERGE_FINDINGS,
+        STATUS,
         { field: 'notRead', expr: 'notRead + unreadable' },
         { field: 'notReadReasons', expr: 'notReadReasons + unreadableReasons' },
         { field: 'unreadable', expr: '[]' },
@@ -781,7 +792,7 @@ export const investigate: Pattern = {
       id: 'mergeParallel',
       kind: 'compute',
       label: 'Record experiments',
-      assign: [...MERGE_FINDINGS, { field: 'ran', expr: 'ran + parallelExperiments' }],
+      assign: [...MERGE_FINDINGS, STATUS, { field: 'ran', expr: 'ran + parallelExperiments' }],
     },
     {
       id: 'experimentsLeft',
@@ -824,7 +835,7 @@ export const investigate: Pattern = {
       id: 'mergeExperiment',
       kind: 'compute',
       label: 'Record experiment',
-      assign: [...MERGE_FINDINGS, { field: 'ran', expr: 'append(ran, currentExperiment)' }],
+      assign: [...MERGE_FINDINGS, STATUS, { field: 'ran', expr: 'append(ran, currentExperiment)' }],
     },
     {
       id: 'sourcesLeft',
@@ -853,6 +864,7 @@ export const investigate: Pattern = {
         AGAINST,
       reads: [
         'hypotheses',
+        'hypothesisStatus',
         'question',
         'hint',
         'subQuestions',
@@ -882,7 +894,11 @@ export const investigate: Pattern = {
       id: 'mergeSource',
       kind: 'compute',
       label: 'Record source',
-      assign: [...MERGE_FINDINGS, { field: 'consulted', expr: 'consulted + currentSources' }],
+      assign: [
+        ...MERGE_FINDINGS,
+        STATUS,
+        { field: 'consulted', expr: 'consulted + currentSources' },
+      ],
     },
     {
       id: 'assess',
@@ -890,12 +906,13 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Find gaps',
       directive:
-        'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Do the same for every entry of `openObjections` (objections to the last answer, sent back to research) that the findings do not yet settle. Set `confidence` (0..1) that the findings fully answer `question`.',
+        'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Do the same for every entry of `openObjections` (objections to the last answer, sent back to research) that the findings do not yet settle. A hypothesis that `hypothesisStatus` marks untested is a gap only if a sub-question needs it settled. Set `confidence` (0..1) that the findings fully answer `question`.',
       reads: [
         'question',
         'hint',
         'subQuestions',
         'openObjections',
+        'hypothesisStatus',
         'findingsBrief',
         'skipSources',
         'skipReasons',
@@ -924,7 +941,16 @@ export const investigate: Pattern = {
       directive:
         'Close every gap in `gaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
-      reads: ['hypotheses', 'question', 'gaps', 'hint', 'findingsBrief', 'sourceInfo', 'consulted'],
+      reads: [
+        'hypotheses',
+        'hypothesisStatus',
+        'question',
+        'gaps',
+        'hint',
+        'findingsBrief',
+        'sourceInfo',
+        'consulted',
+      ],
       writes: ['queries', 'newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -945,7 +971,7 @@ export const investigate: Pattern = {
       id: 'mergeChase',
       kind: 'compute',
       label: 'Record gap research',
-      assign: [...MERGE_FINDINGS, { field: 'gapRounds', expr: 'gapRounds + 1' }],
+      assign: [...MERGE_FINDINGS, STATUS, { field: 'gapRounds', expr: 'gapRounds + 1' }],
     },
     {
       id: 'confident',
@@ -1009,7 +1035,7 @@ export const investigate: Pattern = {
       directive:
         'Answer `question` using only `findings`. ' +
         CITE_BY_ID +
-        ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). In `subAnswers`, give one entry per entry of `subQuestions`, in order: "S<n>: <its answer in one or two sentences> [F…]" citing the findings it rests on, or "S<n>: OPEN — <what is missing>" when the findings do not answer it. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
+        ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). In `subAnswers`, give one entry per entry of `subQuestions`, in order: "S<n>: <its answer in one or two sentences> [F…]" citing the findings it rests on, or "S<n>: OPEN — <what is missing>" when the findings do not answer it. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it, and say why when a ruling goes against the tally in `hypothesisStatus`. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
       reads: [
         'question',
         'hint',
@@ -1026,6 +1052,7 @@ export const investigate: Pattern = {
         'notReadReasons',
         'confidence',
         'hypotheses',
+        'hypothesisStatus',
         'disagreements',
         'unverified',
         'parts',
@@ -1361,7 +1388,7 @@ export const investigate: Pattern = {
               f.startsWith('http')
                 ? `${f} — state machines apply transitions only on valid input`
                 : f.endsWith('schema.ts')
-                  ? `${f}:115 — validateNodeResult checks verdict and typed updates`
+                  ? `${f}:115 — validateNodeResult checks verdict and typed updates [H1 for, H3 against]`
                   : `${f}:1 — reviewed fully`,
             ),
           },
@@ -1393,7 +1420,7 @@ export const investigate: Pattern = {
         updates: {
           queries: ['git log -S validateNodeResult'],
           newFindings: [
-            'git-history | commit "feat(core): score/performance types and response validation" — validation added with the engine',
+            'git-history | commit "feat(core): score/performance types and response validation" — validation added with the engine [H2 against]',
           ],
         },
         verdict: v('gap closed'),
@@ -1467,7 +1494,9 @@ export const investigate: Pattern = {
         updates: {
           secondOpinion:
             'The engine validates (src/core/engine.ts resolveAgent → checkAgentResult). H1 confirmed; H2 and H3 refuted.',
-          newFindings: ['src/core/engine.ts:1 — resolveAgent checks the answer before applying it'],
+          newFindings: [
+            'src/core/engine.ts:1 — resolveAgent checks the answer before applying it [H1 for, H3 against]',
+          ],
         },
         verdict: v('independent answer'),
       }),

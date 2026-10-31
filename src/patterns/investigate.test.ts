@@ -518,6 +518,22 @@ describe('investigate searches sources side by side', () => {
   });
 });
 
+describe('investigate keeps a tally per hypothesis', () => {
+  it('the engine counts [H# for/against] tags after each merge; no hypothesis is dropped', () => {
+    const { r } = runWith(['workspace']);
+    const s = r.state.state;
+    const status = s.hypothesisStatus as string[];
+    expect(status).toHaveLength((s.hypotheses as string[]).length);
+    const tagged = (s.findings as string[]).filter((f) =>
+      /\[[^\]]*H1 (for|against)/i.test(f),
+    ).length;
+    const [, f, a] = /^H1: (\d+) for, (\d+) against/.exec(status[0]!)!;
+    expect(Number(f) + Number(a)).toBe(tagged);
+    const deep = r.state.steps.find((x) => x.nodeId === 'deepRead');
+    expect(deep?.input).toHaveProperty('hypothesisStatus');
+  });
+});
+
 describe('investigate coverage', () => {
   it('the engine writes the coverage section from its record', () => {
     const { r } = runWith(['workspace']);

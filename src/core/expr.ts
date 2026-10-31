@@ -53,7 +53,8 @@ type FnName =
   | 'unmatched'
   | 'text'
   | 'count'
-  | 'positions';
+  | 'positions'
+  | 'stances';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -83,6 +84,7 @@ const FNS: Record<FnName, number> = {
   text: 1,
   count: 2,
   positions: 2,
+  stances: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -433,6 +435,27 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
               .replace(/\s+/g, ' ')
               .trim();
             return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+          });
+        }
+        case 'stances': {
+          // stances(findings, hypotheses): per hypothesis, how many findings are tagged
+          // "[H2 for]" / "[H2 against]", and "challenged" when against outweighs for.
+          const tally = new Map<string, { for: number; against: number }>();
+          for (const f of strings('stances', x))
+            for (const tag of f.match(/\[[^\]]*\]/g) ?? [])
+              for (const m of tag.matchAll(/\b(H\d+)\s+(for|against)\b/gi)) {
+                const t = tally.get(m[1]!.toUpperCase()) ?? { for: 0, against: 0 };
+                if (m[2]!.toLowerCase() === 'for') t.for += 1;
+                else t.against += 1;
+                tally.set(m[1]!.toUpperCase(), t);
+              }
+          return strings('stances', args[1]).flatMap((h) => {
+            const id = /^\s*(H\d+)\b/i.exec(h)?.[1]?.toUpperCase();
+            if (!id) return [];
+            const t = tally.get(id) ?? { for: 0, against: 0 };
+            const status =
+              t.against > t.for ? ' — challenged' : t.for + t.against === 0 ? ' — untested' : '';
+            return [`${id}: ${t.for} for, ${t.against} against${status}`];
           });
         }
         case 'withIds': {
