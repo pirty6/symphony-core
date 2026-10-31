@@ -53,7 +53,8 @@ export function followUps(score: ExecutableScore, performance: Performance): Cha
  * so they keep going after a failed item. Stopping a run stops the rest.
  */
 export function playsAfter(step: ChainStep, outcome: PerformanceOutcome): boolean {
-  if (outcome === 'success') return true;
+  // A partial run hands on what it has, its doubts included; the next pattern has its own gates.
+  if (outcome === 'success' || outcome === 'partial') return true;
   return typeof step !== 'string' && outcome !== 'cancelled' && outcome !== 'in-progress';
 }
 
@@ -94,6 +95,15 @@ export function handoffContext(
     const theirs = prev.score.state.find((f) => f.name === name);
     if (mine && theirs && mine.type === theirs.type && name in state) ctx[name] = state[name];
   }
+  // Your hint to the first run still applies to the next one, unless it was given its own.
+  const hint = state.hint;
+  if (
+    !('hint' in ctx) &&
+    typeof hint === 'string' &&
+    hint.trim() &&
+    next.state.some((f) => f.name === 'hint' && f.type === 'string')
+  )
+    ctx.hint = hint;
   if (next.goalFrom) {
     const own = ctx[next.goalFrom];
     const goal = typeof own === 'string' && own.trim() ? own.trim() : prev.score.goal;

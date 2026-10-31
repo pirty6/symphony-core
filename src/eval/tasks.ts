@@ -258,8 +258,12 @@ export const EVAL_TASKS: readonly EvalTask[] = [
       'docs/ops.md': 'The service listens on port 8080 by default.\n',
     },
     // The docs say 8080, but the code adds 1: the right answer needs reading the code.
-    check: async ({ state }) =>
-      mentions(String(state.answer ?? ''), ['8081', 'src/config.js', 'loadConfig']),
+    // A right answer from a run that did not succeed (e.g. ended with doubts) is not solved.
+    check: async ({ outcome, state }) =>
+      both(
+        succeeded(outcome),
+        mentions(String(state.answer ?? ''), ['8081', 'src/config.js', 'loadConfig']),
+      ),
   },
   withHiddenTest(
     {
@@ -302,8 +306,11 @@ export const EVAL_TASKS: readonly EvalTask[] = [
       'README.md': '# client\n\nRequests time out after 30 seconds by default.\n',
     },
     // defaults 30 -> overrides x2 = 60 -> client - 15 = 45; the README's 30 is stale.
-    check: async ({ state }) =>
-      mentions(String(state.answer ?? ''), ['45', 'src/client.js', 'src/overrides.js']),
+    check: async ({ outcome, state }) =>
+      both(
+        succeeded(outcome),
+        mentions(String(state.answer ?? ''), ['45', 'src/client.js', 'src/overrides.js']),
+      ),
   },
   {
     id: 'investigate-false-premise',
@@ -320,13 +327,14 @@ export const EVAL_TASKS: readonly EvalTask[] = [
         'export const http = {\n  get: (path) => fetch(`https://api.example.com${path}`),\n};\n',
     },
     // There is no retry at all: the right answer says so instead of explaining one.
-    check: async ({ state }) => {
+    check: async ({ outcome, state }) => {
       const answer = String(state.answer ?? '');
       const denies = /\b(no|not|never|doesn't|does not|without)\b[^.]{0,60}\bretr/i.test(answer);
       const invents = /retr\w*[^.]{0,40}\b(three|3) times\b[^.]{0,40}\bbecause\b/i.test(answer);
       return {
-        pass: denies && !invents,
+        pass: outcome === 'success' && denies && !invents,
         notes: [
+          `outcome ${outcome}`,
           denies ? 'says there is no retry' : 'does not say there is no retry',
           ...(invents ? ['explains a retry that does not exist'] : []),
         ],

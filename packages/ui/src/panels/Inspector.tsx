@@ -299,13 +299,21 @@ export function AiOutput({ stream, live }: { stream: AiStream | undefined; live:
   )
 }
 
+/** Jazz takes have a bandleader (take 0); without one, the takes are a fanned-out step's sub-agents. */
+function takeLabel(take: number | undefined, jazz: boolean): string {
+  if (take === 0) return '🎺 Bandleader: merged answer'
+  if (take === undefined) return jazz ? 'Answer' : "All sub-agents' answers, as the engine got them"
+  return jazz ? `Take ${take}` : `🤖 Sub-agent ${take}`
+}
+
 export function AiTakes({ streams, live }: { streams: readonly AiStream[]; live: boolean }) {
   if (streams.length <= 1) return <AiOutput stream={streams[0]} live={live} />
+  const jazz = streams.some((s) => s.take === 0)
   return (
     <div className="takes" data-testid="ai-takes">
       {streams.map((s) => (
         <details key={s.key} open={s.take === 0} className={s.take === 0 ? 'take merge' : 'take'}>
-          <summary>{s.take === 0 ? '🎺 Bandleader: merged answer' : `Take ${s.take}`}</summary>
+          <summary>{takeLabel(s.take, jazz)}</summary>
           <AiOutput stream={s} live={live} />
         </details>
       ))}

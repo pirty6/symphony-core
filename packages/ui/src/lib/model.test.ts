@@ -18,6 +18,7 @@ import {
   minimapStyle,
   newNode,
   phaseDisplay,
+  subAgentNodes,
   replayView,
   changedFromDemo,
   isOfflineDemo,
@@ -263,5 +264,41 @@ describe('minimapStyle', () => {
     expect(minimapStyle('paused')).toMatchObject({ fill: '#34d399', className: 'minimap-paused' })
     expect(minimapStyle('failed').fill).toBe('#ef4444')
     expect(minimapStyle('done').className).toBe('minimap-done')
+  })
+})
+
+describe('sub-agents on the canvas', () => {
+  it('each part of a fanned-out step is a node beside it, with its state', async () => {
+    const score = compileScore(investigate, {
+      goal: 'g',
+      context: { ...investigate.demo!.context!, batchSize: 1, agents: 2 },
+      generatedAt: 't',
+    })
+    const run = new Run({ score, provider: ScriptedProvider.forPattern(investigate), demo: investigate.demo, autoApprove: true, clock: () => 't' })
+    await run.start()
+    const parts = run.messages.filter((m) => m.type === 'part')
+    expect(parts.length).toBeGreaterThan(0)
+    // Replay the messages up to the first part that finished.
+    let v: RunView = startLive('r')
+    for (const m of run.messages) {
+      v = applyMessage(v, m)
+      if (m.type === 'part' && m.state === 'done') break
+    }
+    expect(v.parts!.nodeId).toBe('triage')
+    // Two sub-agents at a time; a wave holds twice as many parts.
+    expect(v.parts!.states).toEqual(['done', 'running', 'waiting', 'waiting'])
+    const anchor = { id: 'triage', type: 'agent', position: { x: 100, y: 200 }, data: {} } as never
+    const { nodes, edges } = subAgentNodes(v.parts, [anchor], new Map())
+    expect(nodes.map((n) => n.id)).toEqual(['sub:triage:1', 'sub:triage:2', 'sub:triage:3', 'sub:triage:4'])
+    expect(nodes.every((n) => n.position.x > 100)).toBe(true)
+    expect(edges.map((e) => [e.source, e.target, e.animated])).toEqual([
+      ['triage', 'sub:triage:1', false],
+      ['triage', 'sub:triage:2', true],
+      ['triage', 'sub:triage:3', false],
+      ['triage', 'sub:triage:4', false],
+    ])
+    // Inside a closed phase, they hang off the phase.
+    const phase = { id: 'triagePhase', type: 'phase', position: { x: 0, y: 0 }, data: {} } as never
+    expect(subAgentNodes(v.parts, [phase], new Map([['triage', 'triagePhase']])).edges[0]!.source).toBe('triagePhase')
   })
 })

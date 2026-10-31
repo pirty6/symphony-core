@@ -249,6 +249,47 @@ describe('memory tools', () => {
     expect(r.lessons[0]).toMatch(/Fixed "wrong default port": off by one \(files: config.js\)$/);
   });
 
+  it('a lesson keeps its files from cited findings, drops run ids, says how it ended', async () => {
+    const d = dir();
+    const r = await tool('memory.lesson').run(
+      {
+        kind: 'answered',
+        outcome: 'partial',
+        problem: 'which port?',
+        cause: '## Answer\nIt is 8081 [F3, F7] because of the offset [F9].',
+        files: ['F3 src/config.js:1 — port `x`', 'F7 src/config.js:4 — y', 'not a finding'],
+        open: ['Is PORT ever set in CI?'],
+      },
+      ctx(d),
+    );
+    expect(r).toEqual({ saved: true });
+    const m = JSON.parse(readFileSync(join(d, '.symphony', 'memory.json'), 'utf8')) as {
+      lessons: { text: string; files: string[] }[];
+    };
+    expect(m.lessons[0]).toMatchObject({
+      text: 'Answered (with open doubts) "which port?": It is 8081 because of the offset . Open: Is PORT ever set in CI? (files: src/config.js)',
+      files: ['src/config.js'],
+    });
+    expect(
+      await tool('memory.lesson').run({ kind: 'failed', problem: '', failure: '' }, ctx(d)),
+    ).toEqual({ saved: true });
+  });
+
+  it('a memory file that cannot be read is never overwritten', async () => {
+    const d = dir();
+    mkdirSync(join(d, '.symphony'));
+    writeFileSync(join(d, '.symphony', 'memory.json'), '{ broken');
+    // Reading still works (nothing recalled); writing refuses instead of wiping it.
+    expect(await tool('memory.recall').run({ query: 'port' }, ctx(d))).toEqual({
+      facts: [],
+      lessons: [],
+    });
+    await expect(
+      tool('memory.lesson').run({ kind: 'fixed', problem: 'p', cause: 'c' }, ctx(d)),
+    ).rejects.toThrow(/not valid JSON; not overwriting it/);
+    expect(readFileSync(join(d, '.symphony', 'memory.json'), 'utf8')).toBe('{ broken');
+  });
+
   it('a fact whose line moved is pointed at its new line, not dropped', async () => {
     const d = dir();
     writeFileSync(join(d, 'config.js'), 'export const port = DEFAULTS.port + 1;\n');

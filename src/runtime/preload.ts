@@ -21,11 +21,14 @@ export async function preloadFiles(
   paths: readonly unknown[],
 ): Promise<PreloadedFile[]> {
   const out: PreloadedFile[] = [];
+  const seen = new Set<string>();
   let budget = MAX_CALL_CHARS;
   for (const p of paths) {
     if (typeof p !== 'string' || !p.trim() || isUrl(p)) continue;
-    // "src/a.ts#L10-40" or "src/a.ts:10" name the file; the whole file is given.
+    // "src/a.ts#L10-40" or "src/a.ts:10" name the file; the whole file is given, once.
     const path = p.trim().replace(/(#L?\d.*|:\d+(-\d+)?)$/, '');
+    if (seen.has(path)) continue;
+    seen.add(path);
     const full = resolve(workspace, path);
     if (isAbsolute(path) || relative(workspace, full).startsWith('..')) continue;
     const raw = await readFile(full).catch(() => undefined);

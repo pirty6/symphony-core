@@ -122,6 +122,11 @@ function printMessage(m: RunMessage, write: (s: string) => void): void {
     );
     return;
   }
+  if (m.type === 'part') {
+    if (m.state === 'done' || m.state === 'failed')
+      write(c.dim(`\n    sub-agent ${m.part}/${m.total} ${m.state}`));
+    return;
+  }
   if (m.type === 'overtime') {
     if (m.state === 'asking')
       write(`\n${c.yellow(`⏱  '${m.nodeId}' has run ${Math.round(m.afterMs / 60_000)} min`)}\n`);

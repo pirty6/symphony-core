@@ -162,7 +162,7 @@ Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the V
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
 state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + - *`,
-`len empty includes lower append if chars subset take drop first unique without pick join withIds brief`, and
+`len empty includes lower append if chars subset take drop first unique without pick join withIds brief unmatched`, and
 `verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
@@ -647,7 +647,7 @@ solved rate or citation validity.
   for a human like any stuck step. Mechanical steps already play a tier lower (smaller model,
   lower reasoning effort) through `complexityShift`.
 - **Files read by the engine (`preload`).** A step that reads a known list of files (investigate's
-  deep read, review's per-file review) gets each workspace file whole, with line numbers, in its
+  triage and deep read, review's per-file review) gets each workspace file whole, with line numbers, in its
   prompt, instead of paging through it with tool calls. It reads everything in one turn and
   cannot skip part of a file (a file over 120k characters says which lines were left out); it
   still follows references and history with tools, and still lists every item it read. On the
@@ -661,6 +661,12 @@ solved rate or citation validity.
 - **Compact JSON in prompts.** Inputs are sent unindented: about 3-4% fewer prompt characters
   (measured on 549 recorded Copilot prompts), less than the 1.5x a pretty-printing estimate
   suggests, because most of a prompt's JSON is long strings.
+
+- **Partial means "the work so far is kept, with what is missing said".** Limits, an AI stopping
+  early, a stop at a step that cannot answer, and an investigate answer with REAL objections
+  still open at the debate cap all end partial. A chain goes on after a partial run (the next
+  pattern gets the answer and its `doubts`, and has its own gates); the eval never counts a
+  partial run as solved. Engine 1.2.0: older saved runs replay with that noted.
 
 **Decided, and left alone (until the eval says otherwise):**
 

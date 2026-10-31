@@ -33,7 +33,7 @@ describe('pattern library', () => {
     // Small batches, one batch per round: the loop takes several rounds.
     const score = compileScore(p, {
       goal: 'g',
-      context: { ...p.demo!.context!, batchSize: 2, agents: 1 },
+      context: { ...p.demo!.context!, batchSize: 1, agents: 1 },
     });
     const r = runScripted(score, p.demo);
     expect(r.state.outcome).toBe('success');
@@ -143,7 +143,7 @@ describe('pattern library', () => {
     const r = runScripted(compileScore(p, { goal: 'g', context: { target: 'x' } }), undefined);
     // Placeholder answers review nothing: the run ends, and never as a clean review.
     expect(['done', 'failed']).toContain(r.state.kind);
-    expect(r.state.outcome).toBe('failed');
+    expect(r.state.outcome).not.toBe('success');
   });
 
   it('review ends honestly: a failed analysis is not "looks good"', () => {

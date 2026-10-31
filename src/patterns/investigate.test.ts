@@ -121,8 +121,10 @@ describe('investigate adapts its evidence to the question', () => {
   it('performance question: designs experiments and runs them after approval', () => {
     const { r, ran } = runWith(['workspace', 'web', 'experiment']);
     expect(ran).toEqual(
-      expect.arrayContaining(['designExperiments', 'allowExperiments', 'experiment']),
+      expect.arrayContaining(['designExperiments', 'allowExperiments', 'parallelExperiment']),
     );
+    // Nothing timed: no experiment waits for another.
+    expect(ran).not.toContain('experiment');
     expect(r.state.state.ran).toHaveLength(1);
     // Recorded findings carry the id the engine gave them.
     expect((r.state.state.findings as string[]).some((f) => /^F\d+ experiment \|/.test(f))).toBe(
@@ -137,6 +139,7 @@ describe('investigate adapts its evidence to the question', () => {
     });
     expect(ran).toContain('allowExperiments');
     expect(ran).not.toContain('experiment');
+    expect(ran).not.toContain('parallelExperiment');
     expect(r.state.outcome).toBe('success');
     expect(r.state.state.ran).toEqual([]);
   });
@@ -220,7 +223,8 @@ describe('items that cannot be read', () => {
         verdict,
       })),
     );
-    expect(r.state.outcome).toBe('failed');
+    // Stopped at the step that could not answer, keeping the findings so far.
+    expect(r.state.outcome).toBe('partial');
     expect(r.state.reason).toMatch(/Account for EVERY item of deepBatch/);
   });
 });
@@ -250,7 +254,12 @@ describe('open questions', () => {
     );
     expect(r.state.outcome).toBe('success');
     const gap = (r.state.state.subQuestions as string[])[0];
-    expect(r.state.state.openQuestions).toEqual([gap, 'my own wording of it']);
+    // The gap verbatim, the AI's own wording, and the sub-answer that says it is open.
+    expect(r.state.state.openQuestions).toEqual([
+      gap,
+      'my own wording of it',
+      expect.stringMatching(/^S1: OPEN — /),
+    ]);
   });
 });
 
@@ -295,6 +304,7 @@ describe('investigate only records evidence that holds', () => {
           updates: {
             answer: 'It is validated in the engine [F999].',
             openQuestions: [],
+            subAnswers: ((s.subQuestions as string[]) ?? []).map((_, i) => `S${i + 1}: OPEN — x`),
             rulings: ((s.hypotheses as string[]) ?? []).map(
               (h) => `${h.split(':')[0]}: UNKNOWN — x`,
             ),
@@ -322,7 +332,7 @@ describe('investigate always ends: research rounds are bounded', () => {
           updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
           verdict: v,
         }),
-        challenge: () => ({ updates: { objections: ['src/x.ts was never read'] }, verdict: v }),
+        challenge: () => ({ updates: { objections: ['S1: src/x.ts was never read'] }, verdict: v }),
       },
       approvals: {
         ...demo.approvals,
@@ -337,13 +347,12 @@ describe('investigate always ends: research rounds are bounded', () => {
     expect(r.state.kind).toBe('done');
     const s = r.state.state;
     const chases = r.state.steps.filter((x) => x.nodeId === 'chase').length;
-    // Gap rounds, twice (a human hint grants one more batch), plus one per debate round.
-    expect(chases).toBeLessThanOrEqual(
-      2 * (s.maxGapRounds as number) + (s.maxDebateRounds as number),
-    );
+    // Gap rounds, twice (a human hint grants one more batch), and a batch per debate round.
+    const gapRounds = s.maxGapRounds as number;
+    expect(chases).toBeLessThanOrEqual(2 * gapRounds + (s.maxDebateRounds as number) * gapRounds);
     expect(s.debateRounds).toBe(s.maxDebateRounds);
     // Out of rounds, not out of objections: they are reported, not dropped.
-    expect(s.unresolvedObjections).toEqual(['src/x.ts was never read']);
+    expect(s.unresolvedObjections).toEqual(['S1: src/x.ts was never read']);
     const normal = runScripted(
       compileScore(investigate, { goal: 'g', context: demo.context! }),
       demo,
@@ -387,7 +396,7 @@ describe('investigate sizes its parallel work from the plan', () => {
   it('the plan picks how many sub-agents read at once (at most 6)', () => {
     const { r } = runWith(['workspace'], demo.approvals, { parallel: 2 });
     expect(r.state.outcome).toBe('success');
-    expect(r.state.state).toMatchObject({ agents: 2, batchWave: 50, deepWave: 8 });
+    expect(r.state.state).toMatchObject({ agents: 2, batchWave: 40, deepWave: 16 });
     const bad = runWith(['workspace'], demo.approvals, { parallel: 9 }).r;
     const plan = bad.state.steps.find((st) => st.nodeId === 'plan');
     expect(JSON.stringify(plan?.attempts ?? bad.state.pause)).toMatch(/from 1 to 6/);
@@ -405,5 +414,119 @@ describe('investigate hands on its evidence', () => {
       ),
     ).toBe(true);
     expect(investigate.result).toContain('citedFindings');
+  });
+});
+
+describe('investigate asks for a hint once', () => {
+  it('an empty hint stays empty, is not asked again, and the run still answers', () => {
+    const v = { outcome: 'applied' as const, confidence: 0.2, shouldTerminate: false, reason: 'r' };
+    let asked = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        assess: (s) => ({
+          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          verdict: v,
+        }),
+      },
+      approvals: {
+        ...demo.approvals,
+        clarify: () => {
+          asked += 1;
+          return { approved: true, updates: { hint: '' } };
+        },
+      },
+    };
+    const r = runScripted(
+      compileScore(investigate, { goal: 'g', context: { ...demo.context!, complexity: 1 } }),
+      script,
+    );
+    expect(asked).toBe(1);
+    expect(r.state.state).toMatchObject({ hint: '', hintAsked: true });
+    expect(r.state.steps.some((st) => st.nodeId === 'answer')).toBe(true);
+    // Every evidence step reads the hint.
+    for (const id of ['triage', 'deepRead', 'sweep', 'assess', 'answer'])
+      expect(
+        (investigate.nodes.find((n) => n.id === id) as unknown as { reads: string[] }).reads,
+      ).toContain('hint');
+  });
+});
+
+describe('investigate experiments', () => {
+  it('timed experiments run one at a time after the others ran side by side', () => {
+    const exps = ['a — time the cold start', 'b — does it crash?', 'c — does it leak?'];
+    const { r, ran } = runWith(['experiment'], demo.approvals, {
+      agents: {
+        ...demo.agents,
+        designExperiments: () => ({
+          updates: { experiments: exps, timedExperiments: [exps[0]!] },
+          verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+        }),
+      },
+      context: { agents: 2 },
+    });
+    const side = r.state.steps.find((st) => st.nodeId === 'parallelExperiment')!;
+    expect(side.input?.parallelExperiments).toEqual([exps[1], exps[2]]);
+    expect(ran.filter((n) => n === 'experiment')).toHaveLength(1);
+    expect(ran.indexOf('parallelExperiment')).toBeLessThan(ran.indexOf('experiment'));
+    expect((r.state.state.ran as string[]).toSorted()).toEqual([...exps].toSorted());
+  });
+});
+
+describe('investigate searches sources side by side', () => {
+  it('each round takes as many sources as there are sub-agents', () => {
+    const { r } = runWith(['git-history', 'prior-runs'], demo.approvals, { parallel: 2 });
+    const sweeps = r.state.steps.filter((st) => st.nodeId === 'sweep');
+    expect(sweeps).toHaveLength(1);
+    expect(sweeps[0]!.input?.currentSources).toEqual(['git-history', 'prior-runs']);
+    expect(r.state.state.consulted).toEqual(['git-history', 'prior-runs']);
+  });
+});
+
+describe('investigate coverage', () => {
+  it('the engine writes the coverage section from its record', () => {
+    const { r } = runWith(['workspace']);
+    const answer = String(r.state.state.answer);
+    expect(answer).toMatch(
+      /\n## Coverage\n\n- Files not triaged: .+\n- Pages read: .+\n- Experiments run: none\n/,
+    );
+    expect(answer.match(/## Coverage/g)).toHaveLength(1);
+  });
+});
+
+const answerRejections = (r: { state: { events: readonly { type: string; nodeId?: string }[] } }) =>
+  JSON.stringify(
+    r.state.events.filter((e) => e.type === 'response-rejected' && e.nodeId === 'answer'),
+  );
+
+describe('investigate answers every sub-question', () => {
+  it('one sub-answer per sub-question, each cited or said to be open; none skipped', () => {
+    const skipping = (subAnswers: (s: Readonly<Record<string, unknown>>) => string[]) =>
+      runWith(['workspace'], demo.approvals, {
+        agents: {
+          ...demo.agents,
+          answer: (s, n) => {
+            const good = demo.agents!.answer!(s, n);
+            return n === 0
+              ? { ...good, updates: { ...good.updates, subAnswers: subAnswers(s) } }
+              : good;
+          },
+        },
+      }).r;
+    // Missing (the plan here has a single sub-question).
+    expect(answerRejections(skipping(() => []))).toMatch(/one subAnswers entry per sub-question/);
+    // Neither cited nor open.
+    expect(
+      answerRejections(
+        skipping((s) => (s.subQuestions as string[]).map((_, i) => `S${i + 1}: it is fine`)),
+      ),
+    ).toMatch(/citing findings, or/);
+    const ok = runWith(['workspace']).r;
+    expect(ok.state.state.subAnswers).toEqual(
+      (ok.state.state.subQuestions as string[]).map((_, i) =>
+        expect.stringMatching(new RegExp(`^S${i + 1}: `)),
+      ),
+    );
   });
 });

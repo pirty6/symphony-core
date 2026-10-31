@@ -25,7 +25,20 @@ const FILE_CITATION =
 /** Other ways of writing a line: "a.ts line 3", "a.ts, line 3", "a.ts | line 3", "a.ts (line 3)", "a.ts#L3", "a.ts L3". */
 const LINE_WORD = /([\w@./-]+\.[A-Za-z0-9]+)(?:\s*[,|(]\s*|\s+|#)(?:line\s*|L)(\d+)\)?/gi;
 /** Something checked elsewhere: a URL, "source | location — fact", a commit, an issue or PR. */
-const OTHER_SOURCE = /https?:\/\/|^\s*(?:F\d+\s+)?[\w:.-]+\s+\|\s+\S|\b[0-9a-f]{7,40}\b|#\d+/i;
+const OTHER_SOURCE = new RegExp(
+  [
+    'https?://',
+    // "git | a1b2c3 — fact": a named source and where in it
+    '^\\s*(?:F\\d+\\s+)?[\\w:.-]+\\s+\\|\\s+\\S',
+    // a commit: said so, or a hash with both digits and letters (not any hex-looking word)
+    '\\b(?:commit|sha|rev)\\s+[0-9a-f]{7,40}\\b',
+    '\\b(?=[0-9a-f]*\\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\\b',
+    // an issue or PR: said so, or owner/repo#N (a bare #N says nothing)
+    '\\b(?:PR|pull request|pull|issue)s?\\s*#?\\d+',
+    '[\\w.-]+/[\\w.-]+#\\d+',
+  ].join('|'),
+  'i',
+);
 /** A quote needs at least this many characters to prove anything. */
 const MIN_QUOTE = 8;
 /** A cited range wider than this proves nothing about where the fact is. */
@@ -38,15 +51,15 @@ const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
 /** Compare without markdown that models drop or double: backticks and ** / __ emphasis. */
 const plain = (s: string) => squash(s.replace(/`/g, '').replace(/\*\*|__/g, ''));
 
-/** Where a finding cites a workspace file, wherever it says so and however it is dressed. */
-function fileCitation(finding: string): RegExpExecArray | null {
+/** Every place a finding cites a workspace file, wherever it says so and however it is dressed. */
+function fileCitations(finding: string): RegExpExecArray[] {
   const text = finding
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/\*\*|__/g, '')
     // A backticked path ("`src/a.ts`:3" or "`src/a.ts:3`") is still a path.
     .replace(/`([\w@./-]+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?)?)`/g, '$1')
     .replace(LINE_WORD, '$1:$2');
-  return FILE_CITATION.exec(text);
+  return [...text.matchAll(new RegExp(FILE_CITATION.source, 'g'))];
 }
 
 /**
@@ -70,9 +83,25 @@ export async function checkCitations(
   const invalid: { finding: string; reason: string }[] = [];
   const files = new Map<string, string[] | undefined>();
   let checked = 0;
+  const linesOf = async (path: string) => {
+    if (!files.has(path)) {
+      const full = resolve(workspace, path);
+      const inside = !isAbsolute(path) && !relative(workspace, full).startsWith('..');
+      files.set(
+        path,
+        inside
+          ? await readFile(full, 'utf8').then(
+              (t) => t.split('\n'),
+              () => undefined,
+            )
+          : undefined,
+      );
+    }
+    return files.get(path);
+  };
   for (const finding of findings) {
-    const m = fileCitation(finding);
-    if (!m) {
+    const cites = fileCitations(finding);
+    if (cites.length === 0) {
       // Not a workspace file: it must still point at something a reader can check.
       if (OTHER_SOURCE.test(finding)) valid.push(finding);
       else
@@ -84,54 +113,46 @@ export async function checkCitations(
       continue;
     }
     checked += 1;
-    const path = m[1]!;
-    const full = resolve(workspace, path);
-    const inside = !isAbsolute(path) && !relative(workspace, full).startsWith('..');
-    if (!files.has(path)) {
-      files.set(
-        path,
-        inside
-          ? await readFile(full, 'utf8').then(
-              (t) => t.split('\n'),
-              () => undefined,
-            )
-          : undefined,
+    // Every place it cites must be real; the quote must be at one of them.
+    let why: string | undefined;
+    const near: string[] = [];
+    for (const m of cites) {
+      const path = m[1]!;
+      const lines = await linesOf(path);
+      const from = Number(m[2]);
+      const to = m[3] ? Number(m[3]) : from;
+      if (!lines) why = `${path} does not exist in the workspace`;
+      else if (from < 1 || to < from || from > lines.length)
+        why = `${path} has ${lines.length} lines, not line ${from}`;
+      else if (to - from > MAX_SPAN)
+        why = `${path}:${from}-${to} spans ${to - from + 1} lines: cite the line, or at most ${MAX_SPAN + 1}`;
+      if (why) break;
+      near.push(
+        plain(
+          lines!
+            .slice(Math.max(0, from - 1 - SLACK), Math.min(lines!.length, to + SLACK))
+            .join(' '),
+        ),
       );
     }
-    const lines = files.get(path);
-    const from = Number(m[2]);
-    const to = m[3] ? Number(m[3]) : from;
-    if (!lines) {
-      invalid.push({ finding, reason: `${path} does not exist in the workspace` });
+    if (why) {
+      invalid.push({ finding, reason: why });
       continue;
     }
-    if (from < 1 || to < from || from > lines.length) {
-      invalid.push({ finding, reason: `${path} has ${lines.length} lines, not line ${from}` });
-      continue;
-    }
-    if (to - from > MAX_SPAN) {
-      invalid.push({
-        finding,
-        reason: `${path}:${from}-${to} spans ${to - from + 1} lines: cite the line, or at most ${MAX_SPAN + 1}`,
-      });
-      continue;
-    }
+    const first = `${cites[0]![1]}:${cites[0]![2]}`;
     // A quote is required: without one only the line's existence could be checked.
     const quotes = quotesOf(finding);
     if (quotes.length === 0) {
       invalid.push({
         finding,
-        reason: `no quote: add a short verbatim quote from ${path}:${from} in backticks`,
+        reason: `no quote: add a short verbatim quote from ${first} in backticks`,
       });
       continue;
     }
-    const near = plain(
-      lines.slice(Math.max(0, from - 1 - SLACK), Math.min(lines.length, to + SLACK)).join(' '),
-    );
-    if (!quotes.some((q) => near.includes(q))) {
+    if (!quotes.some((q) => near.some((n) => n.includes(q)))) {
       invalid.push({
         finding,
-        reason: `the quote \`${quotes[0]!.slice(0, 60)}\` is not at ${path}:${from}`,
+        reason: `the quote \`${quotes[0]!.slice(0, 60)}\` is not at ${first}`,
       });
       continue;
     }

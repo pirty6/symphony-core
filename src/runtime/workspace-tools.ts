@@ -169,6 +169,15 @@ export type WorkspaceDiff = {
   readonly files: readonly string[];
 };
 
+/** A lesson is a lead, not a report: plain text, without this run's finding ids or headings. */
+function plain(s: unknown): string {
+  return String(s ?? '')
+    .replace(/\[(?:F\d+[,\s]*)+\]/g, '')
+    .replace(/^#+\s.*$/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Baseline test results by workspace state; a few dozen at most. */
 const REUSED = new Map<string, Readonly<Record<string, unknown>>>();
 function remember(key: string, result: Readonly<Record<string, unknown>>): void {
@@ -362,17 +371,25 @@ export function workspaceTools(): ToolSpec[] {
         'Remember how a run ended: { kind: "fixed" | "failed" | "implemented" | "answered" | …, problem, cause, files, failure }. Returns { saved }.',
       outputs: ['saved'],
       run: async (args, ctx) => {
-        const files = Array.isArray(args.files) ? args.files.map(String) : [];
+        // Paths, or cited findings ("F3 src/a.ts:12 — …"): a lesson's files tell when it is stale.
+        const files = [
+          ...new Set(
+            (Array.isArray(args.files) ? args.files : []).flatMap((f) => {
+              const m = /^(?:F\d+\s+)?([\w@./-]+\.[A-Za-z0-9]+)(?::\d|\s|$)/.exec(String(f).trim());
+              return m ? [m[1]!] : [];
+            }),
+          ),
+        ].slice(0, 12);
         const kind = String(args.kind ?? 'fixed');
         const problem = String(args.problem ?? '').slice(0, 300);
-        // A lesson is a lead, not a report: keep it short.
-        const cause = String(args.cause ?? '').slice(0, 600);
+        const cause = plain(args.cause).slice(0, 500);
+        const open = (Array.isArray(args.open) ? args.open : []).slice(0, 3).map(plain);
+        const doubtful = args.outcome === 'partial';
         const text =
           kind === 'failed'
-            ? `FAILED to fix "${problem}": ${String(args.failure ?? 'unknown').slice(0, 600)}`
-            : `${kind.charAt(0).toUpperCase()}${kind.slice(1)} "${problem}": ${cause}${files.length ? ` (files: ${files.join(', ')})` : ''}`;
-        await rememberLesson(ctx.memoryRoot ?? ctx.workspace, text, files);
-        return { saved: true };
+            ? `FAILED to fix "${problem}": ${plain(args.failure ?? 'unknown').slice(0, 500)}`
+            : `${kind.charAt(0).toUpperCase()}${kind.slice(1)}${doubtful ? ' (with open doubts)' : ''} "${problem}": ${cause}${open.length ? ` Open: ${open.join('; ')}` : ''}${files.length ? ` (files: ${files.join(', ')})` : ''}`;
+        return { saved: await rememberLesson(ctx.memoryRoot ?? ctx.workspace, text, files) };
       },
     },
   ];

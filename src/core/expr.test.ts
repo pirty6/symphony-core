@@ -86,6 +86,7 @@ describe('evalExpr values', () => {
     ['(2 + 3) * 4', 20],
     ['join([], "-")', ''],
     ['withIds(["F1 a", "F2 b", "F3 c"], ["F3", "F1", "F9"])', ['F1 a', 'F3 c']],
+    ['unmatched(["S1: a", "b", "S12: c"], "^S[0-9]+: ")', ['b']],
     [
       'brief(["F1 a.ts:3 — the port `port = 8080`", "F2 long claim here", "F3 short"], 12)',
       ['F1 a.ts:3 —…', 'F2 long cla…', 'F3 short'],
@@ -108,6 +109,7 @@ describe('evalExpr values', () => {
     expect(() => ev('without(guessed, word)')).toThrow(ExprError);
     expect(() => ev('join([1, 2], ",")')).toThrow(/list of strings/);
     expect(() => ev('join(guessed, 1)')).toThrow(/separator/);
+    expect(() => ev('unmatched(guessed, "(")')).toThrow(/invalid pattern/);
   });
 
   it('rejects mixed-type arithmetic', () => {

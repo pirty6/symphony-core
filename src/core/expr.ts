@@ -49,7 +49,8 @@ type FnName =
   | 'pick'
   | 'join'
   | 'withIds'
-  | 'brief';
+  | 'brief'
+  | 'unmatched';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -75,6 +76,7 @@ const FNS: Record<FnName, number> = {
   join: 2,
   withIds: 2,
   brief: 2,
+  unmatched: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -381,6 +383,18 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
             const i = Number(String(p).trim());
             return Number.isInteger(i) && i >= 1 && i <= x.length ? [x[i - 1]] : [];
           });
+        }
+        case 'unmatched': {
+          // unmatched(objections, "^S[0-9]+: "): the entries that do not match the pattern.
+          if (typeof args[1] !== 'string' || args[1].length > 200)
+            throw new ExprError('unmatched() needs a pattern string (at most 200 characters)');
+          let re: RegExp;
+          try {
+            re = new RegExp(args[1]);
+          } catch {
+            throw new ExprError(`unmatched(): invalid pattern ${JSON.stringify(args[1])}`);
+          }
+          return strings('unmatched', x).filter((s) => !re.test(s));
         }
         case 'brief': {
           // brief(findings, 240): each entry without its `quotes` (already checked), at most n chars.
