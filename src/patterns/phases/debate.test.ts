@@ -120,7 +120,7 @@ describe('debate phases in investigate', () => {
             ...agents.triageObjections!(s, v),
             updates: {
               objectionTriage: objections.map(
-                (o) => `${o}: ${real.includes(o) ? 'REAL' : 'THEORETICAL'} — r`,
+                (o) => `${o}: ${real.includes(o) ? 'REAL' : 'THEORETICAL'} — it bears on S1`,
               ),
               realObjections: real,
             },
@@ -287,6 +287,69 @@ describe('debate phases in investigate', () => {
     expect(
       rejected.some((e) => e.nodeId === 'hypothesize' && /premise is wrong/.test(e.errors.join())),
     ).toBe(true);
+  });
+});
+
+const rejections = (r: ReturnType<typeof play>['r'], node: string) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === node ? [e.errors.join()] : [],
+  );
+
+describe('the debate remembers its earlier rounds', () => {
+  it('the next skeptic reads past objections and their triage, and may not repeat one word for word', () => {
+    const inputs: Record<string, unknown>[] = [];
+    let calls = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        challenge: (s, v) => {
+          inputs.push({ ...s });
+          calls += 1;
+          // Round 2 first repeats round 1 verbatim; the correction raises nothing.
+          const objections =
+            calls === 1 ? ['S1: x was never read'] : calls === 2 ? ['S1: x was never read'] : [];
+          return { ...agents.challenge!(s, v), updates: { objections } };
+        },
+      },
+    };
+    const { r } = play(3, script);
+    expect(r.state.outcome).toBe('success');
+    expect(inputs[0]!.pastObjections).toEqual([]);
+    expect(inputs[1]!.pastObjections).toEqual(['S1: x was never read']);
+    expect(String(inputs[1]!.objectionTriage)).toMatch(/REAL/);
+    expect(inputs[1]!.openObjections).toEqual(['S1: x was never read']);
+    expect(rejections(r, 'challenge').join()).toMatch(/word for word/);
+  });
+
+  it("a pragmatist's reason names its ground (an F-id or S<n>), and only F-ids that exist", () => {
+    let calls = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        triageObjections: (s, v) => {
+          calls += 1;
+          const good = agents.triageObjections!(s, v);
+          const objections = s.objections as string[];
+          const reason = calls === 1 ? 'REAL — it matters' : calls === 2 ? 'REAL — see F999' : '';
+          return reason
+            ? {
+                ...good,
+                updates: {
+                  ...good.updates,
+                  objectionTriage: objections.map((o) => `${o}: ${reason}`),
+                },
+              }
+            : good;
+        },
+      },
+    };
+    const { r } = play(3, script);
+    expect(r.state.outcome).toBe('success');
+    const errors = rejections(r, 'triageObjections').join('\n');
+    expect(errors).toMatch(/name what the reason rests on/);
+    expect(errors).toMatch(/Cite only F-ids that are in findingsBrief/);
   });
 });
 

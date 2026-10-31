@@ -184,6 +184,9 @@ export interface ChallengeConfig {
   readonly about?: string;
 }
 
+/** A triage reason that names its ground: an F-id or the S<n> it would change (no backslashes). */
+const TRIAGE_REASON = '(REAL|THEORETICAL).*[^A-Za-z0-9][SF][0-9]+';
+
 /** Most objections one skeptic round may raise: the debate converges instead of growing. */
 export const MAX_OBJECTIONS = 5;
 
@@ -208,6 +211,11 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         name: 'openObjections',
         type: 'string[]',
         description: 'Objections sent back to research, kept until research settles them',
+      },
+      {
+        name: 'pastObjections',
+        type: 'string[]',
+        description: 'Objections raised in earlier debate rounds',
       },
       { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
       { name: 'findings', type: 'string[]', description: 'All checked evidence, numbered F1, F2…' },
@@ -249,12 +257,27 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         role: 'assessor',
         isolated: true,
         label: 'Skeptic',
-        directive: `You are the SKEPTIC. Attack \`${draft}\` as the answer to \`${subject}\`, using only \`${evidence}\` and \`hypotheses\`. You are not a contrarian: each \`objections\` entry must be CONCRETE and checkable — a claim not backed by a cited item of \`${evidence}\`, a hypothesis dismissed without evidence against it, an alternative explanation the evidence also fits, or a path nobody followed (a caller, a config, a version, an environment). Say what research would settle it. An empty list is fine and better than invented concerns; no style comments. Give at most ${MAX_OBJECTIONS}, the ones most likely to change the answer first, and merge objections one piece of research would settle together.${cfg.about ? ` Start each one with the entry of \`${cfg.about}\` it bears on, by position: "S1: …" for the first (S0 for ${subject} as a whole).` : ''}`,
-        reads: [subject, draft, ...alongside, evidence, 'hypotheses', 'rulings'],
+        directive: `You are the SKEPTIC. Attack \`${draft}\` as the answer to \`${subject}\`, using only \`${evidence}\` and \`hypotheses\`. You are not a contrarian: each \`objections\` entry must be CONCRETE and checkable — a claim not backed by a cited item of \`${evidence}\`, a hypothesis dismissed without evidence against it, an alternative explanation the evidence also fits, or a path nobody followed (a caller, a config, a version, an environment). Say what research would settle it. An empty list is fine and better than invented concerns; no style comments. Give at most ${MAX_OBJECTIONS}, the ones most likely to change the answer first, and merge objections one piece of research would settle together. \`pastObjections\` were raised in earlier rounds and researched (\`openObjections\` are the ones research was sent to settle, \`objectionTriage\` how the last round's were judged): check whether the evidence now settles them, and raise one again only with evidence it did not have then (name the new F-ids).${cfg.about ? ` Start each one with the entry of \`${cfg.about}\` it bears on, by position: "S1: …" for the first (S0 for ${subject} as a whole).` : ''}`,
+        reads: [
+          subject,
+          draft,
+          ...alongside,
+          evidence,
+          'hypotheses',
+          'rulings',
+          'pastObjections',
+          'openObjections',
+          'objectionTriage',
+        ],
         writes: ['objections'],
         retries: 2,
         complexityShift: 1,
         checks: [
+          {
+            expr: 'len(without(objections, pastObjections)) == len(objections)',
+            message:
+              'Do not repeat an objection of pastObjections word for word: raise it again only with the new evidence that reopens it.',
+          },
           {
             expr: `len(objections) <= ${MAX_OBJECTIONS}`,
             message: `Give at most ${MAX_OBJECTIONS} objections: the ones most likely to change the answer, merged where one piece of research settles several.`,
@@ -293,7 +316,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         role: 'assessor',
         isolated: true,
         label: 'Pragmatist',
-        directive: `You are the PRAGMATIST. For EVERY entry of \`objections\` write one \`objectionTriage\` entry, in order: "<objection, abbreviated>: REAL | THEORETICAL — <one-sentence reason>". REAL means it could change the answer to \`${subject}\` and research can settle it; THEORETICAL means it is unlikely or would not change the answer. Copy the REAL ones, verbatim, into \`realObjections\`. You are neither defending the draft nor siding with the skeptic.`,
+        directive: `You are the PRAGMATIST. For EVERY entry of \`objections\` write one \`objectionTriage\` entry, in order: "<objection, abbreviated>: REAL | THEORETICAL — <one-sentence reason>". REAL means it could change the answer to \`${subject}\` and research can settle it; THEORETICAL means it is unlikely or would not change the answer. Copy the REAL ones, verbatim, into \`realObjections\`. You are neither defending the draft nor siding with the skeptic.${cfg.about ? ` Each reason names what it rests on: the finding(s) by F-id, or the entry of \`${cfg.about}\` (S<n>) it would change.` : ''}`,
         reads: [subject, draft, ...alongside, 'objections', evidence],
         writes: ['objectionTriage', 'realObjections'],
         retries: 2,
@@ -306,6 +329,18 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
             expr: 'subset(realObjections, objections)',
             message: 'realObjections must be copied verbatim from objections.',
           },
+          ...(cfg.about
+            ? [
+                {
+                  expr: `len(unmatched(objectionTriage, "${TRIAGE_REASON}")) == 0`,
+                  message: `After REAL or THEORETICAL, name what the reason rests on: an F-id of ${evidence} or the S<n> it would change.`,
+                },
+                {
+                  expr: `subset(refs(objectionTriage), ids(${evidence}))`,
+                  message: `Cite only F-ids that are in ${evidence}.`,
+                },
+              ]
+            : []),
         ],
       },
       {
@@ -335,6 +370,8 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
           { field: gaps, expr: 'realObjections' },
           // Kept until research settles them: the next assessment cannot quietly drop them.
           { field: 'openObjections', expr: 'realObjections' },
+          // The next skeptic sees what was already raised, not a blank slate.
+          { field: 'pastObjections', expr: 'pastObjections + objections' },
           { field: 'debateRounds', expr: 'debateRounds + 1' },
           ...(cfg.resetOnReopen ? [{ field: cfg.resetOnReopen, expr: '0' }] : []),
         ],

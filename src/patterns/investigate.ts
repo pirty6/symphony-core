@@ -1457,7 +1457,7 @@ export const investigate: Pattern = {
       triageObjections: (s) => ({
         updates: {
           objectionTriage: ((s.objections as string[]) ?? []).map(
-            (o) => `${o.slice(0, 40)}…: REAL — it is a claim in the answer`,
+            (o) => `${o.slice(0, 40)}…: REAL — no finding backs this claim, and it would change S2`,
           ),
           realObjections: (s.objections as string[]) ?? [],
         },

@@ -361,7 +361,10 @@ describe('investigate always ends: research rounds are bounded', () => {
           updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
           verdict: v,
         }),
-        challenge: () => ({ updates: { objections: ['S1: src/x.ts was never read'] }, verdict: v }),
+        challenge: (_s, visit) => ({
+          updates: { objections: [`S1: src/x.ts was never read (round ${visit})`] },
+          verdict: v,
+        }),
       },
       approvals: {
         ...demo.approvals,
@@ -381,7 +384,9 @@ describe('investigate always ends: research rounds are bounded', () => {
     expect(chases).toBeLessThanOrEqual(2 * gapRounds + (s.maxDebateRounds as number) * gapRounds);
     expect(s.debateRounds).toBe(s.maxDebateRounds);
     // Out of rounds, not out of objections: they are reported, not dropped.
-    expect(s.unresolvedObjections).toEqual(['S1: src/x.ts was never read']);
+    expect(s.unresolvedObjections).toEqual([
+      `S1: src/x.ts was never read (round ${s.maxDebateRounds})`,
+    ]);
     const normal = runScripted(
       compileScore(investigate, { goal: 'g', context: demo.context! }),
       demo,
