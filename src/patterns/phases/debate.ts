@@ -16,6 +16,13 @@
  */
 import { MEMORY_NOTE } from './evidence.js';
 import type { ScoreEdge, ScoreGroup, ScoreNode, StateField } from '../../core/types.js';
+import {
+  checkFindings,
+  CITE_BY_ID,
+  citesFindings,
+  EVIDENCE_STATE,
+  MERGE_FINDINGS,
+} from './evidence.js';
 import { applyRating, RATING_CHECK, RATING_DIRECTIVE, RATING_STATE } from './complexity.js';
 
 export interface Fragment {
@@ -183,7 +190,12 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       'secondOpinion',
       'disagreements',
       'unresolvedObjections',
-    ),
+    ).concat([
+      // The second opinion's evidence joins the numbered findings (a pattern's own definitions win).
+      { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
+      { name: 'findings', type: 'string[]', description: 'All checked evidence, numbered F1, F2…' },
+      ...EVIDENCE_STATE,
+    ]),
     entry: 'useSkeptic',
     group: {
       id: 'challengePhase',
@@ -202,6 +214,8 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         'reopen',
         'useSecond',
         'second',
+        'checkSecond',
+        'mergeSecond',
         'reconcile',
       ],
     },
@@ -312,12 +326,27 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         label: 'Second investigator',
         // Another model family: its mistakes are less likely to be the first one's.
         otherModel: true,
-        directive: `You are an INDEPENDENT second investigator. Answer \`${subject}\` yourself, from scratch, without seeing the first investigator's answer or evidence. Test every entry of \`hypotheses\` against the sources yourself and cite what you find (path:line, URL, issue/PR #, commit). Write your conclusion, with citations and a verdict per hypothesis, in \`secondOpinion\`.`,
+        directive: `You are an INDEPENDENT second investigator. Answer \`${subject}\` yourself, from scratch, without seeing the first investigator's answer or evidence. Test every entry of \`hypotheses\` against the sources yourself. Record every piece of evidence you rely on in \`newFindings\` ("path:line — fact \`quote\`", or "source | location — fact"): it is checked like the first investigator's. Write your conclusion, with a verdict per hypothesis, in \`secondOpinion\`.`,
         reads: [subject, 'hypotheses', ...cfg.research],
-        writes: ['secondOpinion'],
+        writes: ['secondOpinion', 'newFindings'],
+        cites: 'newFindings',
         retries: 2,
         complexityShift: 1,
-        checks: [{ expr: 'len(secondOpinion) > 0', message: 'Write your conclusion.' }],
+        checks: [
+          { expr: 'len(secondOpinion) > 0', message: 'Write your conclusion.' },
+          {
+            expr: 'len(newFindings) > 0',
+            message: 'Record the evidence you rely on in newFindings.',
+          },
+        ],
+      },
+      // The second opinion's evidence is checked and numbered like the rest, so it can be cited.
+      checkFindings('checkSecond'),
+      {
+        id: 'mergeSecond',
+        kind: 'compute',
+        label: 'Record its evidence',
+        assign: [...MERGE_FINDINGS],
       },
       {
         id: 'reconcile',
@@ -325,8 +354,17 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         role: 'assessor',
         isolated: true,
         label: 'Reconcile',
-        directive: `Two investigators answered \`${subject}\` independently: \`${draft}\` and \`secondOpinion\`. Rewrite \`${draft}\` as the reconciled answer, keeping only claims backed by cited evidence from either, and update \`rulings\` (one per hypothesis, "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence"). List every point where they disagreed, and how it was settled or why it is still open, in \`disagreements\`.`,
-        reads: [subject, draft, ...alongside, 'secondOpinion', evidence, 'hypotheses', 'rulings'],
+        directive: `Two investigators answered \`${subject}\` independently: \`${draft}\` and \`secondOpinion\`. Rewrite \`${draft}\` as the reconciled answer, keeping only claims backed by evidence from either (both are in \`${evidence}\` now). ${CITE_BY_ID} Then update \`rulings\` (one per hypothesis, "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence"). List every point where they disagreed, and how it was settled or why it is still open, in \`disagreements\`.`,
+        reads: [
+          subject,
+          draft,
+          ...alongside,
+          'secondOpinion',
+          evidence,
+          ...(evidence === 'findings' || evidence === 'findingsBrief' ? [] : ['findingsBrief']),
+          'hypotheses',
+          'rulings',
+        ],
         writes: [draft, 'rulings', 'disagreements'],
         retries: 2,
         complexityShift: 1,
@@ -335,6 +373,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
             expr: 'len(rulings) == len(hypotheses)',
             message: 'Give exactly one ruling per hypothesis.',
           },
+          citesFindings(draft),
         ],
       },
     ],
@@ -366,7 +405,9 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       { id: 'reopen-research', from: 'reopen', to: reopen, label: 'research objections' },
       { id: 'useSecond-second', from: 'useSecond', to: 'second', branch: 'then' },
       { id: 'useSecond-done', from: 'useSecond', to: done, branch: 'else' },
-      { id: 'second-reconcile', from: 'second', to: 'reconcile' },
+      { id: 'second-check', from: 'second', to: 'checkSecond' },
+      { id: 'checkSecond-merge', from: 'checkSecond', to: 'mergeSecond' },
+      { id: 'mergeSecond-reconcile', from: 'mergeSecond', to: 'reconcile' },
       { id: 'reconcile-done', from: 'reconcile', to: done },
     ],
   };

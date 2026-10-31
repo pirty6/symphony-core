@@ -62,6 +62,19 @@ describe('debate phases in investigate', () => {
     // Independent: it never saw the first answer or its evidence.
     expect(Object.keys(second.input ?? {})).not.toContain('answer');
     expect(Object.keys(second.input ?? {})).not.toContain('findings');
+    // Its evidence is checked and numbered, and the reconciled answer must cite findings.
+    expect(ran('checkSecond')).toBe(1);
+    expect(r.state.state.findings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^F\d+ src\/core\/engine.ts:1 — resolveAgent checks/),
+      ]),
+    );
+    const reconcile = investigate.nodes.find((n) => n.id === 'reconcile') as unknown as {
+      checks: { expr: string }[];
+    };
+    expect(reconcile.checks.map((c) => c.expr)).toContain(
+      'len(refs(answer)) > 0 && subset(refs(answer), ids(findings))',
+    );
   });
 
   it('a skeptic that never stops objecting is cut off after maxDebateRounds', () => {

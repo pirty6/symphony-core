@@ -1193,6 +1193,7 @@ export const investigate: Pattern = {
           'checkExperiment',
           'checkSource',
           'checkChase',
+          'checkSecond',
         ].map((id) => [
           id,
           (s: Readonly<Record<string, unknown>>) => ({ valid: s.newFindings, invalid: [] }),
@@ -1407,6 +1408,7 @@ export const investigate: Pattern = {
         updates: {
           secondOpinion:
             'The engine validates (src/core/engine.ts resolveAgent → checkAgentResult). H1 confirmed; H2 and H3 refuted.',
+          newFindings: ['src/core/engine.ts:1 — resolveAgent checks the answer before applying it'],
         },
         verdict: v('independent answer'),
       }),
