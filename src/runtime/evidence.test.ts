@@ -128,4 +128,27 @@ describe('checkCitations', () => {
     expect(other.invalid).toEqual([]);
     expect(other.checked).toBe(0);
   });
+
+  it('every cited location must be real, and a bare #N or hex-looking word is not a source', async () => {
+    const r = await checkCitations(ws, [
+      'src/config.js:3 and src/server.js:9 — the port `port: Number(process.env.PORT ?? 8080)`',
+      '#42 — the default was discussed',
+      'deadbeef — a word that only looks like a commit',
+    ]);
+    expect(r.valid).toEqual([]);
+    expect(r.invalid.map((x) => x.reason)).toEqual([
+      'src/server.js does not exist in the workspace',
+      expect.stringMatching(/^cites nothing/),
+      expect.stringMatching(/^cites nothing/),
+    ]);
+    const ok = await checkCitations(ws, [
+      'commit deadbeef — added the default',
+      'a1b2c3d4 — added the default',
+      'pirty6/symphony-core#3 — the default was discussed',
+      'issue #42 — the default was discussed',
+      // Two real places: the quote is at one of them.
+      'README.md:3 and src/config.js:3 — `port: Number(process.env.PORT ?? 8080)`',
+    ]);
+    expect(ok.invalid).toEqual([]);
+  });
 });
