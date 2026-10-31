@@ -58,6 +58,8 @@ export const MAX_FACTS_PER_RUN = 200;
 /** Lessons older than this are not recalled. */
 export const LESSON_DAYS = 90;
 const MAX_COMPOSITIONS = 200;
+/** Least relevance a recalled entry needs (a rare shared word scores about 2-7). */
+export const MIN_SCORE = 1;
 const QUOTED_CITATION = /^[\w@./-]+\.[A-Za-z0-9]+:\d+(?:-\d+)?\b.*`[^`]{4,}`/;
 
 export const memoryPath = (workspace: string) => join(workspace, '.symphony', 'memory.json');
@@ -92,16 +94,33 @@ function tidyFacts(facts: readonly Entry[]): Entry[] {
   return out;
 }
 
-async function load(workspace: string): Promise<MemoryFile> {
+/**
+ * The store, or an empty one when there is none yet. A store that cannot be read
+ * (corrupt, unreadable) is empty for reading, but never overwritten: writing it
+ * would lose everything it holds.
+ */
+async function load(workspace: string, forWrite = false): Promise<MemoryFile> {
+  let raw: string;
   try {
-    const m = JSON.parse(await readFile(memoryPath(workspace), 'utf8')) as Partial<MemoryFile>;
+    raw = await readFile(memoryPath(workspace), 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT' || !forWrite)
+      return { facts: [], lessons: [] };
+    throw e;
+  }
+  try {
+    const m = JSON.parse(raw) as Partial<MemoryFile>;
     // Stores written before the hygiene rules are tidied as they are read.
     return {
       facts: tidyFacts(m.facts ?? []),
       lessons: m.lessons ?? [],
       compositions: m.compositions ?? [],
     };
-  } catch {
+  } catch (e) {
+    if (forWrite)
+      throw new Error(
+        `${memoryPath(workspace)} is not valid JSON; not overwriting it: ${(e as Error).message}`,
+      );
     return { facts: [], lessons: [] };
   }
 }
@@ -119,7 +138,7 @@ async function save(workspace: string, m: MemoryFile): Promise<void> {
 const queues = new Map<string, Promise<unknown>>();
 function update(workspace: string, change: (m: MemoryFile) => MemoryFile): Promise<void> {
   const prev = queues.get(workspace) ?? Promise.resolve();
-  const next = prev.then(async () => save(workspace, change(await load(workspace))));
+  const next = prev.then(async () => save(workspace, change(await load(workspace, true))));
   queues.set(
     workspace,
     next.catch(() => undefined),
@@ -167,17 +186,19 @@ export async function rememberFacts(
   return added;
 }
 
+/** Remember a lesson; says whether it was saved. */
 export async function rememberLesson(
   workspace: string,
   text: string,
   files: readonly string[],
   at = new Date().toISOString(),
-): Promise<void> {
-  if (!text.trim()) return;
+): Promise<boolean> {
+  if (!text.trim()) return false;
   await update(workspace, (m) => ({
     ...m,
     lessons: merge(m.lessons, [{ text, files, at }], MAX_LESSONS),
   }));
+  return true;
 }
 
 const words = (s: string) =>
@@ -199,16 +220,21 @@ function ranked<E extends Entry>(entries: readonly E[], query: string, limit: nu
   const df = new Map<string, number>();
   for (const bag of bags) for (const w of bag) if (q.has(w)) df.set(w, (df.get(w) ?? 0) + 1);
   const weight = (w: string) => Math.log(1 + entries.length / (df.get(w) ?? 1));
-  return entries
-    .map((e, i) => ({
-      e,
-      i,
-      score: [...bags[i]!].filter((w) => q.has(w)).reduce((sum, w) => sum + weight(w), 0),
-    }))
-    .filter((x) => x.score > 0)
-    .toSorted((a, b) => b.score - a.score || a.i - b.i)
-    .slice(0, limit)
-    .map((x) => x.e);
+  return (
+    entries
+      .map((e, i) => ({
+        e,
+        i,
+        score: [...bags[i]!].filter((w) => q.has(w)).reduce((sum, w) => sum + weight(w), 0),
+      }))
+      // One very common word shared is noise, not a lead (a small store cannot tell rare words).
+      .filter(
+        (x) => x.score > 0 && x.score >= Math.min(MIN_SCORE, 0.5 * Math.log(1 + entries.length)),
+      )
+      .toSorted((a, b) => b.score - a.score || a.i - b.i)
+      .slice(0, limit)
+      .map((x) => x.e)
+  );
 }
 
 async function liveLessons(workspace: string, lessons: readonly Entry[]): Promise<Entry[]> {

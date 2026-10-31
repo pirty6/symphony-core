@@ -30,6 +30,13 @@ const challenge = challengePhase({
 /** Most independent parts one investigation answers side by side. */
 export const MAX_PARTS = 8;
 
+const LESSON_INPUTS = {
+  problem: 'question',
+  cause: 'answer',
+  files: 'citedFindings',
+  open: 'openQuestions',
+} as const;
+
 const AGAINST =
   ' Look for evidence for AND against every entry of `hypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]".';
 
@@ -74,6 +81,8 @@ export const investigate: Pattern = {
     'unresolvedObjections',
     // The evidence the answer rests on, so a chained run (fix, refactor…) need not find it again.
     'citedFindings',
+    // Why a partial answer is partial.
+    'doubts',
   ],
   goalFrom: 'question',
   maxSteps: 5000,
@@ -84,6 +93,11 @@ export const investigate: Pattern = {
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
       { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
+      {
+        name: 'doubts',
+        type: 'string[]',
+        description: 'Why the answer ended with open doubts (empty when it is settled)',
+      },
       {
         name: 'citedFindings',
         type: 'string[]',
@@ -882,6 +896,8 @@ export const investigate: Pattern = {
         'unverified',
         'parts',
         'partAnswers',
+        // The objections it must answer when it was challenged.
+        'realObjections',
       ],
       writes: ['answer', 'openQuestions', 'rulings'],
       verifyBelow: 0.6,
@@ -902,16 +918,20 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'List open questions',
       // The engine, not the AI, guarantees every remaining gap is reported verbatim.
-      assign: [{ field: 'openQuestions', expr: 'unique(gaps + openQuestions)' }],
+      assign: [
+        { field: 'openQuestions', expr: 'unique(gaps + openQuestions + unresolvedObjections)' },
+      ],
     },
     ...hypotheses.nodes,
     ...challenge.nodes,
     {
       id: 'attachParts',
       kind: 'compute',
-      label: 'Attach part answers',
-      // The engine, not the AI, puts every part in the result, after the (challenged) summary.
+      label: 'Finish the answer',
+      // The engine, not the AI, puts every part in the result, after the (challenged) summary,
+      // and every objection still open at the debate cap among the open questions.
       assign: [
+        { field: 'openQuestions', expr: 'unique(openQuestions + unresolvedObjections)' },
         {
           field: 'citedFindings',
           expr: 'withIds(findings, refs(answer + " " + join(partAnswers, " ")))',
@@ -922,8 +942,6 @@ export const investigate: Pattern = {
         },
       ],
     },
-    // What was asked and the answer's opening, as a lead for later questions like it.
-    rememberLessonNode('learnAnswer', 'answered', { problem: 'question', cause: 'answer' }),
     {
       id: 'settled',
       kind: 'condition',
@@ -931,6 +949,21 @@ export const investigate: Pattern = {
       // Open objections or low confidence are said in the outcome, not only in the text.
       expression: 'len(unresolvedObjections) == 0 && confidence >= 0.5',
     },
+    {
+      id: 'noteDoubts',
+      kind: 'compute',
+      label: 'Say why it is unsettled',
+      assign: [
+        {
+          field: 'doubts',
+          expr: 'if(len(unresolvedObjections) > 0, ["Objections were still open when the debate reached its cap (maxDebateRounds): see unresolvedObjections"], []) + if(confidence < 0.5, ["Confidence that the findings answer the question stayed below 0.5"], [])',
+        },
+      ],
+    },
+    // What was asked, how it ended, the answer's opening and what stayed open: a lead for
+    // later questions like it, stale once its cited files are gone.
+    rememberLessonNode('learnAnswer', 'answered', LESSON_INPUTS, { outcome: 'success' }),
+    rememberLessonNode('learnDoubts', 'answered', LESSON_INPUTS, { outcome: 'partial' }),
     { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
     { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
   ],
@@ -1034,16 +1067,19 @@ export const investigate: Pattern = {
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
-    { id: 'attachParts-learn', from: 'attachParts', to: 'learnAnswer' },
-    { id: 'learn-settled', from: 'learnAnswer', to: 'settled' },
-    { id: 'settled-done', from: 'settled', to: 'done', branch: 'then' },
-    { id: 'settled-doubts', from: 'settled', to: 'doubts', branch: 'else' },
+    { id: 'attachParts-settled', from: 'attachParts', to: 'settled' },
+    { id: 'settled-learn', from: 'settled', to: 'learnAnswer', branch: 'then' },
+    { id: 'settled-note', from: 'settled', to: 'noteDoubts', branch: 'else' },
+    { id: 'learn-done', from: 'learnAnswer', to: 'done' },
+    { id: 'note-learn', from: 'noteDoubts', to: 'learnDoubts' },
+    { id: 'learnDoubts-doubts', from: 'learnDoubts', to: 'doubts' },
   ],
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
       recall: () => ({ facts: [], lessons: [] }),
       learnAnswer: () => ({ saved: true }),
+      learnDoubts: () => ({ saved: true }),
       ...Object.fromEntries(
         ['checkTriage', 'checkDeep', 'checkExperiment', 'checkSource', 'checkChase'].map((id) => [
           id,

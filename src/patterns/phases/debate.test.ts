@@ -79,6 +79,11 @@ describe('debate phases in investigate', () => {
     // It ends, and says so: an answer with objections still open is partial.
     expect(r.state.outcome).toBe('partial');
     expect(r.state.cursor).toBe('doubts');
+    // Why it is partial is recorded, the open objections are open questions, and the lesson says so.
+    expect(state.doubts).toEqual([expect.stringMatching(/^Objections were still open/)]);
+    expect(state.openQuestions).toEqual(expect.arrayContaining(state.unresolvedObjections as string[]));
+    expect(ran('learnDoubts')).toBe(1);
+    expect(ran('learnAnswer')).toBe(0);
     expect(state.debateRounds).toBe(state.maxDebateRounds);
     expect(ran('challenge')).toBe((state.maxDebateRounds as number) + 1);
   });

@@ -96,13 +96,14 @@ export function rememberLessonNode(
   id: string,
   kind: 'fixed' | 'failed' | 'implemented' | 'answered',
   inputs: Readonly<Record<string, string>>,
+  args: Readonly<Record<string, unknown>> = {},
 ): ScoreNode {
   return {
     id,
     kind: 'tool',
     label: kind === 'failed' ? 'Remember the failure' : 'Remember the outcome',
     tool: 'memory.lesson',
-    args: { kind },
+    args: { kind, ...args },
     inputs,
     output: { saved: 'lessonSaved' },
   };
