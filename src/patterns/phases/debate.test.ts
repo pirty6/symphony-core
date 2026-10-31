@@ -259,6 +259,35 @@ describe('debate phases in investigate', () => {
       ),
     ).toBe(true);
   });
+
+  it('rejects hypotheses without a "none of these" or "premise is wrong" rival', () => {
+    let proposals = 0;
+    const narrow: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        hypothesize: (s, v) =>
+          proposals++ === 0
+            ? {
+                ...agents.hypothesize!(s, v),
+                updates: {
+                  hypotheses: [
+                    'H1: a | confirm if x | refute if y',
+                    'H2: b | confirm if z | refute if w',
+                  ],
+                  ratedComplexity: 2,
+                },
+              }
+            : agents.hypothesize!(s, v),
+      },
+    };
+    const { r } = play(2, narrow);
+    expect(r.state.outcome).toBe('success');
+    const rejected = r.state.events.flatMap((e) => (e.type === 'response-rejected' ? [e] : []));
+    expect(
+      rejected.some((e) => e.nodeId === 'hypothesize' && /premise is wrong/.test(e.errors.join())),
+    ).toBe(true);
+  });
 });
 
 /** The tier each AI step was played at. */

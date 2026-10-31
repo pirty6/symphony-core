@@ -107,6 +107,9 @@ export interface HypothesesConfig {
   readonly context: readonly string[];
 }
 
+/** The hypothesis that the question's framing is wrong (no backslashes: expressions drop them). */
+const NULL_HYPOTHESIS = '[Nn]one of (these|the above)|[Pp]remise[^|]*wrong';
+
 /** Competing explanations before any evidence is gathered. */
 export function hypothesesPhase(cfg: HypothesesConfig): Fragment {
   return {
@@ -143,6 +146,13 @@ export function hypothesesPhase(cfg: HypothesesConfig): Fragment {
           {
             expr: 'len(unique(hypotheses)) == len(hypotheses)',
             message: 'Each hypothesis must be distinct.',
+          },
+          {
+            // Without a rival that the framing itself is wrong, the evidence can only pick among
+            // the proposer's favourites.
+            expr: `count(hypotheses, "${NULL_HYPOTHESIS}") >= 1`,
+            message:
+              'Include one hypothesis that says "none of these" or that the premise is wrong.',
           },
         ],
       },
