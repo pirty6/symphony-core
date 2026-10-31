@@ -185,7 +185,9 @@ test('a stuck AI step waits for you: retry with a hint and a smarter tier, then 
   await expect(page.getByTestId('timeline-events')).toContainText('pick: retry at tier 4 with hint "use a much longer word"')
   await expect(card).toBeVisible()
   await card.getByRole('button', { name: '✕ Stop run' }).click()
-  await expect(page.getByTestId('run-status')).toHaveText('failed')
+  // Stopped at a step that cannot answer: partial, with the work so far kept.
+  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await expect(page.getByTestId('run-result')).toContainText('partial')
   await expect(page.getByTestId('timeline-events')).toContainText('pick: stopped by studio')
 })
 
@@ -405,7 +407,8 @@ test('the sub-agents of a fanned-out step show as nodes beside it, each with its
   await expect(page.getByTestId('subagent-1')).toBeVisible()
   await expect(page.getByTestId('subagent-2')).toBeVisible()
   await expect(page.getByTestId('subagent-1')).toHaveAttribute('data-state', /done|running/)
-  await expect(page.getByTestId('subagent-1')).toContainText('Sub-agent 1/2')
+  // Two sub-agents, two parts each per wave.
+  await expect(page.getByTestId('subagent-1')).toContainText(/Sub-agent 1\/4/)
   // A sub-agent shows its step's AI output.
   await page.getByTestId('subagent-1').click()
   await expect(page.getByRole('button', { name: 'AI output', exact: true })).toHaveClass(/\bon\b/)
