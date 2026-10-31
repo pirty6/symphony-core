@@ -161,7 +161,12 @@ export interface ChallengeConfig {
   readonly research: readonly string[];
   /** Fields the skeptic, pragmatist and reconciler read with the draft (e.g. per-part answers). */
   readonly alongside?: readonly string[];
+  /** A counter of the research loop to reset when objections reopen it (its own budget per round). */
+  readonly resetOnReopen?: string;
 }
+
+/** Most objections one skeptic round may raise: the debate converges instead of growing. */
+export const MAX_OBJECTIONS = 5;
 
 /** Attack the draft conclusion; send real objections back to research; reconcile a second opinion. */
 export function challengePhase(cfg: ChallengeConfig): Fragment {
@@ -188,7 +193,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         'useSkeptic',
         'challenge',
         'hasObjections',
-        'atCap',
+        'roundsLeft',
         'keepOpen',
         'usePragmatist',
         'triageObjections',
@@ -213,17 +218,29 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         role: 'assessor',
         isolated: true,
         label: 'Skeptic',
-        directive: `You are the SKEPTIC. Attack \`${draft}\` as the answer to \`${subject}\`, using only \`${evidence}\` and \`hypotheses\`. You are not a contrarian: each \`objections\` entry must be CONCRETE and checkable — a claim not backed by a cited item of \`${evidence}\`, a hypothesis dismissed without evidence against it, an alternative explanation the evidence also fits, or a path nobody followed (a caller, a config, a version, an environment). Say what research would settle it. An empty list is fine and better than invented concerns; no style comments.`,
+        directive: `You are the SKEPTIC. Attack \`${draft}\` as the answer to \`${subject}\`, using only \`${evidence}\` and \`hypotheses\`. You are not a contrarian: each \`objections\` entry must be CONCRETE and checkable — a claim not backed by a cited item of \`${evidence}\`, a hypothesis dismissed without evidence against it, an alternative explanation the evidence also fits, or a path nobody followed (a caller, a config, a version, an environment). Say what research would settle it. An empty list is fine and better than invented concerns; no style comments. Give at most ${MAX_OBJECTIONS}, the ones most likely to change the answer first, and merge objections one piece of research would settle together.`,
         reads: [subject, draft, ...alongside, evidence, 'hypotheses', 'rulings'],
         writes: ['objections'],
         retries: 2,
         complexityShift: 1,
+        checks: [
+          {
+            expr: `len(objections) <= ${MAX_OBJECTIONS}`,
+            message: `Give at most ${MAX_OBJECTIONS} objections: the ones most likely to change the answer, merged where one piece of research settles several.`,
+          },
+        ],
       },
       {
         id: 'hasObjections',
         kind: 'condition',
-        label: 'Objections left?',
-        expression: 'len(objections) > 0 && debateRounds < maxDebateRounds',
+        label: 'Objections?',
+        expression: 'len(objections) > 0',
+      },
+      {
+        id: 'roundsLeft',
+        kind: 'condition',
+        label: 'Research them? (rounds left)',
+        expression: 'debateRounds < maxDebateRounds',
       },
       {
         id: 'usePragmatist',
@@ -253,17 +270,11 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         ],
       },
       {
-        id: 'atCap',
-        kind: 'condition',
-        label: 'Still objecting at the cap?',
-        expression: 'len(objections) > 0',
-      },
-      {
         id: 'keepOpen',
         kind: 'compute',
         label: 'Report open objections',
-        // Out of rounds, not out of objections: say so in the result instead of dropping them.
-        assign: [{ field: 'unresolvedObjections', expr: 'objections' }],
+        // Out of rounds, not out of objections: the REAL ones are said in the result, not dropped.
+        assign: [{ field: 'unresolvedObjections', expr: 'realObjections' }],
       },
       {
         id: 'keepAll',
@@ -284,6 +295,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         assign: [
           { field: gaps, expr: 'realObjections' },
           { field: 'debateRounds', expr: 'debateRounds + 1' },
+          ...(cfg.resetOnReopen ? [{ field: cfg.resetOnReopen, expr: '0' }] : []),
         ],
       },
       {
@@ -336,9 +348,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         to: 'usePragmatist',
         branch: 'then',
       },
-      { id: 'hasObjections-atCap', from: 'hasObjections', to: 'atCap', branch: 'else' },
-      { id: 'atCap-keepOpen', from: 'atCap', to: 'keepOpen', branch: 'then' },
-      { id: 'atCap-useSecond', from: 'atCap', to: 'useSecond', branch: 'else' },
+      { id: 'hasObjections-useSecond', from: 'hasObjections', to: 'useSecond', branch: 'else' },
       { id: 'keepOpen-useSecond', from: 'keepOpen', to: 'useSecond' },
       {
         id: 'usePragmatist-triage',
@@ -349,7 +359,9 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       { id: 'usePragmatist-keepAll', from: 'usePragmatist', to: 'keepAll', branch: 'else' },
       { id: 'triage-anyReal', from: 'triageObjections', to: 'anyReal' },
       { id: 'keepAll-anyReal', from: 'keepAll', to: 'anyReal' },
-      { id: 'anyReal-reopen', from: 'anyReal', to: 'reopen', branch: 'then' },
+      { id: 'anyReal-roundsLeft', from: 'anyReal', to: 'roundsLeft', branch: 'then' },
+      { id: 'roundsLeft-reopen', from: 'roundsLeft', to: 'reopen', branch: 'then' },
+      { id: 'roundsLeft-keepOpen', from: 'roundsLeft', to: 'keepOpen', branch: 'else' },
       { id: 'anyReal-useSecond', from: 'anyReal', to: 'useSecond', branch: 'else' },
       { id: 'reopen-research', from: 'reopen', to: reopen, label: 'research objections' },
       { id: 'useSecond-second', from: 'useSecond', to: 'second', branch: 'then' },

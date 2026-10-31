@@ -24,7 +24,10 @@ const challenge = challengePhase({
   reopen: 'chase',
   done: 'attachParts',
   research: ['subQuestions', 'sourceInfo', 'useSources', 'hint'],
-  alongside: ['partAnswers'],
+  // The skeptic sees what was asked, what could not be read and what did not check out.
+  alongside: ['partAnswers', 'subQuestions', 'notRead', 'unverified'],
+  // A debate round gets its own gap-research budget instead of the one already spent.
+  resetOnReopen: 'gapRounds',
 });
 
 /** Most independent parts one investigation answers side by side. */

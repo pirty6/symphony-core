@@ -90,6 +90,62 @@ describe('debate phases in investigate', () => {
     expect(ran('challenge')).toBe((state.maxDebateRounds as number) + 1);
   });
 
+  it('at the cap only REAL objections leave doubts; theoretical ones do not', () => {
+    const objecting = (realAtCap: boolean): DemoScript => ({
+      ...demo,
+      agents: {
+        ...agents,
+        challenge: (s, v) => ({
+          ...agents.challenge!(s, v),
+          updates: { objections: [`objection ${v}`, `nit ${v}`] },
+        }),
+        triageObjections: (s, v) => {
+          const objections = s.objections as string[];
+          const last = v >= (s.maxDebateRounds as number);
+          const real = last && !realAtCap ? [] : [objections[0]!];
+          return {
+            ...agents.triageObjections!(s, v),
+            updates: {
+              objectionTriage: objections.map(
+                (o) => `${o}: ${real.includes(o) ? 'REAL' : 'THEORETICAL'} — r`,
+              ),
+              realObjections: real,
+            },
+          };
+        },
+      },
+    });
+    const real = play(3, objecting(true));
+    expect(real.r.state.outcome).toBe('partial');
+    // Only the REAL one is open; the nit is not.
+    expect(real.state.unresolvedObjections).toEqual([`objection ${real.state.maxDebateRounds}`]);
+    const theoretical = play(3, objecting(false));
+    expect(theoretical.r.state.outcome).toBe('success');
+    expect(theoretical.state.unresolvedObjections).toEqual([]);
+  });
+
+  it('a skeptic raises at most 5 objections a round', () => {
+    const many: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        challenge: (s, v) => ({
+          ...agents.challenge!(s, v),
+          updates: { objections: ['a', 'b', 'c', 'd', 'e', 'f'] },
+        }),
+      },
+    };
+    const { r } = play(2, many);
+    expect(
+      r.state.events.some(
+        (e) =>
+          e.type === 'response-rejected' &&
+          e.nodeId === 'challenge' &&
+          /at most 5/.test(e.errors.join()),
+      ),
+    ).toBe(true);
+  });
+
   it('a routine problem needs 2 hypotheses, a harder one 3', () => {
     const two = (rated: number): DemoScript => ({
       ...demo,

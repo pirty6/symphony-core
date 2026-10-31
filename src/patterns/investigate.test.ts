@@ -337,10 +337,9 @@ describe('investigate always ends: research rounds are bounded', () => {
     expect(r.state.kind).toBe('done');
     const s = r.state.state;
     const chases = r.state.steps.filter((x) => x.nodeId === 'chase').length;
-    // Gap rounds, twice (a human hint grants one more batch), plus one per debate round.
-    expect(chases).toBeLessThanOrEqual(
-      2 * (s.maxGapRounds as number) + (s.maxDebateRounds as number),
-    );
+    // Gap rounds, twice (a human hint grants one more batch), and a batch per debate round.
+    const gapRounds = s.maxGapRounds as number;
+    expect(chases).toBeLessThanOrEqual(2 * gapRounds + (s.maxDebateRounds as number) * gapRounds);
     expect(s.debateRounds).toBe(s.maxDebateRounds);
     // Out of rounds, not out of objections: they are reported, not dropped.
     expect(s.unresolvedObjections).toEqual(['src/x.ts was never read']);
