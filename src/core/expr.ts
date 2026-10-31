@@ -52,7 +52,8 @@ type FnName =
   | 'brief'
   | 'unmatched'
   | 'text'
-  | 'count';
+  | 'count'
+  | 'positions';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -81,6 +82,7 @@ const FNS: Record<FnName, number> = {
   unmatched: 2,
   text: 1,
   count: 2,
+  positions: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -393,17 +395,20 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           if (typeof x === 'string') return x;
           if (typeof x === 'number' || typeof x === 'boolean') return String(x);
           throw new ExprError('text() needs a string, number or boolean');
-        case 'count': {
+        case 'count':
+        case 'positions': {
           // count(findings, "pattern"): how many entries match.
+          // positions(reasons, "pattern"): their 1-based positions, for pick() on a parallel list.
           if (typeof args[1] !== 'string' || args[1].length > 200)
-            throw new ExprError('count() needs a pattern string (at most 200 characters)');
+            throw new ExprError(`${e.fn}() needs a pattern string (at most 200 characters)`);
           let re: RegExp;
           try {
             re = new RegExp(args[1]);
           } catch {
-            throw new ExprError(`count(): invalid pattern ${JSON.stringify(args[1])}`);
+            throw new ExprError(`${e.fn}(): invalid pattern ${JSON.stringify(args[1])}`);
           }
-          return strings('count', x).filter((s) => re.test(s)).length;
+          const hits = strings(e.fn, x).flatMap((s, i) => (re.test(s) ? [i + 1] : []));
+          return e.fn === 'count' ? hits.length : hits;
         }
         case 'unmatched': {
           // unmatched(objections, "^S[0-9]+: "): the entries that do not match the pattern.

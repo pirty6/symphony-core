@@ -92,6 +92,10 @@ const RELEVANT = /engine|schema|validate/;
  *   Close gaps       unanswered sub-questions get targeted research, then a human hint
  *   Answer           cited, with a coverage report
  */
+/** Unreadable items another fetch will not fix: PDFs and binaries, by path or by the reason given. */
+const NO_RETRY =
+  'unique(positions(notRead, "[.][Pp][Dd][Ff]([?#]|$)") + positions(notReadReasons, "[Bb]inary|PDF|[.]pdf"))';
+
 export const investigate: Pattern = {
   name: 'investigate',
   description:
@@ -189,7 +193,7 @@ export const investigate: Pattern = {
       {
         name: 'agents',
         type: 'number',
-        initial: 4,
+        initial: MAX_AGENTS,
         description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
       },
       // Files per sub-agent: read whole in its prompt, so fewer than when it paged through them.
@@ -198,7 +202,7 @@ export const investigate: Pattern = {
         name: 'batchWave',
         type: 'number',
         // batchSize × agents (set after planning): no slot sits idle.
-        initial: 100,
+        initial: 180,
         description: 'Files per triage round, split into parallel calls of batchSize',
       },
       { name: 'pendingFiles', type: 'string[]' },
@@ -210,7 +214,7 @@ export const investigate: Pattern = {
       {
         name: 'deepWave',
         type: 'number',
-        initial: 16,
+        initial: 72,
         description: 'Items per deep-read round, split into parallel calls of deepBatchSize',
       },
       { name: 'pendingDeep', type: 'string[]' },
@@ -241,6 +245,11 @@ export const investigate: Pattern = {
       },
       { name: 'notReadReasons', type: 'string[]', description: 'Why, per notRead item' },
       { name: 'unreadRetries', type: 'number' },
+      {
+        name: 'noRetryAt',
+        type: 'number[]',
+        description: 'Positions in notRead that another fetch cannot help (PDF, binary)',
+      },
       {
         name: 'maxUnreadRetries',
         type: 'number',
@@ -382,7 +391,7 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'assessor',
       label: 'Plan research',
-      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side. Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): 1-2 for a narrow question about a few files, 3-4 for a typical one, 5-${MAX_AGENTS} when the evidence is large (a big repository, many pages) or \`parts\` has many subjects; more agents finish sooner but each one costs a call.`,
+      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side. Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): ${MAX_AGENTS} unless the question is narrow, 1-3 for one about a few files; parallel calls finish sooner at the same total reading, and an idle slot only costs time.`,
       reads: ['question', 'hint', 'sourceNames', 'sourceInfo'],
       writes: [
         'subQuestions',
@@ -437,9 +446,9 @@ export const investigate: Pattern = {
           field: 'pendingSources',
           expr: 'without(unique(useSources), ["workspace", "web", "experiment"])',
         },
-        // Each wave gives every sub-agent the plan asked for two parts, one after the other.
-        { field: 'batchWave', expr: 'batchSize * agents * 2' },
-        { field: 'deepWave', expr: 'deepBatchSize * agents * 2' },
+        // Each wave gives every sub-agent three parts, one after the other: fewer pauses between waves.
+        { field: 'batchWave', expr: 'batchSize * agents * 3' },
+        { field: 'deepWave', expr: 'deepBatchSize * agents * 3' },
       ],
     },
     {
@@ -682,16 +691,18 @@ export const investigate: Pattern = {
       kind: 'condition',
       label: 'Retry unreadable?',
       // Rate limits and timeouts often clear by the end of deep reading: one more try, then report.
-      expression: 'len(notRead) > 0 && unreadRetries < maxUnreadRetries',
+      // A PDF or binary fails the same way every time: only the rest are worth another try.
+      expression: `len(notRead) > len(${NO_RETRY}) && unreadRetries < maxUnreadRetries`,
     },
     {
       id: 'requeueUnread',
       kind: 'compute',
       label: 'Queue unreadable again',
       assign: [
-        { field: 'pendingDeep', expr: 'notRead' },
-        { field: 'notRead', expr: '[]' },
-        { field: 'notReadReasons', expr: '[]' },
+        { field: 'noRetryAt', expr: NO_RETRY },
+        { field: 'pendingDeep', expr: 'without(notRead, pick(notRead, noRetryAt))' },
+        { field: 'notReadReasons', expr: 'pick(notReadReasons, noRetryAt)' },
+        { field: 'notRead', expr: 'pick(notRead, noRetryAt)' },
         { field: 'unreadRetries', expr: 'unreadRetries + 1' },
       ],
     },
@@ -1286,7 +1297,7 @@ export const investigate: Pattern = {
             skipReasons: skip.map((n) => `${n} cannot explain where code validates answers`),
             parts: [],
             // The demo keeps the number of sub-agents it was given (4 by default).
-            agents: typeof s.agents === 'number' ? s.agents : 4,
+            agents: typeof s.agents === 'number' ? s.agents : MAX_AGENTS,
           },
           verdict: v('planned'),
         };

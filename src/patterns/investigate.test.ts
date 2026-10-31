@@ -211,6 +211,35 @@ describe('items that cannot be read', () => {
     expect(r.state.steps.filter((x) => x.nodeId === 'requeueUnread')).toHaveLength(1);
   });
 
+  it('a PDF or binary is reported, not fetched again the same way', () => {
+    const seen: string[][] = [];
+    const r = play(
+      script((s) => {
+        const batch = s.deepBatch as string[];
+        seen.push(batch);
+        const bad = seen.length === 1 ? batch.slice(0, 2) : [];
+        return {
+          updates: {
+            examined: batch.filter((x) => !bad.includes(x)),
+            unreadable: bad,
+            unreadableReasons: bad.length ? ['binary file, nothing readable', 'HTTP 429'] : [],
+            newFindings: ['x — y'],
+          },
+          verdict,
+        };
+      }),
+    );
+    expect(r.state.outcome).toBe('success');
+    const [binary, flaky] = seen[0]!;
+    const retried = seen.slice(1).flat();
+    expect(retried).toContain(flaky);
+    expect(retried).not.toContain(binary);
+    expect(r.state.state.notRead).toContain(binary);
+    const reasons = r.state.state.notReadReasons as string[];
+    const at = (r.state.state.notRead as string[]).indexOf(binary!);
+    expect(reasons[at]).toBe('binary file, nothing readable');
+  });
+
   it('may not be dropped silently', () => {
     const r = play(
       script((s) => ({
@@ -396,7 +425,7 @@ describe('investigate sizes its parallel work from the plan', () => {
   it('the plan picks how many sub-agents read at once (at most 6)', () => {
     const { r } = runWith(['workspace'], demo.approvals, { parallel: 2 });
     expect(r.state.outcome).toBe('success');
-    expect(r.state.state).toMatchObject({ agents: 2, batchWave: 40, deepWave: 16 });
+    expect(r.state.state).toMatchObject({ agents: 2, batchWave: 60, deepWave: 24 });
     const bad = runWith(['workspace'], demo.approvals, { parallel: 9 }).r;
     const plan = bad.state.steps.find((st) => st.nodeId === 'plan');
     expect(JSON.stringify(plan?.attempts ?? bad.state.pause)).toMatch(/from 1 to 6/);

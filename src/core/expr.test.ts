@@ -89,6 +89,8 @@ describe('evalExpr values', () => {
     ['unmatched(["S1: a", "b", "S12: c"], "^S[0-9]+: ")', ['b']],
     ['"round " + text(2) + ", ok " + text(true)', 'round 2, ok true'],
     ['count(["a.ts:1", "web | x", "b.ts:2"], "^[a-z.]+:[0-9]")', 2],
+    ['positions(["x", "binary", "y", "pdf"], "binary|pdf")', [2, 4]],
+    ['pick(["a", "b", "c"], unique(positions(["1", "2", "3"], "1|3") + [3]))', ['a', 'c']],
     [
       'brief(["F1 a.ts:3 — the port `port = 8080`", "F2 long claim here", "F3 short"], 12)',
       ['F1 a.ts:3 —…', 'F2 long cla…', 'F3 short'],
