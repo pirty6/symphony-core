@@ -130,6 +130,8 @@ export function formatUsage(u: TokenUsage): string {
   return `${k(u.inputTokens)} in${u.cacheReadTokens ? ` (${k(u.cacheReadTokens)} cached)` : ''} · ${k(u.outputTokens)} out · ${u.calls} calls${time}${cost}${compacted}`;
 }
 
+const pct = (part: number, whole: number) => (whole > 0 ? Math.round((100 * part) / whole) : 0);
+
 /**
  * The steps that cost most (premium requests, then input tokens), each with its usage and
  * its share of the run: of the cost (premium requests, else input tokens) and of model time.
@@ -150,7 +152,6 @@ export function costliest(
   const premium = all.reduce((n, u) => n + (u.premiumRequests ?? 0), 0);
   const input = all.reduce((n, u) => n + u.inputTokens, 0);
   const ms = all.reduce((n, u) => n + (u.apiMs ?? 0), 0);
-  const pct = (part: number, whole: number) => (whole > 0 ? Math.round((100 * part) / whole) : 0);
   return Object.entries(byNode)
     .toSorted(
       ([, a], [, b]) =>
