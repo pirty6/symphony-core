@@ -198,7 +198,8 @@ export function createApi(opts: ApiOptions) {
     const isolation =
       settings.provider === 'copilot' && editsFiles(score) ? await isolate(workspace, score.pattern, env) : undefined
     const dir = isolation?.dir ?? workspace
-    const toolContext = isolation ? { ...shared, workspace: dir } : shared
+    // In a worktree, memory stays in your workspace: what the run learns outlives the worktree.
+    const toolContext = isolation ? { ...shared, workspace: dir, memoryRoot: shared.workspace } : shared
     const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir)
     const id = `run-${Date.now().toString(36)}-${(counter++).toString(36)}`
     const next = concertNext({
@@ -233,6 +234,8 @@ export function createApi(opts: ApiOptions) {
         return file
       },
       checkpoint: true,
+      // You are watching: at the time limit you decide whether a step keeps going.
+      askOnOvertime: true,
       ...(settings.restore ? { restore: settings.restore } : {}),
       ...(next ? { next } : {}),
     })
@@ -273,6 +276,14 @@ export function createApi(opts: ApiOptions) {
     const { run: saved, issues } = await loadRun(file)
     if (issues.length) throw new CompileError(issues.map((message) => ({ message })))
     const kind = body.kind === 'forked' ? 'forked' : 'resumed'
+    if (kind === 'resumed') {
+      // The same run, played by this server: one copy, never two writing the same file.
+      const same = [...savedFiles].filter(([, f]) => f === file).map(([id]) => runs.get(id))
+      const playing = same.find((r) => r && !TERMINAL.has(r.status))
+      if (playing) return playing
+      // An ended copy is replaced by the resumed one in the list of runs.
+      for (const r of same) if (r) runs.delete(r.id)
+    }
     const perf = saved.performance
     const last = perf.steps.at(-1)?.step ?? 0
     if (kind === 'resumed' && perf.outcome !== 'in-progress' && perf.outcome !== 'cancelled') {
@@ -479,6 +490,16 @@ export function createApi(opts: ApiOptions) {
             case 'stepMode':
               run.setStepMode(body.on === true)
               break
+            case 'keepWaiting':
+            case 'stopStep': {
+              // A step over its time limit: keep waiting, or stop it keeping what it has.
+              const error = run.answerOvertime(body.action === 'stopStep' ? 'stop' : 'wait')
+              if (error) {
+                send(res, 409, { error })
+                return true
+              }
+              break
+            }
             default:
               send(res, 400, { error: `unknown action '${String(body.action)}'` })
               return true

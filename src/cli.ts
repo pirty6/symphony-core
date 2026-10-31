@@ -122,6 +122,11 @@ function printMessage(m: RunMessage, write: (s: string) => void): void {
     );
     return;
   }
+  if (m.type === 'overtime') {
+    if (m.state === 'asking')
+      write(`\n${c.yellow(`⏱  '${m.nodeId}' has run ${Math.round(m.afterMs / 60_000)} min`)}\n`);
+    return;
+  }
   const e = m.event;
   switch (e.type) {
     case 'node-entered':
@@ -174,6 +179,8 @@ interface PlayOptions {
   readonly fresh?: boolean;
   /** Continue a restored run (resume / fork). */
   readonly restore?: RunOptions['restore'];
+  /** --complexity as given: backlog items otherwise rate their own complexity. */
+  readonly complexity?: Complexity;
 }
 
 /**
@@ -226,7 +233,9 @@ async function play(
   const run = new Run({
     score,
     tools: extras.tools,
-    toolContext: isolation ? { ...extras.toolContext, workspace: dir } : extras.toolContext,
+    toolContext: isolation
+      ? { ...extras.toolContext, workspace: dir, memoryRoot: extras.toolContext.workspace }
+      : extras.toolContext,
     provider: makeProvider({
       provider: o.providerName,
       pattern: demo ? { ...pattern, demo } : pattern,
@@ -423,10 +432,13 @@ async function playChain(
     const given = parseContext(chained.get(name) ?? [], pattern);
     const prev = { score: current.score, performance: perf };
     const { goal, context } = stepContext(pattern, step, prev, given);
+    // A chained pattern goes on at the same tier; a backlog item is its own request and
+    // rates its own complexity, unless you chose one.
+    const complexity = typeof step === 'string' ? current.score.complexity : o.complexity;
     const score = compileScore(pattern, {
       goal,
       context,
-      complexity: current.score.complexity,
+      ...(complexity ? { complexity } : {}),
       improvisation: current.score.improvisation,
     });
     const left = queue.filter((s) => typeof s !== 'string').length;
@@ -513,6 +525,9 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
         step: values.step,
         breakpoints: values.break ?? [],
         save: !values['no-save'],
+        ...(complexityOf(values.complexity)
+          ? { complexity: complexityOf(values.complexity)! }
+          : {}),
         ...(rl ? { rl } : {}),
       },
       splitContext(values.context, then).chained,
@@ -1002,7 +1017,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       const shown = rest.includes('--all') ? all : all.filter((r) => !r.demo);
       for (const r of shown)
         console.log(
-          `${r.startedAt}  ${r.pattern.padEnd(12)} ${r.outcome.padEnd(10)} ${join(dir, r.file)}${r.demo ? c.dim('  (demo)') : ''}`,
+          `${r.startedAt}  ${r.pattern.padEnd(12)} ${r.outcome.padEnd(10)} ${join(dir, r.file)}${r.demo ? c.dim('  (demo)') : ''}${r.usage ? c.dim(`  ${Math.round(r.usage.inputTokens / 1000)}k in · ${r.usage.calls} calls`) : ''}`,
         );
       const hidden = all.length - shown.length;
       if (hidden > 0) console.log(c.dim(`${hidden} offline-demo runs hidden (--all to show them)`));

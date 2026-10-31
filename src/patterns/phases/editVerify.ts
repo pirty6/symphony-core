@@ -74,6 +74,8 @@ export const EDIT_STATE: readonly StateField[] = [
 
 /** Upper bound on visits to the loop's nodes: attempts per diagnosis × diagnoses, with room. */
 const LOOP_VISITS = 20;
+/** Raised to fit the counters you set: every attempt of every diagnosis, with room. */
+const LOOP_FROM = '(maxAttempts + 1) * (maxDiagnoses + 1) + 4';
 
 export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
   const re = cfg.rediagnose;
@@ -87,6 +89,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       reads: [...cfg.applyReads, 'failureReason', 'testOutput', 'lintOutput', 'changedFiles'],
       writes: ['changes', ...(cfg.applyWrites ?? [])],
       maxVisits: LOOP_VISITS,
+      visitsFrom: LOOP_FROM,
       retries: 2,
       checks: [{ expr: 'len(changes) > 0', message: 'List every edit you made in changes.' }],
     },
@@ -97,6 +100,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       tool: 'git.diff',
       output: { diff: 'diff', hash: 'diffHash', files: 'changedFiles' },
       maxVisits: LOOP_VISITS,
+      visitsFrom: LOOP_FROM,
     },
     {
       id: 'progressed',
@@ -125,6 +129,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       inputs: { command: 'testCommand' },
       output: { passed: 'testsPassed', output: 'testOutput' },
       maxVisits: LOOP_VISITS,
+      visitsFrom: LOOP_FROM,
     },
     {
       id: 'hasLint',
@@ -140,6 +145,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       inputs: { command: 'lintCommand' },
       output: { passed: 'lintPassed', output: 'lintOutput' },
       maxVisits: LOOP_VISITS,
+      visitsFrom: LOOP_FROM,
     },
     {
       id: 'countAttempt',
@@ -173,6 +179,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       writes: ['failureKind', 'failureReason'],
       retries: 2,
       maxVisits: LOOP_VISITS,
+      visitsFrom: LOOP_FROM,
       checks: [
         {
           expr: 'includes(["PATCH", "DIAGNOSIS", "ENVIRONMENT"], failureKind)',

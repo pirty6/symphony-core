@@ -3,6 +3,7 @@
  * a recording) to perform one agent node. Plus the pure pieces every
  * provider shares: the prompt, result extraction and the role policy.
  */
+import { preloadSection, type PreloadedFile } from './preload-prompt.js';
 import type { AgentPause, AiTranscript, Role } from '../core/types.js';
 
 export type ProviderEvent =
@@ -37,6 +38,8 @@ export interface AgentRequest {
   readonly integrate?: readonly unknown[];
   /** This run's scratch folder, deleted when the run ends. */
   readonly scratchDir?: string;
+  /** pause.preload: the listed workspace files, read whole by the runtime. */
+  readonly files?: readonly PreloadedFile[];
 }
 
 export interface AgentResponse {
@@ -65,11 +68,19 @@ export interface Provider {
 
 export const SUBMIT_TOOL = 'submit_result';
 
+/**
+ * Abort reason for "stop this step, but keep what it has": a provider ends the call and
+ * returns the answer the AI already submitted (if any) instead of throwing AbortError.
+ */
+export const KEEP_ANSWER = 'keep-answer';
+
 export interface PromptSources {
   /** MCP servers connected for this node. */
   readonly mcpServers?: readonly string[];
   /** This run's scratch folder (executors write temporary files only there). */
   readonly scratchDir?: string;
+  /** pause.preload: the files to put in the prompt, whole. */
+  readonly files?: readonly PreloadedFile[];
 }
 
 /** Inputs and context are compact JSON: pretty-printing made them about 1.5x longer. */
@@ -159,6 +170,8 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
   if (Object.keys(context).length > 0) {
     lines.push('', '## Context', '```json', JSON.stringify(context), '```');
   }
+  if (pause.preload && sources.files?.length)
+    lines.push(...preloadSection(pause.preload, sources.files));
   if (pause.feedback && pause.feedback.length > 0) {
     lines.push(
       '',
@@ -246,6 +259,10 @@ const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'test',
   '[',
   'read',
+  'awk',
+  'gawk',
+  'mawk',
+  'nawk',
 ]);
 const READ_ONLY_GIT: ReadonlySet<string> = new Set([
   'diff',
@@ -386,6 +403,23 @@ const GIT_CONFIG_READS: ReadonlySet<string> = new Set([
   '-l',
 ]);
 
+const AWKS: ReadonlySet<string> = new Set(['awk', 'gawk', 'mawk', 'nawk']);
+
+/**
+ * awk reads, unless its program runs a command (system, pipes, getline from a
+ * command) or writes a file (print/printf >); a program file (-f) is not seen.
+ */
+function awkRefusal(cmd: string, args: readonly string[]): string | undefined {
+  if (args.some((a) => a === '-f' || a.startsWith('--file') || /^-[^-]*f/.test(a)))
+    return `\`${cmd} -f\` (runs a program file the check cannot see)`;
+  const program = args.join(' ');
+  if (/\bsystem\s*\(|\bgetline\b|\bfflush\b|\bclose\s*\(/.test(program))
+    return `\`${cmd}\` with system, getline, fflush or close (runs commands)`;
+  if (/(^|[^|])\|(?!\|)/.test(program)) return `\`${cmd}\` with a pipe (runs a command)`;
+  if (/\bprintf?\b[^;}]*>/.test(program)) return `\`${cmd}\` print > (writes a file)`;
+  return undefined;
+}
+
 /** Why one command of a line is not read-only, or undefined when it is. */
 function segmentRefusal(segment: string): string | undefined {
   // Subshell and group brackets around a command change nothing about what it does.
@@ -416,6 +450,7 @@ function segmentRefusal(segment: string): string | undefined {
   if (!READ_ONLY_COMMANDS.has(cmd)) return `\`${cmd}\` (not on the read-only list)`;
   const args = t.slice(1);
   if (args.some((a) => a.startsWith('--output'))) return `\`${cmd} --output\` (writes a file)`;
+  if (AWKS.has(cmd)) return awkRefusal(cmd, args);
   if (cmd === 'sort')
     return args.some((a) => a === '-o' || a.startsWith('-o'))
       ? '`sort -o` (writes a file)'

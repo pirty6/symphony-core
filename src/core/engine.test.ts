@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { validatePattern } from './validate.js';
 import { hangman } from '../patterns/hangman.js';
 import { compileScore } from './compile.js';
 import {
@@ -277,13 +278,36 @@ describe('engine: loop safety', () => {
     r = answerAgent(s, r, ok({ word: 'cat' }));
     r = guess(s, r, 'q');
     r = guess(s, r, 'w');
-    expect(r.state.kind).toBe('failed');
-    expect(r.state.reason).toMatch(/exceeded maxVisits \(2\)/);
+    // A limit ends the run partial, with the work so far kept.
+    expect(r.state).toMatchObject({ kind: 'done', outcome: 'partial', cursor: 'ask' });
+    expect(r.state.reason).toMatch(/'ask' reached maxVisits \(2\); the work so far is kept/);
+    expect(r.state.state.guessed).toEqual(['q', 'w']);
 
     const short = compileScore({ ...hangman, maxSteps: 2 }, { goal: 'g' });
     let q = createEngine(short);
     q = answerAgent(short, q, ok({ word: 'cat' }));
-    expect(q.state.reason).toMatch(/maxSteps \(2\) exceeded/);
+    expect(q.state.outcome).toBe('partial');
+    expect(q.state.reason).toMatch(/step limit \(maxSteps 2\)/);
+  });
+
+  it('visitsFrom raises a node cap when a counter you set is larger', () => {
+    const raised: Pattern = {
+      ...hangman,
+      nodes: hangman.nodes.map((n) =>
+        n.id === 'ask' ? { ...n, maxVisits: 2, visitsFrom: 'maxWrong + 1' } : n,
+      ),
+    };
+    const s = compileScore(raised, { goal: 'g', context: { maxWrong: 3 } });
+    let r = createEngine(s);
+    r = answerAgent(s, r, ok({ word: 'cat' }));
+    for (const l of ['q', 'w', 'x']) r = guess(s, r, l);
+    // Three wrong guesses end the game as the rules say, not at the cap of 2.
+    expect(r.state.reason).toBe("reached end 'lose'");
+    const nodes = [...raised.nodes];
+    const ask = nodes.findIndex((n) => n.id === 'ask');
+    nodes[ask] = { ...nodes[ask]!, visitsFrom: 'maxWrong +' };
+    const messages = validatePattern({ ...raised, nodes }).errors.map((e) => e.message);
+    expect(messages.join()).toMatch(/visitsFrom 'maxWrong \+' is invalid/);
   });
 });
 
@@ -312,13 +336,14 @@ describe('engine: approvals, termination, cancel', () => {
     expect(r.state).toMatchObject({ kind: 'done', outcome: 'cancelled' });
   });
 
-  it('honours verdict.shouldTerminate', () => {
+  it('honours verdict.shouldTerminate, but never as success: the steps ahead did not run', () => {
     const r = answerAgent(
       score,
       createEngine(score),
       ok({ word: 'cat' }, { shouldTerminate: true }),
     );
-    expect(r.state).toMatchObject({ kind: 'done', outcome: 'success' });
+    expect(r.state).toMatchObject({ kind: 'done', outcome: 'partial' });
+    expect(r.state.reason).toMatch(/'pick' terminated/);
   });
 
   it('supports cancel resolutions', () => {

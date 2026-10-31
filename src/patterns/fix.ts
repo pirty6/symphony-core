@@ -113,6 +113,14 @@ export const fix: Pattern = {
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
+    {
+      id: 'snapshot',
+      kind: 'tool',
+      label: 'Snapshot workspace',
+      tool: 'git.diff',
+      // Edits must change the workspace from here; changes already there are not a fix.
+      output: { hash: 'prevDiffHash' },
+    },
     recallMemory('recall', 'issue'),
     ...hypotheses.nodes,
     {
@@ -198,7 +206,8 @@ export const fix: Pattern = {
     { id: 'rejected', kind: 'end', label: 'Plan rejected', outcome: 'partial' },
   ],
   edges: [
-    { id: 'start-recall', from: 'start', to: 'recall' },
+    { id: 'start-snapshot', from: 'start', to: 'snapshot' },
+    { id: 'snapshot-recall', from: 'snapshot', to: 'recall' },
     { id: 'recall-hypothesize', from: 'recall', to: hypotheses.entry },
     { id: 'learnFixed-fixed', from: 'learnFixed', to: 'fixed' },
     { id: 'learnFailed-gaveUp', from: 'learnFailed', to: 'gaveUp' },
@@ -288,6 +297,7 @@ export const fix: Pattern = {
       }),
     },
     tools: {
+      snapshot: () => ({ diff: '', hash: 'base', files: [] }),
       recall: () => ({ facts: [], lessons: [] }),
       learnFixed: () => ({ saved: true }),
       learnFailed: () => ({ saved: true }),

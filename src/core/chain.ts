@@ -33,13 +33,18 @@ export function followUps(score: ExecutableScore, performance: Performance): Cha
   const pattern = typeof s.runPattern === 'string' && s.runPattern.trim();
   if (!pattern || !Array.isArray(s.queue)) return [];
   const test = typeof s.testCommand === 'string' ? s.testCommand.trim() : '';
-  const context = test ? { testCommand: test } : undefined;
-  return s.queue
-    .filter((g): g is string => typeof g === 'string' && g.trim() !== '')
-    .map(
-      (goal): ChainStep =>
-        context ? { pattern, goal: goal.trim(), context } : { pattern, goal: goal.trim() },
-    );
+  const source = typeof s.source === 'string' ? s.source.trim() : '';
+  const items = s.queue.filter((g): g is string => typeof g === 'string' && g.trim() !== '');
+  // Each item is its own run: say where it comes from, and to leave the other items alone.
+  const from = source.length <= 200 ? ` from ${source}` : '';
+  return items.map((goal, i): ChainStep => {
+    const hint = `One item (${i + 1} of ${items.length}) of a backlog${from}; the others are done in their own runs, so change only what this item needs.`;
+    return {
+      pattern,
+      goal: goal.trim(),
+      context: { ...(test ? { testCommand: test } : {}), hint },
+    };
+  });
 }
 
 /**

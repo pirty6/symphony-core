@@ -30,7 +30,15 @@ describe('backlog', () => {
     expect(r.state.outcome).toBe('success');
     expect(end).toBe('queued');
     expect(steps).toEqual(
-      ITEMS.map((goal) => ({ pattern: 'implement', goal, context: { testCommand: 'npm test' } })),
+      ITEMS.map((goal, i) => ({
+        pattern: 'implement',
+        goal,
+        context: {
+          testCommand: 'npm test',
+          // Where it comes from, and to leave the other items to their own runs.
+          hint: `One item (${i + 1} of ${ITEMS.length}) of a backlog from docs/improvements.md; the others are done in their own runs, so change only what this item needs.`,
+        },
+      })),
     );
   });
 
@@ -40,10 +48,29 @@ describe('backlog', () => {
     expect(steps.map((s) => (typeof s === 'string' ? s : s.goal))).toEqual([ITEMS[1], ITEMS[0]]);
   });
 
-  it('fails without queueing when no picked number is an item', () => {
-    const { r, end, steps } = play(picking(['7']));
+  it('asks again when a pick is not an item or is repeated, saying why; nothing is dropped', () => {
+    const asked: unknown[][] = [];
+    const answers = [['7'], ['1', '1'], ['2']];
+    const { state, steps } = play({
+      approvals: {
+        choose: (s, visit) => {
+          asked.push([s.pickProblem]);
+          return { approved: true, updates: { picks: answers[visit] } };
+        },
+      },
+    });
+    expect(asked.map(([p]) => p)).toEqual([
+      '',
+      'Use each item number once (1 is the first item); got: 7',
+      'Use each item number once (1 is the first item); got: 1, 1',
+    ]);
+    expect(state.queue).toEqual([ITEMS[1]]);
+    expect(steps).toHaveLength(1);
+  });
+
+  it('fails without queueing when every answer stays invalid', () => {
+    const { r, steps } = play(picking(['7']));
     expect(r.state.outcome).toBe('failed');
-    expect(end).toBe('badPick');
     expect(steps).toEqual([]);
   });
 

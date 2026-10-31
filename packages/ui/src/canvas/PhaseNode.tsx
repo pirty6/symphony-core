@@ -3,7 +3,7 @@ import type { FrameNodeData, PhaseNodeData } from '../lib/model'
 
 export type PhaseNodeType = Node<PhaseNodeData, 'phase'>
 
-export function PhaseNode({ id, data }: NodeProps<PhaseNodeType>) {
+export function PhaseNode({ id, data, isConnectable }: NodeProps<PhaseNodeType>) {
   const cls = ['flow-node', 'phase-node', data.status ? `status-${data.status}` : ''].filter(Boolean).join(' ')
   return (
     <div
@@ -13,7 +13,7 @@ export function PhaseNode({ id, data }: NodeProps<PhaseNodeType>) {
       onDoubleClick={() => data.onExpand?.(id)}
       title={`${data.steps.join(' → ')}\n\nClick ⊕ to open this phase`}
     >
-      <Handle type="target" position={Position.Top} />
+      <Handle isConnectable={isConnectable} type="target" position={Position.Top} />
       <div className="fn-header">
         <span className="fn-icon">▣</span>
         <span className="fn-title">{data.group.label}</span>
@@ -44,7 +44,7 @@ export function PhaseNode({ id, data }: NodeProps<PhaseNodeType>) {
           {data.writes.length > 5 && <span className="chip chip-more">+{data.writes.length - 5}</span>}
         </div>
       )}
-      <Handle type="source" position={Position.Bottom} />
+      <Handle isConnectable={isConnectable} type="source" position={Position.Bottom} />
     </div>
   )
 }

@@ -17,6 +17,11 @@ export const EVIDENCE_STATE: readonly StateField[] = [
     type: 'string[]',
     description: 'Every finding dropped because its file, line or quote was not real',
   },
+  {
+    name: 'findingsBrief',
+    type: 'string[]',
+    description: 'The findings with their ids and locations, quotes left out (they were checked)',
+  },
 ];
 
 /** Check the step's new findings against the workspace; failures go to rejectedFindings. */
@@ -39,11 +44,13 @@ export const MERGE_FINDINGS = [
     expr: 'findings + numbered(without(unique(newFindings), unnumbered(findings)), len(findings) + 1)',
   },
   { field: 'unverified', expr: 'unverified + rejectedFindings' },
+  // What most readers get: about a third smaller, ids and locations kept.
+  { field: 'findingsBrief', expr: 'brief(findings, 240)' },
 ] as const;
 
 /** Answers cite findings by id, e.g. [F3]. */
 export const CITE_BY_ID =
-  'Cite the findings you rely on by their ids in brackets, e.g. [F3]; every claim needs at least one, and only ids that exist in `findings` count.';
+  'Cite the findings you rely on by their ids in brackets, e.g. [F3]; every claim needs at least one, and only ids of findings you were given count.';
 
 export function citesFindings(field: string): AcceptanceCheck {
   return {
@@ -87,7 +94,7 @@ export const MEMORY_NOTE =
 /** Remember how the run ended, for later runs. */
 export function rememberLessonNode(
   id: string,
-  kind: 'fixed' | 'failed' | 'implemented',
+  kind: 'fixed' | 'failed' | 'implemented' | 'answered',
   inputs: Readonly<Record<string, string>>,
 ): ScoreNode {
   return {

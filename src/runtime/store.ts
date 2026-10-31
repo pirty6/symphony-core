@@ -2,6 +2,7 @@
  * Filesystem side of the runtime: workspace fingerprint, run store and
  * user pattern files. Kept out of the pure core on purpose.
  */
+import { performanceUsage } from '../core/usage.js';
 import { execFile } from 'node:child_process';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -49,6 +50,13 @@ export interface RunSummary {
   readonly steps: number;
   /** Played by the offline demo (canned answers): hidden from recent lists by default. */
   readonly demo: boolean;
+  /** What the run cost, rejected attempts included (absent when nothing was reported). */
+  readonly usage?: {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly calls: number;
+    readonly premiumRequests?: number;
+  };
 }
 
 /**
@@ -137,6 +145,20 @@ function summaryOf(run: SavedRun): Omit<RunSummary, 'file'> {
     startedAt: run.performance.startedAt,
     steps: run.performance.steps.length,
     demo: isDemoRun(run.performance),
+    ...usageSummary(run),
+  };
+}
+
+function usageSummary(run: SavedRun): Pick<RunSummary, 'usage'> {
+  const u = performanceUsage(run.performance).total;
+  if (!u.calls) return {};
+  return {
+    usage: {
+      inputTokens: u.inputTokens,
+      outputTokens: u.outputTokens,
+      calls: u.calls,
+      ...(u.premiumRequests ? { premiumRequests: u.premiumRequests } : {}),
+    },
   };
 }
 

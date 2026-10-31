@@ -20,6 +20,7 @@ import { evalExpr, evaluateGuard, parseExpr } from './expr.js';
 import { hashOf } from './hash.js';
 import { solosActive, takesFor } from './jazz.js';
 import { checkAgentResult, checkValue, validateUpdates, type Checked } from './schema.js';
+import { MAX_AGENTS } from './types.js';
 import type {
   AcceptanceCheck,
   AgentNode,
@@ -288,7 +289,49 @@ function partsOf(
   for (let i = 0; i < list.length; i += per) {
     parts.push({ ...input, [node.fanOut.over]: list.slice(i, i + per) });
   }
-  return parts.length > 1 ? { parts } : {};
+  const agents = node.fanOut.agents ? state[node.fanOut.agents] : undefined;
+  const parallel =
+    typeof agents === 'number' && Number.isFinite(agents)
+      ? Math.min(MAX_AGENTS, Math.max(1, Math.round(agents)))
+      : undefined;
+  return parts.length > 1 ? { parts, ...(parallel ? { parallel } : {}) } : {};
+}
+
+/** One part's answer, checked as if it were the whole step (shape, then the step's checks). */
+function checkPart(
+  raw: unknown,
+  pause: AgentPause,
+  i: number,
+  state: Readonly<Record<string, unknown>>,
+): Checked<NodeResult> {
+  const c = checkAgentResult(raw, pause.outputSchema);
+  if (!c.ok || !pause.checks?.length) return c;
+  return acceptance(pause.checks, { ...state, ...pause.parts![i] }, c.value);
+}
+
+/**
+ * Parts that passed at an earlier attempt of this step, so a retry plays only the rest.
+ * Derived from the recorded attempts (replay gets the same). When every part passed,
+ * the merged answer itself was rejected, so nothing is kept.
+ */
+function partsDoneOf(
+  parts: readonly Readonly<Record<string, unknown>>[],
+  pause: AgentPause,
+  attempts: Ctx['attempts'],
+  state: Readonly<Record<string, unknown>>,
+): (NodeResult | null)[] | undefined {
+  const done: (NodeResult | null)[] = parts.map(() => null);
+  for (const a of attempts) {
+    const got = (a.result as { parts?: unknown } | null | undefined)?.parts;
+    if (!Array.isArray(got) || got.length !== parts.length) continue;
+    got.forEach((p, i) => {
+      if (p === undefined || p === null) return;
+      const c = checkPart(p, { ...pause, parts }, i, state);
+      if (c.ok) done[i] = c.value;
+    });
+  }
+  const kept = done.filter(Boolean).length;
+  return kept > 0 && kept < parts.length ? done : undefined;
 }
 
 /**
@@ -300,8 +343,10 @@ function checkParts(
   pause: AgentPause,
   transcript: AiTranscript | undefined,
 ): Checked<NodeResult> | undefined {
-  const parts = (raw as { parts?: unknown } | null | undefined)?.parts;
-  if (!pause.parts || !Array.isArray(parts)) return undefined;
+  const given = (raw as { parts?: unknown } | null | undefined)?.parts;
+  if (!pause.parts || !Array.isArray(given)) return undefined;
+  // A part kept from an earlier attempt need not be sent again.
+  const parts = given.map((p, i) => p ?? pause.partsDone?.[i] ?? undefined);
   if (parts.length !== pause.parts.length) {
     return {
       ok: false,
@@ -361,7 +406,7 @@ function makePause(
     16,
   );
   if (node.kind === 'agent') {
-    return {
+    const pause: AgentPause = {
       kind: 'agent',
       pauseId,
       step: ctx.step,
@@ -384,6 +429,7 @@ function makePause(
       ...(node.cites ? { cites: node.cites } : {}),
       ...(node.checks?.length ? { checks: node.checks } : {}),
       ...(node.otherModel ? { otherModel: true } : {}),
+      ...(node.preload ? { preload: node.preload } : {}),
       ...partsOf(node, ctx.state),
       // Parallel parts already multiply the calls: a fanned-out step plays one take.
       takes: node.fanOut ? 1 : takesFor(score.improvisation, node.role),
@@ -396,6 +442,11 @@ function makePause(
       ...(feedback ? { feedback } : {}),
       moveKey,
     };
+    const done =
+      pause.parts && ctx.attempts.length > 0
+        ? partsDoneOf(pause.parts, pause, ctx.attempts, ctx.state)
+        : undefined;
+    return done ? { ...pause, partsDone: done } : pause;
   }
   if (node.kind === 'tool') {
     return {
@@ -428,21 +479,46 @@ function makePause(
     shows: node.shows ?? [],
     outputSchema: fieldsOf(score, node.writes),
     ...(feedback ? { feedback } : {}),
+    ...(node.unattended ? { unattended: node.unattended } : {}),
     moveKey,
   };
+}
+
+/** maxVisits, raised by visitsFrom when a counter on the state is larger. */
+function visitCap(node: ScoreNode, state: Readonly<Record<string, unknown>>): number | undefined {
+  if (!node.visitsFrom) return node.maxVisits;
+  let from: unknown;
+  try {
+    from = evalExpr(parseExpr(node.visitsFrom), state);
+  } catch {
+    from = undefined;
+  }
+  return typeof from === 'number' && Number.isFinite(from)
+    ? Math.max(node.maxVisits ?? 0, Math.ceil(from))
+    : node.maxVisits;
 }
 
 /** Run deterministic nodes until a pause or a terminal state. */
 function drive(score: ExecutableScore, ctx: Ctx): void {
   while (ctx.kind === 'running') {
     const node = nodeOf(score, ctx.cursor);
+    // A limit ends the run partial, keeping its state, instead of throwing the work away.
     if (ctx.step >= score.maxSteps) {
-      fail(ctx, `maxSteps (${score.maxSteps}) exceeded`, node.id);
+      finish(
+        ctx,
+        'partial',
+        `stopped at the step limit (maxSteps ${score.maxSteps}) at '${node.id}'; the work so far is kept`,
+      );
       return;
     }
     const visits = (ctx.visits[node.id] ?? 0) + 1;
-    if (node.maxVisits !== undefined && visits > node.maxVisits) {
-      fail(ctx, `node '${node.id}' exceeded maxVisits (${node.maxVisits})`, node.id);
+    const cap = visitCap(node, ctx.state);
+    if (cap !== undefined && visits > cap) {
+      finish(
+        ctx,
+        'partial',
+        `stopped at a limit: '${node.id}' reached maxVisits (${cap}); the work so far is kept`,
+      );
       return;
     }
     const hashBefore = stateHashOf(ctx.state, ctx.env);
@@ -828,12 +904,9 @@ function resolveAgent(
     stateHash: stateHashOf(ctx.state, ctx.env),
   });
   if (verdict.shouldTerminate) {
-    const outcome =
-      verdict.outcome === 'applied'
-        ? 'success'
-        : verdict.outcome === 'failed'
-          ? 'failed'
-          : 'partial';
+    // Success is the pattern's to declare, at an end: stopping early skips the steps and
+    // checks still ahead, so the run is at best partial.
+    const outcome = verdict.outcome === 'failed' ? 'failed' : 'partial';
     finish(ctx, outcome, `'${node.id}' terminated: ${verdict.reason}`, res.at);
     return;
   }

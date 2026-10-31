@@ -13,6 +13,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { ToolContext, ToolSpec } from './tools.js';
+import { preloadFiles } from './preload.js';
 
 const git = promisify(execFile);
 
@@ -168,6 +169,32 @@ export type WorkspaceDiff = {
   readonly files: readonly string[];
 };
 
+/** Baseline test results by workspace state; a few dozen at most. */
+const REUSED = new Map<string, Readonly<Record<string, unknown>>>();
+function remember(key: string, result: Readonly<Record<string, unknown>>): void {
+  REUSED.set(key, result);
+  if (REUSED.size > 50) REUSED.delete(REUSED.keys().next().value!);
+}
+
+/** The command plus everything that could change its result: HEAD and the working changes. */
+async function workspaceKey(ctx: ToolContext, command: string): Promise<string | undefined> {
+  try {
+    // No commits yet: no HEAD, and the working changes are everything.
+    const head = await git('git', ['rev-parse', '--verify', '-q', 'HEAD'], {
+      cwd: ctx.workspace,
+    }).then(
+      (r) => r.stdout.trim(),
+      () => '',
+    );
+    const { hash } = await workspaceDiff(ctx);
+    return `${ctx.workspace}\0${command}\0${head}\0${hash}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** git's id for the empty tree. */
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MAX_DIFF = 30_000;
 
 /** Cut a long diff, naming every file whose changes were cut off (nothing dropped silently). */
@@ -204,17 +231,22 @@ export async function workspaceDiff(
         signal: ctx.signal,
       })
     ).stdout;
+  // A repository without commits yet has no HEAD: compare with the empty tree.
+  const base = await run(['rev-parse', '--verify', '-q', 'HEAD']).then(
+    () => 'HEAD',
+    () => EMPTY_TREE,
+  );
   const diff = await run([
     '--no-pager',
     'diff',
-    'HEAD',
+    base,
     '--no-color',
     '--no-ext-diff',
     '--',
     ...where,
     NOT_THE_EDIT,
   ]);
-  const changed = (await run(['diff', 'HEAD', '--name-only', '--', ...where, NOT_THE_EDIT]))
+  const changed = (await run(['diff', base, '--name-only', '--', ...where, NOT_THE_EDIT]))
     .split('\n')
     .filter(Boolean);
   const untracked = (
@@ -255,8 +287,28 @@ export function workspaceTools(): ToolSpec[] {
           );
         }
         const timeout = typeof args.timeoutMs === 'number' ? args.timeoutMs : TEST_TIMEOUT_MS;
-        return runCommand(command, ctx, timeout);
+        if (args.reuse !== true) return runCommand(command, ctx, timeout);
+        // A baseline: the same command on the very same workspace gives the same answer.
+        const key = await workspaceKey(ctx, command);
+        const known = key ? REUSED.get(key) : undefined;
+        if (known)
+          return {
+            ...known,
+            output: `${String(known.output)}\n(reused: the workspace is unchanged since this command last ran)`,
+          };
+        const result = await runCommand(command, ctx, timeout);
+        if (key) remember(key, result);
+        return result;
       },
+    },
+    {
+      name: 'files.read',
+      description:
+        'Read workspace files whole, with line numbers, for a prompt (a step that preloads its files): { files: [{ path, text, lines, omitted? }] }.',
+      outputs: ['files'],
+      run: async (args, ctx) => ({
+        files: await preloadFiles(ctx.workspace, Array.isArray(args.paths) ? args.paths : []),
+      }),
     },
     {
       name: 'git.diff',
@@ -275,36 +327,51 @@ export function workspaceTools(): ToolSpec[] {
       name: 'evidence.check',
       description:
         'Check cited findings against the workspace: a "path:line — fact `quote`" must name a real file and line, and the quote must be there. { valid, invalid } (invalid entries end with why).',
-      outputs: ['valid', 'invalid'],
+      outputs: ['valid', 'invalid', 'checked'],
       run: async (args, ctx) => {
         const findings = Array.isArray(args.findings)
           ? args.findings.filter((f): f is string => typeof f === 'string')
           : [];
         const r = await checkCitations(ctx.workspace, findings);
         // What held is remembered for later runs (re-checked whenever it is recalled).
-        await rememberFacts(ctx.workspace, r.valid, undefined, ctx.runId).catch(() => 0);
-        return { valid: r.valid, invalid: r.invalid.map((i) => `${i.finding} ✗ ${i.reason}`) };
+        await rememberFacts(ctx.memoryRoot ?? ctx.workspace, r.valid, undefined, ctx.runId).catch(
+          () => 0,
+        );
+        return {
+          valid: r.valid,
+          invalid: r.invalid.map((i) => `${i.finding} ✗ ${i.reason}`),
+          // How many cited a workspace file and were checked: 0 is not "all valid".
+          checked: r.checked,
+        };
       },
     },
     {
       name: 'memory.recall',
       description:
-        'Facts from earlier runs that still hold in the workspace (re-checked now) and lessons from earlier fix/implement runs, ranked by the words they share with `query`: { facts, lessons }.',
+        'Facts from earlier runs that still hold in the workspace (re-checked now) and lessons from earlier runs, ranked by the words they share with `query`: { facts, lessons }.',
       outputs: ['facts', 'lessons'],
-      run: (args, ctx) => recall(ctx.workspace, String(args.query ?? '')),
+      run: (args, ctx) =>
+        recall(ctx.workspace, String(args.query ?? ''), 12, {
+          ...(ctx.memoryRoot ? { store: ctx.memoryRoot } : {}),
+          ...(ctx.runId ? { excludeRun: ctx.runId } : {}),
+        }),
     },
     {
       name: 'memory.lesson',
       description:
-        'Remember how a fix or implement run ended: { kind: "fixed" | "failed" | "implemented", problem, cause, files, failure }. Returns { saved }.',
+        'Remember how a run ended: { kind: "fixed" | "failed" | "implemented" | "answered" | …, problem, cause, files, failure }. Returns { saved }.',
       outputs: ['saved'],
       run: async (args, ctx) => {
         const files = Array.isArray(args.files) ? args.files.map(String) : [];
+        const kind = String(args.kind ?? 'fixed');
+        const problem = String(args.problem ?? '').slice(0, 300);
+        // A lesson is a lead, not a report: keep it short.
+        const cause = String(args.cause ?? '').slice(0, 600);
         const text =
-          args.kind === 'failed'
-            ? `FAILED to fix "${String(args.problem ?? '')}": ${String(args.failure ?? 'unknown')}`
-            : `${args.kind === 'implemented' ? 'Implemented' : 'Fixed'} "${String(args.problem ?? '')}": ${String(args.cause ?? '')} (files: ${files.join(', ')})`;
-        await rememberLesson(ctx.workspace, text, files);
+          kind === 'failed'
+            ? `FAILED to fix "${problem}": ${String(args.failure ?? 'unknown').slice(0, 600)}`
+            : `${kind.charAt(0).toUpperCase()}${kind.slice(1)} "${problem}": ${cause}${files.length ? ` (files: ${files.join(', ')})` : ''}`;
+        await rememberLesson(ctx.memoryRoot ?? ctx.workspace, text, files);
         return { saved: true };
       },
     },

@@ -17,6 +17,30 @@ const json = (v: unknown) => JSON.stringify(v, null, 2)
 
 // ── cards shown while a run waits for the user ─────────────────────
 
+/** A step over its time limit: keep waiting, or stop it and keep what it has so far. */
+export function OvertimeCard({ view, onAnswer }: { view: RunView; onAnswer: (action: 'keepWaiting' | 'stopStep') => void }) {
+  if (!view.overtime) return null
+  const { nodeId, afterMs } = view.overtime
+  return (
+    <div className="card gate" data-testid="overtime-card">
+      <h3>
+        ⏱ “{nodeId}” has run {Math.round(afterMs / 60_000)} min
+      </h3>
+      <p className="muted">
+        It is still working; its output so far is in AI output. Stopping keeps what it already submitted (and every finished part); only the rest is retried.
+      </p>
+      <div className="row">
+        <button type="button" className="primary" onClick={() => onAnswer('keepWaiting')}>
+          Keep waiting
+        </button>
+        <button type="button" className="danger" onClick={() => onAnswer('stopStep')}>
+          Stop this step, keep what it has
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function GateCard({ view, onResume, onStep, onStop }: { view: RunView; onResume: () => void; onStep: () => void; onStop: () => void }) {
   if (view.status !== 'paused' || !view.gate) return null
   const { gate } = view

@@ -82,7 +82,14 @@ describe('evalExpr values', () => {
     ['ids(["F3 a.ts:1 — x", "no id", "F10 c"])', ['F3', 'F10']],
     ['pick(["a", "b", "c"], ["3", " 1", "9", "x", 2])', ['c', 'a', 'b']],
     ['join(guessed, ", ")', 'a, e'],
+    ['2 + 3 * 4', 14],
+    ['(2 + 3) * 4', 20],
     ['join([], "-")', ''],
+    ['withIds(["F1 a", "F2 b", "F3 c"], ["F3", "F1", "F9"])', ['F1 a', 'F3 c']],
+    [
+      'brief(["F1 a.ts:3 — the port `port = 8080`", "F2 long claim here", "F3 short"], 12)',
+      ['F1 a.ts:3 —…', 'F2 long cla…', 'F3 short'],
+    ],
     ['refs("Port 8081 [F2], see F10 and F2; not FF2 or F2x")', ['F2', 'F10']],
     ['refs(["[F1]", "F1 and F3"])', ['F1', 'F3']],
     ['subset(refs("[F1][F2]"), ids(numbered(["a", "b"], 1)))', true],
@@ -106,6 +113,7 @@ describe('evalExpr values', () => {
   it('rejects mixed-type arithmetic', () => {
     expect(() => ev('word - 1')).toThrow(ExprError);
     expect(() => ev('word + 1')).toThrow(ExprError);
+    expect(() => ev('word * 2')).toThrow(/'\*' needs two numbers/);
   });
 });
 

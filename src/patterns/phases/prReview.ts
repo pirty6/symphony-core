@@ -42,6 +42,7 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       // Another model family than the author's: its blind spots are less likely to be the same.
       otherModel: true,
       maxVisits: 8,
+      visitsFrom: '(maxReviewRounds + 1) * 3',
       directive: `Review this change as you would a pull request, against \`${cfg.subject}\` and ${cfg.against.map((a) => `\`${a}\``).join(', ')}. Read \`diff\` and the code around it in the workspace (read-only). Look for: wrong behaviour or missed cases, a fix of the symptom instead of the cause, missing or weak tests (a test that would pass without the change), broken conventions of the codebase, needless complexity, and leftover debug code. Write each issue in \`reviewComments\` as "BLOCKING path:line — what to change and why" or "NIT path:line — …". Only real problems are BLOCKING; style preferences are NITs. Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE, and summarize in \`reviewSummary\`. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed.`,
       reads: [cfg.subject, ...cfg.against, 'diff', 'changes', 'testOutput', 'reviewComments'],
       writes: ['reviewDecision', 'reviewComments', 'reviewSummary'],
@@ -88,6 +89,8 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
     {
       id: 'acceptAnyway',
       kind: 'approval',
+      // Nobody to ask: a change the review blocked is not accepted.
+      unattended: 'reject',
       label: 'Accept despite review?',
       message:
         'The reviewer still requests changes after the last review round. Approve to accept the change as it is (the comments stay in the result), or reject to stop.',

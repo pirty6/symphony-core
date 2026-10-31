@@ -1,4 +1,4 @@
-import type { Pattern } from '../core/types.js';
+import { MAX_AGENTS, type Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import {
   checkFindings,
@@ -8,6 +8,7 @@ import {
   MEMORY_STATE,
   MERGE_FINDINGS,
   recallMemory,
+  rememberLessonNode,
 } from './phases/evidence.js';
 
 const hypotheses = hypothesesPhase({
@@ -16,7 +17,8 @@ const hypotheses = hypothesesPhase({
 });
 const challenge = challengePhase({
   subject: 'question',
-  evidence: 'findings',
+  // The debaters read findings without their (already checked) quotes.
+  evidence: 'findingsBrief',
   draft: 'answer',
   gaps: 'gaps',
   reopen: 'chase',
@@ -64,7 +66,15 @@ export const investigate: Pattern = {
     'Answer a question thoroughly with the evidence it needs: repo files (big repos are searched first), web pages, experiments, history, GitHub, dependencies, MCP. Nothing listed is skipped; every claim is cited.',
   verbTriggers: ['investigate', 'explain', 'why', 'how does', 'find out', 'research'],
   requiredContext: ['question'],
-  result: ['answer', 'rulings', 'openQuestions', 'disagreements', 'unresolvedObjections'],
+  result: [
+    'answer',
+    'rulings',
+    'openQuestions',
+    'disagreements',
+    'unresolvedObjections',
+    // The evidence the answer rests on, so a chained run (fix, refactor…) need not find it again.
+    'citedFindings',
+  ],
   goalFrom: 'question',
   maxSteps: 5000,
   state: withState(
@@ -74,6 +84,11 @@ export const investigate: Pattern = {
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
       { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
+      {
+        name: 'citedFindings',
+        type: 'string[]',
+        description: 'The findings the answer cites, with their ids',
+      },
       {
         name: 'parts',
         type: 'string[]',
@@ -113,11 +128,17 @@ export const investigate: Pattern = {
         type: 'string[]',
         description: 'Experiments to run: command, what it measures',
       },
+      {
+        name: 'agents',
+        type: 'number',
+        initial: 4,
+        description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
+      },
       { name: 'batchSize', type: 'number', initial: 25 },
       {
         name: 'batchWave',
         type: 'number',
-        // batchSize × the parallel calls a step runs at once (4): no slot sits idle.
+        // batchSize × agents (set after planning): no slot sits idle.
         initial: 100,
         description: 'Files per triage round, split into parallel calls of batchSize',
       },
@@ -294,9 +315,17 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'assessor',
       label: 'Plan research',
-      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side. Otherwise leave \`parts\` empty.`,
+      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side. Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): 1-2 for a narrow question about a few files, 3-4 for a typical one, 5-${MAX_AGENTS} when the evidence is large (a big repository, many pages) or \`parts\` has many subjects; more agents finish sooner but each one costs a call.`,
       reads: ['question', 'hint', 'sourceNames', 'sourceInfo'],
-      writes: ['subQuestions', 'searchTerms', 'useSources', 'skipSources', 'skipReasons', 'parts'],
+      writes: [
+        'subQuestions',
+        'searchTerms',
+        'useSources',
+        'skipSources',
+        'skipReasons',
+        'parts',
+        'agents',
+      ],
       retries: 2,
       checks: [
         {
@@ -326,6 +355,10 @@ export const investigate: Pattern = {
           expr: `len(parts) != 1 && len(parts) <= ${MAX_PARTS}`,
           message: `List 2 to ${MAX_PARTS} independent subjects in parts, or none.`,
         },
+        {
+          expr: `agents >= 1 && agents <= ${MAX_AGENTS}`,
+          message: `Set agents to a whole number from 1 to ${MAX_AGENTS}.`,
+        },
       ],
     },
     {
@@ -337,6 +370,9 @@ export const investigate: Pattern = {
           field: 'pendingSources',
           expr: 'without(unique(useSources), ["workspace", "web", "experiment"])',
         },
+        // Each wave fills every sub-agent the plan asked for.
+        { field: 'batchWave', expr: 'batchSize * agents' },
+        { field: 'deepWave', expr: 'deepBatchSize * agents' },
       ],
     },
     {
@@ -481,7 +517,7 @@ export const investigate: Pattern = {
         'Open EVERY file in `batch` (view each one; for long files look through all of it, not just the top). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
         AGAINST,
       reads: ['hypotheses', 'question', 'subQuestions', 'batch'],
-      fanOut: { over: 'batch', per: 'batchSize' },
+      fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
       writes: ['triaged', 'batchRelevant', 'newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -536,10 +572,12 @@ export const investigate: Pattern = {
       capabilities: ['web'],
       label: 'Deep read',
       directive:
-        'Read every item of `deepBatch` completely. Workspace files: line by line, following references out of them (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
+        'Read every item of `deepBatch` completely. Workspace files are given to you whole, with line numbers, at the end of this prompt: read every line there (do not re-open them), then follow the references out of them that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
         AGAINST,
+      // The engine reads the workspace files of the batch whole: one turn, nothing skipped.
+      preload: 'deepBatch',
       reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch'],
-      fanOut: { over: 'deepBatch', per: 'deepBatchSize' },
+      fanOut: { over: 'deepBatch', per: 'deepBatchSize', agents: 'agents' },
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
       cites: 'newFindings',
       retries: 2,
@@ -714,8 +752,8 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Find gaps',
       directive:
-        'For EACH sub-question, decide whether `findings` answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Set `confidence` (0..1) that the findings fully answer `question`.',
-      reads: ['question', 'subQuestions', 'findings', 'skipSources', 'skipReasons'],
+        'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Set `confidence` (0..1) that the findings fully answer `question`.',
+      reads: ['question', 'subQuestions', 'findingsBrief', 'skipSources', 'skipReasons'],
       writes: ['gaps', 'confidence'],
       retries: 2,
       checks: [
@@ -740,7 +778,7 @@ export const investigate: Pattern = {
       directive:
         'Close every gap in `gaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
-      reads: ['hypotheses', 'question', 'gaps', 'hint', 'findings', 'sourceInfo', 'consulted'],
+      reads: ['hypotheses', 'question', 'gaps', 'hint', 'findingsBrief', 'sourceInfo', 'consulted'],
       writes: ['queries', 'newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -800,12 +838,12 @@ export const investigate: Pattern = {
       label: 'Answer each part',
       // One call per part, side by side: each stays on its own subject over the shared
       // evidence, instead of one call answering everything and drifting or running out.
-      fanOut: { over: 'parts', per: 1 },
+      fanOut: { over: 'parts', per: 1, agents: 'agents' },
       directive:
-        'Answer `question` for the ONE subject in `parts` only, using only `findings`. ' +
+        'Answer `question` for the ONE subject in `parts` only, using only `findingsBrief` (the findings, quotes left out). ' +
         CITE_BY_ID +
         ' Findings in `unverified` could not be verified: do not rely on them. Write exactly one `partAnswers` entry: a Markdown section that starts with "## " and the subject, says what the evidence shows about it and what follows from it (for the question asked), and cites finding ids. Stay on your subject: say what holds for every subject in one closing line starting "Shared:" rather than at length. No coverage section; the overall answer has it.',
-      reads: ['question', 'parts', 'subQuestions', 'hint', 'findings', 'gaps', 'unverified'],
+      reads: ['question', 'parts', 'subQuestions', 'hint', 'findingsBrief', 'gaps', 'unverified'],
       writes: ['partAnswers'],
       retries: 2,
       checks: [
@@ -875,12 +913,26 @@ export const investigate: Pattern = {
       // The engine, not the AI, puts every part in the result, after the (challenged) summary.
       assign: [
         {
+          field: 'citedFindings',
+          expr: 'withIds(findings, refs(answer + " " + join(partAnswers, " ")))',
+        },
+        {
           field: 'answer',
           expr: 'if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer)',
         },
       ],
     },
-    { id: 'done', kind: 'end', label: 'Answered' },
+    // What was asked and the answer's opening, as a lead for later questions like it.
+    rememberLessonNode('learnAnswer', 'answered', { problem: 'question', cause: 'answer' }),
+    {
+      id: 'settled',
+      kind: 'condition',
+      label: 'Settled?',
+      // Open objections or low confidence are said in the outcome, not only in the text.
+      expression: 'len(unresolvedObjections) == 0 && confidence >= 0.5',
+    },
+    { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
+    { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
   ],
   edges: [
     { id: 'start-recall', from: 'start', to: 'recall' },
@@ -982,12 +1034,16 @@ export const investigate: Pattern = {
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
-    { id: 'attachParts-done', from: 'attachParts', to: 'done' },
+    { id: 'attachParts-learn', from: 'attachParts', to: 'learnAnswer' },
+    { id: 'learn-settled', from: 'learnAnswer', to: 'settled' },
+    { id: 'settled-done', from: 'settled', to: 'done', branch: 'then' },
+    { id: 'settled-doubts', from: 'settled', to: 'doubts', branch: 'else' },
   ],
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
       recall: () => ({ facts: [], lessons: [] }),
+      learnAnswer: () => ({ saved: true }),
       ...Object.fromEntries(
         ['checkTriage', 'checkDeep', 'checkExperiment', 'checkSource', 'checkChase'].map((id) => [
           id,
@@ -1044,6 +1100,8 @@ export const investigate: Pattern = {
             skipSources: skip,
             skipReasons: skip.map((n) => `${n} cannot explain where code validates answers`),
             parts: [],
+            // The demo keeps the number of sub-agents it was given (4 by default).
+            agents: typeof s.agents === 'number' ? s.agents : 4,
           },
           verdict: v('planned'),
         };

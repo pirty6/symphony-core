@@ -125,6 +125,12 @@ describe('studio api', () => {
     }
     // It waits for a guess, with a checkpoint saved.
     const playing = (await wait((rs) => rs.some((r) => r.pattern === 'hangman'))).find((r) => r.pattern === 'hangman')!
+    // Resuming a run this server is still playing follows it: no second copy.
+    const settings = { provider: 'scripted', autoApprove: false, stepMode: false, breakpoints: [] }
+    const again = (await (await post('/api/runs/continue', { file: playing.file, kind: 'resumed', ...settings })).json()) as { runId: string }
+    expect(again.runId).toBe(start.runId)
+    const live = (await (await fetch(`${base}/api/runs`)).json()) as { id: string; pattern: string; status: string }[]
+    expect(live.filter((r) => r.pattern === 'hangman' && !['done', 'failed', 'cancelled'].includes(r.status))).toHaveLength(1)
     const busy = await post('/api/saved/delete', { path: playing.file })
     expect(busy.status).toBe(409)
     expect(((await busy.json()) as { error: string }).error).toMatch(/still playing/)

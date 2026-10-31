@@ -36,7 +36,9 @@ test('step mode halts before and after the AI; the proposed result is visible be
   await page.getByLabel('step mode').check()
   await page.getByRole('button', { name: '▶ Run' }).click()
   const gate = page.getByTestId('gate-card')
-  // First the tool step that recalls earlier runs, then the first AI step.
+  // First the tool steps (snapshot the workspace, recall earlier runs), then the first AI step.
+  await expect(gate).toContainText('Paused before “snapshot”')
+  await gate.getByRole('button', { name: '⏭ Step' }).click()
   await expect(gate).toContainText('Paused before “recall”')
   await gate.getByRole('button', { name: '⏭ Step' }).click()
   await expect(gate).toContainText('Paused before “hypothesize”')
@@ -210,7 +212,7 @@ test('several runs play at once on one server; the studio switches between them'
   await page.getByText('auto-approve').click()
   await page.getByLabel('step mode').check()
   await page.getByRole('button', { name: '▶ Run' }).click()
-  await expect(page.getByTestId('gate-card')).toContainText('Paused before “recall”')
+  await expect(page.getByTestId('gate-card')).toContainText('Paused before “snapshot”')
   const live = page.getByTestId('live-runs')
   await expect(live.getByRole('button', { name: /fix/ }).first()).toContainText('on screen')
   // Newest first: the first hangman is the one started above, still waiting for a guess.
@@ -221,7 +223,7 @@ test('several runs play at once on one server; the studio switches between them'
   // And back to fix, still paused where it was.
   await live.getByRole('button', { name: /fix/ }).first().click()
   await expect(page.locator('.tb-title')).toContainText('fix')
-  await expect(page.getByTestId('gate-card')).toContainText('Paused before “recall”')
+  await expect(page.getByTestId('gate-card')).toContainText('Paused before “snapshot”')
 })
 
 test('inputs start empty with the demo as a hint, the large editor writes into them, and offline runs still work', async ({ page }) => {
@@ -364,4 +366,24 @@ test('the minimap lights up where the run is, as the diagram does', async ({ pag
   await expect(minimap.locator('.react-flow__minimap-node.minimap-paused')).toHaveCount(1)
   await expect(minimap.locator('.react-flow__minimap-node.minimap-paused')).toHaveCSS('fill', 'rgb(52, 211, 153)')
   await expect(minimap.locator('.react-flow__minimap-node.minimap-done').first()).toBeAttached()
+})
+
+test('during a run, nodes and closed phases can be moved, but nothing can be connected', async ({ page }) => {
+  await open(page, 'investigate')
+  await page.getByLabel('step mode').check()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('gate-card')).toBeVisible()
+  // Bring every node into view first (the window may be small).
+  await page.locator('.react-flow__controls-fitview').click()
+  const phase = page.locator('.react-flow__node[data-id="planPhase"]')
+  const before = await phase.evaluate((el) => (el as HTMLElement).style.transform)
+  const box = (await phase.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 200, box.y + 40, { steps: 8 })
+  await page.mouse.up()
+  await expect.poll(() => phase.evaluate((el) => (el as HTMLElement).style.transform)).not.toBe(before)
+  // Connections stay as the pattern says: no handle accepts a new edge while it plays.
+  await expect(page.locator('.react-flow__handle.connectable')).toHaveCount(0)
+  await page.getByTestId('gate-card').getByRole('button', { name: '⏹ Stop' }).click()
 })

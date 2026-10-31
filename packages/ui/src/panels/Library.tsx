@@ -161,6 +161,7 @@ export function Library(p: Props) {
               {r.demo && <span className="tag demo">demo</span>}
               <small>
                 {new Date(r.startedAt).toLocaleString()} · {r.steps} steps
+                {r.usage ? ` · ${Math.round(r.usage.inputTokens / 1000)}k tokens in${r.usage.premiumRequests ? ` · ${+r.usage.premiumRequests.toFixed(1)} premium` : ''}` : ''}
               </small>
             </button>
             {p.onDeleteSaved &&

@@ -161,8 +161,8 @@ Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the V
 ### Expressions
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
-state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + -`,
-`len empty includes lower append if chars subset take drop first unique without pick join`, and
+state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + - *`,
+`len empty includes lower append if chars subset take drop first unique without pick join withIds brief`, and
 `verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
@@ -593,10 +593,12 @@ Every change here was measured with `symphony eval` and kept only if it did not 
 solved rate or citation validity.
 
 - **`symphony eval`** (`src/eval/`): small fixture repos with a known right answer: two fixes, an
-  implement and a refactor checked by hidden tests the AI never saw, and an investigate whose
-  docs say 8080 while the code says 8081. It records solved, citations valid, tokens, time and
-  models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline on
-  correctness. `--task routing` adds 21 maestro requests (compose only) judged in code on the
+  implement and a refactor checked by hidden tests the AI never saw, an investigate whose
+  docs say 8080 while the code says 8081, a review of uncommitted work with one real bug, an
+  analysis of a small CSV (the answer and its margin, cited), and a backlog judged on the items
+  it extracts (each real one once, the done one skipped). It records solved, citations valid, tokens, time and
+  models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline: fewer
+  solved, more invalid citations, none checked, or 25% more input tokens per run. `--task routing` adds 21 maestro requests (compose only) judged in code on the
   pattern chosen, a complexity band and the chained pattern; `rehearse maestro --fields
   chosen,complexity` measures how often routing agrees with itself.
 - **Checked evidence.** Findings are written `path:line — fact \`quote\``. A **Check citations**
@@ -604,6 +606,11 @@ solved rate or citation validity.
   quote are real (the rest go to `unverified`); the Copilot provider also sends wrong citations
   back in-session while the AI still has the files open (`cites`). Recorded findings get ids
   (F1, F2…) and answers, root causes and designs must cite existing ids (`refs`, `ids`).
+  The citation is found wherever it sits and however it is written (bold, backticks, "a.ts line
+  3", "a.ts | line 3"), so dressing it up cannot skip the check; quotes need 8+ characters and
+  ranges at most 26 lines. A finding that cites nothing (no path:line, URL, "source | location",
+  commit or issue) is rejected. `evidence.check` reports how many it `checked`, and the eval
+  never counts zero checked as all valid.
 - **The step's own checks run in-session** too ("at least 3 hypotheses"), so a bad answer is fixed
   while the AI still has its context instead of costing a fresh attempt.
 - **Malformed answers are repaired before they are judged.** Claude models sometimes send
@@ -624,7 +631,9 @@ solved rate or citation validity.
   implement runs. They are leads to check, never evidence. The store stays clean: run tags such
   as `[H2 against]` are stripped, only the newest fact per `path:line` is kept, one run writes at
   most 200 facts (so a few runs cannot replace the whole store), lessons expire after 90 days or
-  when their files are gone, and recall weights rare words above common ones.
+  when their files are gone, and recall weights rare words above common ones. A run never
+  recalls its own facts, investigate remembers each answer as a lesson too, and a run playing in
+  its own worktree reads and adds to your workspace's memory, not a copy deleted with it.
 - **Replays know who played.** A recorded answer is reused only for the same move *and* the same
   model settings (tier, requested model, effort); `compare` names "played by different models"
   as a cause instead of calling two runs identical.
@@ -637,6 +646,18 @@ solved rate or citation validity.
 - **Time limit per step** (15 min, `SYMPHONY_STEP_TIMEOUT_S`): a hung call is retried, then waits
   for a human like any stuck step. Mechanical steps already play a tier lower (smaller model,
   lower reasoning effort) through `complexityShift`.
+- **Files read by the engine (`preload`).** A step that reads a known list of files (investigate's
+  deep read, review's per-file review) gets each workspace file whole, with line numbers, in its
+  prompt, instead of paging through it with tool calls. It reads everything in one turn and
+  cannot skip part of a file (a file over 120k characters says which lines were left out); it
+  still follows references and history with tools, and still lists every item it read. On the
+  largest recorded run the deep read made about 48 model calls per part (1,531 in all) and used
+  142M input tokens, while the whole text of the 113 files it read is about 357k tokens.
+- **Lean findings.** investigate's assess, gap chaser, part answers and debaters read
+  `findingsBrief`: each finding with its id and location, its (already checked) quote left out
+  and capped at 240 characters. On the largest recorded run (3,285 findings) that is 30% fewer
+  characters in the block that made up 86-96% of those prompts. The final answer still reads them
+  in full.
 - **Compact JSON in prompts.** Inputs are sent unindented: about 3-4% fewer prompt characters
   (measured on 549 recorded Copilot prompts), less than the 1.5x a pretty-printing estimate
   suggests, because most of a prompt's JSON is long strings.
@@ -653,6 +674,10 @@ solved rate or citation validity.
   answers, now repaired before they are judged.
 - **`runs --prune`** (`compact.ts`) only deals with old saved runs, not with prompt context.
 - **Drift in the composed score** is what the requirement ledger addresses.
+- **Experiments and analyses stay one at a time.** investigate's experiments often time
+  things, and timings taken side by side skew each other; analyze picks each next analysis from
+  what the last one found. Review reads its files in parallel instead, and investigate's triage,
+  deep reads and parts do.
 - **Past compositions for the classifier** are the composition memory: only approved ones are
   stored, and they are precedent, not a cache.
 

@@ -315,6 +315,21 @@ git -C .. log --oneline -1 -- . ; git --no-pager -C /w check-ignore -v .symphony
     );
   });
 
+  it('lets awk read, but not run commands or write files', () => {
+    for (const ok of [
+      "awk '{print $1}' src/a.ts",
+      "awk 'NR>=10 && NR<=40' src/a.ts",
+      'awk -F: \'$3 > 5 || $2 == "x" {n++} END {print n}\' f',
+      "git log --oneline | awk '{print $1}'",
+    ])
+      expect(readOnlyRefusal(ok), ok).toBeUndefined();
+    expect(readOnlyRefusal('awk \'BEGIN{system("rm x")}\'')).toMatch(/runs commands/);
+    expect(readOnlyRefusal('awk \'{print | "sh"}\' f')).toMatch(/pipe/);
+    expect(readOnlyRefusal('awk \'{"date" | getline d}\' f')).toMatch(/runs commands|pipe/);
+    expect(readOnlyRefusal('awk \'{print $1 > "out"}\' f')).toMatch(/writes a file/);
+    expect(readOnlyRefusal('awk -f prog.awk f')).toMatch(/program file/);
+  });
+
   it('explains each kind of refusal', () => {
     expect(readOnlyRefusal('ls && rm -rf x')).toBe('`rm` (not on the read-only list)');
     expect(readOnlyRefusal('git branch -D main')).toBe(

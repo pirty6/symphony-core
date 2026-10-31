@@ -52,6 +52,11 @@ export const backlog: Pattern = {
       description: 'Item numbers to play, e.g. 1, 3 (empty = all)',
     },
     { name: 'queue', type: 'string[]', description: 'The requests that will play, in order' },
+    {
+      name: 'pickProblem',
+      type: 'string',
+      description: 'Why the last picks could not be used',
+    },
   ],
   start: 'start',
   nodes: [
@@ -97,7 +102,26 @@ export const backlog: Pattern = {
       message:
         'Each item plays as its own run, one after another. Enter the item numbers to play (e.g. 1, 3) or leave empty for all; reject to play none.',
       writes: ['picks'],
-      shows: ['items', 'runPattern'],
+      shows: ['items', 'runPattern', 'pickProblem'],
+      maxVisits: 4,
+    },
+    {
+      id: 'validPicks',
+      kind: 'condition',
+      label: 'Valid numbers?',
+      // Every pick names an item, and none twice: nothing is dropped or played twice silently.
+      expression: 'len(pick(items, picks)) == len(picks) && len(unique(picks)) == len(picks)',
+    },
+    {
+      id: 'rejectPicks',
+      kind: 'compute',
+      label: 'Ask again',
+      assign: [
+        {
+          field: 'pickProblem',
+          expr: '"Use each item number once (1 is the first item); got: " + join(picks, ", ")',
+        },
+      ],
     },
     { id: 'picked', kind: 'condition', label: 'Picked some?', expression: 'len(picks) > 0' },
     {
@@ -113,7 +137,13 @@ export const backlog: Pattern = {
       assign: [{ field: 'queue', expr: 'items' }],
     },
     { id: 'hasQueue', kind: 'condition', label: 'Queue empty?', expression: 'len(queue) > 0' },
-    { id: 'queued', kind: 'end', label: 'Items queued', outcome: 'success' },
+    // Success here means the items are queued; each one's own run says how it went.
+    {
+      id: 'queued',
+      kind: 'end',
+      label: 'Items queued (each plays as its own run)',
+      outcome: 'success',
+    },
     { id: 'nothing', kind: 'end', label: 'Nothing to do', outcome: 'success' },
     { id: 'badPick', kind: 'end', label: 'No valid item numbers', outcome: 'failed' },
     { id: 'unknown', kind: 'end', label: 'Unknown pattern', outcome: 'failed' },
@@ -129,7 +159,10 @@ export const backlog: Pattern = {
     { id: 'hasItems-choose', from: 'hasItems', to: 'choose', branch: 'then' },
     { id: 'hasItems-nothing', from: 'hasItems', to: 'nothing', branch: 'else' },
     { id: 'choose-picked', from: 'choose', to: 'picked' },
-    { id: 'picked-picks', from: 'picked', to: 'queuePicks', branch: 'then' },
+    { id: 'picked-valid', from: 'picked', to: 'validPicks', branch: 'then' },
+    { id: 'valid-picks', from: 'validPicks', to: 'queuePicks', branch: 'then' },
+    { id: 'valid-reject', from: 'validPicks', to: 'rejectPicks', branch: 'else' },
+    { id: 'reject-choose', from: 'rejectPicks', to: 'choose', label: 'ask again' },
     { id: 'picked-all', from: 'picked', to: 'queueAll', branch: 'else' },
     { id: 'queuePicks-hasQueue', from: 'queuePicks', to: 'hasQueue' },
     { id: 'queueAll-hasQueue', from: 'queueAll', to: 'hasQueue' },

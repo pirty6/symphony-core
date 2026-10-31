@@ -10,7 +10,9 @@ import { enabledExtras } from './extras/index.js';
 import { composedScore, maestro, maestroThen } from './maestro.js';
 import { refactor } from './refactor.js';
 import { review } from './review.js';
-import { triggerMatches } from './route.js';
+import { routeMatches } from './route.js';
+
+export { routeMatches };
 
 /** The pattern library. Patterns are TypeScript modules; add new ones here. */
 export const PATTERNS: readonly Pattern[] = [
@@ -52,20 +54,6 @@ export function routePrompt(
   library: readonly Pattern[] = PATTERNS,
 ): Pattern | undefined {
   return routeMatches(prompt, library)[0];
-}
-
-/** Patterns with at least one verb trigger in the prompt, best first (ties keep library order). */
-export function routeMatches(prompt: string, library: readonly Pattern[]): Pattern[] {
-  const text = prompt.toLowerCase();
-  return library
-    .map((pattern, i) => ({
-      pattern,
-      i,
-      score: (pattern.verbTriggers ?? []).filter((t) => triggerMatches(text, t)).length,
-    }))
-    .filter((m) => m.score > 0)
-    .toSorted((a, b) => b.score - a.score || a.i - b.i)
-    .map((m) => m.pattern);
 }
 
 export {

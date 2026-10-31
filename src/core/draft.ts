@@ -35,6 +35,9 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
     id,
     label: label ?? id,
     ...(posInt(raw.maxVisits) ? { maxVisits: posInt(raw.maxVisits)! } : {}),
+    ...(typeof raw.visitsFrom === 'string' && raw.visitsFrom.trim()
+      ? { visitsFrom: raw.visitsFrom }
+      : {}),
   };
   switch (raw.kind) {
     case 'start':
@@ -68,6 +71,7 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(isComplexity(raw.complexity) ? { complexity: raw.complexity } : {}),
         ...(raw.isolated === true ? { isolated: true } : {}),
         ...(typeof raw.cites === 'string' && raw.cites ? { cites: raw.cites } : {}),
+        ...(typeof raw.preload === 'string' && raw.preload ? { preload: raw.preload } : {}),
         ...(typeof raw.verifyBelow === 'number' ? { verifyBelow: raw.verifyBelow } : {}),
         ...(raw.otherModel === true ? { otherModel: true } : {}),
         ...fanOutOf(raw.fanOut),
@@ -119,6 +123,9 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         message: str(raw.message) ?? label ?? id,
         writes: strList(raw.writes),
         ...(strList(raw.shows).length ? { shows: strList(raw.shows) } : {}),
+        ...(raw.unattended === 'reject' || raw.unattended === 'approve'
+          ? { unattended: raw.unattended }
+          : {}),
       };
     default:
       errors.push(`nodes[${i}] (${id}) has unknown kind '${String(raw.kind)}'`);
@@ -383,9 +390,9 @@ Node kinds:
 Optional "groups": [{id,label,description?,nodes:[node ids]}] name the phases of the flow (e.g. "List evidence",
 "Deep read"); each phase is shown as one collapsible step. Approval nodes may list state keys to show in "shows".
 
-Expressions (guards, conditions, compute): state keys by name, literals, == != < <= > >= && || ! + -,
+Expressions (guards, conditions, compute): state keys by name, literals, == != < <= > >= && || ! + - *,
 functions len(x) empty(x) includes(list,v) lower(s) append(list,v) if(c,a,b) chars(s) subset(a,b),
-join(list,sep) numbered(list,start) unnumbered(list) ids(list) refs(text) (evidence ids "F<n>"),
+join(list,sep) withIds(list,ids) brief(list,n) numbered(list,start) unnumbered(list) ids(list) refs(text) (evidence ids "F<n>"),
 and verdict.outcome / verdict.confidence of the last agent. Must be boolean for guards/conditions.
 
 Rules: every node reachable from start; an end reachable from every node; edges are tried in order and

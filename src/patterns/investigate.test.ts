@@ -10,7 +10,11 @@ const demo = investigate.demo!;
 function runWith(
   use: string[],
   approvals: DemoScript['approvals'] = demo.approvals,
-  over: Partial<DemoScript> & { context?: Record<string, unknown>; parts?: string[] } = {},
+  over: Partial<DemoScript> & {
+    context?: Record<string, unknown>;
+    parts?: string[];
+    parallel?: number;
+  } = {},
 ) {
   const script: DemoScript = {
     ...demo,
@@ -30,6 +34,7 @@ function runWith(
             skipSources: skip,
             skipReasons: skip.map(() => 'not needed for this question'),
             parts: over.parts ?? [],
+            agents: over.parallel ?? 4,
           },
           verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
         };
@@ -375,5 +380,30 @@ describe('investigate answers several subjects side by side', () => {
     const plan = r.state.steps.find((st) => st.nodeId === 'plan');
     expect(JSON.stringify(plan?.attempts ?? r.state.pause)).toMatch(/2 to 8 independent subjects/);
     expect(r.state.outcome).not.toBe('success');
+  });
+});
+
+describe('investigate sizes its parallel work from the plan', () => {
+  it('the plan picks how many sub-agents read at once (at most 6)', () => {
+    const { r } = runWith(['workspace'], demo.approvals, { parallel: 2 });
+    expect(r.state.outcome).toBe('success');
+    expect(r.state.state).toMatchObject({ agents: 2, batchWave: 50, deepWave: 8 });
+    const bad = runWith(['workspace'], demo.approvals, { parallel: 9 }).r;
+    const plan = bad.state.steps.find((st) => st.nodeId === 'plan');
+    expect(JSON.stringify(plan?.attempts ?? bad.state.pause)).toMatch(/from 1 to 6/);
+  });
+});
+
+describe('investigate hands on its evidence', () => {
+  it('the result carries the findings the answer cites, with their ids', () => {
+    const { r } = runWith(['workspace']);
+    const cited = r.state.state.citedFindings as string[];
+    expect(cited.length).toBeGreaterThan(0);
+    expect(
+      cited.every(
+        (f) => /^F\d+ /.test(f) && String(r.state.state.answer).includes(`[${f.split(' ')[0]}]`),
+      ),
+    ).toBe(true);
+    expect(investigate.result).toContain('citedFindings');
   });
 });

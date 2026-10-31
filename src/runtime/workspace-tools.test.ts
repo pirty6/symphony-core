@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -121,7 +121,42 @@ setInterval(() => {}, 1000);`,
   });
 });
 
+describe('tests.run reuse', () => {
+  it('a baseline on an unchanged workspace is reused; any change runs it again', async () => {
+    const d = dir();
+    const counter = join(root, `runs-${n}`);
+    writeFileSync(join(d, 'a.txt'), 'one\n');
+    const args = { command: `echo ran >> ${counter}`, reuse: true };
+    const first = await tool('tests.run').run(args, ctx(d));
+    const again = await tool('tests.run').run(args, ctx(d));
+    expect(again.output).toMatch(/\(reused: the workspace is unchanged/);
+    const runs = () =>
+      readFileSync(counter, 'utf8')
+        .split(/\r?\n/)
+        .filter((l) => l.trim()).length;
+    expect(runs()).toBe(1);
+    writeFileSync(join(d, 'a.txt'), 'two\n');
+    await tool('tests.run').run(args, ctx(d));
+    expect(runs()).toBe(2);
+    // Without reuse every call runs.
+    await tool('tests.run').run({ command: args.command }, ctx(d));
+    expect(runs()).toBe(3);
+    expect(first.passed).toBe(true);
+  });
+});
+
 describe('git.diff', () => {
+  it('works in a repository with no commits yet', async () => {
+    const d = dir();
+    const before = await workspaceDiff(ctx(d));
+    expect(before.files).toEqual([]);
+    writeFileSync(join(d, 'a.txt'), 'one\n');
+    execFileSync('git', ['-C', d, 'add', '.']);
+    const staged = await workspaceDiff(ctx(d));
+    expect(staged.files).toEqual(['a.txt']);
+    expect(staged.hash).not.toBe(before.hash);
+  });
+
   it('hashes every change against HEAD, untracked files included, without touching the index', async () => {
     const d = dir();
     writeFileSync(join(d, 'a.txt'), 'one\n');
@@ -178,7 +213,7 @@ describe('evidence.check', () => {
       {
         findings: [
           'a.js:1 — exports the port `port = 8081`',
-          'a.js:1 — the port is `8080`',
+          'a.js:1 — the port is `port = 8080`',
           'web | https://example.com — a page',
         ],
       },
@@ -186,7 +221,8 @@ describe('evidence.check', () => {
     );
     expect(out).toEqual({
       valid: ['a.js:1 — exports the port `port = 8081`', 'web | https://example.com — a page'],
-      invalid: ['a.js:1 — the port is `8080` ✗ the quote `8080` is not at a.js:1'],
+      invalid: ['a.js:1 — the port is `port = 8080` ✗ the quote `port = 8080` is not at a.js:1'],
+      checked: 2,
     });
   });
 });
@@ -211,6 +247,52 @@ describe('memory tools', () => {
       'config.js:1 — the default port is one above DEFAULTS `DEFAULTS.port + 1`',
     ]);
     expect(r.lessons[0]).toMatch(/Fixed "wrong default port": off by one \(files: config.js\)$/);
+  });
+
+  it('a fact whose line moved is pointed at its new line, not dropped', async () => {
+    const d = dir();
+    writeFileSync(join(d, 'config.js'), 'export const port = DEFAULTS.port + 1;\n');
+    const fact = 'config.js:1 — the port is one above DEFAULTS `DEFAULTS.port + 1`';
+    await tool('evidence.check').run({ findings: [fact] }, { ...ctx(d), runId: 'old' });
+    // Lines are added above it, more than the check's slack.
+    writeFileSync(
+      join(d, 'config.js'),
+      `${'// config\n'.repeat(8)}export const port = DEFAULTS.port + 1;\n`,
+    );
+    const r = (await tool('memory.recall').run({ query: 'port DEFAULTS' }, ctx(d))) as {
+      facts: string[];
+    };
+    expect(r.facts).toEqual(['config.js:9 — the port is one above DEFAULTS `DEFAULTS.port + 1`']);
+    // Remembered at its new line.
+    expect(readFileSync(join(d, '.symphony', 'memory.json'), 'utf8')).toContain('config.js:9 —');
+  });
+
+  it('a run in a worktree reads and adds to your workspace memory; it does not recall its own facts', async () => {
+    const home = dir();
+    const tree = dir();
+    for (const d of [home, tree])
+      writeFileSync(join(d, 'config.js'), 'export const port = DEFAULTS.port + 1;\n');
+    const fact = 'config.js:1 — the port is one above DEFAULTS `DEFAULTS.port + 1`';
+    const inTree = { ...ctx(tree), memoryRoot: home, runId: 'run-a' };
+    await tool('evidence.check').run({ findings: [fact] }, inTree);
+    await tool('memory.lesson').run(
+      { kind: 'answered', problem: 'which port?', cause: 'one above' },
+      inTree,
+    );
+    // Kept in your workspace, not in the worktree that is deleted.
+    expect(existsSync(join(home, '.symphony', 'memory.json'))).toBe(true);
+    expect(existsSync(join(tree, '.symphony', 'memory.json'))).toBe(false);
+    const own = (await tool('memory.recall').run({ query: 'port DEFAULTS' }, inTree)) as {
+      facts: string[];
+      lessons: string[];
+    };
+    expect(own.facts).toEqual([]);
+    expect(own.lessons[0]).toMatch(/Answered "which port\?": one above$/);
+    const next = (await tool('memory.recall').run(
+      { query: 'port DEFAULTS' },
+      { ...inTree, runId: 'run-b' },
+    )) as { facts: string[] };
+    expect(next.facts).toEqual([fact]);
   });
 });
 

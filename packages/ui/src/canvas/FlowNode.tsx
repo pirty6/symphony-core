@@ -26,7 +26,7 @@ function Chips({ label, keys }: { label: string; keys: readonly string[] }) {
   )
 }
 
-export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
+export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNodeType>) {
   const n = data.node
   const kindKey = n.kind === 'agent' ? n.role : n.kind
   const cls = [
@@ -42,7 +42,7 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
 
   return (
     <div className={cls} data-testid={`node-${id}`} data-status={data.status ?? 'idle'} title={data.issues?.join('\n')}>
-      {n.kind !== 'start' && <Handle type="target" position={Position.Top} />}
+      {n.kind !== 'start' && <Handle isConnectable={isConnectable} type="target" position={Position.Top} />}
       <div className="fn-header">
         <span className="fn-icon">{ICON[kindKey]}</span>
         <span className="fn-title">{n.label}</span>
@@ -122,8 +122,8 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
       )}
       {n.kind === 'condition' ? (
         <>
-          <Handle type="source" id="then" position={Position.Bottom} style={{ left: '28%' }} />
-          <Handle type="source" id="else" position={Position.Bottom} style={{ left: '72%' }} />
+          <Handle isConnectable={isConnectable} type="source" id="then" position={Position.Bottom} style={{ left: '28%' }} />
+          <Handle isConnectable={isConnectable} type="source" id="else" position={Position.Bottom} style={{ left: '72%' }} />
           <div className="fn-branches">
             <span>then</span>
             <span>else</span>
@@ -131,15 +131,15 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
         </>
       ) : n.kind === 'approval' ? (
         <>
-          <Handle type="source" id="approved" position={Position.Bottom} style={{ left: '28%' }} />
-          <Handle type="source" id="rejected" position={Position.Bottom} style={{ left: '72%' }} />
+          <Handle isConnectable={isConnectable} type="source" id="approved" position={Position.Bottom} style={{ left: '28%' }} />
+          <Handle isConnectable={isConnectable} type="source" id="rejected" position={Position.Bottom} style={{ left: '72%' }} />
           <div className="fn-branches">
             <span>approved</span>
             <span>rejected</span>
           </div>
         </>
       ) : n.kind !== 'end' ? (
-        <Handle type="source" position={Position.Bottom} />
+        <Handle isConnectable={isConnectable} type="source" position={Position.Bottom} />
       ) : null}
     </div>
   )

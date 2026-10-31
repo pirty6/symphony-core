@@ -16,6 +16,9 @@ function play(complexity: Complexity, script: DemoScript = demo) {
   return { r, ran, state: r.state.state };
 }
 
+const hypothesesRejected = (r: ReturnType<typeof play>['r']) =>
+  r.state.events.some((e) => e.type === 'response-rejected' && e.nodeId === 'hypothesize');
+
 describe('debate phases in investigate', () => {
   it('complexity 1: hypotheses only, no debate', () => {
     const { r, ran } = play(1);
@@ -73,9 +76,32 @@ describe('debate phases in investigate', () => {
       },
     };
     const { r, ran, state } = play(2, relentless);
-    expect(r.state.outcome).toBe('success');
+    // It ends, and says so: an answer with objections still open is partial.
+    expect(r.state.outcome).toBe('partial');
+    expect(r.state.cursor).toBe('doubts');
     expect(state.debateRounds).toBe(state.maxDebateRounds);
     expect(ran('challenge')).toBe((state.maxDebateRounds as number) + 1);
+  });
+
+  it('a routine problem needs 2 hypotheses, a harder one 3', () => {
+    const two = (rated: number): DemoScript => ({
+      ...demo,
+      agents: {
+        ...agents,
+        hypothesize: (s, v) => ({
+          ...agents.hypothesize!(s, v),
+          updates: {
+            hypotheses: [
+              'H1: a | confirm if x | refute if y',
+              'H2: none of these | confirm if z | refute if w',
+            ],
+            ratedComplexity: rated,
+          },
+        }),
+      },
+    });
+    expect(hypothesesRejected(play(1, two(1)).r)).toBe(false);
+    expect(hypothesesRejected(play(2, two(2)).r)).toBe(true);
   });
 
   it('rejects hypotheses that are too few and an answer that skips a ruling', () => {

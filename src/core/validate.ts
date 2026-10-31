@@ -153,6 +153,11 @@ export function validateGraph(g: PatternGraph): ValidationReport {
     if (!ID.test(n.id)) errors.push({ ...at, message: `invalid node id '${n.id}'` });
     if (nodes.has(n.id)) errors.push({ ...at, message: `duplicate node id '${n.id}'` });
     nodes.set(n.id, n);
+    if (n.visitsFrom !== undefined) {
+      checkExpr(n.visitsFrom, new Set(g.state.map((f) => f.name)), at, 'visitsFrom', errors);
+      if (n.maxVisits === undefined)
+        errors.push({ ...at, message: 'visitsFrom raises maxVisits: set maxVisits as the floor' });
+    }
     if (n.maxVisits !== undefined && (!Number.isInteger(n.maxVisits) || n.maxVisits < 1)) {
       errors.push({ ...at, message: 'maxVisits must be a positive integer' });
     }
@@ -191,10 +196,21 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         if (n.verifyBelow !== undefined && !(n.verifyBelow > 0 && n.verifyBelow <= 1)) {
           errors.push({ ...at, message: 'verifyBelow must be a confidence above 0 and at most 1' });
         }
+        if (
+          n.preload !== undefined &&
+          (!n.reads.includes(n.preload) ||
+            g.state.find((f) => f.name === n.preload)?.type !== 'string[]')
+        )
+          errors.push({
+            ...at,
+            message: `preload '${n.preload}' must be a string[] field it reads`,
+          });
         if (n.fanOut) {
           const typeOf = (name: string) => g.state.find((f) => f.name === name)?.type;
           const isList = (name: string) => String(typeOf(name) ?? '').endsWith('[]');
-          const { over, per } = n.fanOut;
+          const { over, per, agents } = n.fanOut;
+          if (agents !== undefined && typeOf(agents) !== 'number')
+            errors.push({ ...at, message: `fanOut.agents '${agents}' must be a number field` });
           if (!n.reads.includes(over) || !isList(over))
             errors.push({ ...at, message: `fanOut.over '${over}' must be a list field it reads` });
           if (

@@ -1,5 +1,5 @@
 import { compileScore } from '../core/compile.js';
-import { triggerMatches } from './route.js';
+import { routeMatches } from './route.js';
 import {
   adaptPattern,
   draftInstructions,
@@ -10,6 +10,7 @@ import {
 import type { ExecutableScore, Improvisation, Pattern } from '../core/types.js';
 import { analyze } from './analyze.js';
 import { fix } from './fix.js';
+import { investigate } from './investigate.js';
 
 /**
  * Maestro: the meta-algorithm. It composes the score the orchestra will play.
@@ -28,7 +29,7 @@ import { fix } from './fix.js';
 
 const SCORE_FORMAT = draftInstructions();
 /** Offline library for the demo script (the real run lists the whole library with a tool). */
-const DEMO_LIBRARY: readonly Pattern[] = [fix, analyze];
+const DEMO_LIBRARY: readonly Pattern[] = [fix, investigate, analyze];
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -771,11 +772,7 @@ ${SCORE_FORMAT}`,
       recall: () => ({ exact: {}, similar: [] }),
       remember: () => ({ saved: true }),
       route: (s) => {
-        const text = String(s.request).toLowerCase();
-        const hit = DEMO_LIBRARY.find((p) =>
-          (p.verbTriggers ?? []).some((t) => triggerMatches(text, t)),
-        );
-        return { suggested: hit?.name ?? 'new' };
+        return { suggested: routeMatches(String(s.request), DEMO_LIBRARY)[0]?.name ?? 'new' };
       },
       outline: (s) => {
         const t = parseDraft(s.template);

@@ -51,6 +51,11 @@ interface NodeBase {
   readonly label: string;
   /** Hard cap on how many times this node may be entered in one run. */
   readonly maxVisits?: number;
+  /**
+   * A number expression on the state (e.g. 'maxAnalyses + 2') that raises maxVisits
+   * when a counter you can set is larger, so raising the counter cannot hit the cap.
+   */
+  readonly visitsFrom?: string;
 }
 
 /** Entry point. Pure routing. */
@@ -93,7 +98,22 @@ export interface AgentNode extends NodeBase {
    * checked one by one and merged in chunk order, so the result does not depend
    * on which call finished first. Every field the step writes must be a list.
    */
-  readonly fanOut?: { readonly over: string; readonly per: number | string };
+  /**
+   * A string[] field this step reads that lists workspace files (URLs are left to the
+   * AI): the runtime reads each file whole and puts its text, with line numbers, in the
+   * prompt. The AI reads everything it was given in one turn instead of paging through
+   * it with tool calls, and cannot skip part of a file.
+   */
+  readonly preload?: string;
+  readonly fanOut?: {
+    readonly over: string;
+    readonly per: number | string;
+    /**
+     * A number field (e.g. set by the AI that planned the work): how many parts play at
+     * once, clamped to 1..MAX_AGENTS. Without it the runtime's default applies.
+     */
+    readonly agents?: string;
+  };
   /**
    * When the AI reports confidence below this (0-1), ask it once more, one tier
    * smarter, to re-check its weakest claims; that second answer is accepted.
@@ -128,6 +148,12 @@ export interface ApprovalNode extends NodeBase {
   readonly writes: readonly string[];
   /** State keys to show the human before they decide. */
   readonly shows?: readonly string[];
+  /**
+   * What a run with nobody to ask (auto-approve, the offline demo) answers here when
+   * its script does not say: approve (default), or reject for a gate that must not be
+   * passed without a person (e.g. accepting a change the review blocked).
+   */
+  readonly unattended?: 'approve' | 'reject';
 }
 
 /**
@@ -340,6 +366,9 @@ export interface Musician {
 
 // ── Engine: pauses and resolutions ─────────────────────────────────
 
+/** Most parallel AI calls (sub-agents) one step may run at once. */
+export const MAX_AGENTS = 6;
+
 export interface AgentPause {
   readonly kind: 'agent';
   readonly pauseId: string;
@@ -368,6 +397,15 @@ export interface AgentPause {
    * answer is { parts: [one result per part] }, or an already merged result (replay).
    */
   readonly parts?: readonly Readonly<Record<string, unknown>>[];
+  /**
+   * fanOut: parts already answered and accepted at an earlier attempt of this step,
+   * by part index (null = still to play). Only the others are played again.
+   */
+  readonly partsDone?: readonly (NodeResult | null)[];
+  /** fanOut: how many parts may play at once (fanOut.agents), 1..MAX_AGENTS. */
+  readonly parallel?: number;
+  /** AgentNode.preload: the input field listing files the runtime reads into the prompt. */
+  readonly preload?: string;
   /** Independent takes to play before integrating (1 = a single take). */
   readonly takes: number;
   /** Present at an active solo point: the routes the AI may choose from. */
@@ -394,6 +432,8 @@ export interface ApprovalPause {
   readonly shows: readonly string[];
   readonly outputSchema: readonly StateField[];
   readonly feedback?: readonly string[];
+  /** ApprovalNode.unattended. */
+  readonly unattended?: 'approve' | 'reject';
   readonly moveKey: string;
 }
 

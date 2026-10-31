@@ -25,7 +25,7 @@ export type Expr =
   | { readonly t: 'call'; readonly fn: FnName; readonly args: readonly Expr[] }
   | { readonly t: 'list'; readonly items: readonly Expr[] };
 
-type BinOp = '&&' | '||' | '==' | '!=' | '<' | '<=' | '>' | '>=' | '+' | '-';
+type BinOp = '&&' | '||' | '==' | '!=' | '<' | '<=' | '>' | '>=' | '+' | '-' | '*';
 type FnName =
   | 'len'
   | 'empty'
@@ -47,7 +47,9 @@ type FnName =
   | 'ids'
   | 'refs'
   | 'pick'
-  | 'join';
+  | 'join'
+  | 'withIds'
+  | 'brief';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -71,6 +73,8 @@ const FNS: Record<FnName, number> = {
   refs: 1,
   pick: 2,
   join: 2,
+  withIds: 2,
+  brief: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -111,6 +115,7 @@ const OPS = [
   ']',
   '+',
   '-',
+  '*',
   '{',
   '}',
 ];
@@ -266,7 +271,8 @@ export function parseExpr(src: string): Expr {
     }
     return primary();
   };
-  const addExpr = binary(['+', '-'], unary);
+  const mulExpr = binary(['*'], unary);
+  const addExpr = binary(['+', '-'], mulExpr);
   const cmpExpr = binary(['==', '!=', '<', '<=', '>', '>='], addExpr, true);
   const andExpr = binary(['&&'], cmpExpr);
   const orExpr: () => Expr = binary(['||'], andExpr);
@@ -376,6 +382,24 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
             return Number.isInteger(i) && i >= 1 && i <= x.length ? [x[i - 1]] : [];
           });
         }
+        case 'brief': {
+          // brief(findings, 240): each entry without its `quotes` (already checked), at most n chars.
+          const n = args[1];
+          if (typeof n !== 'number' || n < 8)
+            throw new ExprError('brief() needs a length of 8 or more');
+          return strings('brief', x).map((s) => {
+            const t = s
+              .replace(/`[^`]*`/g, '')
+              .replace(/\s+/g, ' ')
+              .trim();
+            return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+          });
+        }
+        case 'withIds': {
+          // withIds(findings, refs(answer)): the numbered entries whose id is listed, in order.
+          const wanted = new Set(strings('withIds', args[1]));
+          return strings('withIds', x).filter((s) => wanted.has(LEADING_ID.exec(s)?.[1] ?? ''));
+        }
         case 'join': {
           // join(list, sep): strings only, so nothing is silently stringified.
           if (typeof args[1] !== 'string') throw new ExprError('join() needs a separator string');
@@ -427,9 +451,9 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           `'+' needs two numbers, strings or lists, got ${typeof l} and ${typeof r}`,
         );
       }
-      if (e.op === '-') {
-        if (typeof l === 'number' && typeof r === 'number') return l - r;
-        throw new ExprError(`'-' needs two numbers, got ${typeof l} and ${typeof r}`);
+      if (e.op === '-' || e.op === '*') {
+        if (typeof l === 'number' && typeof r === 'number') return e.op === '-' ? l - r : l * r;
+        throw new ExprError(`'${e.op}' needs two numbers, got ${typeof l} and ${typeof r}`);
       }
       if (e.op === '==') return deepEqual(l, r);
       if (e.op === '!=') return !deepEqual(l, r);

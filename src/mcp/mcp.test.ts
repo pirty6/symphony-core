@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -12,6 +13,8 @@ import { RunManager, usageOf, type RunView } from './runs.js';
 import { createSymphonyServer } from './server.js';
 
 const workspace = mkdtempSync(join(tmpdir(), 'symphony-mcp-'));
+// Patterns that edit start from a git snapshot of the workspace.
+execFileSync('git', ['init', '-q'], { cwd: workspace });
 afterAll(() => rmSync(workspace, { recursive: true, force: true }));
 const env = { SYMPHONY_MCP: 'off' } as NodeJS.ProcessEnv;
 const manager = (editsAllowed = true) =>

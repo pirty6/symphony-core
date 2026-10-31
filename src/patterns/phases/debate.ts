@@ -128,8 +128,10 @@ export function hypothesesPhase(cfg: HypothesesConfig): Fragment {
         checks: [
           RATING_CHECK,
           {
-            expr: 'len(hypotheses) >= 3',
-            message: 'Give at least 3 competing hypotheses, including a "none of these" one.',
+            // A routine problem (rated or set at 1) needs fewer rivals than a hard one.
+            expr: 'len(hypotheses) >= if(ratedComplexity == 1 || complexity == 1, 2, 3)',
+            message:
+              'Give at least 3 competing hypotheses (2 for a routine problem), including a "none of these" one.',
           },
           {
             expr: 'len(unique(hypotheses)) == len(hypotheses)',

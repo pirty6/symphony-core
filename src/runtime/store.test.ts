@@ -69,6 +69,41 @@ describe('run store', () => {
     expect(runPath(root, 'fix/a.txt')).toBeUndefined();
   });
 
+  it('lists what a run cost', async () => {
+    const dir = join(root, 'cost');
+    const score = compileScore(review, {
+      goal: 'g',
+      context: review.demo!.context!,
+      generatedAt: 't',
+    });
+    const played = toPerformance(runScripted(score, review.demo, { at: 't' }).state);
+    const performance = structuredClone(played);
+    const step = performance.steps.find((st) => st.nodeId === 'collect')!;
+    Object.assign(step, {
+      transcript: {
+        provider: 'copilot',
+        prompt: '',
+        output: '',
+        toolCalls: [],
+        usage: {
+          calls: 1,
+          inputTokens: 12_000,
+          outputTokens: 300,
+          cacheReadTokens: 0,
+          reasoningTokens: 0,
+          premiumRequests: 1,
+        },
+      },
+    });
+    await saveRun(dir, { schemaVersion: 3, score, performance });
+    expect((await listRuns(dir))[0]!.usage).toEqual({
+      inputTokens: 12_000,
+      outputTokens: 300,
+      calls: 1,
+      premiumRequests: 1,
+    });
+  });
+
   it('deletes one saved run, never anything outside the store', async () => {
     const dir = join(root, 'del');
     const score = compileScore(review, {

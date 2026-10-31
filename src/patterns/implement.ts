@@ -181,6 +181,8 @@ export const implement: Pattern = {
       kind: 'tool',
       label: 'Run tests first',
       tool: 'tests.run',
+      // An unchanged workspace (e.g. the next backlog item) reuses the last baseline.
+      args: { reuse: true },
       inputs: { command: 'testCommand' },
       output: { passed: 'baselinePassed', output: 'baselineOutput' },
     },
@@ -279,6 +281,7 @@ export const implement: Pattern = {
       role: 'assessor',
       label: 'Acceptance review',
       maxVisits: 4,
+      visitsFrom: 'maxReviews + 2',
       directive:
         'The tests and lint pass. Now check the change against `request`, not against the tests alone: for EVERY entry of `acceptanceCriteria`, in order, write one `criteriaReport` entry "C<n>: MET | NOT MET — evidence", where evidence is a test that checks it (file and name) or the code in `diff` that does it (path:line). A criterion with no test and no code that does it is NOT MET. Copy every NOT MET criterion, with what is missing, into `unmetCriteria` (empty when all are met).',
       reads: ['request', 'acceptanceCriteria', 'testsToAdd', 'diff', 'changes', 'testOutput'],

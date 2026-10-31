@@ -57,7 +57,7 @@ import {
   type PatternMeta,
   type RunView,
 } from './lib/model'
-import { AiTakes, ApprovalCard, RecoveryCard, EdgeEditor, GateCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
+import { AiTakes, ApprovalCard, RecoveryCard, EdgeEditor, GateCard, OvertimeCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
 import { Library } from './panels/Library'
 import { ResultPreview, ResultReader } from './panels/Result'
 import { PatternPanel } from './panels/PatternPanel'
@@ -92,6 +92,9 @@ export default function Studio() {
   /** Phases opened on the canvas; the rest are drawn as one node each. */
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   /** Measured sizes of phase and frame nodes (they are not in the editable node list). */
+  // Where you dragged nodes while phases are closed: display only, reset when the view changes.
+  const [moved, setMoved] = useState<ReadonlyMap<string, { x: number; y: number }>>(new Map())
+  useEffect(() => setMoved(new Map()), [expanded])
   const [phaseSizes, setPhaseSizes] = useState<ReadonlyMap<string, { width: number; height: number }>>(new Map())
   const [library, setLibrary] = useState<LibraryItem[]>([])
   const [saved, setSaved] = useState<SavedSummary[]>([])
@@ -301,22 +304,28 @@ export default function Studio() {
     })
     const writes = new Map(nodes.map((n) => [n.id, writesOf(n.data.node, { state: meta.state, nodes: [], edges: [], start: '' })]))
     const steps = { nodes: d.nodes, edges: d.edges.map((e) => ({ ...e, data: { ...e.data!, carries: writes.get(e.source) ?? [] } })) }
-    const shown = phaseDisplay(pattern, steps, expanded, frame, { onExpand: openPhase, onCollapse: closePhase })
+    const shown = phaseDisplay(pattern, steps, expanded, frame, { onExpand: openPhase, onCollapse: closePhase, moved })
     const sized = shown.nodes.map((n) => {
       const size = n.type === 'phase' || n.type === 'frame' ? phaseSizes.get(n.id) : undefined
       return size ? { ...n, measured: size } : n
     })
     return { ...shown, nodes: sized }
-  }, [nodes, edges, frame, breakpoints, editable, issues, view.gate, origins, toggleBreakpoint, meta.state, pattern, expanded, openPhase, closePhase, phaseSizes])
+  }, [nodes, edges, frame, breakpoints, editable, issues, view.gate, origins, toggleBreakpoint, meta.state, pattern, expanded, openPhase, closePhase, phaseSizes, moved])
 
   const onCanvasNodesChange = useCallback(
     (changes: NodeChange[]) => {
       const steps = new Set(nodes.map((n) => n.id))
       const sizes = changes.flatMap((c) => (c.type === 'dimensions' && c.dimensions && !steps.has(c.id) ? [[c.id, c.dimensions] as const] : []))
       if (sizes.length > 0) setPhaseSizes((prev) => new Map([...prev, ...sizes]))
-      onNodesChange(changes.filter((c) => !('id' in c) || steps.has(c.id)) as NodeChange<FlowNodeType>[])
+      // With phases closed the layout is the phase view's: a drag moves the node in this view only.
+      const viewMoves = changes.flatMap((c) =>
+        c.type === 'position' && c.position && (display.collapsed || !steps.has(c.id)) ? [[c.id, c.position] as const] : [],
+      )
+      if (viewMoves.length > 0) setMoved((prev) => new Map([...prev, ...viewMoves]))
+      const own = new Set(viewMoves.map(([id]) => id))
+      onNodesChange(changes.filter((c) => !('id' in c) || (steps.has(c.id) && !own.has(c.id))) as NodeChange<FlowNodeType>[])
     },
-    [nodes, onNodesChange],
+    [nodes, onNodesChange, display.collapsed],
   )
 
   const focusId = selected ?? frame.pausedNodeId ?? frame.activeNodeId ?? null
@@ -818,6 +827,7 @@ export default function Studio() {
           </div>
         )}
         <GateCard view={view} onResume={() => control('resume')} onStep={() => control('step')} onStop={() => control('stop')} />
+        <OvertimeCard view={view} onAnswer={(action) => control(action)} />
         <ApprovalCard view={view} onAnswer={(a) => sendAnswer((id) => api.approve(id, a))} />
         <RecoveryCard view={view} onAnswer={(a) => sendAnswer((id) => api.recover(id, a))} />
         {resultBanner}

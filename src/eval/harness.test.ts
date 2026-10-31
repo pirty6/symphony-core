@@ -5,7 +5,14 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Pattern } from '../core/types.js';
 import type { Provider } from '../runtime/provider.js';
-import { formatReport, runEval, summarize, worseThan, type EvalReport } from './harness.js';
+import {
+  formatReport,
+  regressions,
+  runEval,
+  summarize,
+  worseThan,
+  type EvalReport,
+} from './harness.js';
 import {
   buildFixture,
   EVAL_TASKS,
@@ -47,7 +54,7 @@ const task: EvalTask = {
   id: 'mini-task',
   pattern: 'mini',
   inputs: {},
-  files: { 'a.txt': 'broken\n' },
+  files: { 'a.txt': 'broken line\n' },
   check: async ({ workspace }) => ({
     pass: readFileSync(join(workspace, 'a.txt'), 'utf8') === 'fixed\n',
     notes: ['a.txt fixed'],
@@ -62,7 +69,7 @@ const fakeProvider =
       if (fix) writeFileSync(join(workspace, 'a.txt'), 'fixed\n');
       return {
         result: {
-          updates: { findings: ['a.txt:1 — the text `broken`', 'a.txt:9 — no such line'] },
+          updates: { findings: ['a.txt:1 — the text `broken line`', 'a.txt:9 — no such line'] },
           verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
         },
         transcript: {
@@ -131,8 +138,16 @@ describe('eval harness', () => {
     expect(text).toMatch(/✘ mini-task/);
     expect(text).toMatch(/solved 0\/1 \(baseline 1\/1\)/);
     expect(text).toMatch(/citations valid 1\/2/);
-    expect(text).toMatch(/⚠ worse than the baseline on correctness/);
+    expect(text).toMatch(/⚠ worse than the baseline: fewer tasks solved/);
     expect(formatReport(baseline, baseline)).not.toMatch(/⚠/);
+    // Cost counts too, and nothing checked is not "all valid".
+    const base = summarize(baseline.results);
+    expect(regressions({ ...base, inputTokens: base.inputTokens * 2 }, base)).toEqual([
+      'input tokens per run up 100%',
+    ]);
+    expect(regressions({ ...base, citationsChecked: 0, citationsInvalid: 0 }, base)).toEqual([
+      'no citations checked',
+    ]);
     // Two runs against a baseline of one: compared per run, not in total.
     const twice = await evaluate(true, 2);
     expect(formatReport(twice, baseline)).toMatch(/tokens 2\.0k in \(\+0%\) per run/);
@@ -235,6 +250,23 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
           },
         ],
       },
+    },
+  }),
+  'review-off-by-one': () => ({
+    state: {
+      findings: ['F1 src/sum.js:4 — the loop stops before n `for (let i = 1; i < n; i++)`'],
+      report: 'HIGH: sumTo leaves out n [F1]',
+    },
+  }),
+  'analyze-top-region': () => ({
+    state: { conclusion: 'EU had the highest revenue, 2000, 500 more than the US [F2].' },
+  }),
+  'backlog-extract': () => ({
+    state: {
+      items: [
+        'In src/sum.js, make sumTo throw a RangeError for negative n.',
+        'In src/greet.js, trim the name before greeting.',
+      ],
     },
   }),
   'investigate-default-port': () => ({
