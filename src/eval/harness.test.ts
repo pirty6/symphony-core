@@ -125,7 +125,7 @@ describe('eval harness', () => {
     expect(s.perform).toMatchObject({ calls: 2, inputTokens: 2000 });
     expect(s.compose.calls).toBe(0);
     expect(formatReport(report)).toMatch(
-      /costliest steps: mini work \(2k in \(800 cached\) · 100 out · 2 calls\)/,
+      /costliest steps: mini work \(100% of the cost: 2k in \(800 cached\) · 100 out · 2 calls\)/,
     );
   });
 
@@ -227,6 +227,12 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
       answer: 'It does not retry at all: fetchUser calls http.get once and throws on failure.',
     },
   }),
+  'investigate-false-hint': () => ({
+    state: {
+      answer:
+        'It listens on 3001: src/server.js:3 uses DEFAULT_PORT + 1 from src/config.js. src/legacy-config.js (8080) is not imported by anything.',
+    },
+  }),
   'maestro-requirements': () => ({
     state: {
       requirements: [
@@ -297,7 +303,12 @@ describe('eval tasks', () => {
             ? {}
             : t.id === 'investigate-false-premise'
               ? { answer: 'It retries three times because the network is flaky.' }
-              : { answer: 'The README says 30 seconds; the docs say port 8080.' };
+              : t.id === 'investigate-false-hint'
+                ? {
+                    answer:
+                      'The port is 8080, set in src/legacy-config.js (src/server.js reads 3001 only in tests).',
+                  }
+                : { answer: 'The README says 30 seconds; the docs say port 8080.' };
         expect((await t.check({ workspace: dir, outcome: 'success', state: wrong })).pass).toBe(
           false,
         );

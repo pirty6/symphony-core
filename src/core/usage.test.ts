@@ -117,7 +117,16 @@ describe('token usage', () => {
       3,
     );
     expect(top.map((x) => x.node)).toEqual(['propose', 'skeptic', 'context']);
-    expect(top[0]!.text).toMatch(/^90k in · 9k out · 1 calls · 3 premium requests$/);
+    expect(top[0]!.text).toMatch(
+      /^75% of the cost: 90k in · 9k out · 1 calls · 3 premium requests$/,
+    );
+    expect(top.map((x) => x.share)).toEqual([75, 25, 0]);
+    const timed = costliest({ a: { ...u(10, 1), apiMs: 3000 }, b: { ...u(30, 1), apiMs: 1000 } });
+    expect(timed.map((x) => [x.node, x.share, x.timeShare])).toEqual([
+      ['b', 75, 25],
+      ['a', 25, 75],
+    ]);
+    expect(timed[1]!.text).toMatch(/^25% of the cost, 75% of model time: /);
   });
 
   it('reads well', () => {

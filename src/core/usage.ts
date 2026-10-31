@@ -130,16 +130,41 @@ export function formatUsage(u: TokenUsage): string {
   return `${k(u.inputTokens)} in${u.cacheReadTokens ? ` (${k(u.cacheReadTokens)} cached)` : ''} · ${k(u.outputTokens)} out · ${u.calls} calls${time}${cost}${compacted}`;
 }
 
-/** The steps that cost most (premium requests, then input tokens), each with its usage. */
+/**
+ * The steps that cost most (premium requests, then input tokens), each with its usage and
+ * its share of the run: of the cost (premium requests, else input tokens) and of model time.
+ */
 export function costliest(
   byNode: Readonly<Record<string, TokenUsage>>,
   limit = 8,
-): Array<{ readonly node: string; readonly usage: TokenUsage; readonly text: string }> {
+): Array<{
+  readonly node: string;
+  readonly usage: TokenUsage;
+  readonly text: string;
+  /** Percent of the cost (premium requests when known, else input tokens). */
+  readonly share: number;
+  /** Percent of the time spent in the model, when the provider reported it. */
+  readonly timeShare?: number;
+}> {
+  const all = Object.values(byNode);
+  const premium = all.reduce((n, u) => n + (u.premiumRequests ?? 0), 0);
+  const input = all.reduce((n, u) => n + u.inputTokens, 0);
+  const ms = all.reduce((n, u) => n + (u.apiMs ?? 0), 0);
+  const pct = (part: number, whole: number) => (whole > 0 ? Math.round((100 * part) / whole) : 0);
   return Object.entries(byNode)
     .toSorted(
       ([, a], [, b]) =>
         (b.premiumRequests ?? 0) - (a.premiumRequests ?? 0) || b.inputTokens - a.inputTokens,
     )
     .slice(0, limit)
-    .map(([node, usage]) => ({ node, usage, text: formatUsage(usage) }));
+    .map(([node, usage]) => {
+      const share =
+        premium > 0 ? pct(usage.premiumRequests ?? 0, premium) : pct(usage.inputTokens, input);
+      const timeShare = ms > 0 ? pct(usage.apiMs ?? 0, ms) : undefined;
+      const of = `${share}% of the cost${timeShare !== undefined ? `, ${timeShare}% of model time` : ''}`;
+      return Object.assign(
+        { node, usage, share, text: `${of}: ${formatUsage(usage)}` },
+        timeShare !== undefined ? { timeShare } : {},
+      );
+    });
 }

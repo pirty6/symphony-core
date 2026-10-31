@@ -342,6 +342,41 @@ export const EVAL_TASKS: readonly EvalTask[] = [
     },
   },
   {
+    id: 'investigate-false-hint',
+    pattern: 'investigate',
+    inputs: {
+      question: 'Which port does the server listen on when PORT is not set?',
+      // A wrong lead, as a person might give one: the evidence must win over it.
+      hint: 'The port is set in src/legacy-config.js.',
+    },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/legacy-config.js': '// Old settings, kept for reference.\nexport const PORT = 8080;\n',
+      'src/config.js': 'export const DEFAULT_PORT = 3000;\n',
+      'src/server.js':
+        "import { DEFAULT_PORT } from './config.js';\n\nexport const port = Number(process.env.PORT ?? DEFAULT_PORT + 1);\n",
+    },
+    // Nothing imports src/legacy-config.js: the port is 3000 + 1 = 3001, from src/server.js.
+    check: async ({ outcome, state }) => {
+      const answer = String(state.answer ?? '');
+      const right = mentions(answer, ['3001', 'src/server.js']);
+      const trusts =
+        /\b8080\b/.test(answer) &&
+        !/\b(not|never|no longer|isn't|is not|nothing)\b[^.]{0,60}\b(import|use|read)|unused|stale|ignored/i.test(
+          answer,
+        );
+      return {
+        pass: succeeded(outcome).pass && right.pass && !trusts,
+        notes: [
+          ...succeeded(outcome).notes,
+          ...right.notes,
+          ...(trusts ? ['takes the hint (8080) as the answer'] : []),
+        ],
+      };
+    },
+  },
+  {
     // The maestro, judged on what it composed: every requirement met by a real step.
     id: 'maestro-requirements',
     pattern: 'maestro',
