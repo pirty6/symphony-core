@@ -20,6 +20,11 @@ pattern, judges its **complexity**, and runs a debate sized to that complexity. 
 conductor: it makes every musician (AI agent) play exactly the notes of the score, in order. How
 much the musicians may **improvise** is one knob, from 🎻 Classical (same song, same notes) to 🥁 Free jazz.
 
+**Guides:** [how Symphony Studio works](docs/studio.md) (who keeps track, how lies and failures
+are caught, stopping and resuming) · [the maestro](docs/maestro.md) (a search engine for patterns,
+and its log) · [the algorithm flows](docs/patterns.md) (investigate, fix, refactor, implement,
+backlog, review, analyze; diagrams generated from the patterns by `npm run docs`).
+
 ## Quick start (only Node.js needed)
 
 Requires **Node.js 20.19+ or 22.12+** (npm ships with Node). No pnpm, no build step.
@@ -728,6 +733,7 @@ npm test             # core + runtime + CLI (vitest)
 npm run test:ui      # studio unit + integration + API tests
 npm run typecheck && npm run lint
 npm run build        # library to dist/
+npm run docs         # redraw the flow diagrams in docs/ from the patterns (a test checks they are current)
 cd packages/ui && npx playwright install chromium && npx playwright test   # browser e2e
 ```
 
