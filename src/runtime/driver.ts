@@ -52,6 +52,7 @@ export type RunStatus =
   | 'failed'
   | 'cancelled';
 export type GatePhase = 'before' | 'after';
+export type PartState = 'waiting' | 'running' | 'done' | 'failed' | 'kept';
 
 export type RunMessage =
   | { readonly seq: number; readonly type: 'engine'; readonly event: EngineEvent }
@@ -81,6 +82,18 @@ export type RunMessage =
       readonly savedTo?: string;
     }
   | ({ readonly seq: number; readonly type: 'next' } & NextPerformance)
+  | {
+      readonly seq: number;
+      readonly type: 'part';
+      /** One sub-agent of a fanned-out step (1-based part of `total`). */
+      readonly nodeId: string;
+      readonly step: number;
+      readonly attempt: number;
+      readonly part: number;
+      readonly total: number;
+      /** waiting for a slot, running, done (answered), failed (no answer), kept (from an earlier attempt). */
+      readonly state: PartState;
+    }
   | {
       readonly seq: number;
       readonly type: 'overtime';
@@ -467,6 +480,17 @@ export class Run {
     });
     // Parts that passed at an earlier attempt are not played again.
     const todo = all.map((_, i) => i).filter((i) => !partsDone?.[i]);
+    const tell = (i: number, state: PartState) =>
+      this.push({
+        type: 'part',
+        nodeId: pause.nodeId,
+        step: pause.step,
+        attempt: pause.attempt,
+        part: i + 1,
+        total: all.length,
+        state,
+      });
+    all.forEach((_, i) => tell(i, partsDone?.[i] ? 'kept' : 'waiting'));
     for (const [i, kept] of (partsDone ?? []).entries())
       if (kept) out[i] = { result: kept, transcript: note('(kept from an earlier attempt)') };
     if (todo.length < all.length)
@@ -487,6 +511,7 @@ export class Run {
         const unwatch = ownClock
           ? this.watch(pause.nodeId, () => ctrl.abort(KEEP_ANSWER), false)
           : () => undefined;
+        tell(i, 'running');
         out[i] = await this.play({ ...single, input: part }, ctrl.signal, {
           take: i + 1,
           state: { ...this.engine.state, ...part },
@@ -506,6 +531,7 @@ export class Run {
             unwatch();
             signal.removeEventListener('abort', follow);
           });
+        tell(i, out[i]?.result === undefined ? 'failed' : 'done');
       }
     };
     const width = Math.min(

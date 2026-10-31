@@ -387,3 +387,28 @@ test('during a run, nodes and closed phases can be moved, but nothing can be con
   await expect(page.locator('.react-flow__handle.connectable')).toHaveCount(0)
   await page.getByTestId('gate-card').getByRole('button', { name: '⏹ Stop' }).click()
 })
+
+test('the sub-agents of a fanned-out step show as nodes beside it, each with its state', async ({ page }) => {
+  await open(page, 'investigate')
+  // Small batches and two sub-agents, so triage splits into parts.
+  await page.getByText(/^Other initial state/).click()
+  await page.getByLabel('context batchSize', { exact: true }).fill('1')
+  await page.getByLabel('context agents', { exact: true }).fill('2')
+  await page.getByText('auto-approve').click()
+  await page.getByLabel('step mode').check()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  const gate = page.getByTestId('gate-card')
+  for (let i = 0; i < 40 && !(await page.getByTestId('subagent-1').isVisible()); i++) {
+    await gate.getByRole('button', { name: '⏭ Step' }).click()
+    await page.waitForTimeout(100)
+  }
+  await expect(page.getByTestId('subagent-1')).toBeVisible()
+  await expect(page.getByTestId('subagent-2')).toBeVisible()
+  await expect(page.getByTestId('subagent-1')).toHaveAttribute('data-state', /done|running/)
+  await expect(page.getByTestId('subagent-1')).toContainText('Sub-agent 1/2')
+  // A sub-agent shows its step's AI output.
+  await page.getByTestId('subagent-1').click()
+  await expect(page.getByRole('button', { name: 'AI output', exact: true })).toHaveClass(/\bon\b/)
+  await page.screenshot({ path: 'test-results/subagents.png' })
+  await gate.getByRole('button', { name: '⏹ Stop' }).click()
+})
