@@ -120,3 +120,15 @@ describe('chainNext with backlog items', () => {
     expect([...plain.started, ...items.started]).toEqual([]);
   });
 });
+
+describe('the hint carries on', () => {
+  it("a chained pattern that takes a hint gets the first run's, unless given its own", async () => {
+    const inv = compileScore(PATTERNS.find((p) => p.name === 'investigate')!, {
+      context: { question: 'why?', hint: 'only the CLI' },
+      generatedAt: 't',
+    });
+    const { next, started } = hook(['fix'], inv);
+    await next!(end('success', { hint: 'only the CLI', answer: 'because' }));
+    expect(started[0]!.score.context.hint).toBe('only the CLI');
+  });
+});

@@ -93,6 +93,7 @@ export const investigate: Pattern = {
     [
       { name: 'question', type: 'string', description: 'What to find out' },
       { name: 'hint', type: 'string', description: 'Optional human clarification' },
+      { name: 'hintAsked', type: 'boolean', description: 'A person was asked for a hint once' },
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
       { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
@@ -533,7 +534,7 @@ export const investigate: Pattern = {
       directive:
         'Open EVERY file in `batch` (view each one; for long files look through all of it, not just the top). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
         AGAINST,
-      reads: ['hypotheses', 'question', 'subQuestions', 'batch'],
+      reads: ['hypotheses', 'question', 'hint', 'subQuestions', 'batch'],
       fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
       writes: ['triaged', 'batchRelevant', 'newFindings'],
       cites: 'newFindings',
@@ -593,7 +594,7 @@ export const investigate: Pattern = {
         AGAINST,
       // The engine reads the workspace files of the batch whole: one turn, nothing skipped.
       preload: 'deepBatch',
-      reads: ['hypotheses', 'question', 'subQuestions', 'deepBatch'],
+      reads: ['hypotheses', 'question', 'hint', 'subQuestions', 'deepBatch'],
       fanOut: { over: 'deepBatch', per: 'deepBatchSize', agents: 'agents' },
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
       cites: 'newFindings',
@@ -736,6 +737,7 @@ export const investigate: Pattern = {
       reads: [
         'hypotheses',
         'question',
+        'hint',
         'subQuestions',
         'searchTerms',
         'currentSource',
@@ -770,7 +772,7 @@ export const investigate: Pattern = {
       label: 'Find gaps',
       directive:
         'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Set `confidence` (0..1) that the findings fully answer `question`.',
-      reads: ['question', 'subQuestions', 'findingsBrief', 'skipSources', 'skipReasons'],
+      reads: ['question', 'hint', 'subQuestions', 'findingsBrief', 'skipSources', 'skipReasons'],
       writes: ['gaps', 'confidence'],
       retries: 2,
       checks: [
@@ -822,7 +824,7 @@ export const investigate: Pattern = {
       id: 'confident',
       kind: 'condition',
       label: 'Good enough?',
-      expression: 'confidence >= 0.7 || !empty(hint)',
+      expression: 'confidence >= 0.7 || !empty(hint) || hintAsked',
     },
     {
       id: 'clarify',
@@ -838,7 +840,8 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Use hint',
       assign: [
-        { field: 'hint', expr: 'if(empty(hint), "(no hint given)", hint)' },
+        // Asked once; an empty hint stays empty rather than a placeholder passing as one.
+        { field: 'hintAsked', expr: 'true' },
         { field: 'gapRounds', expr: '0' },
       ],
     },
@@ -882,6 +885,7 @@ export const investigate: Pattern = {
         ' Findings the engine could not verify are in `unverified`: do not rely on them. End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), items that could not be read in full and why (`notRead`, `notReadReasons`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared, then coverage; correct a part here if newer findings contradict it.',
       reads: [
         'question',
+        'hint',
         'subQuestions',
         'findings',
         'gaps',

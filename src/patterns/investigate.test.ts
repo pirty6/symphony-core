@@ -406,3 +406,39 @@ describe('investigate hands on its evidence', () => {
     expect(investigate.result).toContain('citedFindings');
   });
 });
+
+describe('investigate asks for a hint once', () => {
+  it('an empty hint stays empty, is not asked again, and the run still answers', () => {
+    const v = { outcome: 'applied' as const, confidence: 0.2, shouldTerminate: false, reason: 'r' };
+    let asked = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        assess: (s) => ({
+          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          verdict: v,
+        }),
+      },
+      approvals: {
+        ...demo.approvals,
+        clarify: () => {
+          asked += 1;
+          return { approved: true, updates: { hint: '' } };
+        },
+      },
+    };
+    const r = runScripted(
+      compileScore(investigate, { goal: 'g', context: { ...demo.context!, complexity: 1 } }),
+      script,
+    );
+    expect(asked).toBe(1);
+    expect(r.state.state).toMatchObject({ hint: '', hintAsked: true });
+    expect(r.state.steps.some((st) => st.nodeId === 'answer')).toBe(true);
+    // Every evidence step reads the hint.
+    for (const id of ['triage', 'deepRead', 'sweep', 'assess', 'answer'])
+      expect(
+        (investigate.nodes.find((n) => n.id === id) as unknown as { reads: string[] }).reads,
+      ).toContain('hint');
+  });
+});
