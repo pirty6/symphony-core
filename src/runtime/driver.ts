@@ -118,6 +118,8 @@ export interface NextPerformance {
 type Unsequenced<T> = T extends { seq: number } ? Omit<T, 'seq'> : never;
 
 const DEFAULT_PARALLEL = 4;
+/** fanOut.warm: the longest the other parts wait for the first one to start answering. */
+const WARM_MS = 30_000;
 
 export interface RunOptions {
   readonly id?: string;
@@ -559,7 +561,14 @@ export class Run {
       MAX_AGENTS,
       Math.max(1, todo.length),
     );
-    await Promise.all(Array.from({ length: width }, worker));
+    // Warm: one part first; the rest start once the model is answering it (its prompt cached).
+    const warm = pause.warmFirst && width > 1 && todo.length > 1;
+    const first = warm ? worker() : undefined;
+    if (warm) await this.warmUp(pause.nodeId, todo[0]! + 1, signal);
+    await Promise.all([
+      ...(first ? [first] : []),
+      ...Array.from({ length: warm ? width - 1 : width }, worker),
+    ]);
     // Stopped at the time limit: finished parts count; the rest are retried.
     if (signal.aborted && signal.reason !== KEEP_ANSWER)
       throw new DOMException('aborted', 'AbortError');
@@ -579,6 +588,37 @@ export class Run {
         parts: transcripts,
       },
     };
+  }
+
+  /**
+   * Resolves once part `take` of this step shows model output (not the engine's own notes),
+   * ends, or WARM_MS passes: never later, so a slow first part delays the rest by at most that.
+   */
+  private warmUp(nodeId: string, take: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        off();
+        signal.removeEventListener('abort', done);
+        resolve();
+      };
+      const timer = setTimeout(done, WARM_MS);
+      signal.addEventListener('abort', done, { once: true });
+      const off = this.subscribe((m) => {
+        const answering =
+          m.type === 'provider' &&
+          m.nodeId === nodeId &&
+          m.take === take &&
+          m.event.type !== 'info';
+        const ended =
+          m.type === 'part' &&
+          m.nodeId === nodeId &&
+          m.part === take &&
+          (m.state === 'done' || m.state === 'failed');
+        if (answering || ended) done();
+      });
+    });
   }
 
   /** Jazz: independent takes in parallel, then a bandleader merges them. */

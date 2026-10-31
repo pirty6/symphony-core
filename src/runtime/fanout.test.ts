@@ -102,6 +102,53 @@ describe('fanOut parts play at the same time', () => {
     expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
   });
 
+  it('warm: the other parts start only once the first one is answering', async () => {
+    const warm = compileScore(
+      {
+        ...reader,
+        state: [...reader.state, { name: 'note', type: 'string', initial: 'shared' }],
+        nodes: reader.nodes.map((n) =>
+          n.id === 'readAll' && n.kind === 'agent'
+            ? Object.assign({}, n, {
+                reads: ['files', 'note'],
+                fanOut: { over: 'files', per: 2, warm: true },
+              })
+            : n,
+        ),
+      },
+      { goal: 'g', context: { files }, generatedAt: 't' },
+    );
+    const log: string[] = [];
+    const inputs: string[] = [];
+    const provider: Provider = {
+      name: 'fake',
+      runAgent: async (req: AgentRequest) => {
+        const mine = req.pause.input.files as string[];
+        inputs.push(JSON.stringify(req.pause.input));
+        log.push(`start ${mine.join('')}`);
+        await new Promise((r) => setTimeout(r, 20));
+        // The model starts answering: what lets the others go.
+        req.onEvent?.({ type: 'delta', text: 'reading' });
+        log.push(`answering ${mine.join('')}`);
+        await new Promise((r) => setTimeout(r, 20));
+        return {
+          result: {
+            updates: { read: mine },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+          },
+          transcript: { provider: 'fake', prompt: '', output: '', toolCalls: [] },
+        };
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const perf = await new Run({ score: warm, provider, parallel: 3 }).start();
+    expect(perf.outcome).toBe('success');
+    expect(log.slice(0, 3)).toEqual(['start ab', 'answering ab', 'start cd']);
+    // What the parts share comes first, their own slice last: one prompt prefix for all.
+    expect(inputs[0]).toBe('{"note":"shared","files":["a","b"]}');
+    expect(replayPerformance(warm, perf).divergence.reproduced).toBe(true);
+  });
+
   it('a part whose call fails is named, and the others are not lost', async () => {
     let calls = 0;
     const provider: Provider = {

@@ -113,6 +113,12 @@ export interface AgentNode extends NodeBase {
      * once, clamped to 1..MAX_AGENTS. Without it the runtime's default applies.
      */
     readonly agents?: string;
+    /**
+     * Play the first part alone until the model starts answering, then the rest: their
+     * prompts share its prefix, which the provider's cache then holds. Costs one part's
+     * head start in time.
+     */
+    readonly warm?: boolean;
   };
   /**
    * When the AI reports confidence below this (0-1), ask it once more, one tier
@@ -415,6 +421,8 @@ export interface AgentPause {
   readonly partsDone?: readonly (NodeResult | null)[];
   /** fanOut: how many parts may play at once (fanOut.agents), 1..MAX_AGENTS. */
   readonly parallel?: number;
+  /** fanOut.warm: start the first part alone until the model answers, then the rest. */
+  readonly warmFirst?: boolean;
   /** AgentNode.preload: the input field listing files the runtime reads into the prompt. */
   readonly preload?: string;
   /** Independent takes to play before integrating (1 = a single take). */

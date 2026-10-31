@@ -1013,7 +1013,8 @@ export const investigate: Pattern = {
       label: 'Answer each part',
       // One call per part, side by side: each stays on its own subject over the shared
       // evidence, instead of one call answering everything and drifting or running out.
-      fanOut: { over: 'parts', per: 1, agents: 'agents' },
+      // The parts share everything but their subject: the first one warms the prompt cache.
+      fanOut: { over: 'parts', per: 1, agents: 'agents', warm: true },
       directive:
         'Answer `question` for the ONE subject in `parts` only, using only `findingsBrief` (the findings, quotes left out). ' +
         CITE_BY_ID +
