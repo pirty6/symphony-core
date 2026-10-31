@@ -53,7 +53,8 @@
     "lint": "oxlint src/ packages/ui/src packages/ui/server",
     "lint:fix": "oxlint --fix src/ packages/ui/src packages/ui/server",
     "format": "oxfmt src/",
-    "format:check": "oxfmt --check src/"
+    "format:check": "oxfmt --check src/",
+    "docs": "tsx src/flows.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
