@@ -33,6 +33,26 @@ const challenge = challengePhase({
 /** Most independent parts one investigation answers side by side. */
 export const MAX_PARTS = 8;
 
+/** Lists the coverage report shows; long ones end with a pointer to the full field. */
+const listed = (field: string, none: string) =>
+  `if(len(${field}) == 0, "${none}", join(take(${field}, 15), "; ") + if(len(${field}) > 15, " … (all in ${field})", ""))`;
+
+/** The coverage section, written by the engine from what it recorded (not by the AI). */
+const COVERAGE = [
+  '"## Coverage\n\n- Files not triaged: "',
+  listed('excludedFiles', 'none'),
+  '"\n- Pages read: "',
+  listed('pages', 'none'),
+  '"\n- Experiments run: "',
+  listed('ran', 'none'),
+  '"\n- Could not read in full: "',
+  listed('notRead', 'nothing'),
+  '"\n- Sources searched: "',
+  listed('consulted', 'none'),
+  '"\n- Sources skipped: "',
+  listed('skipReasons', 'none'),
+].join(' + ');
+
 const LESSON_INPUTS = {
   problem: 'question',
   cause: 'answer',
@@ -955,7 +975,7 @@ export const investigate: Pattern = {
       directive:
         'Answer `question` using only `findings`. ' +
         CITE_BY_ID +
-        ' Findings the engine could not verify are in `unverified`: do not rely on them. End with a "Coverage" section: files triaged and excluded (`excludedFiles`), pages read (`pages`), experiments run (`ran`), items that could not be read in full and why (`notRead`, `notReadReasons`), sources searched (`consulted`), sources skipped with their reasons, and what is still unknown. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared, then coverage; correct a part here if newer findings contradict it.',
+        ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
       reads: [
         'question',
         'hint',
@@ -1018,7 +1038,7 @@ export const investigate: Pattern = {
         },
         {
           field: 'answer',
-          expr: 'if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer)',
+          expr: `if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer) + "\n\n" + ${COVERAGE}`,
         },
       ],
     },
@@ -1342,12 +1362,6 @@ export const investigate: Pattern = {
             '1. **Determinism**: `advance()` is pure, so a rejected answer leaves the state hash unchanged and a retry gets the same move key.',
             '2. **Auditability**: each rejected attempt is recorded with its errors in the Performance, so a replay reproduces the failure too.',
             '3. **Safety**: an assessor can never write keys it was not given (`updates.x is not writable here`).',
-            '',
-            '## Coverage',
-            '',
-            `- Files triaged: ${((s.triaged as string[]) ?? []).length}; read completely: ${((s.examined as string[]) ?? []).length}`,
-            `- Web pages read: ${((s.pages as string[]) ?? []).length}; experiments run: ${((s.ran as string[]) ?? []).length}`,
-            `- Sources searched: ${((s.consulted as string[]) ?? []).join(', ') || 'none'}; skipped: ${((s.skipSources as string[]) ?? []).join(', ') || 'none'}`,
           ].join('\n'),
           openQuestions: (s.gaps as string[]) ?? [],
           rulings: ((s.hypotheses as string[]) ?? []).map((h, i) =>

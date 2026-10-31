@@ -476,3 +476,14 @@ describe('investigate searches sources side by side', () => {
     expect(r.state.state.consulted).toEqual(['git-history', 'prior-runs']);
   });
 });
+
+describe('investigate coverage', () => {
+  it('the engine writes the coverage section from its record', () => {
+    const { r } = runWith(['workspace']);
+    const answer = String(r.state.state.answer);
+    expect(answer).toMatch(
+      /\n## Coverage\n\n- Files not triaged: .+\n- Pages read: .+\n- Experiments run: none\n/,
+    );
+    expect(answer.match(/## Coverage/g)).toHaveLength(1);
+  });
+});
