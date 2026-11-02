@@ -1493,8 +1493,10 @@ export const investigate: Pattern = {
     {
       id: 'confident',
       kind: 'condition',
-      label: 'Good enough?',
-      expression: 'confidence >= 0.7 || !empty(hint) || hintAsked',
+      label: 'Gaps closed?',
+      // On the record, never the model's confidence: no gap left in the checked assessment
+      // and nothing queued to read. Otherwise a person is asked once for a hint.
+      expression: '(len(gaps) == 0 && len(pendingDeep) == 0) || !empty(hint) || hintAsked',
     },
     {
       id: 'clarify',

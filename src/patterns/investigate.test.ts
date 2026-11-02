@@ -333,6 +333,38 @@ describe('the gap check: one structured entry per sub-question', () => {
     expect(seen).toBeGreaterThan(1);
   });
 
+  it('moving on is decided by the gaps, never by the confidence', () => {
+    const asked = (gap: boolean, confidence: number) => {
+      let n = 0;
+      const r = runScripted(compileScore(investigate, { context: demo.context! }), {
+        ...demo,
+        agents: {
+          ...demo.agents,
+          assess: (s) => ({
+            updates: {
+              ...assessFor(s, gap ? [(s.subQuestions as string[])[0]!] : []),
+              confidence,
+            },
+            verdict: v,
+          }),
+        },
+        approvals: {
+          ...demo.approvals,
+          clarify: () => {
+            n += 1;
+            return { approved: false };
+          },
+        },
+      });
+      expect(r.state.outcome).not.toBe('failure');
+      return n;
+    };
+    // Sure of itself with a gap left: a person is still asked.
+    expect(asked(true, 1)).toBe(1);
+    // Unsure with no gap left: on to the answer.
+    expect(asked(false, 0.05)).toBe(0);
+  });
+
   it('sends back an entry left out, one out of order, an ANSWERED without a citation or one citing an unknown id', () => {
     for (const bad of [
       (subs: string[]) => subs.slice(1).map((_, i) => `S${i + 1}: ANSWERED [F1]`),
