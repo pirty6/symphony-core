@@ -352,7 +352,7 @@ the listing adapts to the question: "is this on the internet?", "does this work 
    triaged, and the coverage says the rest were not. Pass `-c exhaustive=true` to triage every file. *Web* has the AI search and list
    the pages worth reading. *Experiment* has the AI design the commands to run (benchmarks, timing,
    profiling).
-3. **Triage files** (loop): every listed file, in batches of `batchSize` (25). An answer that leaves
+3. **Triage files** (loop): every listed file, in batches of `batchSize` (10). An answer that leaves
    out a file is rejected.
 4. **Deep read** (loop): every relevant file *and* every listed page, read completely,
    `deepBatchSize` (4) at a time.
@@ -637,8 +637,10 @@ solved rate or citation validity.
   of a maestro run before; the CLI and `eval` report them (`rejected: N attempts …`).
 - **The last valid answer wins, but an empty one never replaces one with content**: a skeptic's
   eight real concerns were once lost to an empty second call. The AI is told, and the run notes it.
-- **Parallel parts (`fanOut`).** investigate's triage and deep reads take a wave of four batches
-  (100 files to triage, 16 items to read in full) and play them at once (at most 4 calls); answers are checked per part and merged in part order,
+- **Parallel parts (`fanOut`).** investigate's triage and deep reads take a wave of three batches
+  per sub-agent (with the default 6 sub-agents: 180 files to triage in batches of 10, 72 items to
+  read in full in batches of 4) and play them at once (at most 6 calls; the plan picks 1-6);
+  answers are checked per part and merged in part order,
   so the result does not depend on timing and replays exactly.
 - **Memory across runs** (`.symphony/memory.json`). Facts that passed the citation check are
   remembered; a **Recall earlier runs** step brings back those that share words with the question
