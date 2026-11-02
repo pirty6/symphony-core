@@ -70,6 +70,28 @@ describe('compacting old runs', () => {
     expect(back.compacted).toBe(true);
   });
 
+  it("keeps each part's read record: a fanned-out step's files stay read after compaction", () => {
+    // As the runtime records a fanned-out step: the read record on each part's transcript.
+    const fanned: Performance = {
+      ...perf,
+      steps: perf.steps.map((s) => {
+        const pre = s.transcript?.preloaded;
+        if (!pre) return s;
+        const { preloaded: _p, ...top } = s.transcript!;
+        return Object.assign({}, s, {
+          transcript: { ...top, parts: [{ ...transcript, preloaded: pre }] },
+        });
+      }),
+    };
+    expect(replayPerformance(score, fanned).divergence.reproduced).toBe(true);
+    const small = compactPerformance(score, fanned)!;
+    expect(small).toBeDefined();
+    const part = small.steps.find((s) => s.transcript?.parts)!.transcript!.parts![0]!;
+    expect(part.prompt).toBe('');
+    expect(part.preloaded?.length).toBeGreaterThan(0);
+    expect(replayPerformance(score, small).divergence.reproduced).toBe(true);
+  });
+
   it('refuses a run that no longer replays, and leaves full runs alone', () => {
     const tampered = { ...perf, steps: perf.steps.map((s) => ({ ...s, stateHashAfter: 'x' })) };
     expect(compactPerformance(score, tampered)).toBeUndefined();

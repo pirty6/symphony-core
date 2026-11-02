@@ -825,10 +825,25 @@ function lowConfidence(
 function preloadReportOf(
   node: ScoreNode,
   transcript: AiTranscript | undefined,
-  input: Readonly<Record<string, unknown>>,
+  pause: AgentPause,
+  attempts: Ctx['attempts'],
 ): Record<string, string[]> {
   if (node.kind !== 'agent' || !node.preloadReport || !node.preload) return {};
-  const records = [transcript, ...(transcript?.parts ?? [])].flatMap((t) => t?.preloaded ?? []);
+  const input = pause.input;
+  // A part kept from an earlier attempt was not played again: its record is that attempt's.
+  const kept = (pause.partsDone ?? []).flatMap((done, i) => {
+    if (!done) return [];
+    const from = attempts.findLast(
+      (a) =>
+        (a.result as { parts?: unknown[] } | null | undefined)?.parts?.[i] != null &&
+        a.transcript?.parts?.[i]?.preloaded,
+    );
+    return from?.transcript?.parts?.[i]?.preloaded ?? [];
+  });
+  const records = [
+    ...[transcript, ...(transcript?.parts ?? [])].flatMap((t) => t?.preloaded ?? []),
+    ...kept,
+  ];
   const listed = input[node.preload];
   const expected = [
     ...new Set(
@@ -894,7 +909,7 @@ function resolveAgent(
           ...routed.value,
           updates: {
             ...routed.value.updates,
-            ...preloadReportOf(node, res.transcript, pause.input),
+            ...preloadReportOf(node, res.transcript, pause, ctx.attempts),
           },
         },
       }

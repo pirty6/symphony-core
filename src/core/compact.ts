@@ -18,6 +18,8 @@ function slim(t: AiTranscript): AiTranscript {
     ...(t.startedAt ? { startedAt: t.startedAt } : {}),
     ...(t.completedAt ? { completedAt: t.completedAt } : {}),
     ...(t.takes ? { takes: t.takes.map(slim) } : {}),
+    // Each part's read record too: fan-out steps keep theirs on the parts.
+    ...(t.parts ? { parts: t.parts.map(slim) } : {}),
     ...(t.fromRepertoire ? { fromRepertoire: t.fromRepertoire } : {}),
     ...(t.musician ? { musician: t.musician } : {}),
     ...(t.usage ? { usage: t.usage } : {}),
