@@ -172,15 +172,19 @@ function fanOutOf(raw: unknown): {
 
 /** AgentNode.preloadReport: the engine's record of what it could not give whole. */
 function preloadReportOf(raw: unknown): {
-  preloadReport?: { paths: string; reasons: string; whole?: string };
+  preloadReport?: { paths: string; reasons: string; whole?: string; rest?: string };
 } {
-  const r = raw as { paths?: unknown; reasons?: unknown; whole?: unknown } | null | undefined;
+  const r = raw as
+    | { paths?: unknown; reasons?: unknown; whole?: unknown; rest?: unknown }
+    | null
+    | undefined;
   return typeof r?.paths === 'string' && r.paths && typeof r.reasons === 'string' && r.reasons
     ? {
         preloadReport: {
           paths: r.paths,
           reasons: r.reasons,
           ...(typeof r.whole === 'string' && r.whole ? { whole: r.whole } : {}),
+          ...(typeof r.rest === 'string' && r.rest ? { rest: r.rest } : {}),
         },
       }
     : {};

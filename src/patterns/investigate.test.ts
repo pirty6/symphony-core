@@ -3,11 +3,22 @@ import { compileScore } from '../core/compile.js';
 import { advance, createEngine, toPerformance } from '../core/engine.js';
 import { replayPerformance } from '../core/replay.js';
 import { runScripted, scriptedResolution } from '../core/scripted.js';
-import type { DemoScript, PreloadRecord, Resolution } from '../core/types.js';
+import type { DemoResponder, DemoScript, PreloadRecord, Resolution } from '../core/types.js';
 import { buildAgentPrompt } from '../runtime/provider.js';
+import { itemOf } from '../core/items.js';
 import { investigate } from './index.js';
 
 const demo = investigate.demo!;
+
+/** A deep-read responder that leaves `readNotes` out gets one note per batch item. */
+const withNotes =
+  (f: DemoResponder): DemoResponder =>
+  (s, visit) => {
+    const r = f(s, visit);
+    if (r.updates.readNotes) return r;
+    const batch = (s.deepBatch as string[]) ?? [];
+    return { ...r, updates: { ...r.updates, readNotes: batch.map((x) => `${x} — read`) } };
+  };
 
 /** Run investigate with the plan using exactly `use` (everything else skipped). */
 /** How many leading characters two prompts share. */
@@ -170,9 +181,10 @@ describe('investigate adapts its evidence to the question', () => {
 describe('items that cannot be read', () => {
   // Regression: a live run failed at deepRead because a page returned HTTP 429 and the
   // AI honestly said so; the rule accepted only "read completely", so honesty failed the run.
+  // These tests are about examined/unreadable: each note per item is filled in for them.
   const script = (deepRead: NonNullable<DemoScript['agents']>[string]): DemoScript => ({
     ...demo,
-    agents: { ...demo.agents, deepRead },
+    agents: { ...demo.agents, deepRead: withNotes(deepRead) },
   });
   const verdict = {
     outcome: 'applied' as const,
@@ -814,29 +826,79 @@ describe('investigate holds "read completely" to what the engine gave', () => {
     return { score, r, deepBatches };
   }
 
-  it('a file cut for the call budget is reported, then read again on its own; one too long for any prompt is reported', () => {
+  it('a file cut short is read on in line-range chunks until done; one nothing of fit is retried alone', () => {
+    // engine.ts is too long for one prompt (twice over); validate.ts was cut for the call's
+    // size; nothing of schema.ts fit the first time. Chunks are given whole when asked for.
     const { score, r, deepBatches } = withManifest((batch, visit) =>
-      batch.flatMap((path): PreloadRecord[] =>
-        path.endsWith('engine.ts')
-          ? [{ path, lines: 9000, omitted: [4001, 9000], cut: 'file' }]
-          : path.endsWith('validate.ts') && visit === 0
-            ? [{ path, lines: 900, omitted: [301, 900], cut: 'call' }]
-            : [{ path, lines: 100 }],
-      ),
+      batch.flatMap((item): PreloadRecord[] => {
+        const { path, from, to } = itemOf(item);
+        if (from !== undefined)
+          return path.endsWith('engine.ts') && from === 4001
+            ? [{ path, item, range: [from, to!], lines: 9000, omitted: [8001, 9000], cut: 'file' }]
+            : [{ path, item, range: [from, to!], lines: 9000 }];
+        if (path.endsWith('engine.ts'))
+          return [{ path, lines: 9000, omitted: [4001, 9000], cut: 'file' }];
+        if (path.endsWith('validate.ts') && visit === 0)
+          return [{ path, lines: 900, omitted: [301, 900], cut: 'call' }];
+        if (path.endsWith('schema.ts') && visit === 0)
+          return [{ path, lines: 500, omitted: [1, 500], cut: 'call' }];
+        return [{ path, lines: 100 }];
+      }),
     );
     expect(r.state.kind).toBe('done');
     const s = r.state.state;
-    // The AI said it examined everything; the engine's record decides.
-    expect(s.notRead).toContain('src/core/engine.ts');
-    expect(s.notRead).not.toContain('src/core/validate.ts');
-    const at = (s.notRead as string[]).indexOf('src/core/engine.ts');
-    expect((s.notReadReasons as string[])[at]).toMatch(
-      /^longer than one prompt can hold: lines 4001-9000/,
+    const items = deepBatches.flat();
+    // The rest of each cut file is read next, first in the queue, until the whole file is read.
+    expect(deepBatches[1]!.slice(0, 2).toSorted()).toEqual([
+      'src/core/engine.ts#chunk=4001-9000',
+      'src/core/validate.ts#chunk=301-900',
+    ]);
+    expect(items).toContain('src/core/engine.ts#chunk=8001-9000');
+    // Nothing of schema.ts fit: no chunk of it, reported and retried once, alone, at the end.
+    expect(items.filter((x) => x.startsWith('src/core/schema.ts'))).toEqual([
+      'src/core/schema.ts',
+      'src/core/schema.ts',
+    ]);
+    expect(deepBatches.at(-1)).toEqual(['src/core/schema.ts']);
+    expect(s.notRead).toEqual([]);
+    // Output for every item read, chunks included.
+    expect(s.readLog).toEqual(
+      expect.arrayContaining([
+        'src/core/engine.ts#chunk=8001-9000 — read in full',
+        'src/core/validate.ts#chunk=301-900 — read in full',
+      ]),
     );
-    // The retry read validate.ts alone (one item per call), and not engine.ts again.
-    expect(deepBatches.at(-1)).toEqual(['src/core/validate.ts']);
-    expect(String(s.answer)).toMatch(/Could not read in full: .*src\/core\/engine\.ts/);
     expect(replayPerformance(score, toPerformance(r.state)).divergence.reproduced).toBe(true);
+  });
+
+  it('an item missing from the record counts as not read (fails closed), and is reported', () => {
+    const { r } = withManifest((batch) =>
+      batch.filter((p) => !p.endsWith('engine.ts')).map((path) => ({ path, lines: 100 })),
+    );
+    const s = r.state.state;
+    expect(s.notRead).toContain('src/core/engine.ts');
+    const at = (s.notRead as string[]).indexOf('src/core/engine.ts');
+    expect((s.notReadReasons as string[])[at]).toMatch(/not in the engine's record/);
+    expect(String(s.answer)).toMatch(/Could not read in full: .*src\/core\/engine\.ts/);
+  });
+
+  it('a reader that leaves out the note for an item is sent back', () => {
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        deepRead: (st, visit) => {
+          const good = demo.agents!.deepRead!(st, visit);
+          return {
+            ...good,
+            updates: { ...good.updates, readNotes: (good.updates.readNotes as string[]).slice(1) },
+          };
+        },
+      },
+    };
+    const r = runScripted(compileScore(investigate, { context: demo.context! }), script);
+    expect(r.state.outcome).toBe('partial');
+    expect(r.state.reason).toMatch(/exactly one readNotes entry per item of deepBatch/);
   });
 
   it('a file triage saw only part of goes to the deep read whatever triage said', () => {
@@ -1012,8 +1074,8 @@ describe('the support judge (off by default)', () => {
 });
 
 describe('single-pass triage pilot (off by default)', () => {
-  /** The demo with singlePass on; triage's transcript carries this preload record (none: no record). */
-  const pilot = (manifest?: (batch: readonly string[]) => PreloadRecord[]) => {
+  /** The demo with singlePass on; triage's transcript carries this preload record (null: none at all). */
+  const pilot = (manifest?: ((batch: readonly string[]) => PreloadRecord[]) | null) => {
     const score = compileScore(investigate, {
       goal: 'g',
       context: { ...demo.context!, singlePass: true, batchSize: 10 },
@@ -1024,14 +1086,17 @@ describe('single-pass triage pilot (off by default)', () => {
       const pause = r.state.pause;
       let res: Resolution = scriptedResolution(demo, pause, r.state, 't');
       if (
-        manifest &&
+        manifest !== undefined &&
         pause.kind === 'agent' &&
         pause.nodeId === 'triageDeep' &&
         res.kind === 'agent'
       )
         res = {
           ...res,
-          transcript: { ...res.transcript!, preloaded: manifest(pause.input.batch as string[]) },
+          transcript: {
+            ...res.transcript!,
+            preloaded: manifest ? manifest(pause.input.batch as string[]) : undefined,
+          },
         };
       r = advance(score, r.state, res);
     }
@@ -1050,7 +1115,7 @@ describe('single-pass triage pilot (off by default)', () => {
   });
 
   it('no preload record: nothing is assumed read whole, every relevant file still gets a deep read', () => {
-    const { r, deepRead } = pilot();
+    const { r, deepRead } = pilot(null);
     expect(r.state.steps.map((x) => x.nodeId)).toContain('triageDeep');
     expect(deepRead).toEqual(expect.arrayContaining(RELEVANT_FILES));
   });
@@ -1108,7 +1173,7 @@ describe('the step limit is a backstop, never the bound', () => {
           updates: { triaged: s.batch, batchRelevant: s.batch, newFindings: [] },
           verdict: v,
         }),
-        deepRead: (s) => {
+        deepRead: withNotes((s) => {
           // One item of each batch unreadable at first: the retry pass plays too.
           const b = s.deepBatch as string[];
           const bad = (s.unreadRetries as number) === 0 ? b.slice(0, 1) : [];
@@ -1121,7 +1186,7 @@ describe('the step limit is a backstop, never the bound', () => {
             },
             verdict: v,
           };
-        },
+        }),
         designExperiments: (s) => {
           const all = Array.from({ length: s.maxExperiments as number }, (_, i) => `exp ${i}`);
           return {

@@ -25,7 +25,17 @@ const transcript = {
 const perf: Performance = {
   ...played,
   provider: 'copilot',
-  steps: played.steps.map((s) => (s.kind === 'agent' ? Object.assign({}, s, { transcript }) : s)),
+  steps: played.steps.map((s) =>
+    s.kind === 'agent'
+      ? Object.assign({}, s, {
+          transcript: Object.assign(
+            {},
+            transcript,
+            s.transcript?.preloaded ? { preloaded: s.transcript.preloaded } : {},
+          ),
+        })
+      : s,
+  ),
 };
 const size = (p: Performance) => JSON.stringify(p).length;
 
@@ -37,7 +47,7 @@ describe('compacting old runs', () => {
     expect(compact.events).toEqual([]);
     expect(size(compact)).toBeLessThan(size(perf) / 3);
     const agent = compact.steps.find((s) => s.kind === 'agent')!;
-    expect(agent.transcript).toEqual({
+    expect(agent.transcript).toMatchObject({
       provider: 'copilot',
       model: 'm',
       prompt: '',

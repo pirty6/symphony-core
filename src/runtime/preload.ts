@@ -4,6 +4,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { isUrl, itemOf } from '../core/items.js';
 import type { PreloadedFile } from './preload-prompt.js';
 
 export type { PreloadedFile } from './preload-prompt.js';
@@ -12,8 +13,6 @@ export type { PreloadedFile } from './preload-prompt.js';
 export const MAX_FILE_CHARS = 120_000;
 /** All files of one call together. */
 export const MAX_CALL_CHARS = 360_000;
-
-const isUrl = (s: string) => /^[a-z][a-z0-9+.-]*:\/\//i.test(s);
 
 /** Read the workspace files among `paths` (URLs and anything outside are skipped). */
 export async function preloadFiles(
@@ -25,13 +24,14 @@ export async function preloadFiles(
   let budget = MAX_CALL_CHARS;
   for (const p of paths) {
     if (typeof p !== 'string' || !p.trim() || isUrl(p)) continue;
-    // "src/a.ts#L10-40" or "src/a.ts:10" name the file; the whole file is given, once.
-    const path = p.trim().replace(/(#L?\d.*|:\d+(-\d+)?)$/, '');
-    if (seen.has(path)) continue;
-    seen.add(path);
+    // A citation-like item names the whole file, given once; a chunk is its own lines.
+    const { path, from, to } = itemOf(p);
+    const item = from === undefined ? path : p.trim();
+    if (seen.has(item)) continue;
+    seen.add(item);
     const full = resolve(workspace, path);
     // Said, not dropped: the AI reads what the engine could not.
-    const failed = (error: string) => out.push({ path, text: `(${error})`, lines: 0, error });
+    const failed = (error: string) => out.push({ path, item, text: `(${error})`, lines: 0, error });
     if (isAbsolute(path) || relative(workspace, full).startsWith('..')) {
       failed('outside the workspace');
       continue;
@@ -48,12 +48,15 @@ export async function preloadFiles(
       continue;
     }
     const all = raw.toString('utf8').split('\n');
+    // The lines asked for: all of them, or a chunk's.
+    const first = Math.min(from ?? 1, all.length);
+    const last = Math.min(to ?? all.length, all.length);
     const cap = Math.min(MAX_FILE_CHARS, budget);
     let used = 0;
-    let shown = 0;
+    let shown = first - 1;
     const numbered: string[] = [];
-    for (const [i, line] of all.entries()) {
-      const row = `${i + 1}| ${line}`;
+    for (let i = first - 1; i < last; i++) {
+      const row = `${i + 1}| ${all[i]}`;
       if (used + row.length + 1 > cap) break;
       numbered.push(row);
       used += row.length + 1;
@@ -62,11 +65,13 @@ export async function preloadFiles(
     budget -= used;
     out.push({
       path,
+      item,
       text: numbered.join('\n'),
       lines: all.length,
-      ...(shown < all.length
+      ...(from !== undefined ? { range: [first, last] as const } : {}),
+      ...(shown < last
         ? {
-            omitted: [shown + 1, all.length] as const,
+            omitted: [shown + 1, last] as const,
             cut: MAX_FILE_CHARS <= cap ? ('file' as const) : ('call' as const),
           }
         : {}),

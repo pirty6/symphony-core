@@ -1,3 +1,4 @@
+import { itemOf } from '../core/items.js';
 import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import {
@@ -407,6 +408,23 @@ export const investigate: Pattern = {
         type: 'number[]',
         description: 'Positions of partlyRead not yet reported',
       },
+      {
+        name: 'partlyRest',
+        type: 'string[]',
+        description:
+          'By position with partlyRead: the chunk of remaining lines to read next, or ""',
+      },
+      {
+        name: 'unreadAt',
+        type: 'number[]',
+        description: 'Positions of partlyRead with nothing given',
+      },
+      {
+        name: 'readNotes',
+        type: 'string[]',
+        description: 'One per item of the deep batch, in order: "<item> — what it holds"',
+      },
+      { name: 'readLog', type: 'string[]', description: 'Every readNotes entry, wave after wave' },
       {
         name: 'triagePartial',
         type: 'string[]',
@@ -919,7 +937,9 @@ export const investigate: Pattern = {
           // A file triage saw only part of goes to the deep read, whatever triage said.
           // The pilot's readFully skip the deep read only where the engine's record shows the
           // file was given whole (an intersection: without a record, none skip).
-          expr: 'relevantFiles + without(batchRelevant, without(readFully, without(readFully, triageWhole))) + without(pick(triagePartial, positions(triagePartialReasons, "^(lines|longer)")), batchRelevant)',
+          // Any file triage was not given whole (cut, unreadable, or missing from the record)
+          // counts as unseen: it goes to the deep read, whatever triage said.
+          expr: 'relevantFiles + without(batchRelevant, without(readFully, without(readFully, triageWhole))) + without(triagePartial, batchRelevant)',
         },
         ...MERGE_FINDINGS,
         ...STATUS,
@@ -956,15 +976,19 @@ export const investigate: Pattern = {
       capabilities: ['web'],
       label: 'Deep read',
       directive:
-        'Read every item of `deepBatch` completely. Workspace files are given to you whole, with line numbers, at the end of this prompt: read every line there (do not re-open them), then follow the references out of them that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
+        'Read every item of `deepBatch` completely. Workspace files are given to you whole, with line numbers, at the end of this prompt: read every line there (do not re-open them), then follow the references out of them that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`. List each item of `deepBatch` you read completely in `examined`. In `readNotes`, give one entry per item of `deepBatch`, in order, starting with the item exactly as listed: "<item> — what it holds for the question" (or "<item> — nothing relevant"). An item "path#chunk=from-to" is lines from-to of path, the rest of a file too long for one prompt: cite its facts as "path:line" with the line numbers of the file. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
         AGAINST,
       // The engine reads the workspace files of the batch whole: one turn, nothing skipped.
       preload: 'deepBatch',
       // "Read completely" is held to what the engine gave, not to what the AI says it read.
-      preloadReport: { paths: 'partlyRead', reasons: 'partlyReadReasons' },
+      preloadReport: {
+        paths: 'partlyRead',
+        reasons: 'partlyReadReasons',
+        rest: 'partlyRest',
+      },
       reads: ['leadHypotheses', 'leadStatus', 'question', 'hint', 'subQuestions', 'deepBatch'],
       fanOut: { over: 'deepBatch', per: 'deepBatchSize', agents: 'agents' },
-      writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
+      writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons', 'readNotes'],
       cites: 'newFindings',
       retries: 2,
       checks: [
@@ -985,6 +1009,12 @@ export const investigate: Pattern = {
           expr: 'len(unreadableReasons) == len(unreadable)',
           message:
             'Give one reason in unreadableReasons per item in unreadable, in the same order.',
+        },
+        {
+          // Output for every item, by the item each note starts with: none left out.
+          expr: 'heads(readNotes, "^[^ ]+") == deepBatch',
+          message:
+            'Give exactly one readNotes entry per item of deepBatch, in the same order, each starting with the item exactly as listed, then " — " and what it holds.',
         },
       ],
     },
@@ -1018,14 +1048,20 @@ export const investigate: Pattern = {
       assign: [
         ...MERGE_FINDINGS,
         ...STATUS,
-        // Files the engine could not give whole are not read completely, whatever the AI says:
-        // they are reported (and retried once, alone, at the end) like the unreadable ones.
+        // The engine's record decides what was read, whatever the AI says. Cut short: the rest
+        // is read next, as a range, first in the queue (a full prompt to itself). Not given at
+        // all (unreadable, or missing from the record): reported, and retried once at the end.
         { field: 'partialAt', expr: 'outside(partlyRead, notRead + unreadable)' },
-        { field: 'notRead', expr: 'notRead + unreadable + pick(partlyRead, partialAt)' },
+        { field: 'unreadAt', expr: 'without(partialAt, positions(partlyRest, "."))' },
+        { field: 'notRead', expr: 'notRead + unreadable + pick(partlyRead, unreadAt)' },
         {
           field: 'notReadReasons',
-          expr: 'notReadReasons + unreadableReasons + pick(partlyReadReasons, partialAt)',
+          expr: 'notReadReasons + unreadableReasons + pick(partlyReadReasons, unreadAt)',
         },
+        { field: 'pendingDeep', expr: 'without(partlyRest, [""]) + pendingDeep' },
+        // What the reader said of each item, wave after wave.
+        { field: 'readLog', expr: 'readLog + readNotes' },
+        { field: 'readNotes', expr: '[]' },
         { field: 'unreadable', expr: '[]' },
         { field: 'unreadableReasons', expr: '[]' },
       ],
@@ -1856,12 +1892,13 @@ export const investigate: Pattern = {
             examined: batch,
             unreadable: [],
             unreadableReasons: [],
+            readNotes: batch.map((f) => `${f} — read in full`),
             newFindings: batch.map((f) =>
               f.startsWith('http')
                 ? `${f} — state machines apply transitions only on valid input`
                 : f.endsWith('schema.ts')
                   ? `${f}:115 — validateNodeResult checks verdict and typed updates${tagged(s, ' [H1 for, H3 against]')}`
-                  : `${f}:1 — reviewed fully`,
+                  : `${itemOf(f).path}:${itemOf(f).from ?? 1} — reviewed fully`,
             ),
           },
           verdict: v('read fully'),

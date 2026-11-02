@@ -12,8 +12,10 @@ import type { SavedRun } from './types.js';
  * failed or success); fan-out retries keep the parts that passed.
  * 1.3.0: steps with preloadReport get the files the runtime could not give whole, from the
  * recorded preload manifest.
+ * 1.4.0: that report is item by item against the preload list, and fails closed: an item the
+ * record does not mention counts as not read; a cut one gets a chunk of its remaining lines.
  */
-export const ENGINE_VERSION = '1.3.0';
+export const ENGINE_VERSION = '1.4.0';
 
 /** The run format this engine writes. */
 export const RUN_SCHEMA_VERSION = 3;

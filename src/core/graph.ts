@@ -71,6 +71,7 @@ export function writesOf(node: ScoreNode, graph?: PatternGraph): string[] {
             node.preloadReport.paths,
             node.preloadReport.reasons,
             ...(node.preloadReport.whole ? [node.preloadReport.whole] : []),
+            ...(node.preloadReport.rest ? [node.preloadReport.rest] : []),
           ]
         : [...node.writes];
     case 'approval':
