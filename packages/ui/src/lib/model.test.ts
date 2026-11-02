@@ -316,13 +316,18 @@ describe('feature switches', () => {
       'keepUnchallenged',
       'pragmatistFrom',
       'gapsPerChase',
+      'maxExpandRounds',
+      'narrowRead',
+      'gapAimed',
     ])
     expect(rows[0]).toMatchObject({ value: 'shadow', default: 'off' })
+    expect(rows.find((r) => r.feature.field === 'maxExpandRounds')).toMatchObject({ value: '2', default: '2' })
+    expect(rows.find((r) => r.feature.field === 'narrowRead')).toMatchObject({ value: 'false', default: 'false' })
     expect(rows.find((r) => r.feature.field === 'readerHypotheses')).toMatchObject({ value: 'true', default: 'true' })
     // fix has the debate's switch only; hangman none; the maestro every one it may compose.
     expect(featureRows(fix, PATTERNS, {}).map((r) => r.feature.field)).toEqual(['pragmatistFrom'])
     expect(featureRows(hangman, PATTERNS, {})).toEqual([])
-    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(6)
+    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(9)
     expect(featureRows(maestro, PATTERNS, {})[4]!.patterns).toEqual(['investigate', 'fix', 'implement'])
   })
 
