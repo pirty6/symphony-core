@@ -57,6 +57,8 @@ export interface StartRunRequest {
   readonly improvisation: Improvisation
   /** Patterns to play after this one, each with what the previous run found. */
   readonly chain?: readonly string[]
+  /** Switches you chose (FEATURES), as strings: applied to this run and the runs it leads to. */
+  readonly features?: Readonly<Record<string, string>>
 }
 
 export type DraftMessage =

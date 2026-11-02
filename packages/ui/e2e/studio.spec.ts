@@ -415,3 +415,35 @@ test('the sub-agents of a fanned-out step show as nodes beside it, each with its
   await page.screenshot({ path: 'test-results/subagents.png' })
   await gate.getByRole('button', { name: '⏹ Stop' }).click()
 })
+
+test('library sections fold away, and a feature switch reaches the run it starts', async ({ page }) => {
+  await open(page, 'investigate')
+  await page.evaluate(() => localStorage.removeItem('symphony.open.patterns'))
+  // Sections fold from their titles.
+  const patterns = page.getByRole('button', { name: 'Patterns', exact: true })
+  await expect(patterns).toHaveAttribute('aria-expanded', 'true')
+  await patterns.click()
+  await expect(page.getByText('+ Blank pattern')).toHaveCount(0)
+  await patterns.click()
+  await expect(page.getByText('+ Blank pattern')).toBeVisible()
+  // The switches this pattern has; the judge in shadow mode for the next run.
+  const judge = page.getByTestId('feature-supportJudge')
+  await expect(judge).toBeVisible()
+  await judge.getByLabel('Support judge').selectOption('shadow')
+  await expect(judge).toContainText('changed')
+  await page.getByText('auto-approve').click()
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('run-status')).toHaveText('done', { timeout: 30_000 })
+  // A long answer opens the reader by itself.
+  await expect(page.getByTestId('result-reader')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'State', exact: true }).click()
+  await expect(page.getByTestId('state-supportJudge')).toContainText('shadow')
+  // The judge played (the demo's rulings): every cited workspace finding was ruled on.
+  await expect(page.getByTestId('state-supportRulings')).toContainText('SUPPORTED')
+  // Kept for the next visit; set back to its default, it is no longer marked.
+  await page.reload()
+  await expect(page.getByTestId('feature-supportJudge').getByLabel('Support judge')).toHaveValue('shadow')
+  await page.getByTestId('feature-supportJudge').getByLabel('Support judge').selectOption('off')
+  await expect(page.getByTestId('feature-supportJudge')).not.toContainText('changed')
+})

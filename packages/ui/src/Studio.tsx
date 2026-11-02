@@ -28,6 +28,8 @@ import { FrameNode, PhaseNode } from './canvas/PhaseNode'
 import { SubAgentNode } from './canvas/SubAgentNode'
 import { api, errorText, isNetworkError, isRunGone, RUN_GONE, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
 import { subAgentItems, subAgentNodes,
+  chooseFeature,
+  featureRows,
   IDLE_VIEW,
   applyMessage,
   currentFrame,
@@ -120,12 +122,21 @@ export default function Studio() {
   const [extras, setExtras] = useState<boolean | undefined>(() => parseStoredSettings(localStorage.getItem(SETTINGS_KEY)).extras)
   const extrasRef = useRef(extras)
   extrasRef.current = extras
+  /** Feature switches you turned away from their defaults: kept between visits, sent with every run. */
+  const [features, setFeatures] = useState<Record<string, string>>(
+    () => parseStoredSettings(localStorage.getItem(SETTINGS_KEY)).features ?? {},
+  )
   useEffect(() => {
     localStorage.setItem(
       SETTINGS_KEY,
-      JSON.stringify({ provider: settings.provider, model: settings.model, ...(extras === undefined ? {} : { extras }) }),
+      JSON.stringify({
+        provider: settings.provider,
+        model: settings.model,
+        ...(extras === undefined ? {} : { extras }),
+        ...(Object.keys(features).length ? { features } : {}),
+      }),
     )
-  }, [settings.provider, settings.model, extras])
+  }, [settings.provider, settings.model, extras, features])
   // Choosing Copilot on a machine with no GitHub account signed in: say how to fix it before a run fails.
   useEffect(() => {
     if (settings.provider !== 'copilot') return
@@ -475,6 +486,7 @@ export default function Studio() {
         ...(settings.complexity ? { complexity: settings.complexity } : {}),
         improvisation: settings.improvisation,
         ...(thenPattern && what.pattern.name !== 'maestro' ? { chain: [thenPattern] } : {}),
+        ...(Object.keys(features).length ? { features } : {}),
       })
       followRun(runId, score)
     } catch (e) {
@@ -756,6 +768,8 @@ export default function Studio() {
             .catch((e: Error) => setError(`Clean up failed: ${errorText(e)}`))
         }
         onAsk={(r) => void ask(r)}
+        features={featureRows(meta, library, features)}
+        onFeature={(row, value) => setFeatures((was) => chooseFeature(was, row, value))}
       />
       <main className="canvas" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
         <ReactFlow

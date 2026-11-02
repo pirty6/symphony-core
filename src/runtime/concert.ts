@@ -11,6 +11,8 @@ import type { NextPerformance } from './driver.js';
 export function concertNext(opts: {
   readonly maestroScore: ExecutableScore;
   readonly improvisation?: Improvisation;
+  /** Switches you chose (FEATURES): the composed score plays with them. */
+  readonly features?: Readonly<Record<string, string>>;
   /** Start the composed score, then the patterns to chain after it; returns the new run id. */
   readonly start: (
     score: ExecutableScore,
@@ -27,7 +29,10 @@ export function concertNext(opts: {
       composed = composedScore(
         opts.maestroScore,
         state,
-        opts.improvisation === undefined ? {} : { improvisation: opts.improvisation },
+        Object.assign(
+          opts.improvisation === undefined ? {} : { improvisation: opts.improvisation },
+          opts.features ? { features: opts.features } : {},
+        ),
       );
     } catch (e) {
       const finalPattern = state.finalPattern as Pattern | undefined;

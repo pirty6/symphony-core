@@ -1257,3 +1257,67 @@ pre {
 .react-flow__edge.subagent-failed path {
   stroke: #f87171;
 }
+
+/* Collapsible sidebar sections: the title opens and closes them. */
+.collapse-toggle {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+.collapse-toggle:hover {
+  color: var(--text);
+}
+.collapse-toggle:focus-visible {
+  outline: 1px solid var(--accent, #7c9cff);
+  outline-offset: 2px;
+}
+.collapse-toggle .chevron {
+  width: 10px;
+  display: inline-block;
+}
+
+/* Feature switches. */
+.feature {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.feature.changed {
+  border-color: var(--accent, #7c9cff);
+}
+.feature label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
+}
+.feature label span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.feature select {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 9em;
+}
+.feature .tag {
+  font-size: 10px;
+}
+.feature small {
+  width: 100%;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}

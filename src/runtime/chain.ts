@@ -12,6 +12,7 @@ import {
   stepContext,
   stepPattern,
 } from '../core/chain.js';
+import { featureInputs } from '../core/catalog.js';
 import { compileScore, CompileError } from '../core/compile.js';
 import type {
   Complexity,
@@ -31,6 +32,8 @@ export interface ChainOptions {
   readonly inputs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   readonly complexity?: Complexity;
   readonly improvisation?: Improvisation;
+  /** Switches you chose (FEATURES): every pattern of the chain that has them plays with them. */
+  readonly features?: Readonly<Record<string, string>>;
   /** Start a compiled score with the rest of the chain; returns the new run id. */
   readonly start: (
     score: ExecutableScore,
@@ -59,7 +62,7 @@ export function chainNext(
     try {
       score = compileScore(pattern, {
         goal,
-        context,
+        context: { ...context, ...featureInputs(pattern, opts.features) },
         ...(opts.complexity ? { complexity: opts.complexity } : {}),
         ...(opts.improvisation !== undefined ? { improvisation: opts.improvisation } : {}),
       });

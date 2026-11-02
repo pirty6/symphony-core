@@ -1,6 +1,7 @@
 import { useState, type DragEvent } from 'react'
 import { TERMINAL, type LibraryItem, type LiveRun, type SavedSummary } from '../lib/api'
-import type { PaletteKind } from '../lib/model'
+import type { FeatureRow, PaletteKind } from '../lib/model'
+import { Collapsible } from './Collapsible'
 import { PromptBox } from './PromptBox'
 
 const PALETTE: { kind: PaletteKind; icon: string; label: string; hint: string }[] = [
@@ -35,6 +36,9 @@ interface Props {
   /** Delete one saved run; resolves once it is gone. */
   onDeleteSaved?: (file: string) => Promise<void>
   onAsk: (request: string) => void
+  /** The switches the open pattern has (or, for the maestro, every pattern it may compose). */
+  features?: readonly FeatureRow[]
+  onFeature?: (row: FeatureRow, value: string) => void
 }
 
 export function Library(p: Props) {
@@ -67,16 +71,18 @@ export function Library(p: Props) {
         </button>
       </section>
 
-      <section>
-        <h2>
-          Patterns
-          {p.onExtras && (
+      <Collapsible
+        id="patterns"
+        title="Patterns"
+        extra={
+          p.onExtras && (
             <label className="extras-toggle" title="Show optional patterns (src/patterns/extras), e.g. metaphor">
               <input type="checkbox" checked={p.extras ?? false} onChange={(e) => p.onExtras!(e.target.checked)} aria-label="extra patterns" />
               extras
             </label>
-          )}
-        </h2>
+          )
+        }
+      >
         {p.library.filter((item) => item.name !== 'maestro').map((item) => (
           <button
             type="button"
@@ -93,11 +99,20 @@ export function Library(p: Props) {
         <button type="button" className="lib-new" onClick={p.onNew}>
           + Blank pattern
         </button>
-      </section>
+      </Collapsible>
+
+      {p.features && p.onFeature && (
+        <Collapsible id="features" title="Features">
+          {p.features.length === 0 ? (
+            <p className="muted small">This pattern has no switches.</p>
+          ) : (
+            p.features.map((row) => <FeatureSwitch key={row.feature.field} row={row} onChange={p.onFeature!} />)
+          )}
+        </Collapsible>
+      )}
 
       {p.editable && (
-        <section>
-          <h2>Add node (drag)</h2>
+        <Collapsible id="palette" title="Add node (drag)">
           <div className="palette">
             {PALETTE.map((item) => (
               <div
@@ -113,7 +128,7 @@ export function Library(p: Props) {
               </div>
             ))}
           </div>
-        </section>
+        </Collapsible>
       )}
 
       {running.length > 0 && (
@@ -192,5 +207,40 @@ export function Library(p: Props) {
         )}
       </section>
     </aside>
+  )
+}
+
+/** One switch: a checkbox for on/off, a select for named choices. Kept for every run until changed. */
+function FeatureSwitch({ row, onChange }: { row: FeatureRow; onChange: (row: FeatureRow, value: string) => void }) {
+  const { feature: f, value } = row
+  const changed = value !== row.default
+  const title = `${f.description}\n\nPatterns: ${row.patterns.join(', ')}. Default: ${row.default}. Applies to the runs you start (and those the maestro composes), unless a run input says otherwise.`
+  return (
+    <div className={`feature${changed ? ' changed' : ''}`} title={title} data-testid={`feature-${f.field}`}>
+      {f.choices ? (
+        <label>
+          <span>{f.label}</span>
+          <select value={value} onChange={(e) => onChange(row, e.target.value)} aria-label={f.label}>
+            {f.choices.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <label>
+          <input
+            type="checkbox"
+            checked={value === 'true'}
+            onChange={(e) => onChange(row, e.target.checked ? 'true' : 'false')}
+            aria-label={f.label}
+          />
+          <span>{f.label}</span>
+        </label>
+      )}
+      {changed && <span className="tag">changed</span>}
+      <small>{f.description}</small>
+    </div>
   )
 }
