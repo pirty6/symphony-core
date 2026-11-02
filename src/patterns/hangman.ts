@@ -33,6 +33,8 @@ export const hangman: Pattern = {
       reads: [],
       writes: ['word'],
       retries: 2,
+      // Its "too short" loop to itself: a few tries, then the engine stops it.
+      maxVisits: 5,
     },
     {
       id: 'ask',

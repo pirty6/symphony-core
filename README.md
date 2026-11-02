@@ -183,7 +183,7 @@ state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= &&
 | Score is read-only | `compileScore` deep-freezes it; its id is a content hash (`verifyScore` detects edits). |
 | Every AI response is validated | `validateNodeResult`: verdict shape, typed `writes`, no undeclared keys. Invalid answers are re-asked with the errors (bounded `retries`), then the run fails. |
 | Never repeat `(moveType, targetSite, stateHash)` | The engine refuses a repeated move; `stateHash` covers run state plus a git workspace fingerprint. |
-| Every loop terminates | Per-node `maxVisits` and per-score `maxSteps`. |
+| Every loop terminates | Per-node `maxVisits` and per-score `maxSteps`. The validator (`src/core/loops.ts`) finds every cycle, self-loops included, and warns about any that no visit cap and no counter it increments against a `max*` field bounds (then only `maxSteps` would stop it). |
 | Assessors are read-only | Permission policy in `src/runtime/provider.ts`: reads and URLs allowed; shell only for allowlisted read-only commands (`git diff/log/show/blame`, `gh issue/pr/run/search view\|list`, `gh api` GETs, `grep`, `ls`, ...); loops and conditions (`for`/`while`/`if`) allowed when every command inside them is; MCP only for read-only tools; command substitutions (`$(…)`, backticks) only when every command inside them is read-only; `NAME=value` alone, or before `echo`/`printf`/`test`; writes refused, and output may only be redirected to `/dev/null` or another stream. |
 | Nothing is skipped | Acceptance checks reject answers that leave out items (files, sources, gaps); the engine, not the AI, owns the work queues. |
 | Stale or duplicate input is ignored | Every resolution must echo the open `pauseId`. |

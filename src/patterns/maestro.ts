@@ -488,6 +488,8 @@ ${SCORE_FORMAT}`,
       id: 'switch',
       kind: 'compute',
       label: 'Switch pattern',
+      // The critic reroutes once (rerouted); the engine holds it to that.
+      maxVisits: 1,
       assign: [
         { field: 'chosen', expr: 'recommended' },
         { field: 'template', expr: 'if(recommended == "new", {}, get(catalog, recommended))' },
