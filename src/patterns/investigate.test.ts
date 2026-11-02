@@ -495,6 +495,24 @@ describe('narrowed read (opt-in)', () => {
     expect(String(s.answer)).toContain('- Left unread by the narrowed read (opt-in): src/cli.ts');
   });
 
+  it('applies only where every file would be triaged: Locate narrows a bigger repository', () => {
+    // Above maxTriageFiles the queue is Locate's, with or without narrowRead.
+    const located = (narrowRead: boolean) =>
+      runWith(['workspace'], demo.approvals, {
+        context: { maxTriageFiles: 3, narrowRead, narrowBudget: 0 },
+      }).r;
+    const on = located(true);
+    expect(on.state.steps.map((x) => x.nodeId)).toContain('locate');
+    expect(triaged(on).toSorted()).toEqual(triaged(located(false)).toSorted());
+    expect(on.state.state.narrowedOut).toEqual([]);
+    expect(String(on.state.state.answer)).not.toContain('narrowed read');
+    // exhaustive triages every file, so narrowRead narrows it.
+    const all = runWith(['workspace'], demo.approvals, {
+      context: { maxTriageFiles: 3, exhaustive: true, narrowRead: true, narrowBudget: 0 },
+    }).r;
+    expect(all.state.state.narrowedOut).toEqual(['README.md', 'src/cli.ts']);
+  });
+
   it('off (the default): every file is triaged, and the coverage has no such line', () => {
     const { r } = runWith(['workspace']);
     expect(triaged(r)).toHaveLength(5);

@@ -66,7 +66,8 @@ const COVERAGE = [
   listed('excludedFiles', 'none'),
   '"\n- Not located, so not triaged: "',
   listed('unlocatedFiles', 'none'),
-  'if(narrowRead, "\n- Left unread by the narrowed read (opt-in): " + ' +
+  // Only where it narrowed something: above maxTriageFiles, Locate decides (unlocatedFiles).
+  'if(narrowRead && len(narrowedOut) > 0, "\n- Left unread by the narrowed read (opt-in): " + ' +
     listed('narrowedOut', 'none') +
     ', "")',
   '"\n- Pages read: "',
@@ -319,7 +320,7 @@ export const investigate: Pattern = {
         name: 'narrowRead',
         type: 'boolean',
         description:
-          'Opt-in: triage only the files the search matched plus narrowBudget more; every other file goes unread (zero coverage), each one listed',
+          'Opt-in, where every file would be triaged (at most maxTriageFiles files, or exhaustive): triage only the files the search matched plus narrowBudget more; every other file goes unread (zero coverage), each one listed. A larger repository is already narrowed by Locate (lower maxTriageFiles to narrow it further)',
       },
       {
         name: 'narrowBudget',
