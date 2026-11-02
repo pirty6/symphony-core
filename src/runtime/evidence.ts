@@ -41,6 +41,15 @@ const OTHER_SOURCE = new RegExp(
 );
 /** A quote needs at least this many characters to prove anything. */
 const MIN_QUOTE = 8;
+/**
+ * …and at least this many words or identifiers: one word ("symphony") is found near almost
+ * any line, so it proves nothing. Counted as tokens, not spaces: a code line like
+ * `checkFindings('checkResearch'),` has no space but two identifiers.
+ */
+export const MIN_QUOTE_TOKENS = 2;
+const TOKEN = /[A-Za-z_$][\w$]*|\d+(?:\.\d+)?/g;
+/** Words and identifiers in a quote. */
+export const quoteTokens = (q: string): number => q.match(TOKEN)?.length ?? 0;
 /** A cited range wider than this proves nothing about where the fact is. */
 const MAX_SPAN = 25;
 /** How far from the cited line a quote may be (models are often off by a few lines). */
@@ -72,7 +81,9 @@ function quotesOf(text: string): string[] {
   const first = text.indexOf('`');
   const last = text.lastIndexOf('`');
   if (first >= 0 && last > first) spans.push(text.slice(first + 1, last));
-  return [...new Set(spans.map(plain))].filter((q) => q.length >= MIN_QUOTE && !PATH_LIKE.test(q));
+  return [...new Set(spans.map(plain))].filter(
+    (q) => q.length >= MIN_QUOTE && quoteTokens(q) >= MIN_QUOTE_TOKENS && !PATH_LIKE.test(q),
+  );
 }
 
 export async function checkCitations(
@@ -145,7 +156,7 @@ export async function checkCitations(
     if (quotes.length === 0) {
       invalid.push({
         finding,
-        reason: `no quote: add a short verbatim quote from ${first} in backticks`,
+        reason: `no quote: add a short verbatim quote from ${first} in backticks, at least ${MIN_QUOTE_TOKENS} words or identifiers (one word is found almost anywhere)`,
       });
       continue;
     }

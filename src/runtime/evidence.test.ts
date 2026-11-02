@@ -54,8 +54,8 @@ describe('checkCitations', () => {
 
   it('requires a quote for a file citation', async () => {
     const r = await checkCitations(ws, ['src/config.js:3 — reads PORT']);
-    expect(r.invalid[0]?.reason).toBe(
-      'no quote: add a short verbatim quote from src/config.js:3 in backticks',
+    expect(r.invalid[0]?.reason).toMatch(
+      /^no quote: add a short verbatim quote from src\/config\.js:3 in backticks/,
     );
   });
 
@@ -104,6 +104,29 @@ describe('checkCitations', () => {
       'src/config.js line 3 — `port: Number(process.env.PORT ?? 8080)`',
     ]);
     expect(ok.invalid).toEqual([]);
+  });
+
+  it('a one-word quote proves nothing; two identifiers do, even without a space or across lines', async () => {
+    writeFileSync(
+      join(ws, 'src', 'reads.ts'),
+      ['const node = {', '  reads: [', "    'question',", "    'findings',", '  ],', '};'].join(
+        '\n',
+      ),
+    );
+    const r = await checkCitations(ws, [
+      'src/reads.ts:4 — the answer reads the full findings `findings`',
+      "src/reads.ts:4 — the answer reads the full findings `'findings',`",
+      "src/reads.ts:3-4 — the answer reads the question and the findings `'question', 'findings',`",
+      'src/config.js:3 — the port comes from the env `Number(process.env.PORT`',
+    ]);
+    expect(r.valid).toEqual([
+      "src/reads.ts:3-4 — the answer reads the question and the findings `'question', 'findings',`",
+      'src/config.js:3 — the port comes from the env `Number(process.env.PORT`',
+    ]);
+    expect(r.invalid.map((i) => i.reason)).toEqual([
+      expect.stringMatching(/^no quote: .*at least 2 words or identifiers/),
+      expect.stringMatching(/^no quote: /),
+    ]);
   });
 
   it('rejects quotes too short to prove anything, ranges as wide as the file, and claims that cite nothing', async () => {
