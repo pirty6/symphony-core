@@ -1525,7 +1525,7 @@ export const investigate: Pattern = {
           objections:
             visit === 0
               ? [
-                  'S2: The answer says a rejected answer keeps the same move key, but no finding cites it: check moveKeyOf in src/core/engine.ts',
+                  'S2: "a rejected answer keeps the same move key" has no finding behind it: check moveKeyOf in src/core/engine.ts',
                 ]
               : [],
         },

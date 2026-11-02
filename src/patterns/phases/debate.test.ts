@@ -84,7 +84,7 @@ describe('debate phases in investigate', () => {
         ...agents,
         challenge: (s, v) => ({
           ...agents.challenge!(s, v),
-          updates: { objections: [`S1: objection ${v}`] },
+          updates: { objections: [`S1: F1 objection ${v}`] },
         }),
       },
     };
@@ -111,7 +111,7 @@ describe('debate phases in investigate', () => {
         ...agents,
         challenge: (s, v) => ({
           ...agents.challenge!(s, v),
-          updates: { objections: [`S1: objection ${v}`, `S0: nit ${v}`] },
+          updates: { objections: [`S1: F1 objection ${v}`, `S0: F1 nit ${v}`] },
         }),
         triageObjections: (s, v) => {
           const objections = s.objections as string[];
@@ -133,7 +133,7 @@ describe('debate phases in investigate', () => {
     expect(real.r.state.outcome).toBe('partial');
     // Only the REAL one is open; the nit is not.
     expect(real.state.unresolvedObjections).toEqual([
-      `S1: objection ${real.state.maxDebateRounds}`,
+      `S1: F1 objection ${real.state.maxDebateRounds}`,
     ]);
     const theoretical = play(3, objecting(false));
     expect(theoretical.r.state.outcome).toBe('success');
@@ -190,7 +190,9 @@ describe('debate phases in investigate', () => {
         ...agents,
         challenge: (s, v) => ({
           ...agents.challenge!(s, v),
-          updates: { objections: ['S1: a', 'S1: b', 'S1: c', 'S1: d', 'S1: e', 'S1: f'] },
+          updates: {
+            objections: ['S1: F1 a', 'S1: F1 b', 'S1: F1 c', 'S1: F1 d', 'S1: F1 e', 'S1: F1 f'],
+          },
         }),
       },
     };
@@ -309,7 +311,11 @@ describe('the debate remembers its earlier rounds', () => {
           calls += 1;
           // Round 2 first repeats round 1 verbatim; the correction raises nothing.
           const objections =
-            calls === 1 ? ['S1: x was never read'] : calls === 2 ? ['S1: x was never read'] : [];
+            calls === 1
+              ? ['S1: x was never read (F1)']
+              : calls === 2
+                ? ['S1: x was never read (F1)']
+                : [];
           return { ...agents.challenge!(s, v), updates: { objections } };
         },
       },
@@ -317,9 +323,9 @@ describe('the debate remembers its earlier rounds', () => {
     const { r } = play(3, script);
     expect(r.state.outcome).toBe('success');
     expect(inputs[0]!.pastObjections).toEqual([]);
-    expect(inputs[1]!.pastObjections).toEqual(['S1: x was never read']);
+    expect(inputs[1]!.pastObjections).toEqual(['S1: x was never read (F1)']);
     expect(String(inputs[1]!.objectionTriage)).toMatch(/REAL/);
-    expect(inputs[1]!.openObjections).toEqual(['S1: x was never read']);
+    expect(inputs[1]!.openObjections).toEqual(['S1: x was never read (F1)']);
     expect(rejections(r, 'challenge').join()).toMatch(/word for word/);
   });
 
@@ -351,6 +357,45 @@ describe('the debate remembers its earlier rounds', () => {
     const errors = rejections(r, 'triageObjections').join('\n');
     expect(errors).toMatch(/name what the reason rests on/);
     expect(errors).toMatch(/Cite only F-ids that are in findingsBrief/);
+  });
+});
+
+describe('the skeptic', () => {
+  it('works with read-only tools on another model family, and names what each objection attacks', () => {
+    let calls = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        challenge: (s, v) => {
+          calls += 1;
+          const objections =
+            calls === 1
+              ? ['S2: the answer is vague about retries']
+              : calls === 2
+                ? [
+                    'S2: "rejected answers keep their move key" is not backed',
+                    'S1: F1 says nothing about schema',
+                  ]
+                : [];
+          return { ...agents.challenge!(s, v), updates: { objections } };
+        },
+      },
+    };
+    const { r } = play(2, script);
+    const pause = r.state.events.flatMap((e) =>
+      e.type === 'paused' && e.pause.kind === 'agent' && e.pause.nodeId === 'challenge'
+        ? [e.pause]
+        : [],
+    )[0]!;
+    expect(pause.isolated).toBe(false);
+    expect(pause.role).toBe('assessor');
+    expect(pause.otherModel).toBe(true);
+    expect(rejections(r, 'challenge').join()).toMatch(/Name what each objection attacks/);
+    expect(r.state.state.pastObjections).toEqual([
+      'S2: "rejected answers keep their move key" is not backed',
+      'S1: F1 says nothing about schema',
+    ]);
   });
 });
 

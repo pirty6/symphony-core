@@ -189,6 +189,9 @@ export interface ChallengeConfig {
 /** A triage reason that names its ground: an F-id or the S<n> it would change (no backslashes). */
 const TRIAGE_REASON = '(REAL|THEORETICAL).*[^A-Za-z0-9][SF][0-9]+';
 
+/** What an objection attacks: a finding id, or a claim of the answer in quotes (no backslashes). */
+const TARGET = '(^|[^A-Za-z0-9])F[0-9]+|"[^"]{8,}"|“[^”]{8,}”';
+
 /** Most objections one skeptic round may raise: the debate converges instead of growing. */
 export const MAX_OBJECTIONS = 5;
 
@@ -257,9 +260,11 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         id: 'challenge',
         kind: 'agent',
         role: 'assessor',
-        isolated: true,
+        // Read-only tools: critique checked against the code is worth more than critique from
+        // the text alone. Another model family, so it does not share the author's blind spots.
+        otherModel: true,
         label: 'Skeptic',
-        directive: `You are the SKEPTIC. Attack \`${draft}\` as the answer to \`${subject}\`, using only \`${evidence}\` and \`hypotheses\`. You are not a contrarian: each \`objections\` entry must be CONCRETE and checkable — a claim not backed by a cited item of \`${evidence}\`, a hypothesis dismissed without evidence against it, an alternative explanation the evidence also fits, or a path nobody followed (a caller, a config, a version, an environment). Say what research would settle it. An empty list is fine and better than invented concerns; no style comments. Give at most ${MAX_OBJECTIONS}, the ones most likely to change the answer first, and merge objections one piece of research would settle together. \`pastObjections\` were raised in earlier rounds and researched (\`openObjections\` are the ones research was sent to settle, \`objectionTriage\` how the last round's were judged): check whether the evidence now settles them, and raise one again only with evidence it did not have then (name the new F-ids).${cfg.about ? ` Start each one with the entry of \`${cfg.about}\` it bears on, by position: "S1: …" for the first (S0 for ${subject} as a whole).` : ''}`,
+        directive: `You are the SKEPTIC. Attack \`${draft}\` as the answer to \`${subject}\`, from \`${evidence}\` and \`hypotheses\`. You may check a claim in the workspace with read-only tools (open a cited file, follow a caller): an objection that what you found refutes the answer is the strongest kind. You are not a contrarian: each \`objections\` entry must be CONCRETE and checkable, and name what it attacks — the finding by its id (F12) or the answer's claim in double quotes ("…") — a claim not backed by a cited item of \`${evidence}\`, a hypothesis dismissed without evidence against it, an alternative explanation the evidence also fits, or a path nobody followed (a caller, a config, a version, an environment). Say what research would settle it. An empty list is fine and better than invented concerns; no style comments. Give at most ${MAX_OBJECTIONS}, the ones most likely to change the answer first, and merge objections one piece of research would settle together. \`pastObjections\` were raised in earlier rounds and researched (\`openObjections\` are the ones research was sent to settle, \`objectionTriage\` how the last round's were judged): check whether the evidence now settles them, and raise one again only with evidence it did not have then (name the new F-ids).${cfg.about ? ` Start each one with the entry of \`${cfg.about}\` it bears on, by position: "S1: …" for the first (S0 for ${subject} as a whole).` : ''}`,
         reads: [
           subject,
           draft,
@@ -279,6 +284,12 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
             expr: 'len(without(objections, pastObjections)) == len(objections)',
             message:
               'Do not repeat an objection of pastObjections word for word: raise it again only with the new evidence that reopens it.',
+          },
+          {
+            // Single-quoted: the pattern itself holds double quotes.
+            expr: `len(unmatched(objections, '${TARGET}')) == 0`,
+            message:
+              'Name what each objection attacks: the finding by its id (F12) or the claim of the answer in double quotes ("…", at least 8 characters).',
           },
           {
             expr: `len(objections) <= ${MAX_OBJECTIONS}`,

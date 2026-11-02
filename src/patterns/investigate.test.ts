@@ -367,7 +367,7 @@ describe('investigate always ends: research rounds are bounded', () => {
           verdict: v,
         }),
         challenge: (_s, visit) => ({
-          updates: { objections: [`S1: src/x.ts was never read (round ${visit})`] },
+          updates: { objections: [`S1: src/x.ts was never read (F1, round ${visit})`] },
           verdict: v,
         }),
       },
@@ -390,7 +390,7 @@ describe('investigate always ends: research rounds are bounded', () => {
     expect(s.debateRounds).toBe(s.maxDebateRounds);
     // Out of rounds, not out of objections: they are reported, not dropped.
     expect(s.unresolvedObjections).toEqual([
-      `S1: src/x.ts was never read (round ${s.maxDebateRounds})`,
+      `S1: src/x.ts was never read (F1, round ${s.maxDebateRounds})`,
     ]);
     const normal = runScripted(
       compileScore(investigate, { goal: 'g', context: demo.context! }),
