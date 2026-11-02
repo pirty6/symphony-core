@@ -626,7 +626,47 @@ describe('investigate keeps a tally per hypothesis', () => {
     const [, f, a] = /^H1: (\d+) for, (\d+) against/.exec(status[0]!)!;
     expect(Number(f) + Number(a)).toBe(tagged);
     const deep = r.state.steps.find((x) => x.nodeId === 'deepRead');
-    expect(deep?.input).toHaveProperty('hypothesisStatus');
+    // The tally as it stood when the deep read began, one line per hypothesis.
+    expect(deep?.input?.leadStatus).toHaveLength((s.hypotheses as string[]).length);
+    expect(deep?.input?.leadHypotheses).toEqual(s.hypotheses);
+  });
+
+  it('readerHypotheses off (an ablation): readers get none and may not tag; the answer still rules on each', () => {
+    let tagged = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        deepRead: (s, v) => {
+          const good = demo.agents!.deepRead!(s, v);
+          // The first answer tags anyway: it is sent back.
+          if (tagged++ > 0) return good;
+          const findings = (good.updates.newFindings as string[]).map((f) => `${f} [H1 for]`);
+          return { ...good, updates: { ...good.updates, newFindings: findings } };
+        },
+      },
+    };
+    const r = runScripted(
+      compileScore(investigate, {
+        goal: 'g',
+        context: { ...demo.context!, readerHypotheses: false },
+      }),
+      script,
+    );
+    const s = r.state.state;
+    for (const node of ['triage', 'deepRead', 'sweep', 'chase']) {
+      const step = r.state.steps.find((x) => x.nodeId === node);
+      if (!step) continue;
+      expect(step.input?.leadHypotheses, node).toEqual([]);
+      expect(step.input?.leadStatus, node).toEqual([]);
+      expect(step.input, node).not.toHaveProperty('hypotheses');
+    }
+    const rejected = r.state.events.flatMap((e) =>
+      e.type === 'response-rejected' && e.nodeId === 'deepRead' ? e.errors : [],
+    );
+    expect(rejected.join()).toMatch(/do not tag findings/);
+    expect(r.state.outcome).toBe('success');
+    expect((s.rulings as string[]).length).toBe((s.hypotheses as string[]).length);
   });
 });
 
