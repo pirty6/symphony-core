@@ -77,6 +77,20 @@ describe('run store', () => {
     for (const pause of deep) expect(pause.parallel).toBe(6);
   });
 
+  it('agentsCap caps what the plan chose (the 6 vs 4 trial)', () => {
+    const score = compileScore(investigate, {
+      goal: 'g',
+      context: { ...investigate.demo!.context!, deepBatchSize: 1, agentsCap: 4 },
+      generatedAt: 't',
+    });
+    const played = runScripted(score, investigate.demo, { at: '2026-01-01T00:00:00Z' }).state;
+    const parallel = played.events.flatMap((e) =>
+      e.type === 'paused' && e.pause.kind === 'agent' && e.pause.parts ? [e.pause.parallel] : [],
+    );
+    expect(parallel.length).toBeGreaterThan(0);
+    expect(new Set(parallel)).toEqual(new Set([4]));
+  });
+
   it('saves, lists and verifies runs', async () => {
     const dir = join(root, 'runs');
     const score = compileScore(fix, { goal: 'g', context: fix.demo!.context!, generatedAt: 't' });

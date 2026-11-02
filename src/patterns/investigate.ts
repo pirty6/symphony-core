@@ -392,6 +392,12 @@ export const investigate: Pattern = {
         initial: MAX_AGENTS,
         description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
       },
+      {
+        name: 'agentsCap',
+        type: 'number',
+        initial: MAX_AGENTS,
+        description: `At most this many parallel sub-agents, whatever the plan chose (a trial: 4 vs ${MAX_AGENTS})`,
+      },
       // Files per sub-agent: read whole in its prompt, so fewer than when it paged through them.
       { name: 'batchSize', type: 'number', initial: 10 },
       {
@@ -861,6 +867,8 @@ export const investigate: Pattern = {
           field: 'pendingSources',
           expr: 'without(unique(useSources), ["workspace", "web", "experiment"])',
         },
+        // The plan chooses the sub-agents; agentsCap (a trial setting) caps that choice.
+        { field: 'agents', expr: 'if(agents > agentsCap, agentsCap, agents)' },
         // Each wave gives every sub-agent three parts, one after the other: fewer pauses between waves.
         { field: 'batchWave', expr: 'batchSize * agents * 3' },
         { field: 'deepWave', expr: 'deepBatchSize * agents * 3' },
