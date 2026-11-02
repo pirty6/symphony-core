@@ -66,6 +66,9 @@ const COVERAGE = [
   listed('excludedFiles', 'none'),
   '"\n- Not located, so not triaged: "',
   listed('unlocatedFiles', 'none'),
+  'if(narrowRead, "\n- Left unread by the narrowed read (opt-in): " + ' +
+    listed('narrowedOut', 'none') +
+    ', "")',
   '"\n- Pages read: "',
   listed('pages', 'none'),
   '"\n- Experiments run: "',
@@ -312,6 +315,23 @@ export const investigate: Pattern = {
       { name: 'skipSources', type: 'string[]', description: 'Sources not used' },
       { name: 'skipReasons', type: 'string[]', description: 'Why each skipped source was skipped' },
       { name: 'repoFiles', type: 'string[]', description: 'Every file in the workspace' },
+      {
+        name: 'narrowRead',
+        type: 'boolean',
+        description:
+          'Opt-in: triage only the files the search matched plus narrowBudget more; every other file goes unread (zero coverage), each one listed',
+      },
+      {
+        name: 'narrowBudget',
+        type: 'number',
+        initial: 20,
+        description: 'With narrowRead: files beyond the matched ones, in ranked order',
+      },
+      {
+        name: 'narrowedOut',
+        type: 'string[]',
+        description: 'Files the narrowed read left unread, each one listed',
+      },
       {
         name: 'unlocatedFiles',
         type: 'string[]',
@@ -901,6 +921,17 @@ export const investigate: Pattern = {
           // The ranked order only when it is the same files: an order never drops one.
           expr: 'if(len(rankedFiles) == len(repoFiles) && subset(repoFiles, rankedFiles), rankedFiles, repoFiles)',
         },
+        // narrowRead (opt-in): every file the search matched (the floor), then narrowBudget more
+        // in ranked order. The rest are never read, and each is named in the coverage.
+        {
+          field: 'narrowedOut',
+          expr: 'if(narrowRead, drop(without(pendingFiles, matchedFiles), narrowBudget), [])',
+        },
+        { field: 'pendingFiles', expr: 'without(pendingFiles, narrowedOut)' },
+        {
+          field: 'excludedFiles',
+          expr: 'if(len(narrowedOut) > 0, append(excludedFiles, text(len(narrowedOut)) + " files were left unread by the narrowed read (opt-in: not matched by the search, and past narrowBudget): see narrowedOut"), excludedFiles)',
+        },
       ],
     },
     {
@@ -1428,6 +1459,8 @@ export const investigate: Pattern = {
         { field: 'expandNew', expr: 'take(without(gapMatched, relevantFiles), expandWave)' },
         { field: 'expandRounds', expr: 'expandRounds + 1' },
         { field: 'expandedFiles', expr: 'expandedFiles + expandNew' },
+        // A file the narrowed read left out that a gap brings in is read after all.
+        { field: 'narrowedOut', expr: 'without(narrowedOut, expandNew)' },
         { field: 'relevantFiles', expr: 'relevantFiles + expandNew' },
         { field: 'pendingDeep', expr: 'pendingDeep + expandNew' },
         { field: 'expanding', expr: 'len(expandNew) > 0' },

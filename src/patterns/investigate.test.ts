@@ -473,6 +473,47 @@ describe('gap expansion: the gaps send matching unread files to the deep read', 
   });
 });
 
+describe('narrowed read (opt-in)', () => {
+  it('triages every matched file plus narrowBudget more; each file left unread is named', () => {
+    const { r } = runWith(['workspace'], demo.approvals, {
+      context: { narrowRead: true, narrowBudget: 1 },
+    });
+    const s = r.state.state;
+    // The demo search matches engine, schema and validate; README is next in rank, then cli.ts.
+    expect(triaged(r).toSorted()).toEqual([
+      'README.md',
+      'src/core/engine.ts',
+      'src/core/schema.ts',
+      'src/core/validate.ts',
+    ]);
+    expect(s.narrowedOut).toEqual(['src/cli.ts']);
+    expect(s.excludedFiles).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^1 files were left unread by the narrowed read/),
+      ]),
+    );
+    expect(String(s.answer)).toContain('- Left unread by the narrowed read (opt-in): src/cli.ts');
+  });
+
+  it('off (the default): every file is triaged, and the coverage has no such line', () => {
+    const { r } = runWith(['workspace']);
+    expect(triaged(r)).toHaveLength(5);
+    expect(r.state.state.narrowedOut).toEqual([]);
+    expect(String(r.state.state.answer)).not.toContain('narrowed read');
+  });
+
+  it('a gap that brings a narrowed-out file in reads it, and it is no longer listed as unread', () => {
+    const r = runScripted(
+      compileScore(investigate, {
+        context: { ...demo.context!, narrowRead: true, narrowBudget: 1 },
+      }),
+      demo,
+    );
+    expect(r.state.state.expandedFiles).toEqual(['src/cli.ts']);
+    expect(r.state.state.narrowedOut).toEqual([]);
+  });
+});
+
 describe('gap-aimed research (a pilot, off by default)', () => {
   const chased = (context: Record<string, unknown>) => {
     const r = runScripted(

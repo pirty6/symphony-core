@@ -118,6 +118,12 @@ export const FEATURES: readonly Feature[] = [
     ],
   },
   {
+    field: 'narrowRead',
+    label: 'Narrowed read (opt-in)',
+    description:
+      'Triage only the files the search matched plus 20 more in ranked order. Every other file is never read (zero coverage) and is listed in the coverage. Only when you accept that.',
+  },
+  {
     field: 'gapAimed',
     label: 'Gap-aimed research (pilot)',
     description:
