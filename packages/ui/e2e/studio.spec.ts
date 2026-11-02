@@ -447,3 +447,49 @@ test('library sections fold away, and a feature switch reaches the run it starts
   await page.getByTestId('feature-supportJudge').getByLabel('Support judge').selectOption('off')
   await expect(page.getByTestId('feature-supportJudge')).not.toContainText('changed')
 })
+
+test('the opening screen asks the maestro; inside a pattern or a run the sidebar does', async ({ page }) => {
+  await page.goto('/')
+  const home = page.getByTestId('home')
+  await expect(home.getByRole('heading', { name: 'What should the orchestra play?' })).toBeVisible()
+  // One maestro prompt on screen: the sidebar does not repeat it here.
+  await expect(page.locator('.library').getByText('🎼 Ask the maestro')).toHaveCount(0)
+  await expect(page.locator('.tb-title')).toContainText('Symphony')
+  await expect(page.getByRole('button', { name: '▶ Run' })).toHaveCount(0)
+  // Open a pattern from the screen: the canvas, and the maestro box in the sidebar.
+  await home.getByRole('button', { name: 'fix', exact: true }).click()
+  await expect(page.locator('.tb-title')).toContainText('fix')
+  await expect(home).toHaveCount(0)
+  await expect(page.locator('.library').getByText('🎼 Ask the maestro')).toBeVisible()
+  // And back.
+  await page.getByTestId('home-link').click()
+  await expect(page.getByTestId('home')).toBeVisible()
+  // Asking from the opening screen starts the maestro and follows it.
+  await page.getByText('auto-approve').click()
+  await page.getByTestId('home').getByLabel('maestro request').fill('Fix the flaky login test')
+  await page.getByTestId('home').getByRole('button', { name: '🎼 Compose & perform' }).click()
+  await expect(page.getByTestId('home')).toHaveCount(0)
+  await expect(page.locator('.tb-title')).toContainText(/maestro|fix/)
+})
+
+test('every feature switch fits inside its card, even with larger text', async ({ page }) => {
+  await open(page, 'investigate')
+  // Larger text than the default (browser zoom, OS font settings): where a select crowded out.
+  await page.addStyleTag({ content: '.library { font-size: 16px } .library select { font-size: 15px }' })
+  const cards = page.locator('[data-testid^="feature-"]')
+  await expect(cards.first()).toBeVisible()
+  for (let i = 0; i < (await cards.count()); i++) {
+    const card = (await cards.nth(i).boundingBox())!
+    const control = (await cards.nth(i).locator('select, input').first().boundingBox())!
+    expect(control.x).toBeGreaterThanOrEqual(card.x)
+    expect(control.x + control.width).toBeLessThanOrEqual(card.x + card.width + 0.5)
+    // The title is not squeezed under the control: its text fits its box, and the boxes do not meet.
+    const title = cards.nth(i).locator('label > span').first()
+    const spills = await title.evaluate((el) => el.scrollWidth > el.clientWidth + 1)
+    expect(spills, await title.innerText()).toBe(false)
+    const t = (await title.boundingBox())!
+    const apart =
+      t.x + t.width <= control.x + 0.5 || control.x + control.width <= t.x + 0.5 || t.y + t.height <= control.y + 0.5 || control.y + control.height <= t.y + 0.5
+    expect(apart, await title.innerText()).toBe(true)
+  }
+})

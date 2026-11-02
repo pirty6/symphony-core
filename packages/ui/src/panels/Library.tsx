@@ -39,6 +39,9 @@ interface Props {
   /** The switches the open pattern has (or, for the maestro, every pattern it may compose). */
   features?: readonly FeatureRow[]
   onFeature?: (row: FeatureRow, value: string) => void
+  /** On the opening screen, which has its own maestro prompt: this one is not shown. */
+  home?: boolean
+  onHome?: () => void
 }
 
 export function Library(p: Props) {
@@ -55,21 +58,35 @@ export function Library(p: Props) {
   }
   return (
     <aside className="library">
-      <section className="maestro-box">
-        <h2>🎼 Ask the maestro</h2>
-        <PromptBox
-          className="draft-input"
-          title="Ask the maestro"
-          placeholder="Describe what you want done, e.g. “find out why checkout got slower this week”. The maestro picks or drafts the score, debates it by complexity, then you approve and it plays."
-          value={request}
-          onChange={setRequest}
-          ariaLabel="maestro request"
-          rows={3}
-        />
-        <button type="button" className="primary" disabled={p.asking || !request.trim()} onClick={() => p.onAsk(request.trim())}>
-          {p.asking ? 'Composing…' : '🎼 Compose & perform'}
+      {p.onHome && (
+        <button
+          type="button"
+          className={`home-link${p.home ? ' active' : ''}`}
+          onClick={p.onHome}
+          disabled={p.home}
+          title="Back to the opening screen (a run keeps playing; it stays under Running now)"
+          data-testid="home-link"
+        >
+          ⌂ Home
         </button>
-      </section>
+      )}
+      {!p.home && (
+        <section className="maestro-box">
+          <h2>🎼 Ask the maestro</h2>
+          <PromptBox
+            className="draft-input"
+            title="Ask the maestro"
+            placeholder="Describe what you want done, e.g. “find out why checkout got slower this week”. The maestro picks or drafts the score, debates it by complexity, then you approve and it plays."
+            value={request}
+            onChange={setRequest}
+            ariaLabel="maestro request"
+            rows={3}
+          />
+          <button type="button" className="primary" disabled={p.asking || !request.trim()} onClick={() => p.onAsk(request.trim())}>
+            {p.asking ? 'Composing…' : '🎼 Compose & perform'}
+          </button>
+        </section>
+      )}
 
       <Collapsible
         id="patterns"
@@ -101,7 +118,7 @@ export function Library(p: Props) {
         </button>
       </Collapsible>
 
-      {p.features && p.onFeature && (
+      {!p.home && p.features && p.onFeature && (
         <Collapsible id="features" title="Features">
           {p.features.length === 0 ? (
             <p className="muted small">This pattern has no switches.</p>
@@ -111,7 +128,7 @@ export function Library(p: Props) {
         </Collapsible>
       )}
 
-      {p.editable && (
+      {!p.home && p.editable && (
         <Collapsible id="palette" title="Add node (drag)">
           <div className="palette">
             {PALETTE.map((item) => (
@@ -150,22 +167,26 @@ export function Library(p: Props) {
           ))}
         </section>
       )}
-      <section>
-        <h2>
-          Saved runs
-          <button type="button" className="link" onClick={p.onRefreshSaved} title="Refresh">
-            ↻
-          </button>
-          <button
-            type="button"
-            className="link"
-            onClick={p.onPrune}
-            data-testid="prune-runs"
-            title="Clean up: delete demo runs older than 7 days and compact runs older than 30 days (they still replay; the AI's raw text is dropped). Also runs by itself once a day."
-          >
-            🧹
-          </button>
-        </h2>
+      <Collapsible
+        id="saved"
+        title="Saved runs"
+        extra={
+          <span className="section-actions">
+            <button type="button" className="link" onClick={p.onRefreshSaved} title="Refresh">
+              ↻
+            </button>
+            <button
+              type="button"
+              className="link"
+              onClick={p.onPrune}
+              data-testid="prune-runs"
+              title="Clean up: delete demo runs older than 7 days and compact runs older than 30 days (they still replay; the AI's raw text is dropped). Also runs by itself once a day."
+            >
+              🧹
+            </button>
+          </span>
+        }
+      >
         {saved.length === 0 && (
           <small className="muted">{demoCount > 0 ? 'No runs with a real AI yet.' : 'Runs are saved to .symphony/runs'}</small>
         )}
@@ -205,7 +226,7 @@ export function Library(p: Props) {
             {showDemo ? 'Hide' : 'Show'} {demoCount} offline-demo run{demoCount === 1 ? '' : 's'}
           </button>
         )}
-      </section>
+      </Collapsible>
     </aside>
   )
 }
@@ -218,8 +239,12 @@ function FeatureSwitch({ row, onChange }: { row: FeatureRow; onChange: (row: Fea
   return (
     <div className={`feature${changed ? ' changed' : ''}`} title={title} data-testid={`feature-${f.field}`}>
       {f.choices ? (
-        <label>
-          <span>{f.label}</span>
+        // The choice on its own row, the card's full width: it never crowds the title.
+        <label className="feature-choice">
+          <span className="feature-title">
+            {f.label}
+            {changed && <span className="tag">changed</span>}
+          </span>
           <select value={value} onChange={(e) => onChange(row, e.target.value)} aria-label={f.label}>
             {f.choices.map((c) => (
               <option key={c.value} value={c.value}>
@@ -236,10 +261,12 @@ function FeatureSwitch({ row, onChange }: { row: FeatureRow; onChange: (row: Fea
             onChange={(e) => onChange(row, e.target.checked ? 'true' : 'false')}
             aria-label={f.label}
           />
-          <span>{f.label}</span>
+          <span className="feature-title">
+            {f.label}
+            {changed && <span className="tag">changed</span>}
+          </span>
         </label>
       )}
-      {changed && <span className="tag">changed</span>}
       <small>{f.description}</small>
     </div>
   )

@@ -26,6 +26,7 @@ import { DataEdge } from './canvas/DataEdge'
 import { FlowNode } from './canvas/FlowNode'
 import { FrameNode, PhaseNode } from './canvas/PhaseNode'
 import { SubAgentNode } from './canvas/SubAgentNode'
+import { Home } from './panels/Home'
 import { api, errorText, isNetworkError, isRunGone, RUN_GONE, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
 import { subAgentItems, subAgentNodes,
   chooseFeature,
@@ -160,6 +161,8 @@ export default function Studio() {
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('node')
   const [error, setError] = useState<string | null>(null)
+  /** The opening screen: no pattern open (the URL names none). */
+  const [home, setHome] = useState(() => !location.hash.slice(1))
   const unsubscribe = useRef<(() => void) | null>(null)
 
   const editable = view.mode === 'idle'
@@ -170,6 +173,8 @@ export default function Studio() {
   const showGraph = useCallback(
     (m: PatternMeta, graph: LibraryItem['graph']) => {
       const flow = toFlow(graph)
+      // A pattern or a run on screen: no longer the opening screen.
+      setHome(false)
       setMeta(m)
       setNodes(flow.nodes)
       setEdges(flow.edges)
@@ -230,8 +235,9 @@ export default function Studio() {
       (items) => {
         if (cancelled) return
         setLibrary(items)
-        const wanted = decodeURIComponent(location.hash.slice(1)) || 'hangman'
-        const first = items.find((i) => i.name === wanted) ?? items[0]
+        // No pattern in the URL: the opening screen, where you ask the maestro.
+        const wanted = decodeURIComponent(location.hash.slice(1))
+        const first = wanted ? (items.find((i) => i.name === wanted) ?? items[0]) : undefined
         if (first) loadPatternRef.current(first)
       },
       (e: Error) => !cancelled && setError(`Could not load patterns: ${errorText(e)}`),
@@ -697,7 +703,7 @@ export default function Studio() {
     ) : null
 
   return (
-    <div className="studio">
+    <div className={`studio${home ? ' at-home' : ''}`}>
       {reading && result && result.keys.length > 0 && (
         <ResultReader
           result={result}
@@ -707,7 +713,8 @@ export default function Studio() {
         />
       )}
       <Toolbar
-        title={meta.name}
+        title={home ? 'Symphony' : meta.name}
+        home={home}
         mode={view.mode}
         status={view.status}
         settings={settings}
@@ -741,6 +748,16 @@ export default function Studio() {
           setGoal('')
           setContext({})
           setView(IDLE_VIEW)
+          setHome(false)
+        }}
+        home={home}
+        onHome={() => {
+          // The run on screen keeps playing on the server; it stays under Running now.
+          unsubscribe.current?.()
+          setView(IDLE_VIEW)
+          setSelected(null)
+          setHome(true)
+          history.replaceState(null, '', location.pathname + location.search)
         }}
         onOpenSaved={(f) => void openSaved(f)}
         onDeleteSaved={deleteSaved}
@@ -771,6 +788,28 @@ export default function Studio() {
         features={featureRows(meta, library, features)}
         onFeature={(row, value) => setFeatures((was) => chooseFeature(was, row, value))}
       />
+      {home && (
+        <Home
+          library={library}
+          asking={view.mode === 'live' && ACTIVE.has(view.status) && meta.name === 'maestro'}
+          onAsk={(r) => void ask(r)}
+          onOpen={loadPattern}
+        >
+          {serverDown && (
+            <div className="card issue warning" role="status" data-testid="server-down">
+              ⚠ Can't reach the studio server (stopped, or restarting after a code change). Reconnecting…
+            </div>
+          )}
+          {error && (
+            <div className="card issue dismissable" role="alert">
+              <span>{error}</span>
+              <button type="button" className="link dismiss" onClick={() => setError(null)} aria-label="dismiss" title="Dismiss">
+                ✕
+              </button>
+            </div>
+          )}
+        </Home>
+      )}
       <main className="canvas" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
         <ReactFlow
           nodes={display.nodes}

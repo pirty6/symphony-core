@@ -344,6 +344,30 @@ describe('Library saved runs', () => {
     ])
   })
 
+  it('on the opening screen the maestro box is not repeated; a home link goes back there', () => {
+    const homes: number[] = []
+    const { rerender } = render(<Library {...props} saved={[]} home onHome={() => homes.push(1)} />)
+    expect(screen.queryByText('🎼 Ask the maestro')).toBeNull()
+    expect(screen.getByTestId('home-link')).toBeDisabled()
+    rerender(<Library {...props} saved={[]} home={false} onHome={() => homes.push(1)} />)
+    expect(screen.getByText('🎼 Ask the maestro')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('home-link'))
+    expect(homes).toEqual([1])
+  })
+
+  it('saved runs fold from their title; refresh stays at hand', () => {
+    localStorage.clear()
+    const refreshed: number[] = []
+    render(<Library {...props} saved={[run('real', false)]} onRefreshSaved={() => refreshed.push(1)} />)
+    fireEvent.click(screen.getByTitle('Refresh'))
+    // The refresh button does not fold the section.
+    expect(screen.getByText('real')).toBeInTheDocument()
+    expect(refreshed).toEqual([1])
+    fireEvent.click(screen.getByRole('button', { name: 'Saved runs' }))
+    expect(screen.queryByText('real')).toBeNull()
+    localStorage.clear()
+  })
+
   it('has no running section when nothing is playing', () => {
     render(<Library {...props} saved={[]} live={[{ id: 'c', pattern: 'review', goal: 'g', status: 'done' }]} />)
     expect(screen.queryByTestId('live-runs')).toBeNull()
