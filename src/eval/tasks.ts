@@ -189,6 +189,51 @@ function plantedFlaw(): EvalTask[] {
   ];
 }
 
+/**
+ * A real quote that invites a wrong claim: `MAX_TRIES = 3` is there, but the loop starts at 1
+ * and stops before the limit, so the request is tried twice. A finding "tried 3 times
+ * \`MAX_TRIES = 3\`" passes the citation check (the quote is real) and is still wrong: the
+ * support judge's own fixture, played with the judge off and on (enforce).
+ */
+function misreadQuote(): EvalTask[] {
+  const files = {
+    'package.json': PKG,
+    '.gitignore': IGNORE,
+    'src/send.js':
+      'export const MAX_TRIES = 3;\n\nexport async function send(request) {\n  let last;\n  for (let attempt = 1; attempt < MAX_TRIES; attempt++) {\n    try {\n      return await request();\n    } catch (e) {\n      last = e;\n    }\n  }\n  throw last;\n}\n',
+  };
+  const inputs = {
+    question: 'How many times in all does send() try a request that keeps failing?',
+  };
+  const check: EvalTask['check'] = async ({ outcome, state }) => {
+    const answer = String(state.answer ?? '');
+    const two = /\b(2|two|twice)\b/i.test(answer);
+    const three =
+      /\b(3|three)\s+(times|tries|attempts)\b/i.test(answer) &&
+      !/MAX_TRIES|limit|not|never|only/i.test(
+        answer.match(/[^.]*\b(3|three)\s+(times|tries|attempts)\b[^.]*/i)?.[0] ?? '',
+      );
+    return {
+      pass: succeeded(outcome).pass && two && !three,
+      notes: [
+        ...succeeded(outcome).notes,
+        two ? 'says twice' : 'does not say twice',
+        ...(three ? ['claims 3 tries from MAX_TRIES = 3'] : []),
+      ],
+    };
+  };
+  return [
+    { id: 'investigate-misread-quote', pattern: 'investigate', inputs, files, check },
+    {
+      id: 'investigate-misread-quote-judged',
+      pattern: 'investigate',
+      inputs: { ...inputs, supportJudge: 'enforce' },
+      files,
+      check,
+    },
+  ];
+}
+
 const SUM_RIGHT =
   '/** Sum of the numbers from 1 to n. */\nexport function sumTo(n) {\n  let total = 0;\n  for (let i = 1; i <= n; i++) total += i;\n  return total;\n}\n';
 const TEST_HEAD = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n";
@@ -500,6 +545,7 @@ export const EVAL_TASKS: readonly EvalTask[] = [
     },
   },
   ...plantedFlaw(),
+  ...misreadQuote(),
   {
     // Many files, several triage waves, the answer in one file deep in the list: does the
     // evidence survive growing context? Costly: name it with --task.

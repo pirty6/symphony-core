@@ -60,7 +60,12 @@ experiments, git history, GitHub, dependencies, MCP servers.
 8. **Challenge.** The debate above; REAL objections reopen research (within the run-wide
    research budget). `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
    keep word for word the sub-answers no objection named, so it opens no new front.
-9. **Settle.** Settled means no unresolved objection, no OPEN sub-answer or objection
+9. **Support judge** (`supportJudge`: off by default; `shadow`, `enforce`). Each cited
+   workspace finding's quote is shown, with its claim and nothing else, to another model
+   family, which rules SUPPORTED or UNSUPPORTED. Unsupported findings are never remembered;
+   in `enforce` they also make the answer partial. Web and other sources are said to be
+   uncheckable, never judged.
+10. **Settle.** Settled means no unresolved objection, no OPEN sub-answer or objection
    resolution, and enough confidence. A settled answer ends `success`, remembers the findings
    it cited and a lesson built from its checked sub-answers (only when it names a workspace
    file, so the lesson goes stale with the code). Anything else ends `partial`, with the
@@ -93,6 +98,7 @@ flowchart TD
   n_sourcePhase[["Search sources · 5 steps"]]
   n_gapPhase[["Close gaps · 8 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
+  n_judgePhase[["Support judge · 5 steps"]]
   n_start --> n_recall
   n_recall --> n_planPhase
   n_planPhase --> n_hypothesesPhase
@@ -110,7 +116,8 @@ flowchart TD
   n_listOpen --> n_challengePhase
   n_challengePhase --> n_attachParts
   n_challengePhase -.-> n_gapPhase
-  n_attachParts --> n_settled
+  n_attachParts --> n_judgePhase
+  n_judgePhase --> n_settled
   n_settled -->|"yes"| n_learnAnswer
   n_settled -->|"no"| n_noteDoubts
   n_learnAnswer --> n_rememberCited
@@ -129,6 +136,7 @@ flowchart TD
 | Search sources | History, GitHub, dependencies, MCP | Sources left? → Next source → Search source → Check citations → Record source |
 | Close gaps | Targeted research, then a human hint | Find gaps → Chase gaps? → Close gaps → Check citations → Record gap research → Good enough? → Ask for a hint → Use hint |
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
+| Support judge | Off by default: does each cited finding's quote back its claim? | Support judge? → What the judge can check → Any to judge? → Support judge → Record the rulings |
 
 <!-- /flow:investigate -->
 

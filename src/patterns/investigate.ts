@@ -336,6 +336,32 @@ export const investigate: Pattern = {
       },
       { name: 'triagePartialReasons', type: 'string[]', description: 'Why, by position' },
       {
+        name: 'supportJudge',
+        type: 'string',
+        initial: 'off',
+        description:
+          "Does each cited finding's quote support its claim? off; shadow (judged and reported, the outcome unchanged); enforce (unsupported ones make the answer partial). Off until calibrated.",
+      },
+      {
+        name: 'judgeItems',
+        type: 'string[]',
+        description:
+          'Cited findings the judge can check: workspace path:line ones, with their quotes',
+      },
+      {
+        name: 'supportRulings',
+        type: 'string[]',
+        description:
+          'One per judgeItems entry, in order: "F12: SUPPORTED — why" or "F12: UNSUPPORTED — why"',
+      },
+      { name: 'unsupportedIds', type: 'string[]', description: 'Cited findings ruled UNSUPPORTED' },
+      { name: 'judgeBatch', type: 'number', initial: 40, description: 'Findings per judge call' },
+      {
+        name: 'factsToKeep',
+        type: 'string[]',
+        description: 'Cited findings remembered for later runs: all but the ones ruled unsupported',
+      },
+      {
         name: 'readerHypotheses',
         type: 'boolean',
         initial: true,
@@ -497,6 +523,12 @@ export const investigate: Pattern = {
       ],
     },
     challenge.group,
+    {
+      id: 'judgePhase',
+      label: 'Support judge',
+      description: "Off by default: does each cited finding's quote back its claim?",
+      nodes: ['useJudge', 'takeJudgeItems', 'hasJudgeItems', 'judgeSupport', 'splitRulings'],
+    },
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
@@ -1359,9 +1391,83 @@ export const investigate: Pattern = {
           // Whatever the answer rests on, wherever it cites it: summary, parts, sub-answers, resolutions.
           expr: 'withIds(findings, refs(answer + " " + join(partAnswers + subAnswers + objectionResolutions, " ")))',
         },
+        { field: 'factsToKeep', expr: 'citedFindings' },
         {
           field: 'answer',
           expr: `if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer) + "\n\n" + ${COVERAGE}`,
+        },
+      ],
+    },
+    {
+      id: 'useJudge',
+      kind: 'condition',
+      label: 'Support judge?',
+      expression: 'supportJudge != "off" && len(citedFindings) > 0',
+    },
+    {
+      id: 'takeJudgeItems',
+      kind: 'compute',
+      label: 'What the judge can check',
+      // Workspace citations carry a checked quote; web and other sources do not (uncheckable).
+      assign: [
+        {
+          field: 'judgeItems',
+          expr: `pick(citedFindings, positions(citedFindings, "${FILE_CITE}"))`,
+        },
+      ],
+    },
+    {
+      id: 'hasJudgeItems',
+      kind: 'condition',
+      label: 'Any to judge?',
+      expression: 'len(judgeItems) > 0',
+    },
+    {
+      id: 'judgeSupport',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Support judge',
+      // Isolated and on another family: it sees each quote and its claim, never the question or
+      // the answer, so it judges support, not plausibility.
+      isolated: true,
+      otherModel: true,
+      directive:
+        'For EVERY entry of `judgeItems`, in order, write one `supportRulings` entry: "F<n>: SUPPORTED — <why>" if the quoted text (in backticks), read as it stands, states what the claim says, or "F<n>: UNSUPPORTED — <why>" if it does not: it only mentions the subject, says something else, needs a step it does not show, or the claim adds a number, name or condition the quote lacks. Judge each one on its own quote and claim only; be strict, a quote that is merely near the claim is UNSUPPORTED. Start each entry with the id of its finding and nothing before it.',
+      reads: ['judgeItems'],
+      writes: ['supportRulings'],
+      fanOut: { over: 'judgeItems', per: 'judgeBatch', agents: 'agents' },
+      retries: 2,
+      maxVisits: 1,
+      checks: [
+        {
+          // By the id each ruling starts with, in order: an id named inside a reason does not count.
+          expr: 'heads(supportRulings, "^F[0-9]+") == ids(judgeItems)',
+          message:
+            "Give exactly one supportRulings entry per entry of judgeItems, in the same order, each starting with that finding's id.",
+        },
+        {
+          expr: 'len(unmatched(supportRulings, "^F[0-9]+: (SUPPORTED|UNSUPPORTED)( |$)")) == 0',
+          message: 'Write each entry as "F<n>: SUPPORTED — why" or "F<n>: UNSUPPORTED — why".',
+        },
+      ],
+    },
+    {
+      id: 'splitRulings',
+      kind: 'compute',
+      label: 'Record the rulings',
+      assign: [
+        {
+          field: 'unsupportedIds',
+          expr: 'heads(without(supportRulings, unmatched(supportRulings, "^F[0-9]+: UNSUPPORTED")), "^F[0-9]+")',
+        },
+        // What later runs remember: never a finding whose quote does not back its claim.
+        {
+          field: 'factsToKeep',
+          expr: 'without(citedFindings, withIds(citedFindings, unsupportedIds))',
+        },
+        {
+          field: 'doubts',
+          expr: `doubts + if(len(unsupportedIds) > 0, ["The support judge found these cited findings unsupported by their own quotes" + if(supportJudge == "shadow", " (shadow mode: reported, the outcome unchanged)", "") + ": " + join(without(supportRulings, unmatched(supportRulings, "^F[0-9]+: UNSUPPORTED")), "; ")], []) + if(len(citedFindings) > len(judgeItems), [text(len(citedFindings) - len(judgeItems)) + " cited findings cite web pages or other sources: the support judge cannot check them"], [])`,
         },
       ],
     },
@@ -1371,7 +1477,7 @@ export const investigate: Pattern = {
       label: 'Settled?',
       // Open objections, open sub-questions or low confidence are said in the outcome, not only
       // in the text. Confidence is the assessor's (from before any debate), so it is not enough.
-      expression: `len(unresolvedObjections) == 0 && len(${OPEN_ENTRIES('subAnswers')}) == 0 && len(${OPEN_ENTRIES('objectionResolutions')}) == 0 && confidence >= 0.5`,
+      expression: `(supportJudge != "enforce" || len(unsupportedIds) == 0) && len(unresolvedObjections) == 0 && len(${OPEN_ENTRIES('subAnswers')}) == 0 && len(${OPEN_ENTRIES('objectionResolutions')}) == 0 && confidence >= 0.5`,
     },
     {
       id: 'noteDoubts',
@@ -1380,7 +1486,7 @@ export const investigate: Pattern = {
       assign: [
         {
           field: 'doubts',
-          expr: `if(len(unresolvedObjections) > 0, ["Objections were still open when the debate reached its cap (maxDebateRounds): see unresolvedObjections"], []) + if(len(${OPEN_ENTRIES('subAnswers')}) > 0, ["Sub-questions the findings do not answer: " + join(${OPEN_ENTRIES('subAnswers')}, "; ")], []) + if(len(${OPEN_ENTRIES('objectionResolutions')}) > 0, ["Objections the answer could not settle: " + join(${OPEN_ENTRIES('objectionResolutions')}, "; ")], []) + if(confidence < 0.5, ["Confidence that the findings answer the question stayed below 0.5"], [])`,
+          expr: `doubts + if(len(unresolvedObjections) > 0, ["Objections were still open when the debate reached its cap (maxDebateRounds): see unresolvedObjections"], []) + if(len(${OPEN_ENTRIES('subAnswers')}) > 0, ["Sub-questions the findings do not answer: " + join(${OPEN_ENTRIES('subAnswers')}, "; ")], []) + if(len(${OPEN_ENTRIES('objectionResolutions')}) > 0, ["Objections the answer could not settle: " + join(${OPEN_ENTRIES('objectionResolutions')}, "; ")], []) + if(confidence < 0.5, ["Confidence that the findings answer the question stayed below 0.5"], [])`,
         },
       ],
     },
@@ -1392,7 +1498,7 @@ export const investigate: Pattern = {
       requireFiles: true,
     }),
     // The facts later runs get are the ones this answer used, not everything read on the way.
-    rememberCitedNode('rememberCited', 'citedFindings'),
+    rememberCitedNode('rememberCited', 'factsToKeep'),
     { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
     { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
   ],
@@ -1506,7 +1612,14 @@ export const investigate: Pattern = {
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
-    { id: 'attachParts-settled', from: 'attachParts', to: 'settled' },
+    { id: 'attachParts-useJudge', from: 'attachParts', to: 'useJudge' },
+    { id: 'useJudge-take', from: 'useJudge', to: 'takeJudgeItems', branch: 'then' },
+    { id: 'useJudge-settled', from: 'useJudge', to: 'settled', branch: 'else' },
+    { id: 'take-hasItems', from: 'takeJudgeItems', to: 'hasJudgeItems' },
+    { id: 'hasItems-judge', from: 'hasJudgeItems', to: 'judgeSupport', branch: 'then' },
+    { id: 'hasItems-split', from: 'hasJudgeItems', to: 'splitRulings', branch: 'else' },
+    { id: 'judge-split', from: 'judgeSupport', to: 'splitRulings' },
+    { id: 'split-settled', from: 'splitRulings', to: 'settled' },
     { id: 'settled-learn', from: 'settled', to: 'learnAnswer', branch: 'then' },
     { id: 'settled-note', from: 'settled', to: 'noteDoubts', branch: 'else' },
     { id: 'learn-cited', from: 'learnAnswer', to: 'rememberCited' },
@@ -1731,6 +1844,14 @@ export const investigate: Pattern = {
           ],
         },
         verdict: v('hypotheses proposed'),
+      }),
+      judgeSupport: (s) => ({
+        updates: {
+          supportRulings: ((s.judgeItems as string[]) ?? []).map(
+            (f) => `${f.split(' ')[0]}: SUPPORTED — the quote states it`,
+          ),
+        },
+        verdict: v('judged'),
       }),
       challenge: (_s, visit) => ({
         updates: {

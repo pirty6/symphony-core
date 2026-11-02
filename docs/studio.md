@@ -67,12 +67,15 @@ No single layer catches everything; each one closes a different gap.
 | Permissions | Assessors are read-only: a command that writes is refused before it runs, and the refusal is recorded. Executors work in a worktree. | `src/runtime/provider.ts` |
 | Engine-run tools | "Tests pass" is not taken from the AI: the engine runs the tests, captures the diff, and notices when an edit changed nothing. | `tests.run`, `git.diff` |
 | Citations | Every ``path:line — fact `quote` `` is checked against the file: the file exists, the line exists, the quote is there. Failures go to `unverified`, not into the answer. | `evidence.check` |
+| Support judge (investigate, off by default) | A real quote paired with a claim it does not state: another model family, shown only each cited finding's quote and claim, rules SUPPORTED or UNSUPPORTED. `shadow` reports the rulings and keeps unsupported findings out of memory; `enforce` also makes the answer partial. Web and other sources are said to be uncheckable. Off until it is calibrated (the `investigate-misread-quote` pair measures it). | `supportJudge` in `src/patterns/investigate.ts` |
 | Debate | A skeptic attacks the draft, a pragmatist triages the objections, a second investigator answers independently (by complexity). | `src/patterns/phases/debate.ts` |
 | People | Approvals at the points that matter (diagnosis, plan, go-gate). | `approval` nodes |
 
-What is *not* caught automatically: a claim that is true of the cited line but wrong about
-the system (the quote exists, the reasoning is bad). The debate and the approvals are there
-for that, and the record lets you find it afterwards.
+What is *not* caught automatically (with the support judge off, as it is by default): a claim
+that is true of the cited line but wrong about the system (the quote exists, the reasoning is
+bad). The debate and the approvals are there for that, and the record lets you find it
+afterwards. Even on, the judge sees one quote and one claim at a time: an answer that misuses
+a well-supported finding is still the debate's to catch.
 
 ## Following a run in the studio
 
