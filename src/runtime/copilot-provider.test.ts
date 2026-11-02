@@ -66,7 +66,9 @@ class FakeSession implements SessionLike {
     };
   }
   emit = (type: string, data?: unknown) => this.handlers.forEach((h) => h({ type, data }));
-  async send() {
+  readonly sent: string[] = [];
+  async send(message?: { prompt: string }) {
+    if (message) this.sent.push(message.prompt);
     void this.script(this.cfg, this.emit, this);
     return 'msg';
   }
@@ -408,6 +410,93 @@ describe('CopilotProvider', () => {
       message: expect.stringMatching(
         /quota is used up.*exceeded your monthly quota.*Retrying cannot help/,
       ),
+    });
+  });
+
+  describe('trial switches', () => {
+    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+    const play = async (
+      opts: Partial<ConstructorParameters<typeof CopilotProvider>[0]>,
+      calls: unknown[],
+      over: Partial<AgentPause> = {},
+      models = ['claude-sonnet-5', 'claude-opus-5.5'],
+    ) => {
+      const replies: string[] = [];
+      const { client, sessions } = fakeClient(async (cfg, emit) => {
+        for (const c of calls) replies.push(String(await callTool(cfg, 'submit_result', c)));
+        emit('session.idle');
+      });
+      const provider = new CopilotProvider({
+        clientFactory: () => ({ ...client, listModels: async () => models.map((id) => ({ id })) }),
+        tiers: { 2: { model: 'claude-sonnet-5' } },
+        ...opts,
+      });
+      const p = { ...pause, ...over };
+      const res = await provider.runAgent({
+        pause: p,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      });
+      return { res, replies, session: sessions[0]!, requested: await provider.requested(p) };
+    };
+    const listed: Partial<AgentPause> = {
+      outputSchema: [
+        { name: 'items', type: 'string[]' },
+        { name: 'notes', type: 'string[]' },
+      ],
+      checks: [{ expr: 'len(notes) == len(items)', message: 'One note per item.' }],
+    };
+
+    it('delta repair: after a rejection, the fields sent replace the rejected ones; the rest is kept', async () => {
+      const first = { updates: { items: ['a', 'b'], notes: ['a — x'] }, verdict };
+      const fix = { updates: { notes: ['a — x', 'b — y'] }, verdict };
+      const on = await play({ deltaRepair: true }, [first, fix], listed);
+      expect(on.replies[0]).toMatch(/One note per item/);
+      expect(on.replies[0]).toMatch(/only the updates you change/);
+      expect(on.replies[1]).toMatch(/^Result recorded/);
+      expect(on.res.result).toEqual({
+        updates: { items: ['a', 'b'], notes: ['a — x', 'b — y'] },
+        verdict,
+      });
+      // Off (the default): the same partial answer is not enough.
+      const off = await play({}, [first, fix], listed);
+      expect(off.replies[0]).toMatch(/complete corrected result/);
+      expect(off.replies[1]).toMatch(/^REJECTED/);
+    });
+
+    it('header in the system message: the step instructions there, the input in the prompt', async () => {
+      const call = { updates: { word: 'cat' }, verdict };
+      const on = await play({ headerInSystem: true }, [call], { input: { topic: 'pets' } });
+      const system = on.session.cfg.systemMessage as { mode?: string; content?: string };
+      expect(system.mode).toBe('append');
+      expect(system.content).toMatch(/^You are the ASSESSOR/);
+      expect(system.content).toContain('## Your step: Pick word');
+      expect(system.content).not.toContain('## Input');
+      expect(on.session.sent[0]).toMatch(/^## Input \(current workflow state you may use\)/);
+      expect(on.session.sent[0]).toContain('"topic":"pets"');
+      // The transcript keeps the whole prompt, as before.
+      expect(on.res.transcript.prompt).toContain('## Your step: Pick word');
+      const off = await play({}, [call], { input: { topic: 'pets' } });
+      expect(off.session.cfg.systemMessage).toBeUndefined();
+      expect(off.session.sent[0]).toMatch(/^You are the ASSESSOR/);
+      // Isolated steps keep their short system message, with the header after it.
+      const iso = await play({ headerInSystem: true }, [call], { isolated: true });
+      const isoSystem = iso.session.cfg.systemMessage as { mode?: string; content?: string };
+      expect(isoSystem.mode).toBe('replace');
+      expect(isoSystem.content!.startsWith(ISOLATED_SYSTEM)).toBe(true);
+    });
+
+    it('node models: a named step runs on its own model when available; replay asks for it too', async () => {
+      const call = { updates: { word: 'cat' }, verdict };
+      const own = await play({ nodeModels: { pick: 'claude-opus-5.5' } }, [call]);
+      expect(own.session.cfg.model).toBe('claude-opus-5.5');
+      expect(own.requested).toMatch(/^claude-opus-5\.5/);
+      const other = await play({ nodeModels: { triage: 'claude-opus-5.5' } }, [call]);
+      expect(other.session.cfg.model).toBe('claude-sonnet-5');
+      const missing = await play({ nodeModels: { pick: 'nope-1' } }, [call]);
+      expect(missing.session.cfg.model).toBe('claude-sonnet-5');
     });
   });
 
