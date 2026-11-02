@@ -16,7 +16,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { toPerformance } from '../core/engine.js';
 import { runScripted } from '../core/scripted.js';
-import { fix, review } from '../patterns/index.js';
+import { MAX_AGENTS } from '../core/types.js';
+import { fix, investigate, review } from '../patterns/index.js';
 import {
   gitFingerprint,
   isDemoRun,
@@ -40,6 +41,42 @@ const root = mkdtempSync(join(tmpdir(), 'symphony-store-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe('run store', () => {
+  it('keeps the parallel sub-agents (fanOut.agents, 6) in the saved score, and each wave plays them', async () => {
+    const dir = join(root, 'runs-agents');
+    const score = compileScore(investigate, {
+      goal: 'g',
+      // One item per sub-agent, so the demo's deep read splits into parts.
+      context: { ...investigate.demo!.context!, deepBatchSize: 1 },
+      generatedAt: 't',
+    });
+    const played = runScripted(score, investigate.demo, { at: '2026-01-01T00:00:00Z' }).state;
+    const file = await saveRun(dir, {
+      schemaVersion: 3,
+      score,
+      performance: toPerformance(played),
+    });
+    const { run, issues } = await loadRun(file);
+    expect(issues).toEqual([]);
+    expect(MAX_AGENTS).toBe(6);
+    const fanned = run.score.nodes.flatMap((n) => (n.kind === 'agent' && n.fanOut ? [n] : []));
+    expect(fanned.map((n) => n.id)).toEqual(
+      expect.arrayContaining(['triage', 'deepRead', 'chase']),
+    );
+    for (const n of fanned) expect(n.fanOut!.agents).toBe('agents');
+    expect(run.score.state.find((f) => f.name === 'agents')?.initial).toBe(6);
+    // The deep read's pause asks for 6 at once, not the runtime's default.
+    const deep = played.events.flatMap((e) =>
+      e.type === 'paused' &&
+      e.pause.kind === 'agent' &&
+      e.pause.nodeId === 'deepRead' &&
+      e.pause.parts
+        ? [e.pause]
+        : [],
+    );
+    expect(deep.length).toBeGreaterThan(0);
+    for (const pause of deep) expect(pause.parallel).toBe(6);
+  });
+
   it('saves, lists and verifies runs', async () => {
     const dir = join(root, 'runs');
     const score = compileScore(fix, { goal: 'g', context: fix.demo!.context!, generatedAt: 't' });
