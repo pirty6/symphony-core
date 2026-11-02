@@ -70,6 +70,8 @@ const COVERAGE = [
   listed('pages', 'none'),
   '"\n- Experiments run: "',
   listed('ran', 'none'),
+  '"\n- Read because a gap named them: "',
+  listed('expandedFiles', 'none'),
   '"\n- Could not read in full: "',
   listed('notRead', 'nothing'),
   '"\n- Sources searched: "',
@@ -554,6 +556,46 @@ export const investigate: Pattern = {
         description: 'Open objections the findings do not yet settle',
       },
       { name: 'gapNotes', type: 'string[]', description: 'The GAP entries of the assessment' },
+      {
+        name: 'expandRounds',
+        type: 'number',
+        description: 'Times the gaps sent more workspace files to the deep read',
+      },
+      {
+        name: 'maxExpandRounds',
+        type: 'number',
+        initial: 2,
+        description: 'Cap on expandRounds (0: never expand)',
+      },
+      {
+        name: 'expandWave',
+        type: 'number',
+        initial: 8,
+        description: 'Files at most a gap expansion adds to the deep read',
+      },
+      {
+        name: 'expandPool',
+        type: 'string[]',
+        description: 'Workspace files not yet read in depth',
+      },
+      { name: 'gapRanked', type: 'string[]' },
+      {
+        name: 'gapMatched',
+        type: 'string[]',
+        description: 'Unread files that share words with the gaps',
+      },
+      { name: 'expandNew', type: 'string[]', description: 'Files the last expansion queued' },
+      { name: 'expandedFiles', type: 'string[]', description: 'Every file a gap expansion queued' },
+      {
+        name: 'expanding',
+        type: 'boolean',
+        description: 'The deep read in progress is a gap expansion',
+      },
+      {
+        name: 'deepBatchUsual',
+        type: 'number',
+        description: 'deepBatchSize before the retry pass set it to 1',
+      },
       { name: 'gapRounds', type: 'number' },
       { name: 'maxGapRounds', type: 'number', initial: 2 },
       { name: 'chaseRounds', type: 'number', description: 'Gap research rounds in the whole run' },
@@ -669,6 +711,13 @@ export const investigate: Pattern = {
       nodes: [
         'assess',
         'recordGaps',
+        'expandGaps',
+        'expandPoolOf',
+        'rankGaps',
+        'takeExpand',
+        'expanded',
+        'expandDone',
+        'endExpand',
         'moreGaps',
         'chase',
         'checkChase',
@@ -1070,6 +1119,7 @@ export const investigate: Pattern = {
         { field: 'pendingDeep', expr: 'without(notRead, pick(notRead, noRetryAt))' },
         { field: 'notReadReasons', expr: 'pick(notReadReasons, noRetryAt)' },
         { field: 'notRead', expr: 'pick(notRead, noRetryAt)' },
+        { field: 'deepBatchUsual', expr: 'if(unreadRetries == 0, deepBatchSize, deepBatchUsual)' },
         { field: 'unreadRetries', expr: 'unreadRetries + 1' },
         // One item per call: a file cut for the call's size gets the whole budget to itself.
         { field: 'deepBatchSize', expr: '1' },
@@ -1325,6 +1375,62 @@ export const investigate: Pattern = {
           expr: 'pick(subQuestions, positions(assessment, "^S[0-9]+: GAP")) + objectionGaps',
         },
       ],
+    },
+    {
+      id: 'expandGaps',
+      kind: 'condition',
+      label: 'Expand the read?',
+      // Gaps first send the workspace files that share their words to the deep read.
+      expression:
+        'len(gaps) > 0 && expandRounds < maxExpandRounds && includes(useSources, "workspace") && len(repoFiles) > 0',
+    },
+    {
+      id: 'expandPoolOf',
+      kind: 'compute',
+      label: 'Unread files',
+      assign: [{ field: 'expandPool', expr: 'without(repoFiles, relevantFiles + notRead)' }],
+    },
+    {
+      // Deterministic: the engine ranks the unread files by the words of the gaps.
+      id: 'rankGaps',
+      kind: 'tool',
+      label: 'Rank by the gaps',
+      tool: 'repo.rank',
+      inputs: { paths: 'expandPool', subQuestions: 'gapNotes', searchTerms: 'objectionGaps' },
+      output: { ranked: 'gapRanked', matched: 'gapMatched' },
+    },
+    {
+      id: 'takeExpand',
+      kind: 'compute',
+      label: 'Queue gap files',
+      assign: [
+        { field: 'expandNew', expr: 'take(without(gapMatched, relevantFiles), expandWave)' },
+        { field: 'expandRounds', expr: 'expandRounds + 1' },
+        { field: 'expandedFiles', expr: 'expandedFiles + expandNew' },
+        { field: 'relevantFiles', expr: 'relevantFiles + expandNew' },
+        { field: 'pendingDeep', expr: 'pendingDeep + expandNew' },
+        { field: 'expanding', expr: 'len(expandNew) > 0' },
+        // A wave reads as many items per call as the first did, not one as the retry pass.
+        { field: 'deepBatchSize', expr: 'if(unreadRetries > 0, deepBatchUsual, deepBatchSize)' },
+      ],
+    },
+    {
+      id: 'expanded',
+      kind: 'condition',
+      label: 'Files queued?',
+      expression: 'expanding',
+    },
+    {
+      id: 'expandDone',
+      kind: 'condition',
+      label: 'Gap expansion read?',
+      expression: 'expanding',
+    },
+    {
+      id: 'endExpand',
+      kind: 'compute',
+      label: 'Back to the gaps',
+      assign: [{ field: 'expanding', expr: 'false' }],
     },
     {
       id: 'moreGaps',
@@ -1735,7 +1841,10 @@ export const investigate: Pattern = {
       branch: 'then',
       label: 'try unreadable again',
     },
-    { id: 'retryUnread-hasExperiments', from: 'retryUnread', to: 'hasExperiments', branch: 'else' },
+    { id: 'retryUnread-expandDone', from: 'retryUnread', to: 'expandDone', branch: 'else' },
+    { id: 'expandDone-endExpand', from: 'expandDone', to: 'endExpand', branch: 'then' },
+    { id: 'expandDone-hasExperiments', from: 'expandDone', to: 'hasExperiments', branch: 'else' },
+    { id: 'endExpand-assess', from: 'endExpand', to: 'assess', label: 're-assess' },
     { id: 'requeue-deepLeft', from: 'requeueUnread', to: 'deepLeft' },
     { id: 'takeDeep-deepRead', from: 'takeDeep', to: 'deepRead' },
     { id: 'deepRead-checkDeep', from: 'deepRead', to: 'checkDeep' },
@@ -1780,7 +1889,14 @@ export const investigate: Pattern = {
     { id: 'checkSource-mergeSource', from: 'checkSource', to: 'mergeSource' },
     { id: 'mergeSource-sourcesLeft', from: 'mergeSource', to: 'sourcesLeft', label: 'next source' },
     { id: 'assess-recordGaps', from: 'assess', to: 'recordGaps' },
-    { id: 'recordGaps-moreGaps', from: 'recordGaps', to: 'moreGaps' },
+    { id: 'recordGaps-expandGaps', from: 'recordGaps', to: 'expandGaps' },
+    { id: 'expandGaps-pool', from: 'expandGaps', to: 'expandPoolOf', branch: 'then' },
+    { id: 'expandGaps-moreGaps', from: 'expandGaps', to: 'moreGaps', branch: 'else' },
+    { id: 'pool-rankGaps', from: 'expandPoolOf', to: 'rankGaps' },
+    { id: 'rankGaps-takeExpand', from: 'rankGaps', to: 'takeExpand' },
+    { id: 'takeExpand-expanded', from: 'takeExpand', to: 'expanded' },
+    { id: 'expanded-deepLeft', from: 'expanded', to: 'deepLeft', branch: 'then', label: 'read' },
+    { id: 'expanded-moreGaps', from: 'expanded', to: 'moreGaps', branch: 'else' },
     { id: 'moreGaps-chase', from: 'moreGaps', to: 'chase', branch: 'then' },
     { id: 'moreGaps-confident', from: 'moreGaps', to: 'confident', branch: 'else' },
     { id: 'chase-checkChase', from: 'chase', to: 'checkChase' },
@@ -1856,6 +1972,12 @@ export const investigate: Pattern = {
         const files = (s.repoFiles as string[]) ?? [];
         const hit = files.filter((f) => RELEVANT.test(f));
         return { ranked: [...hit, ...files.filter((f) => !hit.includes(f))], matched: hit };
+      },
+      // The gap names the command line: the CLI shares its words.
+      rankGaps: (s) => {
+        const pool = (s.expandPool as string[]) ?? [];
+        const hit = pool.filter((f) => f.endsWith('cli.ts'));
+        return { ranked: [...hit, ...pool.filter((f) => !hit.includes(f))], matched: hit };
       },
     },
     agents: {
@@ -1979,7 +2101,7 @@ export const investigate: Pattern = {
         verdict: v('searched'),
       }),
       assess: (s, visit) =>
-        visit === 0
+        visit < 2
           ? {
               updates: {
                 ...assessFor(s, [((s.subQuestions as string[]) ?? [])[1] ?? ''].filter(Boolean)),

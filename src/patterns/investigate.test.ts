@@ -350,6 +350,90 @@ describe('the gap check: one structured entry per sub-question', () => {
   });
 });
 
+describe('gap expansion: the gaps send matching unread files to the deep read', () => {
+  const v = { outcome: 'applied' as const, confidence: 0.9, shouldTerminate: false, reason: 'r' };
+  const expanding = (context: Record<string, unknown>, matched?: (pool: string[]) => string[]) => {
+    const pools: string[][] = [];
+    const words: string[][] = [];
+    const r = runScripted(
+      compileScore(investigate, { context: { ...demo.context!, ...context } }),
+      {
+        ...demo,
+        tools: {
+          ...demo.tools,
+          ...(matched
+            ? {
+                rankGaps: (s) => {
+                  const pool = s.expandPool as string[];
+                  pools.push(pool);
+                  words.push(s.gapNotes as string[]);
+                  return { ranked: pool, matched: matched(pool) };
+                },
+              }
+            : {}),
+        },
+        // A gap that never closes: expansion and the chase run to their caps.
+        agents: {
+          ...demo.agents,
+          assess: (s) => ({
+            updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 1 },
+            verdict: v,
+          }),
+        },
+      },
+    );
+    const deep = (from: number) =>
+      r.state.steps
+        .filter((x) => x.nodeId === 'deepRead' && x.step > from)
+        .flatMap((x) => x.input?.deepBatch as string[]);
+    return { r, s: r.state.state, pools, words, deep };
+  };
+
+  it('ranks only unread files, queues the matches under a round counter, then re-assesses', () => {
+    const { r, s, pools, words, deep } = expanding({}, (pool) =>
+      pool.filter((f) => f.endsWith('cli.ts')),
+    );
+    expect(pools[0]).toEqual(['README.md', 'src/cli.ts']);
+    // Round 2 ranks what is still unread: cli.ts was read in round 1.
+    expect(pools[1]).toEqual(['README.md']);
+    expect(s.expandRounds).toBe(2);
+    expect(s.expandedFiles).toEqual(['src/cli.ts']);
+    const ranked = r.state.steps.find((x) => x.nodeId === 'rankGaps')!;
+    expect(deep(ranked.step)).toContain('src/cli.ts');
+    // Its words are the gap notes, not the question.
+    expect(words[0]).toEqual([expect.stringMatching(/^S1: GAP/)]);
+    const node = compileScore(investigate, { context: demo.context! }).nodes.find(
+      (n) => n.id === 'rankGaps',
+    );
+    expect(node).toMatchObject({
+      tool: 'repo.rank',
+      inputs: { paths: 'expandPool', subQuestions: 'gapNotes', searchTerms: 'objectionGaps' },
+    });
+    const after = r.state.steps.filter((x) => x.step > ranked.step).map((x) => x.nodeId);
+    expect(after.indexOf('assess')).toBeLessThan(after.indexOf('chase'));
+    expect(after.indexOf('assess')).toBeGreaterThan(after.indexOf('deepRead'));
+    expect(r.state.outcome).not.toBe('failure');
+  });
+
+  it('is capped: at most expandWave files a round, at most maxExpandRounds rounds; 0 turns it off', () => {
+    const wave = expanding({ expandWave: 1 }, (pool) => pool);
+    expect(wave.s.expandedFiles).toEqual(['README.md', 'src/cli.ts']);
+    const once = expanding({ maxExpandRounds: 1 }, (pool) => pool);
+    expect(once.pools).toHaveLength(1);
+    expect(once.s.expandedFiles).toEqual(['README.md', 'src/cli.ts']);
+    const off = expanding({ maxExpandRounds: 0 }, (pool) => pool);
+    expect(off.pools).toEqual([]);
+    expect(off.r.state.steps.map((x) => x.nodeId)).not.toContain('rankGaps');
+  });
+
+  it('no match: straight on to the chase, nothing queued', () => {
+    const { r, s } = expanding({}, () => []);
+    expect(s.expandedFiles).toEqual([]);
+    const ran = r.state.steps.map((x) => x.nodeId);
+    expect(ran.indexOf('chase')).toBeGreaterThan(ran.indexOf('rankGaps'));
+  });
+});
+
 describe('open questions', () => {
   // Regression: a live run failed at the answer because the AI reworded the remaining gaps
   // instead of copying them verbatim. The engine now adds them itself.
@@ -523,7 +607,11 @@ describe('investigate always ends: research rounds are bounded', () => {
       },
     };
     const r = runScripted(
-      compileScore(investigate, { goal: 'g', context: { ...demo.context!, gapsPerChase: 1 } }),
+      compileScore(investigate, {
+        goal: 'g',
+        // No gap expansion: the chase gets the gaps.
+        context: { ...demo.context!, gapsPerChase: 1, maxExpandRounds: 0 },
+      }),
       script,
     );
     expect(r.state.outcome).toBe('success');
@@ -758,7 +846,7 @@ describe('investigate coverage', () => {
     const { r } = runWith(['workspace']);
     const answer = String(r.state.state.answer);
     expect(answer).toMatch(
-      /\n## Coverage\n\n- Files not triaged: .+\n- Not located, so not triaged: none\n- Pages read: .+\n- Experiments run: none\n/,
+      /\n## Coverage\n\n- Files not triaged: .+\n- Not located, so not triaged: none\n- Pages read: .+\n- Experiments run: none\n- Read because a gap named them: none\n/,
     );
     expect(answer.match(/## Coverage/g)).toHaveLength(1);
     const findings = r.state.state.findings as string[];
@@ -917,7 +1005,7 @@ describe('investigate holds "read completely" to what the engine gave', () => {
       'src/core/schema.ts',
       'src/core/schema.ts',
     ]);
-    expect(deepBatches.at(-1)).toEqual(['src/core/schema.ts']);
+    expect(deepBatches).toContainEqual(['src/core/schema.ts']);
     expect(s.notRead).toEqual([]);
     // Output for every item read, chunks included.
     expect(s.readLog).toEqual(

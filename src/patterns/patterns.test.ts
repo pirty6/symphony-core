@@ -56,17 +56,21 @@ describe('pattern library', () => {
     const examined = steps
       .filter((s) => s.nodeId === 'deepRead')
       .flatMap((s) => s.updates?.examined as string[]);
+    // The relevant files, then the one the gap's words found (a gap expansion).
     expect(examined.toSorted()).toEqual([
       'https://en.wikipedia.org/wiki/Finite-state_machine',
+      'src/cli.ts',
       'src/core/engine.ts',
       'src/core/schema.ts',
       'src/core/validate.ts',
     ]);
+    expect(r.state.state.expandedFiles).toEqual(['src/cli.ts']);
     expect(r.state.state.consulted).toEqual(['git-history']);
     expect(r.state.state.skipSources).toEqual(['experiment', 'prior-runs']);
-    // One gap round, then one round for the skeptic's objection.
+    // One expansion, one gap round, then one round for the skeptic's objection.
+    expect(steps.filter((s) => s.nodeId === 'rankGaps')).toHaveLength(2);
     expect(steps.filter((s) => s.nodeId === 'chase')).toHaveLength(2);
-    expect(steps.filter((s) => s.nodeId === 'assess')).toHaveLength(3);
+    expect(steps.filter((s) => s.nodeId === 'assess')).toHaveLength(4);
     expect(r.state.state.openQuestions).toEqual([]);
     // The debate: hypotheses up front, the skeptic twice, a ruling on every hypothesis.
     expect(steps.filter((s) => s.nodeId === 'hypothesize')).toHaveLength(1);
