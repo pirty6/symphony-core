@@ -5,7 +5,7 @@
  * hash). The result is deep-frozen: a Score is a read-only plan.
  */
 import { hashOf } from './hash.js';
-import { checkValue, zeroValue } from './schema.js';
+import { checkFieldValue, zeroValue } from './schema.js';
 import { isImprovisation } from './jazz.js';
 import type { Complexity, ExecutableScore, Improvisation, Pattern } from './types.js';
 import type { Issue } from './validate.js';
@@ -80,7 +80,7 @@ export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableSco
       issues.push({ message: `context '${key}' is not a state field` });
       continue;
     }
-    const err = checkValue(field.type, value);
+    const err = checkFieldValue(field, value);
     if (err) issues.push({ message: `context '${key}': ${err}` });
   }
   const fromInput = pattern.goalFrom ? context[pattern.goalFrom] : undefined;

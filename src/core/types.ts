@@ -42,6 +42,12 @@ export interface StateField {
   readonly description?: string;
   /** Initial value; defaults to the zero value of `type`. */
   readonly initial?: unknown;
+  /**
+   * number fields: the least value an input or a tailoring may give it. A step that cannot
+   * work below it (investigate's maxExperiments: 0 would ask for experiments and allow none)
+   * declares it, so such a run is refused at compile instead of stuck at the step.
+   */
+  readonly min?: number;
 }
 
 // ── Nodes ──────────────────────────────────────────────────────────
@@ -118,6 +124,11 @@ export interface AgentNode extends NodeBase {
      * manifest (no preload ran, or an old record): "read whole" is never assumed.
      */
     readonly whole?: string;
+    /**
+     * Optional, by position with `paths`: for an item cut short, the chunk with its remaining
+     * lines ("path#chunk=from-to") to read next; "" for one that could not be read at all.
+     */
+    readonly rest?: string;
   };
   readonly fanOut?: {
     readonly over: string;
@@ -363,6 +374,8 @@ export interface CallUsage {
   readonly cacheWriteTokens?: number;
   /** How long the call took (ms). */
   readonly ms?: number;
+  /** What Copilot billed for this call, in nano AI units. */
+  readonly nanoAiu?: number;
 }
 
 export interface ContextSplit {
@@ -374,6 +387,10 @@ export interface ContextSplit {
 
 export interface PreloadRecord {
   readonly path: string;
+  /** The item as it was listed (a chunk: "path#chunk=from-to"); absent in older records. */
+  readonly item?: string;
+  /** A chunk: the lines it asked for. */
+  readonly range?: readonly [number, number];
   readonly lines: number;
   /** Lines left out for size: [from, to]. */
   readonly omitted?: readonly [number, number];

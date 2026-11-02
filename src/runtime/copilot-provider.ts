@@ -133,6 +133,12 @@ export interface CopilotProviderOptions {
   readonly tiers?: Partial<Record<Complexity, Tier>>;
   /** For steps that want another model family (otherModel); default gpt-6.1-sol. */
   readonly alternateModel?: string;
+  /** Per step id, the model to use instead of the tier's (a trial: one step on another model). */
+  readonly nodeModels?: Readonly<Record<string, string>>;
+  /** After a rejected submit_result, the AI may resend only the fields it changes. */
+  readonly deltaRepair?: boolean;
+  /** The step's fixed instructions go in the system message, the input in the prompt. */
+  readonly headerInSystem?: boolean;
   readonly workingDirectory?: string;
   /** MCP servers connected to nodes with the 'mcp' capability. */
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
@@ -150,6 +156,8 @@ export interface CopilotProviderOptions {
 
 interface SessionRun {
   readonly prompt: string;
+  /** Appended to the system message (headerInSystem). */
+  readonly system?: string;
   readonly role: Role;
   readonly tools: readonly ReturnType<typeof defineTool>[];
   readonly onlyCustomTools: boolean;
@@ -357,6 +365,27 @@ export function hasContent(result: unknown): boolean {
   );
 }
 
+const INPUT_HEADING = '\n## Input (current workflow state you may use)';
+
+/**
+ * The prompt split for headerInSystem: the step's fixed instructions (role, rules, directive,
+ * goal) and the rest (input, files, feedback). No input heading: all of it is the prompt.
+ */
+export function splitHeader(prompt: string): [string | undefined, string] {
+  const at = prompt.indexOf(INPUT_HEADING);
+  return at < 0 ? [undefined, prompt] : [prompt.slice(0, at).trim(), prompt.slice(at + 1)];
+}
+
+/** A corrected submission over the rejected one: the fields it sends replace the old ones. */
+export function mergeSubmission(previous: unknown, next: unknown): unknown {
+  if (!isRecord(previous) || !isRecord(next)) return next;
+  const updates =
+    isRecord(previous.updates) && isRecord(next.updates)
+      ? { ...previous.updates, ...next.updates }
+      : (next.updates ?? previous.updates);
+  return { ...previous, ...next, updates };
+}
+
 /** In-session retries of a malformed submit_result before the engine judges it. */
 const MAX_SUBMIT_CORRECTIONS = 2;
 
@@ -452,9 +481,15 @@ export class CopilotProvider implements Provider {
             availableTools: run.tools.reduce((set, t) => set.addCustom(t.name), new ToolSet()),
             // The SDK's own system prompt (~4k tokens) is about workspace tools this
             // session cannot use; a short one says what it can do.
-            systemMessage: { mode: 'replace', content: ISOLATED_SYSTEM },
+            systemMessage: {
+              mode: 'replace',
+              content: run.system ? `${ISOLATED_SYSTEM}\n\n${run.system}` : ISOLATED_SYSTEM,
+            },
           }
-        : { excludedTools: ['task'] }),
+        : {
+            excludedTools: ['task'],
+            ...(run.system ? { systemMessage: { mode: 'append', content: run.system } } : {}),
+          }),
       ...(run.mcpServers && Object.keys(run.mcpServers).length > 0
         ? { mcpServers: { ...run.mcpServers } }
         : {}),
@@ -578,9 +613,11 @@ export class CopilotProvider implements Provider {
           usage.apiMs += n('duration');
           usage.firstTokenMs += n('timeToFirstTokenMs');
           usage.premiumRequests += n('cost');
-          usage.nanoAiu += Number(
-            (d.copilotUsage as { totalNanoAiu?: unknown } | undefined)?.totalNanoAiu ?? 0,
-          );
+          // What Copilot billed this call: against its cached tokens, how caching is charged.
+          const aiu =
+            Number((d.copilotUsage as { totalNanoAiu?: unknown } | undefined)?.totalNanoAiu ?? 0) ||
+            0;
+          usage.nanoAiu += aiu;
           calls.push(
             Object.assign(
               {
@@ -590,6 +627,7 @@ export class CopilotProvider implements Provider {
               },
               n('cacheWriteTokens') ? { cacheWriteTokens: n('cacheWriteTokens') } : {},
               n('duration') ? { ms: n('duration') } : {},
+              aiu ? { nanoAiu: aiu } : {},
             ),
           );
           break;
@@ -699,10 +737,26 @@ export class CopilotProvider implements Provider {
 
   /** The model and effort this step will ask for: replay reuses only answers recorded with them. */
   async requested(pause: AgentPause): Promise<string> {
-    const tier = pause.otherModel
-      ? await this.otherFamily(pause.complexity)
-      : await this.modelFor(pause.complexity);
+    const tier = await this.tierFor(pause);
     return modelSettings(tier.model, tier.effort);
+  }
+
+  /** The step's model: its own when nodeModels names one (and it is available), else the tier's. */
+  private async tierFor(
+    pause: AgentPause,
+  ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
+    const own = this.opts.nodeModels?.[pause.nodeId];
+    if (own) {
+      const available = await this.availableModels();
+      if (!available || available.has(own))
+        return { model: own, note: `${pause.nodeId} on ${own} (nodeModels)` };
+      const tier = await this.modelFor(pause.complexity);
+      return {
+        ...tier,
+        note: `model '${own}' for ${pause.nodeId} (nodeModels) is not available to you; using ${tier.model ?? 'the default model'}`,
+      };
+    }
+    return pause.otherModel ? this.otherFamily(pause.complexity) : this.modelFor(pause.complexity);
   }
 
   /** The alternate model when it is available and from another family than the tier's. */
@@ -801,9 +855,8 @@ export class CopilotProvider implements Provider {
           ...(req.files ? { files: req.files } : {}),
         });
     const startedAt = this.opts.clock?.();
-    const tier = pause.otherModel
-      ? await this.otherFamily(pause.complexity)
-      : await this.modelFor(pause.complexity);
+    const tier = await this.tierFor(pause);
+    const [system, body] = this.opts.headerInSystem ? splitHeader(prompt) : [undefined, prompt];
     if (tier.note) req.onEvent({ type: 'info', text: tier.note });
     req.onEvent({
       type: 'info',
@@ -820,7 +873,11 @@ export class CopilotProvider implements Provider {
       parameters: resultJsonSchema(pause.outputSchema, pause.choices),
       skipPermission: true,
       handler: async (raw: unknown) => {
-        const args = normalizeSubmission(raw);
+        // Delta repair: after a rejection, the fields sent replace those of the rejected answer.
+        const args =
+          this.opts.deltaRepair && invalid !== undefined
+            ? mergeSubmission(invalid, normalizeSubmission(raw))
+            : normalizeSubmission(raw);
         // Catch a malformed answer while the AI still has its context, instead of
         // a fresh attempt that redoes all the reading. The engine re-checks anyway.
         const checked = checkAgentResult(args, pause.outputSchema, pause.choices);
@@ -858,7 +915,9 @@ export class CopilotProvider implements Provider {
         return [
           'REJECTED: the result was not recorded.',
           ...errors.map((e) => `- ${e}`),
-          `Call ${SUBMIT_TOOL} again now with the complete corrected result ({ updates, verdict${pause.choices ? ', next' : ''} }). Do not redo your research.`,
+          this.opts.deltaRepair
+            ? `Call ${SUBMIT_TOOL} again now with only the updates you change (each field you send replaces the rejected one whole; the others are kept) and a verdict. Do not redo your research.`
+            : `Call ${SUBMIT_TOOL} again now with the complete corrected result ({ updates, verdict${pause.choices ? ', next' : ''} }). Do not redo your research.`,
         ].join('\n');
       },
     });
@@ -870,7 +929,8 @@ export class CopilotProvider implements Provider {
     ];
     const play = (m: { model?: string; effort?: ReasoningEffort }) =>
       this.runSession({
-        prompt,
+        prompt: body,
+        ...(system ? { system } : {}),
         role: pause.role,
         tools,
         mcpServers,

@@ -1,3 +1,4 @@
+import { itemOf } from '../core/items.js';
 import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import {
@@ -63,10 +64,17 @@ const FILE_CITE = '[A-Za-z0-9_@.-]+[.][A-Za-z0-9]+:[0-9]';
 const COVERAGE = [
   '"## Coverage\n\n- Files not triaged: "',
   listed('excludedFiles', 'none'),
+  '"\n- Not located, so not triaged: "',
+  listed('unlocatedFiles', 'none'),
+  'if(narrowRead, "\n- Left unread by the narrowed read (opt-in): " + ' +
+    listed('narrowedOut', 'none') +
+    ', "")',
   '"\n- Pages read: "',
   listed('pages', 'none'),
   '"\n- Experiments run: "',
   listed('ran', 'none'),
+  '"\n- Read because a gap named them: "',
+  listed('expandedFiles', 'none'),
   '"\n- Could not read in full: "',
   listed('notRead', 'nothing'),
   '"\n- Sources searched: "',
@@ -92,6 +100,28 @@ const STATUS = [
   // What the evidence readers get: nothing with readerHypotheses off (an ablation).
   { field: 'leadStatus', expr: 'if(readerHypotheses, hypothesisStatus, [])' },
 ];
+
+/**
+ * An assess answer in the fixed structure, from the gaps it should leave: each sub-question
+ * listed is a GAP, the rest ANSWERED citing the first finding; open objections listed stay open.
+ * For the demo and tests.
+ */
+export function assessFor(
+  s: Readonly<Record<string, unknown>>,
+  gaps: readonly string[],
+): { assessment: string[]; objectionGaps: string[] } {
+  const subs = (s.subQuestions as string[] | undefined) ?? [];
+  const cite = /^(F[0-9]+)\s/.exec(((s.findings as string[] | undefined) ?? [])[0] ?? '')?.[1];
+  const open = (s.openObjections as string[] | undefined) ?? [];
+  return {
+    assessment: subs.map((q, i) =>
+      gaps.includes(q) || !cite
+        ? `S${i + 1}: GAP — no cited evidence yet for ${q}`
+        : `S${i + 1}: ANSWERED [${cite}]`,
+    ),
+    objectionGaps: open.filter((o) => gaps.includes(o)),
+  };
+}
 
 const AGAINST =
   ' Look for evidence for AND against every entry of `leadHypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]". `leadStatus` counts those tags so far: look hardest at the hypotheses it marks untested or challenged. If `leadHypotheses` is empty, gather evidence on the question and sub-questions alone and do not tag findings.';
@@ -286,6 +316,28 @@ export const investigate: Pattern = {
       { name: 'skipReasons', type: 'string[]', description: 'Why each skipped source was skipped' },
       { name: 'repoFiles', type: 'string[]', description: 'Every file in the workspace' },
       {
+        name: 'narrowRead',
+        type: 'boolean',
+        description:
+          'Opt-in: triage only the files the search matched plus narrowBudget more; every other file goes unread (zero coverage), each one listed',
+      },
+      {
+        name: 'narrowBudget',
+        type: 'number',
+        initial: 20,
+        description: 'With narrowRead: files beyond the matched ones, in ranked order',
+      },
+      {
+        name: 'narrowedOut',
+        type: 'string[]',
+        description: 'Files the narrowed read left unread, each one listed',
+      },
+      {
+        name: 'unlocatedFiles',
+        type: 'string[]',
+        description: "A big repository's files Locate did not find: not triaged, each one listed",
+      },
+      {
         name: 'rankedFiles',
         type: 'string[]',
         description: 'repoFiles, likeliest first (engine-ranked by the words of the question)',
@@ -333,12 +385,27 @@ export const investigate: Pattern = {
         type: 'string[]',
         description: 'The other experiments, run side by side',
       },
-      { name: 'maxExperiments', type: 'number', initial: 12 },
+      {
+        name: 'maxExperiments',
+        type: 'number',
+        initial: 12,
+        // On whenever the plan needs them: commands run in the workspace (after your approval).
+        // 0 would ask for experiments and allow none.
+        min: 1,
+        description:
+          'Experiments the plan may run when it needs them (commands in the workspace, after approval)',
+      },
       {
         name: 'agents',
         type: 'number',
         initial: MAX_AGENTS,
         description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
+      },
+      {
+        name: 'agentsCap',
+        type: 'number',
+        initial: MAX_AGENTS,
+        description: `At most this many parallel sub-agents, whatever the plan chose (a trial: 4 vs ${MAX_AGENTS})`,
       },
       // Files per sub-agent: read whole in its prompt, so fewer than when it paged through them.
       { name: 'batchSize', type: 'number', initial: 10 },
@@ -400,6 +467,23 @@ export const investigate: Pattern = {
         type: 'number[]',
         description: 'Positions of partlyRead not yet reported',
       },
+      {
+        name: 'partlyRest',
+        type: 'string[]',
+        description:
+          'By position with partlyRead: the chunk of remaining lines to read next, or ""',
+      },
+      {
+        name: 'unreadAt',
+        type: 'number[]',
+        description: 'Positions of partlyRead with nothing given',
+      },
+      {
+        name: 'readNotes',
+        type: 'string[]',
+        description: 'One per item of the deep batch, in order: "<item> — what it holds"',
+      },
+      { name: 'readLog', type: 'string[]', description: 'Every readNotes entry, wave after wave' },
       {
         name: 'triagePartial',
         type: 'string[]',
@@ -495,6 +579,74 @@ export const investigate: Pattern = {
       ...EVIDENCE_STATE,
       ...MEMORY_STATE,
       { name: 'gaps', type: 'string[]', description: 'Sub-questions without enough evidence' },
+      {
+        name: 'assessment',
+        type: 'string[]',
+        description:
+          'One per sub-question, in order: "S<n>: ANSWERED [F…]" or "S<n>: GAP — what is missing"',
+      },
+      {
+        name: 'objectionGaps',
+        type: 'string[]',
+        description: 'Open objections the findings do not yet settle',
+      },
+      { name: 'gapNotes', type: 'string[]', description: 'The GAP entries of the assessment' },
+      {
+        name: 'gapQuestions',
+        type: 'string[]',
+        description: 'The sub-questions the assessment marks GAP',
+      },
+      {
+        name: 'gapAimed',
+        type: 'boolean',
+        description:
+          'Pilot (off): the gap research gets what the gap check says is missing instead of the whole sub-question',
+      },
+      {
+        name: 'chaseGaps',
+        type: 'string[]',
+        description: 'What the gap research is asked to close',
+      },
+      {
+        name: 'expandRounds',
+        type: 'number',
+        description: 'Times the gaps sent more workspace files to the deep read',
+      },
+      {
+        name: 'maxExpandRounds',
+        type: 'number',
+        initial: 2,
+        description: 'Cap on expandRounds (0: never expand)',
+      },
+      {
+        name: 'expandWave',
+        type: 'number',
+        initial: 8,
+        description: 'Files at most a gap expansion adds to the deep read',
+      },
+      {
+        name: 'expandPool',
+        type: 'string[]',
+        description: 'Workspace files not yet read in depth',
+      },
+      { name: 'gapRanked', type: 'string[]' },
+      {
+        name: 'gapMatched',
+        type: 'string[]',
+        description: 'Unread files that share words with the gaps',
+      },
+      { name: 'expandNew', type: 'string[]', description: 'Files the last expansion queued' },
+      { name: 'expandedFiles', type: 'string[]', description: 'Every file a gap expansion queued' },
+      {
+        name: 'expanding',
+        type: 'boolean',
+        description: 'The deep read in progress is a gap expansion',
+      },
+      {
+        name: 'deepBatchUsual',
+        type: 'number',
+        description: 'deepBatchSize before the retry pass set it to 1',
+      },
       { name: 'gapRounds', type: 'number' },
       { name: 'maxGapRounds', type: 'number', initial: 2 },
       { name: 'chaseRounds', type: 'number', description: 'Gap research rounds in the whole run' },
@@ -609,7 +761,16 @@ export const investigate: Pattern = {
       description: 'Targeted research, then a human hint',
       nodes: [
         'assess',
+        'recordGaps',
+        'expandGaps',
+        'expandPoolOf',
+        'rankGaps',
+        'takeExpand',
+        'expanded',
+        'expandDone',
+        'endExpand',
         'moreGaps',
+        'aimChase',
         'chase',
         'checkChase',
         'mergeChase',
@@ -715,6 +876,8 @@ export const investigate: Pattern = {
           field: 'pendingSources',
           expr: 'without(unique(useSources), ["workspace", "web", "experiment"])',
         },
+        // The plan chooses the sub-agents; agentsCap (a trial setting) caps that choice.
+        { field: 'agents', expr: 'if(agents > agentsCap, agentsCap, agents)' },
         // Each wave gives every sub-agent three parts, one after the other: fewer pauses between waves.
         { field: 'batchWave', expr: 'batchSize * agents * 3' },
         { field: 'deepWave', expr: 'deepBatchSize * agents * 3' },
@@ -775,6 +938,17 @@ export const investigate: Pattern = {
           // The ranked order only when it is the same files: an order never drops one.
           expr: 'if(len(rankedFiles) == len(repoFiles) && subset(repoFiles, rankedFiles), rankedFiles, repoFiles)',
         },
+        // narrowRead (opt-in): every file the search matched (the floor), then narrowBudget more
+        // in ranked order. The rest are never read, and each is named in the coverage.
+        {
+          field: 'narrowedOut',
+          expr: 'if(narrowRead, drop(without(pendingFiles, matchedFiles), narrowBudget), [])',
+        },
+        { field: 'pendingFiles', expr: 'without(pendingFiles, narrowedOut)' },
+        {
+          field: 'excludedFiles',
+          expr: 'if(len(narrowedOut) > 0, append(excludedFiles, text(len(narrowedOut)) + " files were left unread by the narrowed read (opt-in: not matched by the search, and past narrowBudget): see narrowedOut"), excludedFiles)',
+        },
       ],
     },
     {
@@ -822,9 +996,11 @@ export const investigate: Pattern = {
       assign: [
         // What Locate found, plus the engine's candidates: a union, so neither can hide a file.
         { field: 'pendingFiles', expr: 'unique(scopeFiles + candidateFiles)' },
+        // Every file not triaged is named, not summed up: the coverage lists them all.
+        { field: 'unlocatedFiles', expr: 'without(repoFiles, pendingFiles)' },
         {
           field: 'excludedFiles',
-          expr: 'append(excludedFiles, "files the search did not locate were not triaged (the repository has more than maxTriageFiles files; set exhaustive to triage every file)")',
+          expr: 'append(excludedFiles, text(len(unlocatedFiles)) + " files the search did not locate were not triaged (more than maxTriageFiles files; set exhaustive to triage every file): see unlocatedFiles")',
         },
       ],
     },
@@ -910,7 +1086,9 @@ export const investigate: Pattern = {
           // A file triage saw only part of goes to the deep read, whatever triage said.
           // The pilot's readFully skip the deep read only where the engine's record shows the
           // file was given whole (an intersection: without a record, none skip).
-          expr: 'relevantFiles + without(batchRelevant, without(readFully, without(readFully, triageWhole))) + without(pick(triagePartial, positions(triagePartialReasons, "^(lines|longer)")), batchRelevant)',
+          // Any file triage was not given whole (cut, unreadable, or missing from the record)
+          // counts as unseen: it goes to the deep read, whatever triage said.
+          expr: 'relevantFiles + without(batchRelevant, without(readFully, without(readFully, triageWhole))) + without(triagePartial, batchRelevant)',
         },
         ...MERGE_FINDINGS,
         ...STATUS,
@@ -947,15 +1125,19 @@ export const investigate: Pattern = {
       capabilities: ['web'],
       label: 'Deep read',
       directive:
-        'Read every item of `deepBatch` completely. Workspace files are given to you whole, with line numbers, at the end of this prompt: read every line there (do not re-open them), then follow the references out of them that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`. List each item of `deepBatch` you read completely in `examined`. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
+        'Read every item of `deepBatch` completely. Workspace files are given to you whole, with line numbers, at the end of this prompt: read every line there (do not re-open them), then follow the references out of them that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame). Web pages (URLs): fetch and read the whole page, following links that matter. Record every fact that bears on the question as "path:line — fact" or "URL — fact" in `newFindings`. List each item of `deepBatch` you read completely in `examined`. In `readNotes`, give one entry per item of `deepBatch`, in order, starting with the item exactly as listed: "<item> — what it holds for the question" (or "<item> — nothing relevant"). An item "path#chunk=from-to" is lines from-to of path, the rest of a file too long for one prompt: cite its facts as "path:line" with the line numbers of the file. If an item cannot be read in full (HTTP errors, rate limits, truncated or paywalled pages, unreadable files), do not pretend (items you could not read before come back once for another try): put it in `unreadable` and, at the same position, say why and how much you did read in `unreadableReasons`.' +
         AGAINST,
       // The engine reads the workspace files of the batch whole: one turn, nothing skipped.
       preload: 'deepBatch',
       // "Read completely" is held to what the engine gave, not to what the AI says it read.
-      preloadReport: { paths: 'partlyRead', reasons: 'partlyReadReasons' },
+      preloadReport: {
+        paths: 'partlyRead',
+        reasons: 'partlyReadReasons',
+        rest: 'partlyRest',
+      },
       reads: ['leadHypotheses', 'leadStatus', 'question', 'hint', 'subQuestions', 'deepBatch'],
       fanOut: { over: 'deepBatch', per: 'deepBatchSize', agents: 'agents' },
-      writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
+      writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons', 'readNotes'],
       cites: 'newFindings',
       retries: 2,
       checks: [
@@ -977,6 +1159,12 @@ export const investigate: Pattern = {
           message:
             'Give one reason in unreadableReasons per item in unreadable, in the same order.',
         },
+        {
+          // Output for every item, by the item each note starts with: none left out.
+          expr: 'heads(readNotes, "^[^ ]+") == deepBatch',
+          message:
+            'Give exactly one readNotes entry per item of deepBatch, in the same order, each starting with the item exactly as listed, then " — " and what it holds.',
+        },
       ],
     },
     {
@@ -996,6 +1184,7 @@ export const investigate: Pattern = {
         { field: 'pendingDeep', expr: 'without(notRead, pick(notRead, noRetryAt))' },
         { field: 'notReadReasons', expr: 'pick(notReadReasons, noRetryAt)' },
         { field: 'notRead', expr: 'pick(notRead, noRetryAt)' },
+        { field: 'deepBatchUsual', expr: 'if(unreadRetries == 0, deepBatchSize, deepBatchUsual)' },
         { field: 'unreadRetries', expr: 'unreadRetries + 1' },
         // One item per call: a file cut for the call's size gets the whole budget to itself.
         { field: 'deepBatchSize', expr: '1' },
@@ -1009,14 +1198,20 @@ export const investigate: Pattern = {
       assign: [
         ...MERGE_FINDINGS,
         ...STATUS,
-        // Files the engine could not give whole are not read completely, whatever the AI says:
-        // they are reported (and retried once, alone, at the end) like the unreadable ones.
+        // The engine's record decides what was read, whatever the AI says. Cut short: the rest
+        // is read next, as a range, first in the queue (a full prompt to itself). Not given at
+        // all (unreadable, or missing from the record): reported, and retried once at the end.
         { field: 'partialAt', expr: 'outside(partlyRead, notRead + unreadable)' },
-        { field: 'notRead', expr: 'notRead + unreadable + pick(partlyRead, partialAt)' },
+        { field: 'unreadAt', expr: 'without(partialAt, positions(partlyRest, "."))' },
+        { field: 'notRead', expr: 'notRead + unreadable + pick(partlyRead, unreadAt)' },
         {
           field: 'notReadReasons',
-          expr: 'notReadReasons + unreadableReasons + pick(partlyReadReasons, partialAt)',
+          expr: 'notReadReasons + unreadableReasons + pick(partlyReadReasons, unreadAt)',
         },
+        { field: 'pendingDeep', expr: 'without(partlyRest, [""]) + pendingDeep' },
+        // What the reader said of each item, wave after wave.
+        { field: 'readLog', expr: 'readLog + readNotes' },
+        { field: 'readNotes', expr: '[]' },
         { field: 'unreadable', expr: '[]' },
         { field: 'unreadableReasons', expr: '[]' },
       ],
@@ -1199,7 +1394,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Find gaps',
       directive:
-        'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Do the same for every entry of `openObjections` (objections to the last answer, sent back to research) that the findings do not yet settle. A hypothesis that `hypothesisStatus` marks untested is a gap only if a sub-question needs it settled. Set `confidence` (0..1) that the findings fully answer `question`.',
+        'For EACH sub-question, in order, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. In `assessment`, give one entry per sub-question, in order: "S<n>: ANSWERED [F…]" citing the findings that answer it, or "S<n>: GAP — what is missing" (the evidence still needed, and where it might be: name files, functions or terms). In `objectionGaps`, copy exactly every entry of `openObjections` (objections to the last answer, sent back to research) that the findings do not yet settle. A hypothesis that `hypothesisStatus` marks untested is a gap only if a sub-question needs it settled. Set `confidence` (0..1) that the findings fully answer `question`: it is reported; the gaps, not the confidence, decide whether research goes on.',
       reads: [
         'question',
         'hint',
@@ -1210,14 +1405,103 @@ export const investigate: Pattern = {
         'skipSources',
         'skipReasons',
       ],
-      writes: ['gaps', 'confidence'],
+      writes: ['assessment', 'objectionGaps', 'confidence'],
       retries: 2,
       checks: [
         {
-          expr: 'subset(gaps, subQuestions + openObjections)',
-          message: 'gaps must be copied exactly from subQuestions or openObjections.',
+          expr: `${TAGS('assessment')} == seq("S", len(subQuestions))`,
+          message:
+            'Give exactly one assessment entry per sub-question, in order, starting "S1: ", "S2: " and so on.',
+        },
+        {
+          expr: 'len(unmatched(assessment, "^S[0-9]+: (ANSWERED .*[[]F[0-9]+|GAP .*[A-Za-z])")) == 0',
+          message:
+            'Write each assessment entry as "S<n>: ANSWERED [F…]" citing findings, or "S<n>: GAP — what is missing".',
+        },
+        {
+          expr: 'subset(refs(assessment), ids(findings))',
+          message: 'assessment may cite only ids that exist in findings.',
+        },
+        {
+          expr: 'subset(objectionGaps, openObjections)',
+          message: 'objectionGaps must be copied exactly from openObjections.',
         },
       ],
+    },
+    {
+      id: 'recordGaps',
+      kind: 'compute',
+      label: 'Record gaps',
+      // The gaps follow from the assessment, entry by entry: the engine derives them.
+      assign: [
+        { field: 'gapNotes', expr: 'pick(assessment, positions(assessment, "^S[0-9]+: GAP"))' },
+        {
+          field: 'gapQuestions',
+          expr: 'pick(subQuestions, positions(assessment, "^S[0-9]+: GAP"))',
+        },
+        {
+          field: 'gaps',
+          expr: 'pick(subQuestions, positions(assessment, "^S[0-9]+: GAP")) + objectionGaps',
+        },
+      ],
+    },
+    {
+      id: 'expandGaps',
+      kind: 'condition',
+      label: 'Expand the read?',
+      // Gaps first send the workspace files that share their words to the deep read.
+      expression:
+        'len(gaps) > 0 && expandRounds < maxExpandRounds && includes(useSources, "workspace") && len(repoFiles) > 0',
+    },
+    {
+      id: 'expandPoolOf',
+      kind: 'compute',
+      label: 'Unread files',
+      assign: [{ field: 'expandPool', expr: 'without(repoFiles, relevantFiles + notRead)' }],
+    },
+    {
+      // Deterministic: the engine ranks the unread files by the words of the gaps.
+      id: 'rankGaps',
+      kind: 'tool',
+      label: 'Rank by the gaps',
+      tool: 'repo.rank',
+      inputs: { paths: 'expandPool', subQuestions: 'gapNotes', searchTerms: 'objectionGaps' },
+      output: { ranked: 'gapRanked', matched: 'gapMatched' },
+    },
+    {
+      id: 'takeExpand',
+      kind: 'compute',
+      label: 'Queue gap files',
+      assign: [
+        { field: 'expandNew', expr: 'take(without(gapMatched, relevantFiles), expandWave)' },
+        { field: 'expandRounds', expr: 'expandRounds + 1' },
+        { field: 'expandedFiles', expr: 'expandedFiles + expandNew' },
+        // A file the narrowed read left out that a gap brings in is read after all.
+        { field: 'narrowedOut', expr: 'without(narrowedOut, expandNew)' },
+        { field: 'relevantFiles', expr: 'relevantFiles + expandNew' },
+        { field: 'pendingDeep', expr: 'pendingDeep + expandNew' },
+        { field: 'expanding', expr: 'len(expandNew) > 0' },
+        // A wave reads as many items per call as the first did, not one as the retry pass.
+        { field: 'deepBatchSize', expr: 'if(unreadRetries > 0, deepBatchUsual, deepBatchSize)' },
+      ],
+    },
+    {
+      id: 'expanded',
+      kind: 'condition',
+      label: 'Files queued?',
+      expression: 'expanding',
+    },
+    {
+      id: 'expandDone',
+      kind: 'condition',
+      label: 'Gap expansion read?',
+      expression: 'expanding',
+    },
+    {
+      id: 'endExpand',
+      kind: 'compute',
+      label: 'Back to the gaps',
+      assign: [{ field: 'expanding', expr: 'false' }],
     },
     {
       id: 'moreGaps',
@@ -1232,15 +1516,15 @@ export const investigate: Pattern = {
       label: 'Close gaps',
       capabilities: ['web', 'mcp'],
       // gapsPerChase 1: one sub-agent per gap, each with the whole brief (for an A/B).
-      fanOut: { over: 'gaps', per: 'gapsPerChase', agents: 'agents', warm: true },
+      fanOut: { over: 'chaseGaps', per: 'gapsPerChase', agents: 'agents', warm: true },
       directive:
-        'Close every gap in `gaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
+        'Close every gap in `chaseGaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
       reads: [
         'leadHypotheses',
         'leadStatus',
         'question',
-        'gaps',
+        'chaseGaps',
         'hint',
         'findingsBrief',
         'sourceInfo',
@@ -1267,6 +1551,19 @@ export const investigate: Pattern = {
     },
     checkFindings('checkChase', 'newFindings', false),
     {
+      id: 'aimChase',
+      kind: 'compute',
+      label: 'Aim the research',
+      // gapAimed (a pilot, off): research what the gap check says is missing, not the whole
+      // sub-question. Only while the gaps are still the check's own (not objections sent back).
+      assign: [
+        {
+          field: 'chaseGaps',
+          expr: 'if(gapAimed && gaps == gapQuestions + objectionGaps, gapNotes + objectionGaps, gaps)',
+        },
+      ],
+    },
+    {
       id: 'mergeChase',
       kind: 'compute',
       label: 'Record gap research',
@@ -1280,8 +1577,10 @@ export const investigate: Pattern = {
     {
       id: 'confident',
       kind: 'condition',
-      label: 'Good enough?',
-      expression: 'confidence >= 0.7 || !empty(hint) || hintAsked',
+      label: 'Gaps closed?',
+      // On the record, never the model's confidence: no gap left in the checked assessment
+      // and nothing queued to read. Otherwise a person is asked once for a hint.
+      expression: '(len(gaps) == 0 && len(pendingDeep) == 0) || !empty(hint) || hintAsked',
     },
     {
       id: 'clarify',
@@ -1628,7 +1927,10 @@ export const investigate: Pattern = {
       branch: 'then',
       label: 'try unreadable again',
     },
-    { id: 'retryUnread-hasExperiments', from: 'retryUnread', to: 'hasExperiments', branch: 'else' },
+    { id: 'retryUnread-expandDone', from: 'retryUnread', to: 'expandDone', branch: 'else' },
+    { id: 'expandDone-endExpand', from: 'expandDone', to: 'endExpand', branch: 'then' },
+    { id: 'expandDone-hasExperiments', from: 'expandDone', to: 'hasExperiments', branch: 'else' },
+    { id: 'endExpand-assess', from: 'endExpand', to: 'assess', label: 're-assess' },
     { id: 'requeue-deepLeft', from: 'requeueUnread', to: 'deepLeft' },
     { id: 'takeDeep-deepRead', from: 'takeDeep', to: 'deepRead' },
     { id: 'deepRead-checkDeep', from: 'deepRead', to: 'checkDeep' },
@@ -1672,8 +1974,17 @@ export const investigate: Pattern = {
     { id: 'sweep-checkSource', from: 'sweep', to: 'checkSource' },
     { id: 'checkSource-mergeSource', from: 'checkSource', to: 'mergeSource' },
     { id: 'mergeSource-sourcesLeft', from: 'mergeSource', to: 'sourcesLeft', label: 'next source' },
-    { id: 'assess-moreGaps', from: 'assess', to: 'moreGaps' },
-    { id: 'moreGaps-chase', from: 'moreGaps', to: 'chase', branch: 'then' },
+    { id: 'assess-recordGaps', from: 'assess', to: 'recordGaps' },
+    { id: 'recordGaps-expandGaps', from: 'recordGaps', to: 'expandGaps' },
+    { id: 'expandGaps-pool', from: 'expandGaps', to: 'expandPoolOf', branch: 'then' },
+    { id: 'expandGaps-moreGaps', from: 'expandGaps', to: 'moreGaps', branch: 'else' },
+    { id: 'pool-rankGaps', from: 'expandPoolOf', to: 'rankGaps' },
+    { id: 'rankGaps-takeExpand', from: 'rankGaps', to: 'takeExpand' },
+    { id: 'takeExpand-expanded', from: 'takeExpand', to: 'expanded' },
+    { id: 'expanded-deepLeft', from: 'expanded', to: 'deepLeft', branch: 'then', label: 'read' },
+    { id: 'expanded-moreGaps', from: 'expanded', to: 'moreGaps', branch: 'else' },
+    { id: 'moreGaps-aimChase', from: 'moreGaps', to: 'aimChase', branch: 'then' },
+    { id: 'aimChase-chase', from: 'aimChase', to: 'chase' },
     { id: 'moreGaps-confident', from: 'moreGaps', to: 'confident', branch: 'else' },
     { id: 'chase-checkChase', from: 'chase', to: 'checkChase' },
     { id: 'checkChase-mergeChase', from: 'checkChase', to: 'mergeChase' },
@@ -1686,7 +1997,7 @@ export const investigate: Pattern = {
     { id: 'multiPart-answer', from: 'multiPart', to: 'answer', branch: 'else' },
     { id: 'answerParts-answer', from: 'answerParts', to: 'answer' },
     // A hint you gave always gets its round of research (counted in chaseRounds).
-    { id: 'useHint-chase', from: 'useHint', to: 'chase' },
+    { id: 'useHint-aimChase', from: 'useHint', to: 'aimChase' },
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
@@ -1748,6 +2059,12 @@ export const investigate: Pattern = {
         const files = (s.repoFiles as string[]) ?? [];
         const hit = files.filter((f) => RELEVANT.test(f));
         return { ranked: [...hit, ...files.filter((f) => !hit.includes(f))], matched: hit };
+      },
+      // The gap names the command line: the CLI shares its words.
+      rankGaps: (s) => {
+        const pool = (s.expandPool as string[]) ?? [];
+        const hit = pool.filter((f) => f.endsWith('cli.ts'));
+        return { ranked: [...hit, ...pool.filter((f) => !hit.includes(f))], matched: hit };
       },
     },
     agents: {
@@ -1847,12 +2164,13 @@ export const investigate: Pattern = {
             examined: batch,
             unreadable: [],
             unreadableReasons: [],
+            readNotes: batch.map((f) => `${f} — read in full`),
             newFindings: batch.map((f) =>
               f.startsWith('http')
                 ? `${f} — state machines apply transitions only on valid input`
                 : f.endsWith('schema.ts')
                   ? `${f}:115 — validateNodeResult checks verdict and typed updates${tagged(s, ' [H1 for, H3 against]')}`
-                  : `${f}:1 — reviewed fully`,
+                  : `${itemOf(f).path}:${itemOf(f).from ?? 1} — reviewed fully`,
             ),
           },
           verdict: v('read fully'),
@@ -1870,15 +2188,15 @@ export const investigate: Pattern = {
         verdict: v('searched'),
       }),
       assess: (s, visit) =>
-        visit === 0
+        visit < 2
           ? {
               updates: {
-                gaps: [((s.subQuestions as string[]) ?? [])[1] ?? ''].filter(Boolean),
+                ...assessFor(s, [((s.subQuestions as string[]) ?? [])[1] ?? ''].filter(Boolean)),
                 confidence: 0.6,
               },
               verdict: v('one gap', 0.6),
             }
-          : { updates: { gaps: [], confidence: 0.9 }, verdict: v('covered') },
+          : { updates: { ...assessFor(s, []), confidence: 0.9 }, verdict: v('covered') },
       chase: (s) => ({
         updates: {
           queries: ['git log -S validateNodeResult'],

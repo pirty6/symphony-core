@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compileScore } from './compile.js';
 import { advance, createEngine, toPerformance, type AdvanceResult } from './engine.js';
 import { replayPerformance } from './replay.js';
-import type { AgentPause, Pattern } from './types.js';
+import type { AgentPause, AiTranscript, Pattern } from './types.js';
 import { validatePattern } from './validate.js';
 
 const reader: Pattern = {
@@ -52,6 +52,14 @@ const score = compileScore(reader, {
   context: { files: ['a', 'b', 'c', 'd', 'e'] },
   generatedAt: 't',
 });
+/** A part's transcript whose read record shows these files given whole. */
+const t = (paths: string[]): AiTranscript => ({
+  provider: 'p',
+  prompt: '',
+  output: '',
+  toolCalls: [],
+  preloaded: paths.map((path) => ({ path, lines: 10 })),
+});
 const submit = (r: AdvanceResult, result: unknown) =>
   advance(score, r.state, { kind: 'agent', pauseId: r.state.pause!.pauseId, result, at: 't' });
 
@@ -99,6 +107,49 @@ describe('fanOut: one AI call per chunk, merged in chunk order', () => {
       read: ['a', 'b', 'c', 'd', 'e'],
     });
     expect(replayPerformance(score, toPerformance(done.state)).divergence.reproduced).toBe(true);
+  });
+
+  it('a kept part keeps its read record: its files are not reported unread on the retry', () => {
+    const reporting = compileScore(
+      {
+        ...reader,
+        state: [
+          ...reader.state,
+          { name: 'partly', type: 'string[]' },
+          { name: 'why', type: 'string[]' },
+          { name: 'rest', type: 'string[]' },
+        ],
+        nodes: reader.nodes.map((n) =>
+          n.id === 'readAll'
+            ? Object.assign({}, n, {
+                preload: 'files',
+                preloadReport: { paths: 'partly', reasons: 'why', rest: 'rest' },
+              })
+            : n,
+        ),
+      },
+      { goal: 'g', context: { files: ['a.ts', 'b.ts', 'c.ts'] }, generatedAt: 't' },
+    );
+    const send = (r: AdvanceResult, result: unknown, parts: AiTranscript[]) =>
+      advance(reporting, r.state, {
+        kind: 'agent',
+        pauseId: r.state.pause!.pauseId,
+        result,
+        transcript: { provider: 'p', prompt: '', output: '', toolCalls: [], parts },
+        at: 't',
+      });
+    let r = createEngine(reporting, { startedAt: 't' });
+    r = send(r, { parts: [answer(['a.ts', 'b.ts']), { updates: { read: 'c' } }] }, [
+      t(['a.ts', 'b.ts']),
+      t(['c.ts']),
+    ]);
+    expect((r.state.pause as AgentPause).partsDone?.[0]).toBeTruthy();
+    // The retry plays part 2 only; part 1's transcript has no record (it was not played).
+    const kept = { provider: 'p', prompt: '', output: '(kept)', toolCalls: [] };
+    r = send(r, { parts: [null, answer(['c.ts'])] }, [kept, t(['c.ts'])]);
+    expect(r.state.outcome).toBe('success');
+    expect(r.state.state.partly).toEqual([]);
+    expect(replayPerformance(reporting, toPerformance(r.state)).divergence.reproduced).toBe(true);
   });
 
   it('keeps nothing when every part passed but the merged answer was rejected', () => {

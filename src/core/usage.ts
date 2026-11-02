@@ -173,6 +173,76 @@ export function rejectionUsage(perf: Pick<Performance, 'steps'>): {
   return { attempts, attemptUsage, textUpdates };
 }
 
+/**
+ * Why answers were thrown away, by "<step>: <reason>" and how often. Quoted text and numbers
+ * are folded ("…", N) so the same check failing on different values counts as one reason.
+ */
+export function rejectionReasons(perf: Pick<Performance, 'steps'>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const s of perf.steps)
+    for (const a of s.attempts ?? [])
+      for (const e of a.errors) {
+        const reason = e
+          .replace(/"[^"]*"/g, '"…"')
+          .replace(/[0-9]+/g, 'N')
+          .slice(0, 160);
+        const key = `${s.nodeId}: ${reason}`;
+        out[key] = (out[key] ?? 0) + 1;
+      }
+  return out;
+}
+
+const RATE_LIMIT = /\b429\b|rate.?limit|too many requests/i;
+
+/** A transcript with its parallel parts and takes, flattened. */
+const everyTranscript = (t: AiTranscript | undefined): AiTranscript[] =>
+  t
+    ? [t, ...(t.parts ?? []).flatMap(everyTranscript), ...(t.takes ?? []).flatMap(everyTranscript)]
+    : [];
+
+const stepTranscripts = (s: Performance['steps'][number]): AiTranscript[] =>
+  [s.transcript, ...(s.attempts ?? []).map((a) => a.transcript)].flatMap(everyTranscript);
+
+/**
+ * Rate limits a run hit: model calls that failed with one (HTTP 429, "rate limit", "too many
+ * requests"), and items a reader reported unreadable for one (a web page's 429).
+ */
+export function rateLimits(perf: Pick<Performance, 'steps'>): {
+  readonly provider: number;
+  readonly reads: number;
+} {
+  let provider = 0;
+  let reads = 0;
+  for (const s of perf.steps) {
+    provider += stepTranscripts(s).filter(
+      (t) => t.output.startsWith('provider error') && RATE_LIMIT.test(t.output),
+    ).length;
+    const why = s.updates?.unreadableReasons;
+    if (Array.isArray(why))
+      reads += why.filter((w) => typeof w === 'string' && RATE_LIMIT.test(w)).length;
+  }
+  return { provider, reads };
+}
+
+/** How big the saved run is (characters of JSON), and what the read record adds to it. */
+export function recordSize(perf: Performance): {
+  readonly run: number;
+  /** The readers' notes, one per item read. */
+  readonly readNotes: number;
+  /** The engine's record of what it gave each step to read. */
+  readonly preloaded: number;
+} {
+  let readNotes = 0;
+  let preloaded = 0;
+  for (const s of perf.steps) {
+    if (Array.isArray(s.updates?.readNotes))
+      readNotes += JSON.stringify(s.updates.readNotes).length;
+    for (const t of stepTranscripts(s))
+      if (t.preloaded) preloaded += JSON.stringify(t.preloaded).length;
+  }
+  return { run: JSON.stringify(perf).length, readNotes, preloaded };
+}
+
 const k = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
 

@@ -22,6 +22,10 @@ export interface ProviderConfig {
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
   readonly tiers?: Partial<Record<Complexity, Tier>>;
   readonly alternateModel?: string;
+  /** Trials: one step on another model, delta repair, the step's header in the system message. */
+  readonly nodeModels?: Readonly<Record<string, string>>;
+  readonly deltaRepair?: boolean;
+  readonly headerInSystem?: boolean;
 }
 
 export function isProviderName(v: unknown): v is ProviderName {
@@ -40,6 +44,9 @@ export function makeProvider(cfg: ProviderConfig): Provider {
       ...(cfg.mcpServers ? { mcpServers: cfg.mcpServers } : {}),
       ...(cfg.tiers ? { tiers: cfg.tiers } : {}),
       ...(cfg.alternateModel ? { alternateModel: cfg.alternateModel } : {}),
+      ...(cfg.nodeModels ? { nodeModels: cfg.nodeModels } : {}),
+      ...(cfg.deltaRepair ? { deltaRepair: true } : {}),
+      ...(cfg.headerInSystem ? { headerInSystem: true } : {}),
       clock,
     });
   }
@@ -60,17 +67,37 @@ export function envConfig(env: NodeJS.ProcessEnv): {
   gitHubTokenSource?: string;
   tiers?: Partial<Record<Complexity, Tier>>;
   alternateModel?: string;
+  nodeModels?: Record<string, string>;
+  deltaRepair?: boolean;
+  headerInSystem?: boolean;
 } {
   const model = env.COPILOT_MODEL ?? env.MODEL;
   const source = TOKEN_VARS.find((name) => env[name] && env[name] !== 'token');
   const token = source ? env[source] : undefined;
   const tiers = env.SYMPHONY_TIERS ? parseTiers(env.SYMPHONY_TIERS) : undefined;
+  const nodeModels = env.SYMPHONY_NODE_MODELS
+    ? parseNodeModels(env.SYMPHONY_NODE_MODELS)
+    : undefined;
   return {
     ...(model ? { model } : {}),
     ...(token && source ? { gitHubToken: token, gitHubTokenSource: source } : {}),
     ...(tiers ? { tiers } : {}),
     ...(env.SYMPHONY_ALT_MODEL ? { alternateModel: env.SYMPHONY_ALT_MODEL } : {}),
+    ...(nodeModels ? { nodeModels } : {}),
+    ...(on(env.SYMPHONY_DELTA_REPAIR) ? { deltaRepair: true } : {}),
+    ...(on(env.SYMPHONY_HEADER_IN_SYSTEM) ? { headerInSystem: true } : {}),
   };
+}
+
+const on = (v: string | undefined) => v !== undefined && /^(1|true|on|yes)$/i.test(v.trim());
+
+/** "deepRead=claude-opus-4.5,triage=gpt-5-mini": a model per step id. */
+export function parseNodeModels(text: string): Record<string, string> | undefined {
+  const pairs = text
+    .split(',')
+    .map((p) => p.split('=').map((x) => x.trim()))
+    .filter((p): p is [string, string] => p.length === 2 && p[0] !== '' && p[1] !== '');
+  return pairs.length > 0 ? Object.fromEntries(pairs) : undefined;
 }
 
 export interface RuntimeExtras {

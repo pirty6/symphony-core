@@ -4,6 +4,7 @@
  * run every flow without AI credentials. Nodes without a script get a
  * placeholder that satisfies the output schema.
  */
+import { isUrl, itemOf } from './items.js';
 import {
   advance,
   createEngine,
@@ -12,7 +13,14 @@ import {
   type EngineState,
 } from './engine.js';
 import { zeroValue } from './schema.js';
-import type { DemoScript, ExecutableScore, NodeResult, Pause, Resolution } from './types.js';
+import type {
+  DemoScript,
+  ExecutableScore,
+  NodeResult,
+  Pause,
+  PreloadRecord,
+  Resolution,
+} from './types.js';
 
 export function placeholderResult(pause: Extract<Pause, { kind: 'agent' }>): NodeResult {
   return {
@@ -24,6 +32,13 @@ export function placeholderResult(pause: Extract<Pause, { kind: 'agent' }>): Nod
       reason: `scripted placeholder for '${pause.label}'`,
     },
   };
+}
+
+/** What a runtime that read every listed workspace file whole would record. */
+function demoManifest(listed: unknown): PreloadRecord[] {
+  return (Array.isArray(listed) ? listed : [])
+    .filter((x): x is string => typeof x === 'string' && x.trim() !== '' && !isUrl(x))
+    .map((x) => ({ path: itemOf(x).path, item: x.trim(), lines: 1 }));
 }
 
 export function scriptedResolution(
@@ -66,6 +81,9 @@ export function scriptedResolution(
         output: JSON.stringify(result),
         toolCalls: [],
         ...(at ? { startedAt: at, completedAt: at } : {}),
+        // No runtime reads files here: the demo stands in for one that gave each listed file
+        // whole (without a record, the engine would count none as read).
+        ...(pause.preload ? { preloaded: demoManifest(pause.input[pause.preload]) } : {}),
       },
       ...(at ? { at } : {}),
     };

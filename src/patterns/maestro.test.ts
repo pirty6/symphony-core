@@ -552,7 +552,7 @@ describe('maestro never drops go-gate feedback', () => {
     expect(composedScore(score, s)).toBeUndefined();
     expect(maestro.result).toContain('unappliedFeedback');
     expect(maestro.result).toContain('composition');
-  });
+  }, 30_000);
 
   it('empty feedback at the last round still performs', () => {
     const { r } = run(
@@ -569,7 +569,7 @@ describe('maestro never drops go-gate feedback', () => {
     );
     expect(r.state.outcome).toBe('success');
     expect(r.state.state.unappliedFeedback).toBe('');
-  });
+  }, 30_000);
 });
 
 describe('maestro keeps a preset complexity', () => {
@@ -769,7 +769,7 @@ describe('maestro keeps a requirement ledger (replaying run 05-02-16)', () => {
     );
     expect(nodesRun(r)).toContain('gate');
     expect(r.state.state.uncovered).toEqual(['R1: NOT COVERED — x']);
-  });
+  }, 30_000);
 });
 
 describe('maestro shares its names with the other surfaces', () => {

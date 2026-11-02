@@ -2,6 +2,10 @@
 
 export interface PreloadedFile {
   readonly path: string;
+  /** The item as listed (a chunk names its lines), when it differs from the path. */
+  readonly item?: string;
+  /** A chunk: the lines it asked for. */
+  readonly range?: readonly [number, number];
   /** The file with line numbers ("12| text"), or why it is not here. */
   readonly text: string;
   readonly lines: number;
@@ -28,7 +32,7 @@ export function preloadSection(field: string, files: readonly PreloadedFile[]): 
           ]
         : [
             '',
-            `=== ${f.path} (${f.lines} lines)${f.omitted ? ` — lines ${f.omitted[0]}-${f.omitted[1]} left out for size: read them with tools` : ''} ===`,
+            `=== ${f.path} (${f.range ? `lines ${f.range[0]}-${f.range[1]} of ${f.lines}` : `${f.lines} lines`})${f.omitted ? ` — lines ${f.omitted[0]}-${f.omitted[1]} left out for size: read them with tools` : ''} ===`,
             f.text,
           ],
     ),

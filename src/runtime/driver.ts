@@ -8,6 +8,7 @@
  * user can look at the node input and the AI's proposed output before the
  * engine applies it. stop() aborts the live AI call and cancels the run.
  */
+import { itemOf } from '../core/items.js';
 import { stepTimeLimitMs } from './limits.js';
 import { KEEP_ANSWER } from './provider.js';
 import type { PreloadedFile } from './preload-prompt.js';
@@ -408,6 +409,8 @@ export class Run {
     // The record says what the engine put in the prompt, without the text itself.
     const preloaded = files.map((f) => {
       const entry: PreloadRecord = { path: f.path, lines: f.lines };
+      if (f.item && f.item !== f.path) Object.assign(entry, { item: f.item });
+      if (f.range) Object.assign(entry, { range: f.range });
       if (f.omitted) Object.assign(entry, { omitted: f.omitted, ...(f.cut ? { cut: f.cut } : {}) });
       if (f.error) Object.assign(entry, { error: f.error });
       return entry;
@@ -440,7 +443,15 @@ export class Run {
         // The step still runs; it is told, file by file, to read them with tools.
         const error = `read failed: ${e instanceof Error ? e.message : String(e)}`;
         const paths = list.filter((p): p is string => typeof p === 'string' && !URL_LIKE.test(p));
-        return { files: paths.map((path) => ({ path, text: `(${error})`, lines: 0, error })) };
+        return {
+          files: paths.map((p) => ({
+            path: itemOf(p).path,
+            item: p.trim(),
+            text: `(${error})`,
+            lines: 0,
+            error,
+          })),
+        };
       });
     const files = (Array.isArray(out.files) ? out.files : []) as PreloadedFile[];
     const shown = files.filter((f) => !f.error);

@@ -58,11 +58,18 @@ export function cycles(
   return found;
 }
 
-const COMPARE = /([A-Za-z_]\w*)\s*(?:<=?|>=?)\s*(max\w*)|(max\w*)\s*(?:<=?|>=?)\s*([A-Za-z_]\w*)/g;
+const COMPARE = /([A-Za-z_]\w*)\s*(<=?|>=?)\s*(max\w*)|(max\w*)\s*(<=?|>=?)\s*([A-Za-z_]\w*)/g;
 
-/** The fields a condition compares with a max* field: candidate loop counters. */
-function guardedCounters(expression: string): string[] {
-  return [...expression.matchAll(COMPARE)].map((m) => m[1] ?? m[4]!);
+/**
+ * The counters a condition compares with a max* field, each with the branch the comparison
+ * bounds: "n < maxN" holds only while n is below its cap, so it bounds `then`; "n >= maxN"
+ * bounds `else`. The other branch stays open.
+ */
+function guardedCounters(expression: string): { counter: string; branch: 'then' | 'else' }[] {
+  return [...expression.matchAll(COMPARE)].map((m) => {
+    const below = m[1] !== undefined ? m[2]!.startsWith('<') : m[5]!.startsWith('>');
+    return { counter: m[1] ?? m[6]!, branch: below ? 'then' : 'else' };
+  });
 }
 
 /** Does a compute node in the loop increment this counter ("x + 1")? */
@@ -75,19 +82,26 @@ function increments(nodes: readonly ScoreNode[], counter: string): boolean {
 
 const capped = (n: ScoreNode) => n.maxVisits !== undefined || n.visitsFrom !== undefined;
 
+type Edge = PatternGraph['edges'][number];
+
 /** Loops nothing bounds, each as the ids of its nodes. */
 export function unboundedLoops(g: PatternGraph): string[][] {
   const byId = new Map(g.nodes.map((n) => [n.id, n]));
-  const open = (ids: readonly string[]): string[][] =>
-    cycles(ids, g.edges).flatMap((comp) => {
+  const open = (ids: readonly string[], edges: readonly Edge[]): string[][] =>
+    cycles(ids, edges).flatMap((comp) => {
       const members = comp.map((id) => byId.get(id)!);
-      const guard = members.find(
-        (n) =>
-          n.kind === 'condition' &&
-          guardedCounters(n.expression).some((c) => increments(members, c)),
-      );
-      // A guarded component may still hold another cycle that avoids the guard.
-      return guard ? open(comp.filter((id) => id !== guard.id)) : [comp];
+      for (const n of members) {
+        if (n.kind !== 'condition') continue;
+        const guard = guardedCounters(n.expression).find((c) => increments(members, c.counter));
+        if (!guard) continue;
+        // The bounded branch leaves the loop at the cap; cycles through the other one remain.
+        const rest = edges.filter((e) => !(e.from === n.id && e.branch === guard.branch));
+        if (rest.length < edges.length) return open(comp, rest);
+      }
+      return [comp];
     });
-  return open(g.nodes.filter((n) => !capped(n)).map((n) => n.id));
+  return open(
+    g.nodes.filter((n) => !capped(n)).map((n) => n.id),
+    g.edges,
+  );
 }

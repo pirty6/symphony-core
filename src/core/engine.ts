@@ -15,6 +15,7 @@
  *   - a move (moveType, targetSite, stateHash) is never repeated
  *   - per-node maxVisits and per-score maxSteps bound every loop
  */
+import { chunkItem, isUrl, itemOf } from './items.js';
 import { ENGINE_VERSION, RUN_SCHEMA_VERSION } from './migrate.js';
 import { evalExpr, evaluateGuard, parseExpr } from './expr.js';
 import { hashOf } from './hash.js';
@@ -814,38 +815,77 @@ function lowConfidence(
 }
 
 /**
- * AgentNode.preloadReport: the files of `preload` the runtime could not give whole, and why,
- * from the preload record in the transcript (each part's, for a fanned-out step). Replay
- * reads the recorded transcript, so this is as deterministic as the answer itself.
+ * AgentNode.preloadReport, checked item by item against what the step was given to read
+ * (its `preload` list): an item the runtime's record shows was given whole is read; one cut
+ * short gets a chunk with its remaining lines (`rest`); one it could not read, or one the
+ * record does not mention at all, counts as not read (fails closed: no record, no read).
+ * URLs are the step's own to fetch. Replay reads the recorded transcript, so this is as
+ * deterministic as the answer itself.
  */
 function preloadReportOf(
   node: ScoreNode,
   transcript: AiTranscript | undefined,
+  pause: AgentPause,
+  attempts: Ctx['attempts'],
 ): Record<string, string[]> {
-  if (node.kind !== 'agent' || !node.preloadReport) return {};
-  const records = [transcript, ...(transcript?.parts ?? [])].flatMap((t) => t?.preloaded ?? []);
+  if (node.kind !== 'agent' || !node.preloadReport || !node.preload) return {};
+  const input = pause.input;
+  // A part kept from an earlier attempt was not played again: its record is that attempt's.
+  const kept = (pause.partsDone ?? []).flatMap((done, i) => {
+    if (!done) return [];
+    const from = attempts.findLast(
+      (a) =>
+        (a.result as { parts?: unknown[] } | null | undefined)?.parts?.[i] != null &&
+        a.transcript?.parts?.[i]?.preloaded,
+    );
+    return from?.transcript?.parts?.[i]?.preloaded ?? [];
+  });
+  const records = [
+    ...[transcript, ...(transcript?.parts ?? [])].flatMap((t) => t?.preloaded ?? []),
+    ...kept,
+  ];
+  const listed = input[node.preload];
+  const expected = [
+    ...new Set(
+      (Array.isArray(listed) ? listed : [])
+        .filter((x): x is string => typeof x === 'string' && x.trim() !== '' && !isUrl(x))
+        .map((x) => x.trim()),
+    ),
+  ];
   const paths: string[] = [];
   const reasons: string[] = [];
-  const whole = [
-    ...new Set(records.filter((r) => !r.error && !r.omitted && r.lines > 0).map((r) => r.path)),
-  ];
-  for (const r of records) {
-    if (paths.includes(r.path)) continue;
-    const lines = r.omitted ? `lines ${r.omitted[0]}-${r.omitted[1]}` : '';
-    const why = r.error
-      ? `the engine could not read it (${r.error})`
-      : !r.omitted
-        ? undefined
-        : r.cut === 'file'
-          ? `longer than one prompt can hold: ${lines} were not given whole (read with tools, as the AI reports)`
-          : `${lines} left out of the prompt for the call's size: read again on its own`;
-    if (!why) continue;
-    paths.push(r.path);
-    reasons.push(why);
+  const rest: string[] = [];
+  const whole: string[] = [];
+  for (const item of expected) {
+    const { path, from } = itemOf(item);
+    // Older records name only the file: they match an item that is not a chunk.
+    const r =
+      records.find((x) => x.item === item) ??
+      records.find((x) => x.item === undefined && from === undefined && x.path === path);
+    const missed = (why: string, next = '') => {
+      paths.push(item);
+      reasons.push(why);
+      rest.push(next);
+    };
+    if (!r) missed("not in the engine's record of what it gave the step: counted as not read");
+    else if (r.error) missed(`the engine could not read it (${r.error})`);
+    // Nothing of it fit: no chunk (it would be the item again, and never end), reported instead.
+    else if (r.omitted && r.omitted[0] <= (from ?? 1))
+      missed(`lines ${r.omitted[0]}-${r.omitted[1]}: none of it fit in the prompt`);
+    else if (r.omitted)
+      missed(
+        r.cut === 'file'
+          ? `longer than one prompt can hold: lines ${r.omitted[0]}-${r.omitted[1]} are read next, as a range`
+          : `lines ${r.omitted[0]}-${r.omitted[1]} left out of the prompt for the call's size: read next, as a range`,
+        chunkItem(path, r.omitted[0], r.omitted[1]),
+      );
+    else if (r.lines > 0) whole.push(item);
+    else missed('empty: nothing was given');
   }
   return Object.assign(
     { [node.preloadReport.paths]: paths, [node.preloadReport.reasons]: reasons },
     node.preloadReport.whole ? { [node.preloadReport.whole]: whole } : {},
+    node.preloadReport.rest ? { [node.preloadReport.rest]: rest } : {},
   );
 }
 
@@ -867,7 +907,10 @@ function resolveAgent(
         ok: true,
         value: {
           ...routed.value,
-          updates: { ...routed.value.updates, ...preloadReportOf(node, res.transcript) },
+          updates: {
+            ...routed.value.updates,
+            ...preloadReportOf(node, res.transcript, pause, ctx.attempts),
+          },
         },
       }
     : routed;

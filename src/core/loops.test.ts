@@ -69,6 +69,51 @@ describe('every loop is bounded (a warning when not)', () => {
     expect(unboundedLoops(p)).toEqual([['other', 'spin']]);
   });
 
+  it('a cap bounds only the branch it guards: a cycle through the other branch is flagged', () => {
+    const p: Pattern = {
+      name: 'gate',
+      description: 'x',
+      requiredContext: [],
+      state: [
+        { name: 'n', type: 'number' },
+        { name: 'maxN', type: 'number', initial: 3 },
+      ],
+      start: 's',
+      nodes: [
+        { id: 's', kind: 'start', label: 's' },
+        { id: 'top', kind: 'compute', label: 'top', assign: [{ field: 'n', expr: 'n' }] },
+        { id: 'gate', kind: 'condition', label: 'gate', expression: 'n < maxN' },
+        { id: 'count', kind: 'compute', label: 'count', assign: [{ field: 'n', expr: 'n + 1' }] },
+        { id: 'loop', kind: 'condition', label: 'loop', expression: 'n == 0' },
+        { id: 'e', kind: 'end', label: 'e', outcome: 'success' },
+      ],
+      edges: [
+        { id: '1', from: 's', to: 'top' },
+        { id: '2', from: 'top', to: 'gate' },
+        { id: '3', from: 'gate', to: 'count', branch: 'then' },
+        { id: '4', from: 'count', to: 'top' },
+        // Past the cap, the else branch still goes round, and nothing counts it.
+        { id: '5', from: 'gate', to: 'loop', branch: 'else' },
+        { id: '6', from: 'loop', to: 'top', branch: 'then' },
+        { id: '7', from: 'loop', to: 'e', branch: 'else' },
+      ],
+    };
+    expect(unboundedLoops(p)).toEqual([['top', 'gate', 'loop']]);
+    // "n >= maxN" bounds the else branch instead.
+    const flipped: Pattern = {
+      ...p,
+      nodes: p.nodes.map((n) =>
+        n.id === 'gate' ? Object.assign({}, n, { expression: 'maxN <= n' }) : n,
+      ),
+      edges: p.edges.map((x) =>
+        x.from === 'gate'
+          ? Object.assign({}, x, { branch: x.branch === 'then' ? 'else' : 'then' })
+          : x,
+      ),
+    };
+    expect(unboundedLoops(flipped)).toEqual([['top', 'gate', 'loop']]);
+  });
+
   it("investigate's reading waves are bounded by their check caps, its gap loop by its counter", () => {
     expect(loopWarnings(investigate)).toEqual([]);
     // Without the citation check's cap, the triage wave loop has no bound.

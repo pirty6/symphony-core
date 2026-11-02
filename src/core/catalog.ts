@@ -106,6 +106,29 @@ export const FEATURES: readonly Feature[] = [
       { value: '1', label: 'one sub-agent per gap' },
     ],
   },
+  {
+    field: 'maxExpandRounds',
+    label: 'Gap expansion',
+    description:
+      'Gaps send the unread workspace files that share their words to the deep read, up to this many rounds.',
+    choices: [
+      { value: '0', label: 'off' },
+      { value: '1', label: '1 round' },
+      { value: '2', label: '2 rounds' },
+    ],
+  },
+  {
+    field: 'narrowRead',
+    label: 'Narrowed read (opt-in)',
+    description:
+      'Triage only the files the search matched plus 20 more in ranked order. Every other file is never read (zero coverage) and is listed in the coverage. Only when you accept that.',
+  },
+  {
+    field: 'gapAimed',
+    label: 'Gap-aimed research (pilot)',
+    description:
+      'Gap research gets what the gap check says is missing instead of the whole sub-question.',
+  },
 ];
 
 /**

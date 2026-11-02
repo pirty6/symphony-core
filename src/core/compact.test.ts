@@ -25,7 +25,17 @@ const transcript = {
 const perf: Performance = {
   ...played,
   provider: 'copilot',
-  steps: played.steps.map((s) => (s.kind === 'agent' ? Object.assign({}, s, { transcript }) : s)),
+  steps: played.steps.map((s) =>
+    s.kind === 'agent'
+      ? Object.assign({}, s, {
+          transcript: Object.assign(
+            {},
+            transcript,
+            s.transcript?.preloaded ? { preloaded: s.transcript.preloaded } : {},
+          ),
+        })
+      : s,
+  ),
 };
 const size = (p: Performance) => JSON.stringify(p).length;
 
@@ -37,7 +47,7 @@ describe('compacting old runs', () => {
     expect(compact.events).toEqual([]);
     expect(size(compact)).toBeLessThan(size(perf) / 3);
     const agent = compact.steps.find((s) => s.kind === 'agent')!;
-    expect(agent.transcript).toEqual({
+    expect(agent.transcript).toMatchObject({
       provider: 'copilot',
       model: 'm',
       prompt: '',
@@ -58,6 +68,28 @@ describe('compacting old runs', () => {
       perf.steps.map((s) => [s.changes, s.input]),
     );
     expect(back.compacted).toBe(true);
+  });
+
+  it("keeps each part's read record: a fanned-out step's files stay read after compaction", () => {
+    // As the runtime records a fanned-out step: the read record on each part's transcript.
+    const fanned: Performance = {
+      ...perf,
+      steps: perf.steps.map((s) => {
+        const pre = s.transcript?.preloaded;
+        if (!pre) return s;
+        const { preloaded: _p, ...top } = s.transcript!;
+        return Object.assign({}, s, {
+          transcript: { ...top, parts: [{ ...transcript, preloaded: pre }] },
+        });
+      }),
+    };
+    expect(replayPerformance(score, fanned).divergence.reproduced).toBe(true);
+    const small = compactPerformance(score, fanned)!;
+    expect(small).toBeDefined();
+    const part = small.steps.find((s) => s.transcript?.parts)!.transcript!.parts![0]!;
+    expect(part.prompt).toBe('');
+    expect(part.preloaded?.length).toBeGreaterThan(0);
+    expect(replayPerformance(score, small).divergence.reproduced).toBe(true);
   });
 
   it('refuses a run that no longer replays, and leaves full runs alone', () => {

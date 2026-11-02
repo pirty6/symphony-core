@@ -564,6 +564,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
       repeat: { type: 'string', short: 'n', default: '1' },
       compare: { type: 'string' },
       keep: { type: 'boolean', default: false },
+      with: { type: 'string', multiple: true },
     },
   });
   const providerName = args.values.provider;
@@ -587,6 +588,28 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     ? (JSON.parse(await readFile(args.values.compare, 'utf8')) as EvalReport)
     : undefined;
   const library = await allPatterns(cwd);
+  // --with key=value: an input over every task whose pattern has that field (a trial's setting).
+  const pairs = args.values.with ?? [];
+  const patterns = library.filter((p) => tasks.some((t) => t.pattern === p.name));
+  const ownPairs = (p: Pattern) =>
+    pairs.filter((pair) => p.state.some((f) => f.name === pair.slice(0, pair.indexOf('='))));
+  const unknown = pairs.filter((pair) => !patterns.some((p) => ownPairs(p).includes(pair)));
+  if (unknown.length > 0) {
+    console.error(`--with: no task's pattern has ${unknown.map((u) => `'${u}'`).join(', ')}`);
+    return 1;
+  }
+  try {
+    for (const p of patterns)
+      for (const [k, v] of Object.entries(parseContext(ownPairs(p), p)))
+        if (Number.isNaN(v)) throw new Error(`'${k}' must be a number`);
+  } catch (e) {
+    console.error(`--with: ${(e as Error).message}`);
+    return 1;
+  }
+  const switches = Object.entries(process.env)
+    .filter(([k, v]) => /^SYMPHONY_(NODE_MODELS|DELTA_REPAIR|HEADER_IN_SYSTEM)$/.test(k) && v)
+    .map(([k, v]) => `${k}=${v}`)
+    .toSorted();
   console.log(c.dim(`eval: ${tasks.length} task(s) × ${args.values.repeat} on ${providerName}`));
   const report = await runEval({
     tasks,
@@ -596,6 +619,8 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     env: process.env,
     repeat: Number(args.values.repeat),
     keep: args.values.keep,
+    inputs: (p) => parseContext(ownPairs(p), p),
+    settings: [...pairs, ...switches],
     runsDir: join(
       cwd,
       '.symphony',
@@ -1062,6 +1087,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
   eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time
+      --with key=value         an input for every task whose pattern has it (a trial: --with deepBatchSize=8)
       --task routing           21 maestro requests: right pattern, complexity band and chain (compose only)
   runs --prune [--dry-run]     delete demo runs >7 days, compact runs >30 days (still replayable)
 

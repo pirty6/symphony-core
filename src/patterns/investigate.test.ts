@@ -3,11 +3,29 @@ import { compileScore } from '../core/compile.js';
 import { advance, createEngine, toPerformance } from '../core/engine.js';
 import { replayPerformance } from '../core/replay.js';
 import { runScripted, scriptedResolution } from '../core/scripted.js';
-import type { DemoScript, PreloadRecord, Resolution } from '../core/types.js';
+import type {
+  DemoResponder,
+  DemoScript,
+  EngineEvent,
+  PreloadRecord,
+  Resolution,
+} from '../core/types.js';
 import { buildAgentPrompt } from '../runtime/provider.js';
+import { itemOf } from '../core/items.js';
 import { investigate } from './index.js';
+import { assessFor } from './investigate.js';
 
 const demo = investigate.demo!;
+
+/** A deep-read responder that leaves `readNotes` out gets one note per batch item. */
+const withNotes =
+  (f: DemoResponder): DemoResponder =>
+  (s, visit) => {
+    const r = f(s, visit);
+    if (r.updates.readNotes) return r;
+    const batch = (s.deepBatch as string[]) ?? [];
+    return { ...r, updates: { ...r.updates, readNotes: batch.map((x) => `${x} — read`) } };
+  };
 
 /** Run investigate with the plan using exactly `use` (everything else skipped). */
 /** How many leading characters two prompts share. */
@@ -95,8 +113,20 @@ describe('investigate adapts its evidence to the question', () => {
     expect(ran).toContain('locate');
     expect(r.state.state.repoFileCount).toBe(403);
     expect(triaged(r).toSorted()).toEqual([...(r.state.state.scopeFiles as string[])].toSorted());
-    expect(r.state.state.excludedFiles).toEqual(
-      expect.arrayContaining([expect.stringMatching(/did not locate were not triaged/)]),
+    // Every file not triaged is named: 403 minus the located ones, each listed in the coverage.
+    const s = r.state.state;
+    const unlocated = s.unlocatedFiles as string[];
+    expect(unlocated.length + triaged(r).length).toBe(403);
+    expect(unlocated.toSorted()).toEqual(
+      (s.repoFiles as string[]).filter((f) => !triaged(r).includes(f)).toSorted(),
+    );
+    expect(s.excludedFiles).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^\d+ files the search did not locate were not triaged/),
+      ]),
+    );
+    expect(String(s.answer)).toMatch(
+      /- Not located, so not triaged: src\/gen\/file\d+\.ts; .* … \(all in unlocatedFiles\)/,
     );
     // Asked for every file: no search, all 403 triaged.
     const all = runWith(['workspace'], demo.approvals, {
@@ -158,9 +188,10 @@ describe('investigate adapts its evidence to the question', () => {
 describe('items that cannot be read', () => {
   // Regression: a live run failed at deepRead because a page returned HTTP 429 and the
   // AI honestly said so; the rule accepted only "read completely", so honesty failed the run.
+  // These tests are about examined/unreadable: each note per item is filled in for them.
   const script = (deepRead: NonNullable<DemoScript['agents']>[string]): DemoScript => ({
     ...demo,
-    agents: { ...demo.agents, deepRead },
+    agents: { ...demo.agents, deepRead: withNotes(deepRead) },
   });
   const verdict = {
     outcome: 'applied' as const,
@@ -268,6 +299,248 @@ describe('items that cannot be read', () => {
   });
 });
 
+/** The assess answers the engine sent back. */
+const assessRejections = (r: { state: { events: readonly EngineEvent[] } }) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'assess' ? [JSON.stringify(e)] : [],
+  );
+
+describe('the gap check: one structured entry per sub-question', () => {
+  const v = { outcome: 'applied' as const, confidence: 0.9, shouldTerminate: false, reason: 'r' };
+  const assessing = (assess: DemoResponder) =>
+    runScripted(compileScore(investigate, { context: demo.context! }), {
+      ...demo,
+      agents: { ...demo.agents, assess },
+    });
+  it('the engine derives the gaps from the GAP entries, not from a list the AI writes', () => {
+    let seen = 0;
+    const r = assessing((s, visit) => {
+      seen += 1;
+      const subs = s.subQuestions as string[];
+      return visit === 0
+        ? {
+            updates: {
+              assessment: subs.map((_, i) =>
+                i === 1 ? 'S2: GAP — no test of the rejection path' : `S${i + 1}: ANSWERED [F1]`,
+              ),
+              objectionGaps: [],
+              confidence: 0.95,
+            },
+            verdict: v,
+          }
+        : { updates: { ...assessFor(s, []), confidence: 0.2 }, verdict: v };
+    });
+    const first = r.state.steps.find((x) => x.nodeId === 'recordGaps')!;
+    const subs = r.state.state.subQuestions as string[];
+    const after = (key: string) => first.changes.find((c) => c.key === key)?.after;
+    expect(after('gaps')).toEqual([subs[1]]);
+    expect(after('gapNotes')).toEqual(['S2: GAP — no test of the rejection path']);
+    // A confident assessment with a gap is still chased.
+    expect(r.state.steps.map((x) => x.nodeId)).toContain('chase');
+    expect(seen).toBeGreaterThan(1);
+  });
+
+  it('moving on is decided by the gaps, never by the confidence', () => {
+    const asked = (gap: boolean, confidence: number) => {
+      let n = 0;
+      const r = runScripted(compileScore(investigate, { context: demo.context! }), {
+        ...demo,
+        agents: {
+          ...demo.agents,
+          assess: (s) => ({
+            updates: {
+              ...assessFor(s, gap ? [(s.subQuestions as string[])[0]!] : []),
+              confidence,
+            },
+            verdict: v,
+          }),
+        },
+        approvals: {
+          ...demo.approvals,
+          clarify: () => {
+            n += 1;
+            return { approved: false };
+          },
+        },
+      });
+      expect(r.state.outcome).not.toBe('failure');
+      return n;
+    };
+    // Sure of itself with a gap left: a person is still asked.
+    expect(asked(true, 1)).toBe(1);
+    // Unsure with no gap left: on to the answer.
+    expect(asked(false, 0.05)).toBe(0);
+  });
+
+  it('sends back an entry left out, one out of order, an ANSWERED without a citation or one citing an unknown id', () => {
+    for (const bad of [
+      (subs: string[]) => subs.slice(1).map((_, i) => `S${i + 1}: ANSWERED [F1]`),
+      (subs: string[]) => subs.map((_, i) => `S${subs.length - i}: ANSWERED [F1]`),
+      (subs: string[]) => subs.map((_, i) => `S${i + 1}: ANSWERED, clearly`),
+      (subs: string[]) => subs.map((_, i) => `S${i + 1}: ANSWERED [F9999]`),
+    ]) {
+      const r = assessing((s) => ({
+        updates: { assessment: bad(s.subQuestions as string[]), objectionGaps: [], confidence: 1 },
+        verdict: v,
+      }));
+      expect(r.state.outcome).toBe('partial');
+      expect(assessRejections(r).length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('gap expansion: the gaps send matching unread files to the deep read', () => {
+  const v = { outcome: 'applied' as const, confidence: 0.9, shouldTerminate: false, reason: 'r' };
+  const expanding = (context: Record<string, unknown>, matched?: (pool: string[]) => string[]) => {
+    const pools: string[][] = [];
+    const words: string[][] = [];
+    const r = runScripted(
+      compileScore(investigate, { context: { ...demo.context!, ...context } }),
+      {
+        ...demo,
+        tools: {
+          ...demo.tools,
+          ...(matched
+            ? {
+                rankGaps: (s) => {
+                  const pool = s.expandPool as string[];
+                  pools.push(pool);
+                  words.push(s.gapNotes as string[]);
+                  return { ranked: pool, matched: matched(pool) };
+                },
+              }
+            : {}),
+        },
+        // A gap that never closes: expansion and the chase run to their caps.
+        agents: {
+          ...demo.agents,
+          assess: (s) => ({
+            updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 1 },
+            verdict: v,
+          }),
+        },
+      },
+    );
+    const deep = (from: number) =>
+      r.state.steps
+        .filter((x) => x.nodeId === 'deepRead' && x.step > from)
+        .flatMap((x) => x.input?.deepBatch as string[]);
+    return { r, s: r.state.state, pools, words, deep };
+  };
+
+  it('ranks only unread files, queues the matches under a round counter, then re-assesses', () => {
+    const { r, s, pools, words, deep } = expanding({}, (pool) =>
+      pool.filter((f) => f.endsWith('cli.ts')),
+    );
+    expect(pools[0]).toEqual(['README.md', 'src/cli.ts']);
+    // Round 2 ranks what is still unread: cli.ts was read in round 1.
+    expect(pools[1]).toEqual(['README.md']);
+    expect(s.expandRounds).toBe(2);
+    expect(s.expandedFiles).toEqual(['src/cli.ts']);
+    const ranked = r.state.steps.find((x) => x.nodeId === 'rankGaps')!;
+    expect(deep(ranked.step)).toContain('src/cli.ts');
+    // Its words are the gap notes, not the question.
+    expect(words[0]).toEqual([expect.stringMatching(/^S1: GAP/)]);
+    const node = compileScore(investigate, { context: demo.context! }).nodes.find(
+      (n) => n.id === 'rankGaps',
+    );
+    expect(node).toMatchObject({
+      tool: 'repo.rank',
+      inputs: { paths: 'expandPool', subQuestions: 'gapNotes', searchTerms: 'objectionGaps' },
+    });
+    const after = r.state.steps.filter((x) => x.step > ranked.step).map((x) => x.nodeId);
+    expect(after.indexOf('assess')).toBeLessThan(after.indexOf('chase'));
+    expect(after.indexOf('assess')).toBeGreaterThan(after.indexOf('deepRead'));
+    expect(r.state.outcome).not.toBe('failure');
+  });
+
+  it('is capped: at most expandWave files a round, at most maxExpandRounds rounds; 0 turns it off', () => {
+    const wave = expanding({ expandWave: 1 }, (pool) => pool);
+    expect(wave.s.expandedFiles).toEqual(['README.md', 'src/cli.ts']);
+    const once = expanding({ maxExpandRounds: 1 }, (pool) => pool);
+    expect(once.pools).toHaveLength(1);
+    expect(once.s.expandedFiles).toEqual(['README.md', 'src/cli.ts']);
+    const off = expanding({ maxExpandRounds: 0 }, (pool) => pool);
+    expect(off.pools).toEqual([]);
+    expect(off.r.state.steps.map((x) => x.nodeId)).not.toContain('rankGaps');
+  });
+
+  it('no match: straight on to the chase, nothing queued', () => {
+    const { r, s } = expanding({}, () => []);
+    expect(s.expandedFiles).toEqual([]);
+    const ran = r.state.steps.map((x) => x.nodeId);
+    expect(ran.indexOf('chase')).toBeGreaterThan(ran.indexOf('rankGaps'));
+  });
+});
+
+describe('narrowed read (opt-in)', () => {
+  it('triages every matched file plus narrowBudget more; each file left unread is named', () => {
+    const { r } = runWith(['workspace'], demo.approvals, {
+      context: { narrowRead: true, narrowBudget: 1 },
+    });
+    const s = r.state.state;
+    // The demo search matches engine, schema and validate; README is next in rank, then cli.ts.
+    expect(triaged(r).toSorted()).toEqual([
+      'README.md',
+      'src/core/engine.ts',
+      'src/core/schema.ts',
+      'src/core/validate.ts',
+    ]);
+    expect(s.narrowedOut).toEqual(['src/cli.ts']);
+    expect(s.excludedFiles).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^1 files were left unread by the narrowed read/),
+      ]),
+    );
+    expect(String(s.answer)).toContain('- Left unread by the narrowed read (opt-in): src/cli.ts');
+  });
+
+  it('off (the default): every file is triaged, and the coverage has no such line', () => {
+    const { r } = runWith(['workspace']);
+    expect(triaged(r)).toHaveLength(5);
+    expect(r.state.state.narrowedOut).toEqual([]);
+    expect(String(r.state.state.answer)).not.toContain('narrowed read');
+  });
+
+  it('a gap that brings a narrowed-out file in reads it, and it is no longer listed as unread', () => {
+    const r = runScripted(
+      compileScore(investigate, {
+        context: { ...demo.context!, narrowRead: true, narrowBudget: 1 },
+      }),
+      demo,
+    );
+    expect(r.state.state.expandedFiles).toEqual(['src/cli.ts']);
+    expect(r.state.state.narrowedOut).toEqual([]);
+  });
+});
+
+describe('gap-aimed research (a pilot, off by default)', () => {
+  const chased = (context: Record<string, unknown>) => {
+    const r = runScripted(
+      compileScore(investigate, {
+        context: { ...demo.context!, maxExpandRounds: 0, ...context },
+      }),
+      demo,
+    );
+    const rounds = r.state.steps
+      .filter((x) => x.nodeId === 'chase')
+      .map((x) => x.input?.chaseGaps as string[]);
+    return Object.assign(rounds, { subs: r.state.state.subQuestions as string[] });
+  };
+
+  it('off: the research gets the gaps, whole sub-questions', () => {
+    const rounds = chased({});
+    expect(rounds[0]).toEqual([rounds.subs[1]]);
+  });
+
+  it('on: what the gap check says is missing; objections sent back stay as they are', () => {
+    const rounds = chased({ gapAimed: true });
+    expect(rounds[0]).toEqual([expect.stringMatching(/^S2: GAP — /)]);
+    // The demo's skeptic objects once: that round researches the objection itself.
+    expect(rounds.at(-1)).toEqual([expect.stringMatching(/^S[0-9]+: (?!GAP)/)]);
+  });
+});
+
 describe('open questions', () => {
   // Regression: a live run failed at the answer because the AI reworded the remaining gaps
   // instead of copying them verbatim. The engine now adds them itself.
@@ -278,7 +551,7 @@ describe('open questions', () => {
       agents: {
         ...demo.agents,
         assess: (s) => ({
-          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.9 },
+          updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 0.9 },
           verdict: v,
         }),
         answer: (s, n) => {
@@ -373,7 +646,7 @@ describe('investigate always ends: research rounds are bounded', () => {
       agents: {
         ...demo.agents,
         assess: (s) => ({
-          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 0.2 },
           verdict: v,
         }),
         challenge: (_s, visit) => ({
@@ -433,7 +706,7 @@ describe('investigate always ends: research rounds are bounded', () => {
         ...demo.agents,
         assess: (s, visit) => ({
           updates: {
-            gaps: visit === 0 ? ((s.subQuestions as string[]) ?? []) : [],
+            ...assessFor(s, visit === 0 ? ((s.subQuestions as string[]) ?? []) : []),
             confidence: 0.9,
           },
           verdict: v,
@@ -441,7 +714,11 @@ describe('investigate always ends: research rounds are bounded', () => {
       },
     };
     const r = runScripted(
-      compileScore(investigate, { goal: 'g', context: { ...demo.context!, gapsPerChase: 1 } }),
+      compileScore(investigate, {
+        goal: 'g',
+        // No gap expansion: the chase gets the gaps.
+        context: { ...demo.context!, gapsPerChase: 1, maxExpandRounds: 0 },
+      }),
       script,
     );
     expect(r.state.outcome).toBe('success');
@@ -452,7 +729,7 @@ describe('investigate always ends: research rounds are bounded', () => {
     )[0]!;
     const gaps = r.state.state.subQuestions as string[];
     expect(gaps.length).toBeGreaterThan(1);
-    expect(pause.parts?.map((p) => p.gaps)).toEqual(gaps.map((g) => [g]));
+    expect(pause.parts?.map((p) => p.chaseGaps)).toEqual(gaps.map((g) => [g]));
   });
 });
 
@@ -540,7 +817,7 @@ describe('investigate asks for a hint once', () => {
       agents: {
         ...demo.agents,
         assess: (s) => ({
-          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 0.2 },
           verdict: v,
         }),
       },
@@ -676,7 +953,7 @@ describe('investigate coverage', () => {
     const { r } = runWith(['workspace']);
     const answer = String(r.state.state.answer);
     expect(answer).toMatch(
-      /\n## Coverage\n\n- Files not triaged: .+\n- Pages read: .+\n- Experiments run: none\n/,
+      /\n## Coverage\n\n- Files not triaged: .+\n- Not located, so not triaged: none\n- Pages read: .+\n- Experiments run: none\n- Read because a gap named them: none\n/,
     );
     expect(answer.match(/## Coverage/g)).toHaveLength(1);
     const findings = r.state.state.findings as string[];
@@ -802,29 +1079,79 @@ describe('investigate holds "read completely" to what the engine gave', () => {
     return { score, r, deepBatches };
   }
 
-  it('a file cut for the call budget is reported, then read again on its own; one too long for any prompt is reported', () => {
+  it('a file cut short is read on in line-range chunks until done; one nothing of fit is retried alone', () => {
+    // engine.ts is too long for one prompt (twice over); validate.ts was cut for the call's
+    // size; nothing of schema.ts fit the first time. Chunks are given whole when asked for.
     const { score, r, deepBatches } = withManifest((batch, visit) =>
-      batch.flatMap((path): PreloadRecord[] =>
-        path.endsWith('engine.ts')
-          ? [{ path, lines: 9000, omitted: [4001, 9000], cut: 'file' }]
-          : path.endsWith('validate.ts') && visit === 0
-            ? [{ path, lines: 900, omitted: [301, 900], cut: 'call' }]
-            : [{ path, lines: 100 }],
-      ),
+      batch.flatMap((item): PreloadRecord[] => {
+        const { path, from, to } = itemOf(item);
+        if (from !== undefined)
+          return path.endsWith('engine.ts') && from === 4001
+            ? [{ path, item, range: [from, to!], lines: 9000, omitted: [8001, 9000], cut: 'file' }]
+            : [{ path, item, range: [from, to!], lines: 9000 }];
+        if (path.endsWith('engine.ts'))
+          return [{ path, lines: 9000, omitted: [4001, 9000], cut: 'file' }];
+        if (path.endsWith('validate.ts') && visit === 0)
+          return [{ path, lines: 900, omitted: [301, 900], cut: 'call' }];
+        if (path.endsWith('schema.ts') && visit === 0)
+          return [{ path, lines: 500, omitted: [1, 500], cut: 'call' }];
+        return [{ path, lines: 100 }];
+      }),
     );
     expect(r.state.kind).toBe('done');
     const s = r.state.state;
-    // The AI said it examined everything; the engine's record decides.
-    expect(s.notRead).toContain('src/core/engine.ts');
-    expect(s.notRead).not.toContain('src/core/validate.ts');
-    const at = (s.notRead as string[]).indexOf('src/core/engine.ts');
-    expect((s.notReadReasons as string[])[at]).toMatch(
-      /^longer than one prompt can hold: lines 4001-9000/,
+    const items = deepBatches.flat();
+    // The rest of each cut file is read next, first in the queue, until the whole file is read.
+    expect(deepBatches[1]!.slice(0, 2).toSorted()).toEqual([
+      'src/core/engine.ts#chunk=4001-9000',
+      'src/core/validate.ts#chunk=301-900',
+    ]);
+    expect(items).toContain('src/core/engine.ts#chunk=8001-9000');
+    // Nothing of schema.ts fit: no chunk of it, reported and retried once, alone, at the end.
+    expect(items.filter((x) => x.startsWith('src/core/schema.ts'))).toEqual([
+      'src/core/schema.ts',
+      'src/core/schema.ts',
+    ]);
+    expect(deepBatches).toContainEqual(['src/core/schema.ts']);
+    expect(s.notRead).toEqual([]);
+    // Output for every item read, chunks included.
+    expect(s.readLog).toEqual(
+      expect.arrayContaining([
+        'src/core/engine.ts#chunk=8001-9000 — read in full',
+        'src/core/validate.ts#chunk=301-900 — read in full',
+      ]),
     );
-    // The retry read validate.ts alone (one item per call), and not engine.ts again.
-    expect(deepBatches.at(-1)).toEqual(['src/core/validate.ts']);
-    expect(String(s.answer)).toMatch(/Could not read in full: .*src\/core\/engine\.ts/);
     expect(replayPerformance(score, toPerformance(r.state)).divergence.reproduced).toBe(true);
+  });
+
+  it('an item missing from the record counts as not read (fails closed), and is reported', () => {
+    const { r } = withManifest((batch) =>
+      batch.filter((p) => !p.endsWith('engine.ts')).map((path) => ({ path, lines: 100 })),
+    );
+    const s = r.state.state;
+    expect(s.notRead).toContain('src/core/engine.ts');
+    const at = (s.notRead as string[]).indexOf('src/core/engine.ts');
+    expect((s.notReadReasons as string[])[at]).toMatch(/not in the engine's record/);
+    expect(String(s.answer)).toMatch(/Could not read in full: .*src\/core\/engine\.ts/);
+  });
+
+  it('a reader that leaves out the note for an item is sent back', () => {
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        deepRead: (st, visit) => {
+          const good = demo.agents!.deepRead!(st, visit);
+          return {
+            ...good,
+            updates: { ...good.updates, readNotes: (good.updates.readNotes as string[]).slice(1) },
+          };
+        },
+      },
+    };
+    const r = runScripted(compileScore(investigate, { context: demo.context! }), script);
+    expect(r.state.outcome).toBe('partial');
+    expect(r.state.reason).toMatch(/exactly one readNotes entry per item of deepBatch/);
   });
 
   it('a file triage saw only part of goes to the deep read whatever triage said', () => {
@@ -1000,8 +1327,8 @@ describe('the support judge (off by default)', () => {
 });
 
 describe('single-pass triage pilot (off by default)', () => {
-  /** The demo with singlePass on; triage's transcript carries this preload record (none: no record). */
-  const pilot = (manifest?: (batch: readonly string[]) => PreloadRecord[]) => {
+  /** The demo with singlePass on; triage's transcript carries this preload record (null: none at all). */
+  const pilot = (manifest?: ((batch: readonly string[]) => PreloadRecord[]) | null) => {
     const score = compileScore(investigate, {
       goal: 'g',
       context: { ...demo.context!, singlePass: true, batchSize: 10 },
@@ -1012,14 +1339,17 @@ describe('single-pass triage pilot (off by default)', () => {
       const pause = r.state.pause;
       let res: Resolution = scriptedResolution(demo, pause, r.state, 't');
       if (
-        manifest &&
+        manifest !== undefined &&
         pause.kind === 'agent' &&
         pause.nodeId === 'triageDeep' &&
         res.kind === 'agent'
       )
         res = {
           ...res,
-          transcript: { ...res.transcript!, preloaded: manifest(pause.input.batch as string[]) },
+          transcript: {
+            ...res.transcript!,
+            preloaded: manifest ? manifest(pause.input.batch as string[]) : undefined,
+          },
         };
       r = advance(score, r.state, res);
     }
@@ -1038,7 +1368,7 @@ describe('single-pass triage pilot (off by default)', () => {
   });
 
   it('no preload record: nothing is assumed read whole, every relevant file still gets a deep read', () => {
-    const { r, deepRead } = pilot();
+    const { r, deepRead } = pilot(null);
     expect(r.state.steps.map((x) => x.nodeId)).toContain('triageDeep');
     expect(deepRead).toEqual(expect.arrayContaining(RELEVANT_FILES));
   });
@@ -1096,7 +1426,7 @@ describe('the step limit is a backstop, never the bound', () => {
           updates: { triaged: s.batch, batchRelevant: s.batch, newFindings: [] },
           verdict: v,
         }),
-        deepRead: (s) => {
+        deepRead: withNotes((s) => {
           // One item of each batch unreadable at first: the retry pass plays too.
           const b = s.deepBatch as string[];
           const bad = (s.unreadRetries as number) === 0 ? b.slice(0, 1) : [];
@@ -1109,7 +1439,7 @@ describe('the step limit is a backstop, never the bound', () => {
             },
             verdict: v,
           };
-        },
+        }),
         designExperiments: (s) => {
           const all = Array.from({ length: s.maxExperiments as number }, (_, i) => `exp ${i}`);
           return {
@@ -1118,7 +1448,7 @@ describe('the step limit is a backstop, never the bound', () => {
           };
         },
         assess: (s) => ({
-          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 0.2 },
           verdict: v,
         }),
         challenge: (_s, visit) => ({

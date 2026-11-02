@@ -88,6 +88,26 @@ describe('main', () => {
     expect(await main(['eval', '--task', 'nope'], cwd)).toBe(1);
   }, 60_000);
 
+  it('eval --with sets an input on the tasks whose pattern has it, and the report says so', async () => {
+    const args = ['eval', '--provider', 'scripted', '--task', 'investigate-default-port'];
+    out = '';
+    expect(
+      await main([...args, '--with', 'maxExpandRounds=0', '--with', 'gapAimed=true'], cwd),
+    ).toBe(0);
+    expect(plain()).toMatch(/^with maxExpandRounds=0 gapAimed=true$/m);
+    const report = JSON.parse(readFileSync(/saved (\S+\.json)/.exec(plain())![1]!, 'utf8'));
+    expect(report.settings).toEqual(['maxExpandRounds=0', 'gapAimed=true']);
+    const run = JSON.parse(
+      readFileSync(/run (\S+\.json)/.exec(report.results[0].notes.join(' '))![1]!, 'utf8'),
+    );
+    expect(run.score.context).toMatchObject({ maxExpandRounds: 0, gapAimed: true });
+    out = '';
+    expect(await main([...args, '--with', 'noSuchField=1'], cwd)).toBe(1);
+    expect(plain()).toMatch(/--with: no task's pattern has 'noSuchField=1'/);
+    out = '';
+    expect(await main([...args, '--with', 'maxExpandRounds=lots'], cwd)).toBe(1);
+  }, 60_000);
+
   it('two offline runs are identical even though the first one changes the runs folder', async () => {
     const saved: string[] = [];
     for (let i = 0; i < 2; i++) {

@@ -7,7 +7,7 @@
 import { replayPerformance } from './replay.js';
 import type { AiTranscript, ExecutableScore, Performance, PerformedStep } from './types.js';
 
-/** A transcript without the text: identity and usage only. */
+/** A transcript without the text: identity, usage and the engine's read record only. */
 function slim(t: AiTranscript): AiTranscript {
   return {
     provider: t.provider,
@@ -18,9 +18,13 @@ function slim(t: AiTranscript): AiTranscript {
     ...(t.startedAt ? { startedAt: t.startedAt } : {}),
     ...(t.completedAt ? { completedAt: t.completedAt } : {}),
     ...(t.takes ? { takes: t.takes.map(slim) } : {}),
+    // Each part's read record too: fan-out steps keep theirs on the parts.
+    ...(t.parts ? { parts: t.parts.map(slim) } : {}),
     ...(t.fromRepertoire ? { fromRepertoire: t.fromRepertoire } : {}),
     ...(t.musician ? { musician: t.musician } : {}),
     ...(t.usage ? { usage: t.usage } : {}),
+    // The engine's record of what it gave the AI: replay needs it to say what was read.
+    ...(t.preloaded ? { preloaded: t.preloaded } : {}),
   };
 }
 

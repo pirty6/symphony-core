@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import { fix, hangman, PATTERNS } from '../patterns/index.js';
+import { fix, hangman, investigate, PATTERNS } from '../patterns/index.js';
+import { CompileError, compileScore } from './compile.js';
+import { validatePattern } from './validate.js';
 import {
   adaptPattern,
   camelName,
@@ -69,6 +71,13 @@ describe('parseDraft', () => {
   });
 });
 
+/** hangman with one more state field: what validation says about it. */
+const field = (f: object) =>
+  validatePattern({
+    ...hangman,
+    state: [...hangman.state, { name: 'x', ...f }],
+  } as Pattern).errors.map((e) => e.message);
+
 describe('adaptPattern', () => {
   const base = parseDraft(genericDraft('find the flaky test'));
   if (!base.ok) throw new Error(base.errors.join());
@@ -119,6 +128,35 @@ describe('adaptPattern', () => {
       expect.stringMatching(/must be an object/),
     ]);
     expect(adaptPattern(p, {}).errors).toEqual([]);
+  });
+
+  it('a setting may not go below its declared minimum: experiments cannot be tailored off', () => {
+    // Regression: a tailoring set maxExperiments to 0; the design step then had to give at
+    // least one experiment and at most none, and the run was stuck there.
+    expect(adaptPattern(investigate, { initial: { maxExperiments: 0 } }).errors).toEqual([
+      'adaptation.initial.maxExperiments: must be at least 1, got 0',
+    ]);
+    expect(adaptPattern(investigate, { initial: { maxExperiments: 3 } }).errors).toEqual([]);
+    // The maestro is told, and so is every other way in: run inputs are checked at compile.
+    expect(outlinePattern(investigate).settings).toContainEqual(
+      expect.stringMatching(/^maxExperiments = 12 \(at least 1\) — /),
+    );
+    expect(() =>
+      compileScore(investigate, { context: { question: 'q', maxExperiments: 0 } }),
+    ).toThrow(CompileError);
+    expect(() =>
+      compileScore(investigate, { context: { question: 'q', maxExperiments: 0 } }),
+    ).toThrow(/context 'maxExperiments': must be at least 1, got 0/);
+    // A pattern's own default must meet it, and only numbers have one.
+    expect(field({ type: 'number', initial: 0, min: 1 })).toContainEqual(
+      expect.stringMatching(/'x' initial value: must be at least 1/),
+    );
+    expect(field({ type: 'string', min: 1 })).toContainEqual(
+      expect.stringMatching(/min is for number fields/),
+    );
+    // Kept by a draft round-trip.
+    const parsed = parseDraft(JSON.parse(JSON.stringify(investigate)));
+    expect(parsed.ok && parsed.value.state.find((f) => f.name === 'maxExperiments')?.min).toBe(1);
   });
 
   it('outlines a pattern in a fraction of its size, with its tunable settings', () => {

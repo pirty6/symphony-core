@@ -18,6 +18,9 @@ import {
   growthRatios,
   formatUsage,
   performanceUsage,
+  rateLimits,
+  recordSize,
+  rejectionReasons,
   rejectionUsage,
   wallTimeByNode,
 } from '../core/usage.js';
@@ -54,12 +57,30 @@ export interface EvalResult {
     readonly attempts: number;
     readonly premiumRequests: number;
     readonly textUpdates: number;
+    /** Why, by "<step>: <reason>" (values folded), and how often. */
+    readonly reasons?: Readonly<Record<string, number>>;
+  };
+  /** What the run found: findings, and of its sub-answers how many are still open. */
+  readonly evidence?: {
+    readonly findings: number;
+    readonly subQuestions: number;
+    readonly open: number;
+  };
+  /** Rate limits hit: failed model calls, and items a reader could not read for one. */
+  readonly rateLimits?: { readonly provider: number; readonly reads: number };
+  /** The saved run's size (characters of JSON), and what the read record adds to it. */
+  readonly recordSize?: {
+    readonly run: number;
+    readonly readNotes: number;
+    readonly preloaded: number;
   };
 }
 
 export interface EvalReport {
   readonly startedAt: string;
   readonly provider: string;
+  /** What this report's runs were played with (eval --with, trial switches): an A/B's label. */
+  readonly settings?: readonly string[];
   readonly results: readonly EvalResult[];
 }
 
@@ -76,6 +97,10 @@ export interface EvalOptions {
   /** Save each task's run (score + performance) here, to open or replay it later. */
   readonly runsDir?: string;
   readonly onResult?: (r: EvalResult) => void;
+  /** Inputs over each task's own, for this pattern (eval --with: a trial's setting). */
+  readonly inputs?: (pattern: Pattern) => Readonly<Record<string, unknown>>;
+  /** Saved in the report: what the runs were played with. */
+  readonly settings?: readonly string[];
 }
 
 async function runTask(
@@ -94,7 +119,7 @@ async function runTask(
     // The task's workspace only: no MCP servers, no user configuration.
     const extras = await runtimeExtras(workspace, o.repoRoot, { ...o.env, SYMPHONY_MCP: 'off' });
     const score = compileScore(pattern, {
-      context: task.inputs,
+      context: { ...task.inputs, ...o.inputs?.(pattern) },
       ...(pattern.goalFrom ? {} : { goal: task.goal ?? task.id }),
       ...(task.complexity ? { complexity: task.complexity } : {}),
     });
@@ -152,7 +177,21 @@ async function runTask(
         attempts,
         premiumRequests: attemptUsage.premiumRequests ?? 0,
         textUpdates,
+        reasons: rejectionReasons(perf),
       }))(rejectionUsage(perf)),
+      ...(Array.isArray(state.subAnswers)
+        ? {
+            evidence: {
+              findings: findings.length,
+              subQuestions: state.subAnswers.length,
+              open: state.subAnswers.filter(
+                (a) => typeof a === 'string' && /^S[0-9]+: OPEN/.test(a),
+              ).length,
+            },
+          }
+        : {}),
+      rateLimits: rateLimits(perf),
+      recordSize: recordSize(perf),
       models,
       citations: { checked: cited.checked, invalid: cited.invalid.length },
     };
@@ -198,7 +237,12 @@ export async function runEval(o: EvalOptions): Promise<EvalReport> {
       o.onResult?.(r);
     }
   }
-  return { startedAt, provider: o.providerName, results };
+  return {
+    startedAt,
+    provider: o.providerName,
+    ...(o.settings?.length ? { settings: o.settings } : {}),
+    results,
+  };
 }
 
 export interface EvalSummary {
@@ -216,6 +260,17 @@ export interface EvalSummary {
   readonly rejectedAttempts: number;
   readonly rejectedPremiumRequests: number;
   readonly textUpdates: number;
+  /** Rejections by "<pattern> <step>: <reason>", over every run. */
+  readonly rejectionReasons: Readonly<Record<string, number>>;
+  /** Findings, and sub-questions answered of those asked, over the runs that have them. */
+  readonly findings: number;
+  readonly subQuestions: number;
+  readonly answered: number;
+  readonly rateLimitedCalls: number;
+  readonly rateLimitedReads: number;
+  /** Saved-run characters, and the read record's share of them. */
+  readonly recordChars: number;
+  readonly readRecordChars: number;
   /** Composing (maestro runs) vs performing (every other pattern). */
   readonly compose: TokenUsage;
   readonly perform: TokenUsage;
@@ -256,6 +311,18 @@ export function summarize(results: readonly EvalResult[]): EvalSummary {
     rejectedAttempts: sum((r) => r.rejected?.attempts ?? 0),
     rejectedPremiumRequests: sum((r) => r.rejected?.premiumRequests ?? 0),
     textUpdates: sum((r) => r.rejected?.textUpdates ?? 0),
+    rejectionReasons: results.reduce<Record<string, number>>((acc, r) => {
+      for (const [why, n] of Object.entries(r.rejected?.reasons ?? {}))
+        acc[`${r.pattern} ${why}`] = (acc[`${r.pattern} ${why}`] ?? 0) + n;
+      return acc;
+    }, {}),
+    findings: sum((r) => r.evidence?.findings ?? 0),
+    subQuestions: sum((r) => r.evidence?.subQuestions ?? 0),
+    answered: sum((r) => (r.evidence ? r.evidence.subQuestions - r.evidence.open : 0)),
+    rateLimitedCalls: sum((r) => r.rateLimits?.provider ?? 0),
+    rateLimitedReads: sum((r) => r.rateLimits?.reads ?? 0),
+    recordChars: sum((r) => r.recordSize?.run ?? 0),
+    readRecordChars: sum((r) => (r.recordSize?.readNotes ?? 0) + (r.recordSize?.preloaded ?? 0)),
     compose: total(results.filter((r) => r.pattern === 'maestro')),
     perform: total(results.filter((r) => r.pattern !== 'maestro')),
     byNode: results.reduce<Record<string, TokenUsage>>((acc, r) => {
@@ -345,6 +412,9 @@ const pct = (a: number, b: number) =>
 
 const per = (x: EvalSummary, f: (x: EvalSummary) => number) => (x.runs ? f(x) / x.runs : 0);
 
+/** What a report's runs were played with. */
+const label = (r: EvalReport) => (r.settings?.length ? r.settings.join(' ') : 'defaults');
+
 /** One line per result, then the totals; with a baseline, the change against it. */
 export function formatReport(report: EvalReport, baseline?: EvalReport): string {
   const lines = report.results.map(
@@ -353,6 +423,8 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   );
   const s = summarize(report.results);
   const b = baseline ? summarize(baseline.results) : undefined;
+  if (report.settings?.length || baseline?.settings?.length)
+    lines.unshift(`with ${label(report)}${baseline ? ` (baseline: ${label(baseline)})` : ''}`, '');
   // Runs per task may differ from the baseline's: compare averages per run.
   const delta = (f: (x: EvalSummary) => number) =>
     b ? `${pct(per(s, f), per(b, f))} per run` : '';
@@ -364,6 +436,23 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   if (s.rejectedAttempts || s.textUpdates)
     lines.push(
       `rejected ${s.rejectedAttempts} attempts${delta((x) => x.rejectedAttempts)} (${+s.rejectedPremiumRequests.toFixed(2)} premium requests) · ${s.textUpdates} answers sent updates as text`,
+    );
+  const reasons = Object.entries(s.rejectionReasons)
+    .toSorted(([, x], [, y]) => y - x)
+    .slice(0, 5);
+  if (reasons.length > 0)
+    lines.push(`rejection reasons: ${reasons.map(([why, n]) => `${n}× ${why}`).join('; ')}`);
+  if (s.subQuestions > 0)
+    lines.push(
+      `evidence: ${s.findings} findings${delta((x) => x.findings)} · sub-questions answered ${s.answered}/${s.subQuestions}${b?.subQuestions ? ` (baseline ${b.answered}/${b.subQuestions})` : ''}`,
+    );
+  if (s.rateLimitedCalls || s.rateLimitedReads)
+    lines.push(
+      `rate limits: ${s.rateLimitedCalls} model calls${delta((x) => x.rateLimitedCalls)} · ${s.rateLimitedReads} items unreadable`,
+    );
+  if (s.readRecordChars > 0)
+    lines.push(
+      `read record: ${k(s.readRecordChars)} of ${k(s.recordChars)} saved characters (${Math.round((100 * s.readRecordChars) / s.recordChars)}%)`,
     );
   if (s.compose.calls > 0 && s.perform.calls > 0)
     lines.push(`compose ${formatUsage(s.compose)} · perform ${formatUsage(s.perform)}`);

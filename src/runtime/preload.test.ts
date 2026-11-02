@@ -36,6 +36,7 @@ describe('preloadFiles', () => {
     ]);
     expect(files[0]).toEqual({
       path: 'src/a.ts',
+      item: 'src/a.ts',
       text: '1| export const a = 1;\n2| export const b = 2;\n3| ',
       lines: 3,
     });
@@ -53,6 +54,23 @@ describe('preloadFiles', () => {
     expect(
       (await preloadFiles(ws, ['src/a.ts', 'src/a.ts:2', 'src/a.ts#L1-2'])).map((f) => f.path),
     ).toEqual(['src/a.ts']);
+  });
+
+  it("reads a chunk as its own range, with the file's line numbers; a chunk is not the whole file", async () => {
+    const files = await preloadFiles(ws, [
+      'big.txt#chunk=1990-2001',
+      'big.txt',
+      'big.txt#chunk=1990-2001',
+    ]);
+    expect(files.map((f) => f.item)).toEqual(['big.txt#chunk=1990-2001', 'big.txt']);
+    const [chunk] = files;
+    expect(chunk).toMatchObject({ path: 'big.txt', range: [1990, 2001], lines: 2001 });
+    expect(chunk!.omitted).toBeUndefined();
+    expect(chunk!.text.split('\n')[0]).toBe(`1990| ${'x'.repeat(99)}`);
+    expect(chunk!.text.split('\n')).toHaveLength(12);
+    expect(preloadSection('deepBatch', [chunk!]).join('\n')).toMatch(
+      /big\.txt.*lines 1990-2001 of 2001/,
+    );
   });
 
   it('a file too big for one prompt says which lines were left out', async () => {
@@ -192,11 +210,17 @@ describe('preloadReport: the engine, not the AI, says what was not given whole',
       { name: 'partly', type: 'string[]' },
       { name: 'partlyWhy', type: 'string[]' },
       { name: 'given', type: 'string[]' },
+      { name: 'partlyRest', type: 'string[]' },
     ],
     nodes: reader.nodes.map((n) =>
       n.id === 'read'
         ? Object.assign({}, n, {
-            preloadReport: { paths: 'partly', reasons: 'partlyWhy', whole: 'given' },
+            preloadReport: {
+              paths: 'partly',
+              reasons: 'partlyWhy',
+              whole: 'given',
+              rest: 'partlyRest',
+            },
           })
         : n,
     ),
@@ -230,13 +254,19 @@ describe('preloadReport: the engine, not the AI, says what was not given whole',
     expect(s.partly).toEqual(['big.txt', 'q3.txt', 'nope.ts']);
     expect(s.partlyWhy).toEqual([
       expect.stringMatching(
-        /^longer than one prompt can hold: lines \d+-2001 were not given whole/,
+        /^longer than one prompt can hold: lines \d+-2001 are read next, as a range/,
       ),
       expect.stringMatching(/^lines \d+-1001 left out of the prompt for the call's size/),
       'the engine could not read it (not found in the workspace)',
     ]);
     // Only what the record shows was given whole: not the cut ones, not the missing one.
     expect(s.given).toEqual(['src/a.ts', 'q1.txt', 'q2.txt']);
+    // A cut file's remaining lines come back as a chunk to read next; a missing one has none.
+    expect(s.partlyRest).toEqual([
+      expect.stringMatching(/^big\.txt#chunk=\d+-2001$/),
+      expect.stringMatching(/^q3\.txt#chunk=\d+-1001$/),
+      '',
+    ]);
     expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
   });
 

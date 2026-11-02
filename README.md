@@ -120,7 +120,7 @@ npm run cli -- resume .symphony/runs/fix/<file>.json # continue an interrupted o
 npm run cli -- fork .symphony/runs/fix/<file>.json --at 4   # keep steps 1-3, play the rest again
 npm run cli -- runs [--all]                          # saved runs (in-progress = resumable); --all adds demo runs
 npm run cli -- runs --prune [--dry-run]              # delete old demo runs, compact old runs (see Cleaning up)
-npm run cli -- eval [--task a,b] [-n 3] [--compare <report.json>]   # tasks with known answers (see Quality, cost and speed)
+npm run cli -- eval [--task a,b] [-n 3] [--compare <report.json>] [--with key=value]   # tasks with known answers (see Quality, cost and speed)
 ```
 
 ## Concepts
@@ -168,7 +168,7 @@ Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the V
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
 state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + - *`,
-`len empty includes lower append if chars subset take drop first unique without pick join withIds brief unmatched count positions heads outside stances text`, and
+`len empty includes lower append if chars subset take drop first unique without pick join withIds brief unmatched count positions heads outside seq stances text`, and
 `verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
@@ -609,7 +609,11 @@ solved rate or citation validity.
   solved, more invalid citations, none checked, 25% more input tokens per run, 50% more time per
   run, a step whose cached share of input drops 15 points, or a step whose input grows more over
   its visits. The report shows each costly step's share of cost and model time, the slowest
-  steps, and with `-n` the spread over repeats (runs vary: there is no seed). Investigate
+  steps, and with `-n` the spread over repeats (runs vary: there is no seed). It also counts
+  why answers were rejected, the rate limits hit, and the read record's share of the saved run;
+  `--with key=value` sets an input on every task whose pattern has it, and the report names
+  those settings and the trial switches, so two reports compare as an A/B
+  ([docs/trials.md](docs/trials.md)). Investigate
   fixtures also cover a real quote that does not support the claim, a stale lesson in memory
   on unchanged files, a false hint, and a planted flaw played with the debate (complexity 3)
   and without (1), so what the debate catches is measured; `investigate-many-files` (240 files,
@@ -663,6 +667,11 @@ solved rate or citation validity.
 - **Low confidence is re-checked** (`verifyBelow`, 0.6 on answers, diagnoses and designs): once,
   one tier smarter. **Second opinions use another model family** (`otherModel`; set
   `SYMPHONY_ALT_MODEL`, default `gpt-6.1-sol`).
+- **Trial switches** (off by default, for the offline trials in [docs/trials.md](docs/trials.md)):
+  `SYMPHONY_NODE_MODELS=deepRead=claude-opus-5.5` plays the named steps on their own model;
+  `SYMPHONY_DELTA_REPAIR=1` lets a rejected `submit_result` be corrected by resending only the
+  fields that change; `SYMPHONY_HEADER_IN_SYSTEM=1` sends each step's fixed instructions as the
+  system message and only its input as the prompt.
 - **Prompts**: what is fixed for a step comes first and the changing input last, so repeat visits
   reuse the model's prompt cache; steps with no workspace tools get a short system prompt instead
   of the SDK's (~4k tokens fewer per call); every step is anchored to the overall goal.
@@ -674,10 +683,14 @@ solved rate or citation validity.
   prompt, instead of paging through it with tool calls. It reads everything in one turn and
   cannot skip part of a file (a file over 120k characters says which lines were left out); it
   still follows references and history with tools, and still lists every item it read. With
-  `preloadReport`, the engine, not the AI, records which files it could not give whole (too long
-  for one prompt, cut for the call's 360k-character budget, unreadable): investigate's deep read
-  reports those as not read in full and reads the budget-cut ones again on their own, and its
-  triage sends a file it saw only part of to the deep read. On the
+  `preloadReport`, the engine, not the AI, checks every item of the list against its record of
+  what it gave, and fails closed: an item the record does not show given whole (too long for one
+  prompt, cut for the call's 360k-character budget, unreadable, or missing from the record) is
+  not read. A file cut short gets its remaining lines as a chunk item (`path#chunk=from-to`,
+  `rest`), which investigate's deep read reads next, first in its queue, until the file is done;
+  one nothing of fit, or one it could not read, is reported and retried once at the end. Its
+  triage sends any file it was not given whole to the deep read, and the deep read writes one
+  note per item (`readNotes`, checked). On the
   largest recorded run the deep read made about 48 model calls per part (1,531 in all) and used
   142M input tokens, while the whole text of the 113 files it read is about 357k tokens.
 - **Lean findings.** investigate's assess, gap chaser, part answers and debaters read

@@ -41,22 +41,33 @@ experiments, git history, GitHub, dependencies, MCP servers.
    path names, never the AI's hypotheses), so the likeliest are triaged first; it is an order,
    every file is still read. A large repository is searched first (locate, given the engine's
    top matches as a lead and unioned with them) instead of triaging every file, unless
-   `exhaustive` is set.
+   `exhaustive` is set; every file it did not locate is named in the coverage
+   (`unlocatedFiles`). `narrowRead` (opt-in) triages only the files the search matched plus
+   `narrowBudget` (20) more, and names every file it leaves unread (`narrowedOut`).
 4. **Triage → deep read.** Files are read whole by the engine (`preload`) and given to
    sub-agents in parallel batches; an answer that skips a file of its batch is rejected. A
    file the engine could not read is named in the prompt so the step reads it with tools.
    Every relevant file and page is then read completely, and "completely" is the engine's
-   call, not the AI's: a file the engine could not give whole (too long for one prompt, or
-   cut by the call's size budget) is reported as not read in full whatever the AI says, and a
-   file triage saw only part of goes to the deep read. Unreadable items, and files cut for
-   the budget, are retried once at the end, one per call, except PDFs, binaries and files
-   too long for any prompt, which would fail the same way.
+   call, not the AI's. Each item is checked against the engine's record of what it gave, and
+   the check fails closed: no record, or a failed load, counts as not read. A file cut short
+   (too long for one prompt, or cut by the call's size budget) gets its remaining lines as a
+   chunk (`path#chunk=from-to`), read next, first in the queue, until the file is done; a
+   file triage was not given whole goes to the deep read. The reader writes one note per item
+   (`readNotes`, checked against the batch). Unreadable items, and one nothing of fit, are
+   retried once at the end, one per call, except PDFs and binaries, which would fail the same
+   way.
    `singlePass: true` is an off-by-default pilot: triage also reads the relevant files in
    depth (following references and history), and those it read completely skip the deep read
    only if the engine's preload record shows it gave them whole (no record: none skip).
 5. **Experiments** (after your approval) and **source searches**, in parallel.
-6. **Close gaps.** Sub-questions the findings do not answer get targeted research, then a
-   question to you for a hint.
+6. **Close gaps.** The gap check writes one entry per sub-question, in order: `S<n>:
+   ANSWERED [F…]` citing findings, or `S<n>: GAP — what is missing`; the engine derives the
+   gaps from it. First the gaps expand the read: the engine ranks the files not yet read by the
+   gaps' words (`repo.rank`) and sends up to `expandWave` (8) matches to the deep read, at most
+   `maxExpandRounds` (2) times, then checks again. Then targeted research (`gapAimed`, a pilot:
+   aimed at what the GAP notes say is missing). It moves on only when no gap is left and
+   nothing is queued to read, never on the model's confidence; otherwise it asks you once for
+   a hint.
 7. **Answer.** Cited by finding id, one answer per sub-question (or OPEN), one ruling per
    hypothesis. The engine appends a coverage section: files not triaged, pages, experiments,
    what could not be read, sources searched and skipped, findings taken on trust.
@@ -99,7 +110,7 @@ flowchart TD
   n_deepPhase[["Deep read · 8 steps"]]
   n_experimentPhase[["Run experiments · 12 steps"]]
   n_sourcePhase[["Search sources · 5 steps"]]
-  n_gapPhase[["Close gaps · 8 steps"]]
+  n_gapPhase[["Close gaps · 17 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
   n_judgePhase[["Support judge · 5 steps"]]
   n_start --> n_recall
@@ -108,9 +119,11 @@ flowchart TD
   n_hypothesesPhase --> n_listPhase
   n_listPhase --> n_triagePhase
   n_triagePhase --> n_deepPhase
-  n_deepPhase --> n_experimentPhase
+  n_deepPhase --> n_gapPhase
+  n_gapPhase --> n_experimentPhase
   n_experimentPhase --> n_sourcePhase
-  n_sourcePhase --> n_gapPhase
+  n_sourcePhase -.-> n_gapPhase
+  n_gapPhase -.-> n_deepPhase
   n_gapPhase --> n_multiPart
   n_multiPart -->|"yes"| n_answerParts
   n_multiPart -->|"no"| n_answer
@@ -137,7 +150,7 @@ flowchart TD
 | Deep read | Every relevant file and listed page, completely | Queue deep reads → Deep reads left? → Next deep batch → Deep read → Check citations → Record deep read → Retry unreadable? → Queue unreadable again |
 | Run experiments | With your approval, run and measure | Experiments listed? → Allow experiments? → Queue experiments → Untimed experiments? → Run experiments side by side → Check citations → Record experiments → Timed experiments left? → Next experiment → Run timed experiment → Check citations → Record experiment |
 | Search sources | History, GitHub, dependencies, MCP | Sources left? → Next source → Search source → Check citations → Record source |
-| Close gaps | Targeted research, then a human hint | Find gaps → Chase gaps? → Close gaps → Check citations → Record gap research → Good enough? → Ask for a hint → Use hint |
+| Close gaps | Targeted research, then a human hint | Find gaps → Record gaps → Expand the read? → Unread files → Rank by the gaps → Queue gap files → Files queued? → Gap expansion read? → Back to the gaps → Chase gaps? → Aim the research → Close gaps → Check citations → Record gap research → Gaps closed? → Ask for a hint → Use hint |
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
 | Support judge | Off by default: does each cited finding's quote back its claim? | Support judge? → What the judge can check → Any to judge? → Support judge → Record the rulings |
 
