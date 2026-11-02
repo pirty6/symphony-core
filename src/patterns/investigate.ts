@@ -557,6 +557,22 @@ export const investigate: Pattern = {
       },
       { name: 'gapNotes', type: 'string[]', description: 'The GAP entries of the assessment' },
       {
+        name: 'gapQuestions',
+        type: 'string[]',
+        description: 'The sub-questions the assessment marks GAP',
+      },
+      {
+        name: 'gapAimed',
+        type: 'boolean',
+        description:
+          'Pilot (off): the gap research gets what the gap check says is missing instead of the whole sub-question',
+      },
+      {
+        name: 'chaseGaps',
+        type: 'string[]',
+        description: 'What the gap research is asked to close',
+      },
+      {
         name: 'expandRounds',
         type: 'number',
         description: 'Times the gaps sent more workspace files to the deep read',
@@ -719,6 +735,7 @@ export const investigate: Pattern = {
         'expandDone',
         'endExpand',
         'moreGaps',
+        'aimChase',
         'chase',
         'checkChase',
         'mergeChase',
@@ -1371,6 +1388,10 @@ export const investigate: Pattern = {
       assign: [
         { field: 'gapNotes', expr: 'pick(assessment, positions(assessment, "^S[0-9]+: GAP"))' },
         {
+          field: 'gapQuestions',
+          expr: 'pick(subQuestions, positions(assessment, "^S[0-9]+: GAP"))',
+        },
+        {
           field: 'gaps',
           expr: 'pick(subQuestions, positions(assessment, "^S[0-9]+: GAP")) + objectionGaps',
         },
@@ -1445,15 +1466,15 @@ export const investigate: Pattern = {
       label: 'Close gaps',
       capabilities: ['web', 'mcp'],
       // gapsPerChase 1: one sub-agent per gap, each with the whole brief (for an A/B).
-      fanOut: { over: 'gaps', per: 'gapsPerChase', agents: 'agents', warm: true },
+      fanOut: { over: 'chaseGaps', per: 'gapsPerChase', agents: 'agents', warm: true },
       directive:
-        'Close every gap in `gaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
+        'Close every gap in `chaseGaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
       reads: [
         'leadHypotheses',
         'leadStatus',
         'question',
-        'gaps',
+        'chaseGaps',
         'hint',
         'findingsBrief',
         'sourceInfo',
@@ -1479,6 +1500,19 @@ export const investigate: Pattern = {
       ],
     },
     checkFindings('checkChase', 'newFindings', false),
+    {
+      id: 'aimChase',
+      kind: 'compute',
+      label: 'Aim the research',
+      // gapAimed (a pilot, off): research what the gap check says is missing, not the whole
+      // sub-question. Only while the gaps are still the check's own (not objections sent back).
+      assign: [
+        {
+          field: 'chaseGaps',
+          expr: 'if(gapAimed && gaps == gapQuestions + objectionGaps, gapNotes + objectionGaps, gaps)',
+        },
+      ],
+    },
     {
       id: 'mergeChase',
       kind: 'compute',
@@ -1899,7 +1933,8 @@ export const investigate: Pattern = {
     { id: 'takeExpand-expanded', from: 'takeExpand', to: 'expanded' },
     { id: 'expanded-deepLeft', from: 'expanded', to: 'deepLeft', branch: 'then', label: 'read' },
     { id: 'expanded-moreGaps', from: 'expanded', to: 'moreGaps', branch: 'else' },
-    { id: 'moreGaps-chase', from: 'moreGaps', to: 'chase', branch: 'then' },
+    { id: 'moreGaps-aimChase', from: 'moreGaps', to: 'aimChase', branch: 'then' },
+    { id: 'aimChase-chase', from: 'aimChase', to: 'chase' },
     { id: 'moreGaps-confident', from: 'moreGaps', to: 'confident', branch: 'else' },
     { id: 'chase-checkChase', from: 'chase', to: 'checkChase' },
     { id: 'checkChase-mergeChase', from: 'checkChase', to: 'mergeChase' },
@@ -1912,7 +1947,7 @@ export const investigate: Pattern = {
     { id: 'multiPart-answer', from: 'multiPart', to: 'answer', branch: 'else' },
     { id: 'answerParts-answer', from: 'answerParts', to: 'answer' },
     // A hint you gave always gets its round of research (counted in chaseRounds).
-    { id: 'useHint-chase', from: 'useHint', to: 'chase' },
+    { id: 'useHint-aimChase', from: 'useHint', to: 'aimChase' },
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,

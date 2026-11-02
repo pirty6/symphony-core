@@ -109,7 +109,7 @@ describe('loop layout', () => {
       'checkSource',
       'mergeSource',
     ]);
-    expect(bodies.get('moreGaps')).toEqual(['chase', 'checkChase', 'mergeChase']);
+    expect(bodies.get('moreGaps')).toEqual(['aimChase', 'chase', 'checkChase', 'mergeChase']);
     const pos = layout(investigate);
     expect(pos.get('triage')!.y).toBe(pos.get('filesLeft')!.y);
     expect(pos.get('triage')!.x).toBeGreaterThan(pos.get('filesLeft')!.x);

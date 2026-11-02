@@ -473,6 +473,33 @@ describe('gap expansion: the gaps send matching unread files to the deep read', 
   });
 });
 
+describe('gap-aimed research (a pilot, off by default)', () => {
+  const chased = (context: Record<string, unknown>) => {
+    const r = runScripted(
+      compileScore(investigate, {
+        context: { ...demo.context!, maxExpandRounds: 0, ...context },
+      }),
+      demo,
+    );
+    const rounds = r.state.steps
+      .filter((x) => x.nodeId === 'chase')
+      .map((x) => x.input?.chaseGaps as string[]);
+    return Object.assign(rounds, { subs: r.state.state.subQuestions as string[] });
+  };
+
+  it('off: the research gets the gaps, whole sub-questions', () => {
+    const rounds = chased({});
+    expect(rounds[0]).toEqual([rounds.subs[1]]);
+  });
+
+  it('on: what the gap check says is missing; objections sent back stay as they are', () => {
+    const rounds = chased({ gapAimed: true });
+    expect(rounds[0]).toEqual([expect.stringMatching(/^S2: GAP — /)]);
+    // The demo's skeptic objects once: that round researches the objection itself.
+    expect(rounds.at(-1)).toEqual([expect.stringMatching(/^S[0-9]+: (?!GAP)/)]);
+  });
+});
+
 describe('open questions', () => {
   // Regression: a live run failed at the answer because the AI reworded the remaining gaps
   // instead of copying them verbatim. The engine now adds them itself.
@@ -661,7 +688,7 @@ describe('investigate always ends: research rounds are bounded', () => {
     )[0]!;
     const gaps = r.state.state.subQuestions as string[];
     expect(gaps.length).toBeGreaterThan(1);
-    expect(pause.parts?.map((p) => p.gaps)).toEqual(gaps.map((g) => [g]));
+    expect(pause.parts?.map((p) => p.chaseGaps)).toEqual(gaps.map((g) => [g]));
   });
 });
 
