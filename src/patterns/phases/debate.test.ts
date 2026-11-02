@@ -34,6 +34,17 @@ describe('debate phases in investigate', () => {
     expect(state.debateRounds).toBe(1);
   });
 
+  it('pragmatistFrom 2 (a trial switch) brings the pragmatist in at complexity 2', () => {
+    const score = compileScore(investigate, {
+      context: { ...demo.context!, pragmatistFrom: 2 },
+      complexity: 2,
+      generatedAt: 't',
+    });
+    const r = runScripted(score, demo, { at: 't' });
+    expect(r.state.steps.filter((x) => x.nodeId === 'triageObjections')).toHaveLength(1);
+    expect(r.state.outcome).toBe('success');
+  });
+
   it('complexity 3: a pragmatist keeps only real objections', () => {
     const theoretical: DemoScript = {
       ...demo,
@@ -293,40 +304,74 @@ describe('debate phases in investigate', () => {
   });
 });
 
-const rejections = (r: ReturnType<typeof play>['r'], node: string) =>
+const rejections = (r: { state: { events: readonly EngineEvent[] } }, node: string) =>
   r.state.events.flatMap((e) =>
     e.type === 'response-rejected' && e.nodeId === node ? [e.errors.join()] : [],
   );
 
 describe('the debate remembers its earlier rounds', () => {
-  it('the next skeptic reads past objections and their triage, and may not repeat one word for word', () => {
-    const inputs: Record<string, unknown>[] = [];
-    let calls = 0;
-    const script: DemoScript = {
-      ...demo,
-      agents: {
-        ...agents,
-        challenge: (s, v) => {
-          inputs.push({ ...s });
-          calls += 1;
-          // Round 2 first repeats round 1 verbatim; the correction raises nothing.
-          const objections =
-            calls === 1
-              ? ['S1: x was never read (F1)']
-              : calls === 2
-                ? ['S1: x was never read (F1)']
-                : [];
-          return { ...agents.challenge!(s, v), updates: { objections } };
-        },
+  /** A skeptic that raises these objections, round by round (then nothing). */
+  const skeptic = (rounds: string[][], inputs: Record<string, unknown>[] = []): DemoScript => ({
+    ...demo,
+    agents: {
+      ...agents,
+      challenge: (s, v) => {
+        inputs.push({ ...s });
+        return { ...agents.challenge!(s, v), updates: { objections: rounds[v] ?? [] } };
       },
-    };
-    const { r } = play(3, script);
+    },
+  });
+
+  it('the next skeptic reads past objections and their triage', () => {
+    const inputs: Record<string, unknown>[] = [];
+    const { r } = play(3, skeptic([['S1: x was never read (F1)'], []], inputs));
     expect(r.state.outcome).toBe('success');
     expect(inputs[0]!.pastObjections).toEqual([]);
     expect(inputs[1]!.pastObjections).toEqual(['S1: x was never read (F1)']);
     expect(String(inputs[1]!.objectionTriage)).toMatch(/REAL/);
     expect(inputs[1]!.openObjections).toEqual(['S1: x was never read (F1)']);
-    expect(rejections(r, 'challenge').join()).toMatch(/word for word/);
+    expect(r.state.state.debateLog).toEqual([
+      expect.stringMatching(
+        /^Round 1: 1 of 1 objections sent to research \(on S1\), \d+ findings so far$/,
+      ),
+    ]);
+  });
+
+  it('a word-for-word repeat is reported as unresolved, not asked again or researched again', () => {
+    const repeat = 'S1: x was never read (F1)';
+    const { r, ran, state } = play(3, skeptic([[repeat], [repeat]]));
+    expect(rejections(r, 'challenge')).toEqual([]);
+    expect(r.state.kind).toBe('done');
+    expect(r.state.outcome).toBe('partial');
+    expect(state.unresolvedObjections).toEqual([repeat]);
+    // Researched once (round 1), not again.
+    expect(state.debateRounds).toBe(1);
+    expect(ran('challenge')).toBe(2);
+  });
+
+  it('a mixed round sets the repeats aside (open) and goes on with the new ones', () => {
+    const old = 'S1: x was never read (F1)';
+    const fresh = 'S2: "keeps the same move key" has no finding (F2)';
+    const inputs: Record<string, unknown>[] = [];
+    const { state } = play(3, skeptic([[old], [old, fresh], []], inputs));
+    expect(state.unresolvedObjections).toEqual([old]);
+    // Only the new one reached the pragmatist and research.
+    expect(state.pastObjections).toEqual([old, fresh]);
+    expect(state.debateRounds).toBe(2);
+  });
+
+  it('a reworded repeat still runs to the cap', () => {
+    const { r, state } = play(
+      3,
+      skeptic([
+        ['S1: x was never read (F1)'],
+        ['S1: nobody read x (F1)'],
+        ['S1: x is unread (F1)'],
+      ]),
+    );
+    expect(rejections(r, 'challenge')).toEqual([]);
+    expect(state.debateRounds).toBe(state.maxDebateRounds);
+    expect(r.state.outcome).toBe('partial');
   });
 
   it("a pragmatist's reason names its ground (an F-id or S<n>), and only F-ids that exist", () => {
