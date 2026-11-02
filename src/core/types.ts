@@ -368,6 +368,8 @@ export interface CallUsage {
   readonly cacheWriteTokens?: number;
   /** How long the call took (ms). */
   readonly ms?: number;
+  /** What Copilot billed for this call, in nano AI units. */
+  readonly nanoAiu?: number;
 }
 
 export interface ContextSplit {

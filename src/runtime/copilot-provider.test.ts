@@ -636,6 +636,8 @@ describe('CopilotProvider', () => {
     expect(formatUsage(res.transcript.usage!)).toBe(
       '200 in · 10 out · 2 calls · 3.0s in the model, first token 0.4s avg · 2 premium requests · compacted 1×',
     );
+    // Each call carries what it was billed, for comparing with its cached tokens.
+    expect(res.transcript.calls?.map((c) => c.nanoAiu)).toEqual([2000, 2000]);
   });
 
   it('falls back to JSON in the final message', async () => {

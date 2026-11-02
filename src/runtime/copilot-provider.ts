@@ -578,9 +578,11 @@ export class CopilotProvider implements Provider {
           usage.apiMs += n('duration');
           usage.firstTokenMs += n('timeToFirstTokenMs');
           usage.premiumRequests += n('cost');
-          usage.nanoAiu += Number(
-            (d.copilotUsage as { totalNanoAiu?: unknown } | undefined)?.totalNanoAiu ?? 0,
-          );
+          // What Copilot billed this call: against its cached tokens, how caching is charged.
+          const aiu =
+            Number((d.copilotUsage as { totalNanoAiu?: unknown } | undefined)?.totalNanoAiu ?? 0) ||
+            0;
+          usage.nanoAiu += aiu;
           calls.push(
             Object.assign(
               {
@@ -590,6 +592,7 @@ export class CopilotProvider implements Provider {
               },
               n('cacheWriteTokens') ? { cacheWriteTokens: n('cacheWriteTokens') } : {},
               n('duration') ? { ms: n('duration') } : {},
+              aiu ? { nanoAiu: aiu } : {},
             ),
           );
           break;
