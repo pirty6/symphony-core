@@ -120,7 +120,7 @@ npm run cli -- resume .symphony/runs/fix/<file>.json # continue an interrupted o
 npm run cli -- fork .symphony/runs/fix/<file>.json --at 4   # keep steps 1-3, play the rest again
 npm run cli -- runs [--all]                          # saved runs (in-progress = resumable); --all adds demo runs
 npm run cli -- runs --prune [--dry-run]              # delete old demo runs, compact old runs (see Cleaning up)
-npm run cli -- eval [--task a,b] [-n 3] [--compare <report.json>]   # tasks with known answers (see Quality, cost and speed)
+npm run cli -- eval [--task a,b] [-n 3] [--compare <report.json>] [--with key=value]   # tasks with known answers (see Quality, cost and speed)
 ```
 
 ## Concepts
@@ -609,7 +609,11 @@ solved rate or citation validity.
   solved, more invalid citations, none checked, 25% more input tokens per run, 50% more time per
   run, a step whose cached share of input drops 15 points, or a step whose input grows more over
   its visits. The report shows each costly step's share of cost and model time, the slowest
-  steps, and with `-n` the spread over repeats (runs vary: there is no seed). Investigate
+  steps, and with `-n` the spread over repeats (runs vary: there is no seed). It also counts
+  why answers were rejected, the rate limits hit, and the read record's share of the saved run;
+  `--with key=value` sets an input on every task whose pattern has it, and the report names
+  those settings and the trial switches, so two reports compare as an A/B
+  ([docs/trials.md](docs/trials.md)). Investigate
   fixtures also cover a real quote that does not support the claim, a stale lesson in memory
   on unchanged files, a false hint, and a planted flaw played with the debate (complexity 3)
   and without (1), so what the debate catches is measured; `investigate-many-files` (240 files,
