@@ -18,6 +18,9 @@ import {
   growthRatios,
   formatUsage,
   performanceUsage,
+  rateLimits,
+  recordSize,
+  rejectionReasons,
   rejectionUsage,
   wallTimeByNode,
 } from '../core/usage.js';
@@ -54,6 +57,16 @@ export interface EvalResult {
     readonly attempts: number;
     readonly premiumRequests: number;
     readonly textUpdates: number;
+    /** Why, by "<step>: <reason>" (values folded), and how often. */
+    readonly reasons?: Readonly<Record<string, number>>;
+  };
+  /** Rate limits hit: failed model calls, and items a reader could not read for one. */
+  readonly rateLimits?: { readonly provider: number; readonly reads: number };
+  /** The saved run's size (characters of JSON), and what the read record adds to it. */
+  readonly recordSize?: {
+    readonly run: number;
+    readonly readNotes: number;
+    readonly preloaded: number;
   };
 }
 
@@ -152,7 +165,10 @@ async function runTask(
         attempts,
         premiumRequests: attemptUsage.premiumRequests ?? 0,
         textUpdates,
+        reasons: rejectionReasons(perf),
       }))(rejectionUsage(perf)),
+      rateLimits: rateLimits(perf),
+      recordSize: recordSize(perf),
       models,
       citations: { checked: cited.checked, invalid: cited.invalid.length },
     };
@@ -216,6 +232,13 @@ export interface EvalSummary {
   readonly rejectedAttempts: number;
   readonly rejectedPremiumRequests: number;
   readonly textUpdates: number;
+  /** Rejections by "<pattern> <step>: <reason>", over every run. */
+  readonly rejectionReasons: Readonly<Record<string, number>>;
+  readonly rateLimitedCalls: number;
+  readonly rateLimitedReads: number;
+  /** Saved-run characters, and the read record's share of them. */
+  readonly recordChars: number;
+  readonly readRecordChars: number;
   /** Composing (maestro runs) vs performing (every other pattern). */
   readonly compose: TokenUsage;
   readonly perform: TokenUsage;
@@ -256,6 +279,15 @@ export function summarize(results: readonly EvalResult[]): EvalSummary {
     rejectedAttempts: sum((r) => r.rejected?.attempts ?? 0),
     rejectedPremiumRequests: sum((r) => r.rejected?.premiumRequests ?? 0),
     textUpdates: sum((r) => r.rejected?.textUpdates ?? 0),
+    rejectionReasons: results.reduce<Record<string, number>>((acc, r) => {
+      for (const [why, n] of Object.entries(r.rejected?.reasons ?? {}))
+        acc[`${r.pattern} ${why}`] = (acc[`${r.pattern} ${why}`] ?? 0) + n;
+      return acc;
+    }, {}),
+    rateLimitedCalls: sum((r) => r.rateLimits?.provider ?? 0),
+    rateLimitedReads: sum((r) => r.rateLimits?.reads ?? 0),
+    recordChars: sum((r) => r.recordSize?.run ?? 0),
+    readRecordChars: sum((r) => (r.recordSize?.readNotes ?? 0) + (r.recordSize?.preloaded ?? 0)),
     compose: total(results.filter((r) => r.pattern === 'maestro')),
     perform: total(results.filter((r) => r.pattern !== 'maestro')),
     byNode: results.reduce<Record<string, TokenUsage>>((acc, r) => {
@@ -364,6 +396,19 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   if (s.rejectedAttempts || s.textUpdates)
     lines.push(
       `rejected ${s.rejectedAttempts} attempts${delta((x) => x.rejectedAttempts)} (${+s.rejectedPremiumRequests.toFixed(2)} premium requests) · ${s.textUpdates} answers sent updates as text`,
+    );
+  const reasons = Object.entries(s.rejectionReasons)
+    .toSorted(([, x], [, y]) => y - x)
+    .slice(0, 5);
+  if (reasons.length > 0)
+    lines.push(`rejection reasons: ${reasons.map(([why, n]) => `${n}× ${why}`).join('; ')}`);
+  if (s.rateLimitedCalls || s.rateLimitedReads)
+    lines.push(
+      `rate limits: ${s.rateLimitedCalls} model calls${delta((x) => x.rateLimitedCalls)} · ${s.rateLimitedReads} items unreadable`,
+    );
+  if (s.readRecordChars > 0)
+    lines.push(
+      `read record: ${k(s.readRecordChars)} of ${k(s.recordChars)} saved characters (${Math.round((100 * s.readRecordChars) / s.recordChars)}%)`,
     );
   if (s.compose.calls > 0 && s.perform.calls > 0)
     lines.push(`compose ${formatUsage(s.compose)} · perform ${formatUsage(s.perform)}`);

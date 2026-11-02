@@ -8,6 +8,9 @@ import {
   formatUsage,
   performanceUsage,
   growth,
+  rateLimits,
+  recordSize,
+  rejectionReasons,
   rejectionUsage,
   transcriptUsage,
 } from './usage.js';
@@ -107,6 +110,59 @@ describe('token usage', () => {
       attempts: 0,
       textUpdates: 0,
     });
+  });
+
+  it('counts rejections by step and reason, values folded so the same check counts once', () => {
+    const steps = [
+      step('assess', {
+        attempts: [
+          { errors: ['Give exactly one assessment entry per sub-question (got 3, want 4)'] },
+          { errors: ['Give exactly one assessment entry per sub-question (got 2, want 4)'] },
+        ],
+      }),
+      step('deepRead', {
+        attempts: [{ errors: ['newFindings: "src/a.ts:9 — x" — no such line', 'other'] }],
+      }),
+    ];
+    expect(rejectionReasons({ steps })).toEqual({
+      'assess: Give exactly one assessment entry per sub-question (got N, want N)': 2,
+      'deepRead: newFindings: "…" — no such line': 1,
+      'deepRead: other': 1,
+    });
+  });
+
+  it('counts rate limits: failed model calls (parts too) and items unreadable for one', () => {
+    const limited = t(u(0, 0), { output: 'provider error: HTTP 429 Too Many Requests' });
+    const steps = [
+      step('deepRead', {
+        transcript: t(u(1, 1), { parts: [limited, t()] }),
+        attempts: [
+          {
+            errors: ['x'],
+            transcript: t(u(0, 0), { output: 'provider error: rate limit exceeded' }),
+          },
+        ],
+        updates: { unreadableReasons: ['HTTP 429 twice', 'binary file'] },
+      }),
+      step('chase', { transcript: t(u(1, 1), { output: 'it said 429 lines' }) }),
+    ];
+    expect(rateLimits({ steps })).toEqual({ provider: 2, reads: 1 });
+  });
+
+  it('measures the saved run, and what the read notes and preload records add', () => {
+    const preloaded = [{ path: 'a.ts', lines: 3 }];
+    const perf = {
+      steps: [
+        step('deepRead', {
+          transcript: t(u(1, 1), { preloaded }),
+          updates: { readNotes: ['a.ts — x'] },
+        }),
+      ],
+    } as unknown as Parameters<typeof recordSize>[0];
+    const size = recordSize(perf);
+    expect(size.readNotes).toBe(JSON.stringify(['a.ts — x']).length);
+    expect(size.preloaded).toBe(JSON.stringify(preloaded).length);
+    expect(size.run).toBe(JSON.stringify(perf).length);
   });
 
   it('ranks the costliest steps by premium requests, then input tokens', () => {

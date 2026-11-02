@@ -197,6 +197,35 @@ describe('eval harness', () => {
     );
   });
 
+  it('reports rejection reasons, rate limits and the read record, for the trials', async () => {
+    const report = await evaluate(true, 1);
+    const [first] = report.results;
+    // Recorded on every run, even when there is nothing to count.
+    expect(first!.rateLimits).toEqual({ provider: 0, reads: 0 });
+    expect(first!.recordSize!.run).toBeGreaterThan(0);
+    const r = {
+      ...first!,
+      pattern: 'investigate',
+      rejected: {
+        attempts: 3,
+        premiumRequests: 0,
+        textUpdates: 0,
+        reasons: {
+          'assess: Give exactly one assessment entry': 2,
+          'deepRead: Account for EVERY item': 1,
+        },
+      },
+      rateLimits: { provider: 4, reads: 1 },
+      recordSize: { run: 10_000, readNotes: 1500, preloaded: 500 },
+    };
+    const text = formatReport({ ...report, results: [r] });
+    expect(text).toMatch(
+      /rejection reasons: 2× investigate assess: Give exactly one assessment entry; 1× investigate deepRead/,
+    );
+    expect(text).toMatch(/rate limits: 4 model calls · 1 items unreadable/);
+    expect(text).toMatch(/read record: 2\.0k of 10\.0k saved characters \(20%\)/);
+  });
+
   it('a run that errors after playing still reports the tokens it spent', async () => {
     const report = await runEval({
       tasks: [{ ...task, check: () => Promise.reject(new Error('check crashed')) }],
