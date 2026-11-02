@@ -1113,7 +1113,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time
       --with key=value         an input for every task whose pattern has it (a trial: --with deepBatchSize=8)
       --task routing           21 maestro requests: right pattern, complexity band and chain (compose only)
-  runs --prune [--dry-run]     delete demo runs >7 days, compact runs >30 days (still replayable)
+  runs --prune [--dry-run]     delete demo runs >7 days, compact runs >30 days, or >3 days over 500 MB (still replayable)
 
 Studio (visual): npm start`);
       return cmd ? 1 : 0;

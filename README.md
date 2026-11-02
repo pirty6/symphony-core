@@ -433,6 +433,7 @@ runs edit the workspace directly. A resumed editing run starts again from your w
   |------|------|------|
   | Offline-demo runs | older than 7 days | deleted |
   | Real runs | older than 30 days | **compacted**: events, per-step changes and inputs, and the AI's prompt and output text are dropped; every answer, hash, decision, who answered and token usage are kept. Only if the run still replays exactly; opening it rebuilds its timeline by replay. |
+  | Real runs, when the runs folder is over 500 MB | older than 3 days, oldest first, until it fits | **compacted** the same way: the folder is bounded, and nothing real is ever deleted |
   | Scratch folders left by a crashed run | older than 1 day | deleted |
 
 ## Use it from VS Code chat and Copilot Studio
