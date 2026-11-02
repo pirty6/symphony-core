@@ -227,6 +227,57 @@ describe('evidence.check', () => {
   });
 });
 
+describe('memory.lesson', () => {
+  const recalled = async (d: string, q: string) =>
+    ((await tool('memory.recall').run({ query: q }, ctx(d))) as { lessons: string[] }).lessons;
+
+  it('with requireFiles, a lesson that names no workspace file is not saved', async () => {
+    const d = dir();
+    const out = await tool('memory.lesson').run(
+      {
+        kind: 'answered',
+        problem: 'how do retries work',
+        cause: ['S1: they back off [F2]'],
+        files: ['F2 https://example.com/retries | docs — backoff'],
+        requireFiles: true,
+      },
+      ctx(d),
+    );
+    expect(out).toEqual({ saved: false });
+  });
+
+  it('keeps checked entries whole, at the commit it was learned, and replaces an older lesson on the same problem', async () => {
+    const d = dir();
+    writeFileSync(join(d, 'retry.js'), 'export const backoff = (n) => 2 ** n;\n');
+    execFileSync('git', ['add', '.'], { cwd: d });
+    execFileSync('git', ['-c', 'user.email=a@b', '-c', 'user.name=a', 'commit', '-qm', 'x'], {
+      cwd: d,
+    });
+    const long = `S2: ${'x'.repeat(480)} [F3]`;
+    const lesson = (cause: string[]) =>
+      tool('memory.lesson').run(
+        {
+          kind: 'answered',
+          problem: 'How do retries back off?',
+          cause,
+          files: ['F1 retry.js:1 — doubles `backoff = (n) => 2 ** n`'],
+          requireFiles: true,
+        },
+        ctx(d),
+      );
+    expect(await lesson(['S1: exponentially [F1]', long])).toEqual({ saved: true });
+    const [first] = await recalled(d, 'how do retries back off');
+    // The long entry did not fit: it is left out, not cut mid-claim. Ids are meaningless later.
+    expect(first).toMatch(
+      /^\d{4}-\d{2}-\d{2} @[0-9a-f]{8} \| Answered "How do retries back off\?": S1: exponentially \(files: retry\.js\)$/,
+    );
+    await lesson(['S1: linearly, since the last change [F1]']);
+    const after = await recalled(d, 'how do retries back off');
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatch(/S1: linearly/);
+  });
+});
+
 describe('memory tools', () => {
   it('remember: false checks without remembering; memory.facts remembers only what it is given', async () => {
     const d = dir();

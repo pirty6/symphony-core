@@ -69,7 +69,11 @@ export const MEMORY_STATE: readonly StateField[] = [
     type: 'string[]',
     description: 'Facts from earlier runs, re-checked against the files today',
   },
-  { name: 'pastLessons', type: 'string[]', description: 'How earlier fix/implement runs ended' },
+  {
+    name: 'pastLessons',
+    type: 'string[]',
+    description: 'How earlier runs ended (fix, implement, investigate…), dated, with their commit',
+  },
   {
     name: 'lessonSaved',
     type: 'boolean',

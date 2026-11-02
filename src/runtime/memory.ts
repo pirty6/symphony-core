@@ -31,6 +31,10 @@ interface Entry {
   readonly run?: string;
   /** Lessons: a hash of each file as it was, so an edit since makes the lesson stale. */
   readonly hashes?: Readonly<Record<string, string>>;
+  /** Lessons: the commit it was learned at, shown with it. */
+  readonly commit?: string;
+  /** Lessons: what it is about (kind and problem): a newer lesson on it replaces the older. */
+  readonly key?: string;
 }
 
 /** A short content hash of a workspace file, or undefined when it cannot be read. */
@@ -67,6 +71,8 @@ const MAX_LESSONS = 300;
 export const MAX_FACTS_PER_RUN = 200;
 /** Lessons older than this are not recalled. */
 export const LESSON_DAYS = 90;
+/** A lesson that names no file cannot be checked against the code: it lives a shorter time. */
+export const FILELESS_LESSON_DAYS = 30;
 const MAX_COMPOSITIONS = 200;
 /** Least relevance a recalled entry needs (a rare shared word scores about 2-7). */
 export const MIN_SCORE = 1;
@@ -207,7 +213,12 @@ export async function rememberLesson(
   text: string,
   files: readonly string[],
   at = new Date().toISOString(),
-  opts: { readonly run?: string; readonly workspace?: string } = {},
+  opts: {
+    readonly run?: string;
+    readonly workspace?: string;
+    readonly commit?: string;
+    readonly key?: string;
+  } = {},
 ): Promise<boolean> {
   if (!text.trim()) return false;
   const hashes: Record<string, string> = {};
@@ -219,8 +230,18 @@ export async function rememberLesson(
     { text, files, at },
     opts.run ? { run: opts.run } : {},
     Object.keys(hashes).length ? { hashes } : {},
+    opts.commit ? { commit: opts.commit } : {},
+    opts.key ? { key: opts.key } : {},
   );
-  await update(store, (m) => ({ ...m, lessons: merge(m.lessons, [entry], MAX_LESSONS) }));
+  await update(store, (m) => ({
+    ...m,
+    // The newest lesson on the same problem replaces the older (they would contradict).
+    lessons: merge(
+      opts.key ? m.lessons.filter((l) => l.key !== opts.key) : m.lessons,
+      [entry],
+      MAX_LESSONS,
+    ),
+  }));
   return true;
 }
 
@@ -262,9 +283,11 @@ function ranked<E extends Entry>(entries: readonly E[], query: string, limit: nu
 
 async function liveLessons(workspace: string, lessons: readonly Entry[]): Promise<Entry[]> {
   const oldest = Date.now() - LESSON_DAYS * 86_400_000;
+  const oldestFileless = Date.now() - FILELESS_LESSON_DAYS * 86_400_000;
   const live = await Promise.all(
     lessons.map(async (l) => {
       if (Date.parse(l.at) < oldest) return false;
+      if (!l.files?.length && Date.parse(l.at) < oldestFileless) return false;
       const there = await Promise.all(
         (l.files ?? []).map((f) =>
           access(join(workspace, f)).then(
@@ -334,7 +357,7 @@ export async function recall(
   // A lesson about files that are gone or changed, or from long ago, no longer applies.
   const fresh = await liveLessons(workspace, m.lessons);
   const lessons = ranked(fresh, query, Math.ceil(limit / 2)).map(
-    (e) => `${e.at.slice(0, 10)} | ${e.text}`,
+    (e) => `${e.at.slice(0, 10)}${e.commit ? ` @${e.commit.slice(0, 8)}` : ''} | ${e.text}`,
   );
   return { facts: still, lessons };
 }

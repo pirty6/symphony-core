@@ -186,6 +186,13 @@ export type RecoveryAnswer = Omit<Recovery, 'at'>;
 
 let counter = 0;
 
+/** A step that can browse and was given a URL to read: its answer depends on the web now. */
+export const readsPages = (pause: AgentPause): boolean =>
+  pause.capabilities.includes('web') &&
+  Object.values(pause.input).some((v) =>
+    (Array.isArray(v) ? v : [v]).some((x) => typeof x === 'string' && URL_LIKE.test(x.trim())),
+  );
+
 /** A URL, not a workspace path: the step fetches it itself. */
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
@@ -453,6 +460,9 @@ export class Run {
   ): Promise<{ result: unknown; transcript: AiTranscript } | undefined> {
     if (!playsFromRepertoire(pause.improvisation) || pause.role !== 'assessor') return undefined;
     if (!this.opts.repertoire) return undefined;
+    // The replay key holds the workspace's state, not a web page's: a step that reads pages
+    // is played again, since what the page says today may differ.
+    if (readsPages(pause)) return undefined;
     // Only answers recorded with the model settings this step asks for now.
     const settings = (await this.opts.provider.requested?.(pause)) ?? '';
     const take = this.opts.repertoire.find(

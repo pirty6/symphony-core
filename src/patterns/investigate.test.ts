@@ -682,6 +682,32 @@ describe('investigate answers every sub-question', () => {
   });
 });
 
+/** n checkable facts about files named <p><i>.ts. */
+const facts = (p: string, n: number) =>
+  Array.from({ length: n }, (_, i) => `${p}${i}.ts:1 — f \`a b\``);
+
+describe('investigate recalls for the sub-questions too', () => {
+  it('a second recall uses the sub-questions; leads are merged within the usual caps', () => {
+    const { r } = runWith(['workspace'], demo.approvals, {
+      tools: {
+        recall: () => ({ facts: facts('a', 8), lessons: ['l1', 'l2'] }),
+        recallPlan: () => ({
+          facts: [...facts('a', 2), ...facts('b', 8)],
+          lessons: ['l2', 'l3', 'l4', 'l5', 'l6', 'l7'],
+        }),
+      },
+    });
+    const s = r.state.state;
+    const node = compileScore(investigate, { goal: 'g', context: demo.context! }).nodes.find(
+      (n) => n.id === 'recallPlan',
+    );
+    expect(node).toMatchObject({ tool: 'memory.recall', inputs: { query: 'subQuestions' } });
+    expect(s.knownFacts).toHaveLength(12);
+    expect((s.knownFacts as string[]).slice(0, 8)).toEqual(facts('a', 8));
+    expect(s.pastLessons).toEqual(['l1', 'l2', 'l3', 'l4', 'l5', 'l6']);
+  });
+});
+
 describe('investigate reads the likeliest files first, and still every file', () => {
   it('the triage queue follows the engine ranking, which is an order and not a filter', () => {
     const { r } = runWith(['workspace']);

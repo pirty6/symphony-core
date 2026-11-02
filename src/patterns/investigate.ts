@@ -77,7 +77,8 @@ const COVERAGE = [
 
 const LESSON_INPUTS = {
   problem: 'question',
-  cause: 'answer',
+  // The checked sub-answers, whole: not answer prose cut at a length.
+  cause: 'subAnswers',
   files: 'citedFindings',
   open: 'openQuestions',
 } as const;
@@ -148,6 +149,12 @@ export const investigate: Pattern = {
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
       { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
+      { name: 'planFacts', type: 'string[]', description: 'Facts recalled for the sub-questions' },
+      {
+        name: 'planLessons',
+        type: 'string[]',
+        description: 'Lessons recalled for the sub-questions',
+      },
       {
         name: 'subAnswers',
         type: 'string[]',
@@ -373,7 +380,7 @@ export const investigate: Pattern = {
       id: 'planPhase',
       label: 'Plan research',
       description: 'Available sources, sub-questions, which evidence applies',
-      nodes: ['catalog', 'plan', 'queue'],
+      nodes: ['catalog', 'plan', 'recallPlan', 'mergeRecall', 'queue'],
     },
     hypotheses.group,
     {
@@ -462,6 +469,25 @@ export const investigate: Pattern = {
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
     recallMemory('recall', 'question'),
+    {
+      // Again with the sub-questions: the raw question is a poor query for the parts of it.
+      id: 'recallPlan',
+      kind: 'tool',
+      label: 'Recall for the sub-questions',
+      tool: 'memory.recall',
+      inputs: { query: 'subQuestions' },
+      output: { facts: 'planFacts', lessons: 'planLessons' },
+    },
+    {
+      id: 'mergeRecall',
+      kind: 'compute',
+      label: 'Merge recalled leads',
+      assign: [
+        // The same caps as one recall: more related leads are distractors, not help.
+        { field: 'knownFacts', expr: 'take(unique(knownFacts + planFacts), 12)' },
+        { field: 'pastLessons', expr: 'take(unique(pastLessons + planLessons), 6)' },
+      ],
+    },
     {
       id: 'catalog',
       kind: 'tool',
@@ -1288,7 +1314,11 @@ export const investigate: Pattern = {
     },
     // Only a settled answer teaches: what was asked and how it ended, a lead for later questions
     // like it, stale once its cited files change. An unsettled one leaves no lesson.
-    rememberLessonNode('learnAnswer', 'answered', LESSON_INPUTS, { outcome: 'success' }),
+    // Only one that names a workspace file: a file-less lesson cannot go stale with the code.
+    rememberLessonNode('learnAnswer', 'answered', LESSON_INPUTS, {
+      outcome: 'success',
+      requireFiles: true,
+    }),
     // The facts later runs get are the ones this answer used, not everything read on the way.
     rememberCitedNode('rememberCited', 'citedFindings'),
     { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
@@ -1298,7 +1328,9 @@ export const investigate: Pattern = {
     { id: 'start-recall', from: 'start', to: 'recall' },
     { id: 'recall-catalog', from: 'recall', to: 'catalog' },
     { id: 'catalog-plan', from: 'catalog', to: 'plan' },
-    { id: 'plan-queue', from: 'plan', to: 'queue' },
+    { id: 'plan-recall', from: 'plan', to: 'recallPlan' },
+    { id: 'recallPlan-merge', from: 'recallPlan', to: 'mergeRecall' },
+    { id: 'mergeRecall-queue', from: 'mergeRecall', to: 'queue' },
     { id: 'queue-hypothesize', from: 'queue', to: hypotheses.entry },
     ...hypotheses.edges,
     { id: 'rating-needFiles', from: hypotheses.exit!, to: 'needFiles' },

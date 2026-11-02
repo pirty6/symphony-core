@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   cleanFact,
+  FILELESS_LESSON_DAYS,
   LESSON_DAYS,
   MAX_FACTS_PER_RUN,
   memoryPath,
@@ -102,6 +103,25 @@ describe('memory across runs', () => {
     expect((await recall(ws, 'paginate count pages', 12, { store })).lessons).toHaveLength(1);
     writeFileSync(join(ws, 'src', 'paginate.ts'), 'export const page = 0;\n');
     expect((await recall(ws, 'paginate count pages', 12, { store })).lessons).toEqual([]);
+  });
+
+  it('a lesson that names no file lives a shorter time than one tied to files', async () => {
+    const ws = workspace();
+    writeFileSync(join(ws, 'src', 'paginate.ts'), 'export {};\n');
+    await rememberLesson(
+      ws,
+      'Answered "how pages are counted": from one',
+      [],
+      day(FILELESS_LESSON_DAYS + 1),
+    );
+    await rememberLesson(
+      ws,
+      'Answered "how pages are sized": twenty',
+      ['src/paginate.ts'],
+      day(FILELESS_LESSON_DAYS + 1),
+    );
+    const r = await recall(ws, 'how pages are counted and sized');
+    expect(r.lessons).toEqual([expect.stringMatching(/how pages are sized/)]);
   });
 
   it('stores facts without run annotations, one per path:line, the newest', async () => {

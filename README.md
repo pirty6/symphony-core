@@ -637,10 +637,15 @@ solved rate or citation validity.
   *and still match the files today* (re-checked at recall), plus lessons from earlier fix and
   implement runs. They are leads to check, never evidence. The store stays clean: run tags such
   as `[H2 against]` are stripped, only the newest fact per `path:line` is kept, one run writes at
-  most 200 facts (so a few runs cannot replace the whole store), lessons expire after 90 days or
-  when their files are gone, and recall weights rare words above common ones. A run never
-  recalls its own facts, investigate remembers each answer as a lesson too, and a run playing in
-  its own worktree reads and adds to your workspace's memory, not a copy deleted with it.
+  most 200 facts (so a few runs cannot replace the whole store), lessons expire after 90 days (30
+  for one that names no file), when their files are gone or when one of them changes, a newer
+  lesson on the same problem replaces the older, each is shown with its date and commit, and
+  recall weights rare words above common ones. A run never recalls its own facts; investigate
+  recalls again with its sub-questions, and remembers a settled answer as a lesson built from its
+  checked sub-answers (only when it names a workspace file), plus the findings it cited. A run
+  playing in its own worktree reads and adds to your workspace's memory, not a copy deleted with
+  it. Classical replay never reuses an answer about a web page: what the page says may have
+  changed, and the replay key only knows the workspace.
 - **Replays know who played.** A recorded answer is reused only for the same move *and* the same
   model settings (tier, requested model, effort); `compare` names "played by different models"
   as a cause instead of calling two runs identical.

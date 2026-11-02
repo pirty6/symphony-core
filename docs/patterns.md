@@ -27,7 +27,8 @@ Answer a question with evidence, from whatever sources it needs: workspace files
 experiments, git history, GitHub, dependencies, MCP servers.
 
 1. **Recall and plan.** Facts and lessons from earlier runs are recalled and re-checked
-   against today's files. The planner splits the question into sub-questions, decides for
+   against today's files, once for the question and again for the sub-questions (within the
+   same caps: 12 facts, 6 lessons). The planner splits the question into sub-questions, decides for
    every available source whether it can hold evidence (a reason for each skip), chooses
    how many sub-agents to use (1-6), and may split the question into independent parts.
 2. **Hypotheses.** Competing answers before any evidence, each with what would confirm or
@@ -55,8 +56,11 @@ experiments, git history, GitHub, dependencies, MCP servers.
    hypothesis. The engine appends a coverage section: files not triaged, pages, experiments,
    what could not be read, sources searched and skipped, findings taken on trust.
 8. **Challenge.** The debate above; REAL objections reopen research.
-9. **Settle.** A settled answer ends `success` and remembers a lesson and the findings it
-   cited. Open objections or low confidence end `partial`, with the reason, and teach nothing.
+9. **Settle.** Settled means no unresolved objection, no OPEN sub-answer or objection
+   resolution, and enough confidence. A settled answer ends `success`, remembers the findings
+   it cited and a lesson built from its checked sub-answers (only when it names a workspace
+   file, so the lesson goes stale with the code). Anything else ends `partial`, with the
+   reasons in `doubts`, and teaches nothing.
 
 <!-- flow:investigate -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
@@ -76,7 +80,7 @@ flowchart TD
   n_rememberCited[/"🔧 Remember cited facts"/]
   n_done(["Answered · success"])
   n_doubts(["Answered, with open doubts · partial"])
-  n_planPhase[["Plan research · 3 steps"]]
+  n_planPhase[["Plan research · 5 steps"]]
   n_hypothesesPhase[["Competing hypotheses · 2 steps"]]
   n_listPhase[["List evidence · 12 steps"]]
   n_triagePhase[["Triage files · 5 steps"]]
@@ -112,7 +116,7 @@ flowchart TD
 
 | Phase | What it does | Steps |
 | --- | --- | --- |
-| Plan research | Available sources, sub-questions, which evidence applies | List sources → Plan research → Queue sources |
+| Plan research | Available sources, sub-questions, which evidence applies | List sources → Plan research → Recall for the sub-questions → Merge recalled leads → Queue sources |
 | Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
 | List evidence | Only what the plan needs: workspace files, likeliest first (a big repo is searched first), web pages, experiments | Workspace? → List every file → Rank files → Count files → Triage every file? → Queue files → Locate files → Queue located files → Web? → List web pages → Experiments? → Design experiments |
 | Triage files | Every listed file, in batches | Files left? → Next batch → Triage files → Check citations → Record triage |
