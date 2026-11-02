@@ -337,8 +337,31 @@ export interface AiTranscript {
   readonly musician?: Musician;
   /** Tokens the provider reported for this answer (all model calls of the session). */
   readonly usage?: TokenUsage;
+  /**
+   * Each model call of the session, in order: what it read, from the cache and anew. The
+   * first call's cache read says whether a shared prompt prefix was reused at all.
+   */
+  readonly calls?: readonly CallUsage[];
+  /** The context at the session's start, as the provider split it (tokens). */
+  readonly context?: ContextSplit;
   /** Files the engine read whole into the prompt (AgentNode.preload): which, how much, what failed. */
   readonly preloaded?: readonly PreloadRecord[];
+}
+
+export interface CallUsage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens?: number;
+  /** How long the call took (ms). */
+  readonly ms?: number;
+}
+
+export interface ContextSplit {
+  readonly systemTokens?: number;
+  readonly toolDefinitionsTokens?: number;
+  readonly conversationTokens?: number;
+  readonly tokenLimit?: number;
 }
 
 export interface PreloadRecord {

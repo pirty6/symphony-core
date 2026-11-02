@@ -113,11 +113,22 @@ describe('CopilotProvider', () => {
         verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
       });
       emit('tool.execution_complete', { toolCallId: 't1', success: true });
+      emit('session.usage_info', {
+        currentTokens: 900,
+        systemTokens: 700,
+        toolDefinitionsTokens: 150,
+        conversationTokens: 50,
+        tokenLimit: 200000,
+        messagesLength: 1,
+      });
+      emit('session.usage_info', { currentTokens: 1500, systemTokens: 700, messagesLength: 3 });
       emit('assistant.usage', {
         model: 'm1',
         inputTokens: 1200,
         outputTokens: 80,
         cacheReadTokens: 900,
+        cacheWriteTokens: 300,
+        duration: 1500,
       });
       emit('assistant.usage', { model: 'm1', inputTokens: 300, outputTokens: 20 });
       emit('assistant.message', { content: 'Done.', model: 'm1' });
@@ -143,6 +154,25 @@ describe('CopilotProvider', () => {
       outputTokens: 100,
       cacheReadTokens: 900,
       reasoningTokens: 0,
+      cacheWriteTokens: 300,
+      apiMs: 1500,
+    });
+    // Each call on its own, in order, and the context the session started with.
+    expect(res.transcript.calls).toEqual([
+      {
+        inputTokens: 1200,
+        outputTokens: 80,
+        cacheReadTokens: 900,
+        cacheWriteTokens: 300,
+        ms: 1500,
+      },
+      { inputTokens: 300, outputTokens: 20, cacheReadTokens: 0 },
+    ]);
+    expect(res.transcript.context).toEqual({
+      systemTokens: 700,
+      toolDefinitionsTokens: 150,
+      conversationTokens: 50,
+      tokenLimit: 200000,
     });
     expect(res.transcript.toolCalls.some((c) => c.denied)).toBe(true);
     expect(events.map((e) => e.type)).toEqual([

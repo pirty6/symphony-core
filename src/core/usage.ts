@@ -70,6 +70,36 @@ export function wallTimeByNode(perf: Pick<Performance, 'steps'>): Record<string,
   return out;
 }
 
+export interface FirstCalls {
+  /** Sessions (parts, attempts) with a recorded first call. */
+  readonly sessions: number;
+  readonly inputTokens: number;
+  readonly cacheReadTokens: number;
+}
+
+/**
+ * Per node: what each session's FIRST model call read from the cache. Every part of a
+ * fanned-out step is its own session, so this says whether the shared prompt prefix was
+ * reused across parts (later calls of a session reuse its own history either way).
+ */
+export function firstCallCache(perf: Pick<Performance, 'steps'>): Record<string, FirstCalls> {
+  const out: Record<string, FirstCalls> = {};
+  for (const s of perf.steps)
+    for (const t of [...(s.attempts ?? []).map((a) => a.transcript), s.transcript]) {
+      for (const session of t?.parts ?? (t ? [t] : [])) {
+        const first = session.calls?.[0];
+        if (!first) continue;
+        const was = out[s.nodeId] ?? { sessions: 0, inputTokens: 0, cacheReadTokens: 0 };
+        out[s.nodeId] = {
+          sessions: was.sessions + 1,
+          inputTokens: was.inputTokens + first.inputTokens,
+          cacheReadTokens: was.cacheReadTokens + first.cacheReadTokens,
+        };
+      }
+    }
+  return out;
+}
+
 /** Every AI answer of a run (rejected attempts included), per node, per visit and in total. */
 export function performanceUsage(perf: Pick<Performance, 'steps'>): {
   readonly total: TokenUsage;

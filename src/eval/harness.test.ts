@@ -185,6 +185,18 @@ describe('eval harness', () => {
     expect(text).toMatch(/spread over repeats: mini-task: solved 2\/2, 1\.0k–1\.0k in, \d+s–\d+s/);
   });
 
+  it("reports how much of each step's first calls came from the cache", async () => {
+    const report = await evaluate(true, 1);
+    const r = {
+      ...report.results[0]!,
+      pattern: 'investigate',
+      firstCalls: { answerParts: { sessions: 8, inputTokens: 2_000_000, cacheReadTokens: 64_000 } },
+    };
+    expect(formatReport({ ...report, results: [r] })).toMatch(
+      /first-call cache: investigate answerParts 3% of 2000k over 8 sessions/,
+    );
+  });
+
   it('a run that errors after playing still reports the tokens it spent', async () => {
     const report = await runEval({
       tasks: [{ ...task, check: () => Promise.reject(new Error('check crashed')) }],

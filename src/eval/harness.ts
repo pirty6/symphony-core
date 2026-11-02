@@ -13,6 +13,8 @@ import {
   addUsage,
   costliest,
   growth,
+  firstCallCache,
+  type FirstCalls,
   growthRatios,
   formatUsage,
   performanceUsage,
@@ -42,6 +44,8 @@ export interface EvalResult {
   readonly growth?: Readonly<Record<string, number>>;
   /** Wall time per step, ms (AI answers, rejected ones included). */
   readonly msByNode?: Readonly<Record<string, number>>;
+  /** Per step, what each session's first call read from the cache (shared prefixes reused?). */
+  readonly firstCalls?: Readonly<Record<string, FirstCalls>>;
   readonly models: readonly string[];
   /** Workspace citations among the run's findings: how many were checked, how many held. */
   readonly citations: { readonly checked: number; readonly invalid: number };
@@ -143,6 +147,7 @@ async function runTask(
       growing: growth(performanceUsage(perf).byVisit),
       growth: growthRatios(performanceUsage(perf).byVisit),
       msByNode: wallTimeByNode(perf),
+      firstCalls: firstCallCache(perf),
       rejected: (({ attempts, attemptUsage, textUpdates }) => ({
         attempts,
         premiumRequests: attemptUsage.premiumRequests ?? 0,
@@ -220,6 +225,8 @@ export interface EvalSummary {
   readonly msByNode: Readonly<Record<string, number>>;
   /** Largest input growth per "<pattern> <step>" over its visits, in any run. */
   readonly growth: Readonly<Record<string, number>>;
+  /** First calls per "<pattern> <step>", over every run. */
+  readonly firstCalls: Readonly<Record<string, FirstCalls>>;
 }
 
 const NO_TOKENS: TokenUsage = {
@@ -259,6 +266,18 @@ export function summarize(results: readonly EvalResult[]): EvalSummary {
     msByNode: results.reduce<Record<string, number>>((acc, r) => {
       for (const [node, ms] of Object.entries(r.msByNode ?? {}))
         acc[`${r.pattern} ${node}`] = (acc[`${r.pattern} ${node}`] ?? 0) + ms;
+      return acc;
+    }, {}),
+    firstCalls: results.reduce<Record<string, FirstCalls>>((acc, r) => {
+      for (const [node, f] of Object.entries(r.firstCalls ?? {})) {
+        const key = `${r.pattern} ${node}`;
+        const was = acc[key] ?? { sessions: 0, inputTokens: 0, cacheReadTokens: 0 };
+        acc[key] = {
+          sessions: was.sessions + f.sessions,
+          inputTokens: was.inputTokens + f.inputTokens,
+          cacheReadTokens: was.cacheReadTokens + f.cacheReadTokens,
+        };
+      }
       return acc;
     }, {}),
     growth: results.reduce<Record<string, number>>((acc, r) => {
@@ -358,6 +377,15 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   if (slowest.length > 0 && allMs > 0)
     lines.push(
       `slowest steps: ${slowest.map(([n, ms]) => `${n} (${(ms / 1000).toFixed(0)}s, ${Math.round((100 * ms) / allMs)}% of AI time)`).join('; ')}`,
+    );
+  // Steps whose sessions share a prompt prefix: did the first call of each reuse it?
+  const shared = Object.entries(s.firstCalls)
+    .filter(([, f]) => f.sessions > 1 && f.inputTokens > 0)
+    .toSorted(([, x], [, y]) => y.inputTokens - x.inputTokens)
+    .slice(0, 5);
+  if (shared.length > 0)
+    lines.push(
+      `first-call cache: ${shared.map(([n, f]) => `${n} ${Math.round((100 * f.cacheReadTokens) / f.inputTokens)}% of ${k(f.inputTokens)} over ${f.sessions} sessions`).join('; ')}`,
     );
   // Runs vary (no seed): with repeats, say how much, per task.
   const byTask = new Map<string, EvalResult[]>();
