@@ -615,7 +615,8 @@ solved rate or citation validity.
   why answers were rejected, the rate limits hit, and the read record's share of the saved run;
   `--with key=value` sets an input on every task whose pattern has it, and the report names
   those settings and the trial switches, so two reports compare as an A/B
-  ([docs/trials.md](docs/trials.md)). Investigate
+  ([docs/trials.md](docs/trials.md)). What each investigate setting trades, and what backs it:
+  [docs/settings.md](docs/settings.md). Investigate
   fixtures also cover a real quote that does not support the claim, a stale lesson in memory
   on unchanged files, a false hint, and a planted flaw played with the debate (complexity 3)
   and without (1), so what the debate catches is measured; `investigate-many-files` (240 files,
