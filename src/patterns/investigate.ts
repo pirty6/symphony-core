@@ -1,4 +1,4 @@
-import { MAX_AGENTS, type Pattern } from '../core/types.js';
+import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import {
   checkFindings,
@@ -87,10 +87,14 @@ const LESSON_INPUTS = {
 } as const;
 
 /** Re-counted after every merge of findings: the tally the next readers steer by. */
-const STATUS = { field: 'hypothesisStatus', expr: 'stances(findings, hypotheses)' };
+const STATUS = [
+  { field: 'hypothesisStatus', expr: 'stances(findings, hypotheses)' },
+  // What the evidence readers get: nothing with readerHypotheses off (an ablation).
+  { field: 'leadStatus', expr: 'if(readerHypotheses, hypothesisStatus, [])' },
+];
 
 const AGAINST =
-  ' Look for evidence for AND against every entry of `hypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]". `hypothesisStatus` counts those tags so far: look hardest at the hypotheses it marks untested or challenged.';
+  ' Look for evidence for AND against every entry of `leadHypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]". `leadStatus` counts those tags so far: look hardest at the hypotheses it marks untested or challenged. If `leadHypotheses` is empty, gather evidence on the question and sub-questions alone and do not tag findings.';
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -100,6 +104,10 @@ const v = (reason: string, confidence = 0.9) => ({
 });
 
 const RELEVANT = /engine|schema|validate/;
+
+/** The demo's readers tag findings only when given hypotheses, as they are told. */
+const tagged = (s: Readonly<Record<string, unknown>>, tag: string) =>
+  ((s.leadHypotheses as string[] | undefined) ?? []).length > 0 ? tag : '';
 
 /**
  * Thorough investigation that adapts its evidence to the question. The engine
@@ -123,6 +131,73 @@ const RELEVANT = /engine|schema|validate/;
 const NO_RETRY =
   'unique(positions(notRead, "[.][Pp][Dd][Ff]([?#]|$)") + positions(notReadReasons, "[Bb]inary|PDF|[.]pdf|longer than one prompt|not found in the workspace|outside the workspace"))';
 
+/**
+ * Triage of a batch, whole files in the prompt. `deep` is the single-pass pilot (singlePass):
+ * it also reads the relevant files in depth, following references and history, and lists in
+ * `readFully` those it read completely, which then skip the deep read if the engine's own
+ * record shows they were given whole.
+ */
+function triageStep(deep: boolean): ScoreNode {
+  const node: ScoreNode = {
+    id: 'triage',
+    kind: 'agent',
+    role: 'assessor',
+    label: 'Triage files',
+    directive:
+      'Read EVERY file in `batch`: each one is given to you whole, with line numbers, at the end of this prompt (read all of it there, not just the top; open a file with tools only if it says lines were left out). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
+      AGAINST,
+    reads: ['leadHypotheses', 'leadStatus', 'question', 'hint', 'subQuestions', 'batch'],
+    // The engine reads the batch whole: one turn per part instead of a tool call per page.
+    preload: 'batch',
+    // The engine says which files it could not show whole: those are not dismissed unseen.
+    preloadReport: { paths: 'triagePartial', reasons: 'triagePartialReasons' },
+    fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
+    writes: ['triaged', 'batchRelevant', 'newFindings'],
+    cites: 'newFindings',
+    retries: 2,
+    complexityShift: -1,
+    checks: [
+      {
+        expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
+        message: 'No hypotheses were given: do not tag findings with [H…].',
+      },
+      {
+        expr: 'subset(batch, triaged)',
+        message: 'You skipped files. Open and list EVERY file of batch in triaged.',
+      },
+      { expr: 'subset(triaged, batch)', message: 'triaged may only contain files from batch.' },
+      {
+        expr: 'subset(batchRelevant, batch)',
+        message: 'batchRelevant may only contain files from batch.',
+      },
+    ],
+  };
+  if (!deep || node.kind !== 'agent') return node;
+  return {
+    ...node,
+    id: 'triageDeep',
+    label: 'Triage and read in depth',
+    directive:
+      node.directive +
+      ' For each file you count as relevant, also read it as the deep read would: follow the references out of it that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame), and record every fact that bears on the question in `newFindings`. List in `readFully` the relevant files you read that way, completely; leave out any you only skimmed, and any the prompt says were not given whole: those get a deep read of their own.',
+    // The engine says which it gave whole: readFully counts only for those.
+    preloadReport: {
+      paths: 'triagePartial',
+      reasons: 'triagePartialReasons',
+      whole: 'triageWhole',
+    },
+    writes: [...node.writes, 'readFully'],
+    complexityShift: 0,
+    checks: [
+      ...(node.checks ?? []),
+      {
+        expr: 'subset(readFully, batchRelevant)',
+        message: 'readFully may only list files of batchRelevant.',
+      },
+    ],
+  };
+}
+
 export const investigate: Pattern = {
   name: 'investigate',
   description:
@@ -143,6 +218,10 @@ export const investigate: Pattern = {
     'subAnswers',
   ],
   goalFrom: 'question',
+  // A backstop, never the bound: the loops are bounded by their counters and the citation
+  // checks' visit caps (a scripted worst case takes about 400-525 steps; exhaustive stops at a
+  // check's cap near 1,200). Steps do not bound tokens or time, so a tighter number buys nothing,
+  // and it must leave room for counters the maestro may raise per request.
   maxSteps: 5000,
   state: withState(
     [
@@ -328,6 +407,58 @@ export const investigate: Pattern = {
       },
       { name: 'triagePartialReasons', type: 'string[]', description: 'Why, by position' },
       {
+        name: 'singlePass',
+        type: 'boolean',
+        description:
+          'Pilot (off): triage also reads relevant files in depth, and those the engine shows it gave whole skip the deep read',
+      },
+      {
+        name: 'readFully',
+        type: 'string[]',
+        description: 'Relevant files the pilot triage read completely',
+      },
+      {
+        name: 'triageWhole',
+        type: 'string[]',
+        description:
+          'Files of the triage batch the engine gave whole (engine-filled; empty without a record)',
+      },
+      {
+        name: 'supportJudge',
+        type: 'string',
+        initial: 'off',
+        description:
+          "Does each cited finding's quote support its claim? off; shadow (judged and reported, the outcome unchanged); enforce (unsupported ones make the answer partial). Off until calibrated.",
+      },
+      {
+        name: 'judgeItems',
+        type: 'string[]',
+        description:
+          'Cited findings the judge can check: workspace path:line ones, with their quotes',
+      },
+      {
+        name: 'supportRulings',
+        type: 'string[]',
+        description:
+          'One per judgeItems entry, in order: "F12: SUPPORTED — why" or "F12: UNSUPPORTED — why"',
+      },
+      { name: 'unsupportedIds', type: 'string[]', description: 'Cited findings ruled UNSUPPORTED' },
+      { name: 'judgeBatch', type: 'number', initial: 40, description: 'Findings per judge call' },
+      {
+        name: 'factsToKeep',
+        type: 'string[]',
+        description: 'Cited findings remembered for later runs: all but the ones ruled unsupported',
+      },
+      {
+        name: 'readerHypotheses',
+        type: 'boolean',
+        initial: true,
+        description:
+          'Give the hypotheses to the evidence readers (off: an ablation; assess, the answer and the debate keep them)',
+      },
+      { name: 'leadHypotheses', type: 'string[]', description: 'The hypotheses the readers get' },
+      { name: 'leadStatus', type: 'string[]', description: 'The tally the readers get' },
+      {
         name: 'hypothesisStatus',
         type: 'string[]',
         description:
@@ -403,6 +534,7 @@ export const investigate: Pattern = {
       description:
         'Only what the plan needs: workspace files, likeliest first (a big repo is searched first), web pages, experiments',
       nodes: [
+        'leads',
         'needFiles',
         'inventory',
         'rankFiles',
@@ -421,7 +553,15 @@ export const investigate: Pattern = {
       id: 'triagePhase',
       label: 'Triage files',
       description: 'Every listed file, in batches',
-      nodes: ['filesLeft', 'takeBatch', 'triage', 'checkTriage', 'mergeTriage'],
+      nodes: [
+        'filesLeft',
+        'takeBatch',
+        'singlePassOn',
+        'triage',
+        'triageDeep',
+        'checkTriage',
+        'mergeTriage',
+      ],
     },
     {
       id: 'deepPhase',
@@ -479,6 +619,12 @@ export const investigate: Pattern = {
       ],
     },
     challenge.group,
+    {
+      id: 'judgePhase',
+      label: 'Support judge',
+      description: "Off by default: does each cited finding's quote back its claim?",
+      nodes: ['useJudge', 'takeJudgeItems', 'hasJudgeItems', 'judgeSupport', 'splitRulings'],
+    },
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
@@ -637,13 +783,13 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Locate files',
       directive:
-        "This repository has too many files (`repoFileCount`) to triage each one, so first locate where the evidence can be. Search the workspace (read-only): `git grep` or ripgrep for the names, identifiers, error messages, test names and paths in `question`, `hint` and `searchTerms`; `git log` and `git show` for the commits, pull requests, branches or dates it mentions (the files a change touched come first); then follow imports, callers and tests one level out from what you find. `candidateFiles` are the files the engine's own search ranked highest for these words: a lead, check them, and look beyond them. List in `scopeFiles` the files that could hold evidence for or against any entry of `hypotheses`, most likely first, at most `maxTriageFiles`, as paths relative to the repository root exactly as `git ls-files` prints them (files, not folders). At the same position in `scopeReasons`, say why: which search found it. Record every search you ran in `scopeQueries`.",
+        "This repository has too many files (`repoFileCount`) to triage each one, so first locate where the evidence can be. Search the workspace (read-only): `git grep` or ripgrep for the names, identifiers, error messages, test names and paths in `question`, `hint` and `searchTerms`; `git log` and `git show` for the commits, pull requests, branches or dates it mentions (the files a change touched come first); then follow imports, callers and tests one level out from what you find. `candidateFiles` are the files the engine's own search ranked highest for these words: a lead, check them, and look beyond them. List in `scopeFiles` the files that could hold evidence for or against any entry of `leadHypotheses` (or on the question, when it is empty), most likely first, at most `maxTriageFiles`, as paths relative to the repository root exactly as `git ls-files` prints them (files, not folders). At the same position in `scopeReasons`, say why: which search found it. Record every search you ran in `scopeQueries`.",
       reads: [
         'question',
         'hint',
         'subQuestions',
         'searchTerms',
-        'hypotheses',
+        'leadHypotheses',
         'repoFileCount',
         'maxTriageFiles',
         'knownFacts',
@@ -746,35 +892,13 @@ export const investigate: Pattern = {
       ],
     },
     {
-      id: 'triage',
-      kind: 'agent',
-      role: 'assessor',
-      label: 'Triage files',
-      directive:
-        'Read EVERY file in `batch`: each one is given to you whole, with line numbers, at the end of this prompt (read all of it there, not just the top; open a file with tools only if it says lines were left out). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
-        AGAINST,
-      reads: ['hypotheses', 'hypothesisStatus', 'question', 'hint', 'subQuestions', 'batch'],
-      // The engine reads the batch whole: one turn per part instead of a tool call per page.
-      preload: 'batch',
-      // The engine says which files it could not show whole: those are not dismissed unseen.
-      preloadReport: { paths: 'triagePartial', reasons: 'triagePartialReasons' },
-      fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
-      writes: ['triaged', 'batchRelevant', 'newFindings'],
-      cites: 'newFindings',
-      retries: 2,
-      complexityShift: -1,
-      checks: [
-        {
-          expr: 'subset(batch, triaged)',
-          message: 'You skipped files. Open and list EVERY file of batch in triaged.',
-        },
-        { expr: 'subset(triaged, batch)', message: 'triaged may only contain files from batch.' },
-        {
-          expr: 'subset(batchRelevant, batch)',
-          message: 'batchRelevant may only contain files from batch.',
-        },
-      ],
+      id: 'singlePassOn',
+      kind: 'condition',
+      label: 'Single pass? (pilot)',
+      expression: 'singlePass',
     },
+    triageStep(false),
+    triageStep(true),
     checkFindings('checkTriage', 'newFindings', false),
     {
       id: 'mergeTriage',
@@ -784,10 +908,15 @@ export const investigate: Pattern = {
         {
           field: 'relevantFiles',
           // A file triage saw only part of goes to the deep read, whatever triage said.
-          expr: 'relevantFiles + batchRelevant + without(pick(triagePartial, positions(triagePartialReasons, "^(lines|longer)")), batchRelevant)',
+          // The pilot's readFully skip the deep read only where the engine's record shows the
+          // file was given whole (an intersection: without a record, none skip).
+          expr: 'relevantFiles + without(batchRelevant, without(readFully, without(readFully, triageWhole))) + without(pick(triagePartial, positions(triagePartialReasons, "^(lines|longer)")), batchRelevant)',
         },
         ...MERGE_FINDINGS,
-        STATUS,
+        ...STATUS,
+        // Each wave's claims are its own.
+        { field: 'readFully', expr: '[]' },
+        { field: 'triageWhole', expr: '[]' },
       ],
     },
     {
@@ -824,12 +953,16 @@ export const investigate: Pattern = {
       preload: 'deepBatch',
       // "Read completely" is held to what the engine gave, not to what the AI says it read.
       preloadReport: { paths: 'partlyRead', reasons: 'partlyReadReasons' },
-      reads: ['hypotheses', 'hypothesisStatus', 'question', 'hint', 'subQuestions', 'deepBatch'],
+      reads: ['leadHypotheses', 'leadStatus', 'question', 'hint', 'subQuestions', 'deepBatch'],
       fanOut: { over: 'deepBatch', per: 'deepBatchSize', agents: 'agents' },
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
       cites: 'newFindings',
       retries: 2,
       checks: [
+        {
+          expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
+          message: 'No hypotheses were given: do not tag findings with [H…].',
+        },
         {
           expr: 'subset(deepBatch, examined + unreadable)',
           message:
@@ -875,7 +1008,7 @@ export const investigate: Pattern = {
       label: 'Record deep read',
       assign: [
         ...MERGE_FINDINGS,
-        STATUS,
+        ...STATUS,
         // Files the engine could not give whole are not read completely, whatever the AI says:
         // they are reported (and retried once, alone, at the end) like the unreadable ones.
         { field: 'partialAt', expr: 'outside(partlyRead, notRead + unreadable)' },
@@ -944,7 +1077,7 @@ export const investigate: Pattern = {
       id: 'mergeParallel',
       kind: 'compute',
       label: 'Record experiments',
-      assign: [...MERGE_FINDINGS, STATUS, { field: 'ran', expr: 'ran + parallelExperiments' }],
+      assign: [...MERGE_FINDINGS, ...STATUS, { field: 'ran', expr: 'ran + parallelExperiments' }],
     },
     {
       id: 'experimentsLeft',
@@ -987,7 +1120,11 @@ export const investigate: Pattern = {
       id: 'mergeExperiment',
       kind: 'compute',
       label: 'Record experiment',
-      assign: [...MERGE_FINDINGS, STATUS, { field: 'ran', expr: 'append(ran, currentExperiment)' }],
+      assign: [
+        ...MERGE_FINDINGS,
+        ...STATUS,
+        { field: 'ran', expr: 'append(ran, currentExperiment)' },
+      ],
     },
     {
       id: 'sourcesLeft',
@@ -1015,8 +1152,8 @@ export const investigate: Pattern = {
         'Search the ONE source in `currentSources` (see `sourceInfo` for how to use it) for evidence on every sub-question, using `searchTerms` and your own follow-up queries. Be exhaustive: look at several results, read full pages, threads, issues and diffs, and follow links. Record every query, command or tool call in `queries`, and every relevant fact as "source | location (URL, issue/PR #, commit, tool) — fact" in `newFindings`. If the source has nothing relevant, add one finding saying what you searched.' +
         AGAINST,
       reads: [
-        'hypotheses',
-        'hypothesisStatus',
+        'leadHypotheses',
+        'leadStatus',
         'question',
         'hint',
         'subQuestions',
@@ -1030,6 +1167,10 @@ export const investigate: Pattern = {
       fanOut: { over: 'currentSources', per: 1, agents: 'agents' },
       retries: 2,
       checks: [
+        {
+          expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
+          message: 'No hypotheses were given: do not tag findings with [H…].',
+        },
         {
           expr: 'len(queries) > 0',
           message: 'Record every query, command or tool call you made in queries.',
@@ -1048,7 +1189,7 @@ export const investigate: Pattern = {
       label: 'Record source',
       assign: [
         ...MERGE_FINDINGS,
-        STATUS,
+        ...STATUS,
         { field: 'consulted', expr: 'consulted + currentSources' },
       ],
     },
@@ -1096,8 +1237,8 @@ export const investigate: Pattern = {
         'Close every gap in `gaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
       reads: [
-        'hypotheses',
-        'hypothesisStatus',
+        'leadHypotheses',
+        'leadStatus',
         'question',
         'gaps',
         'hint',
@@ -1109,6 +1250,10 @@ export const investigate: Pattern = {
       cites: 'newFindings',
       retries: 2,
       checks: [
+        {
+          expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
+          message: 'No hypotheses were given: do not tag findings with [H…].',
+        },
         {
           expr: 'len(queries) > 0',
           message: 'Record every query, command or tool call you made in queries.',
@@ -1127,7 +1272,7 @@ export const investigate: Pattern = {
       label: 'Record gap research',
       assign: [
         ...MERGE_FINDINGS,
-        STATUS,
+        ...STATUS,
         { field: 'gapRounds', expr: 'gapRounds + 1' },
         { field: 'chaseRounds', expr: 'chaseRounds + 1' },
       ],
@@ -1298,6 +1443,15 @@ export const investigate: Pattern = {
       ],
     },
     ...hypotheses.nodes,
+    {
+      id: 'leads',
+      kind: 'compute',
+      label: 'Hypotheses for the readers',
+      assign: [
+        { field: 'leadHypotheses', expr: 'if(readerHypotheses, hypotheses, [])' },
+        { field: 'leadStatus', expr: 'if(readerHypotheses, hypothesisStatus, [])' },
+      ],
+    },
     ...challenge.nodes,
     {
       id: 'attachParts',
@@ -1312,9 +1466,83 @@ export const investigate: Pattern = {
           // Whatever the answer rests on, wherever it cites it: summary, parts, sub-answers, resolutions.
           expr: 'withIds(findings, refs(answer + " " + join(partAnswers + subAnswers + objectionResolutions, " ")))',
         },
+        { field: 'factsToKeep', expr: 'citedFindings' },
         {
           field: 'answer',
           expr: `if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer) + "\n\n" + ${COVERAGE}`,
+        },
+      ],
+    },
+    {
+      id: 'useJudge',
+      kind: 'condition',
+      label: 'Support judge?',
+      expression: 'supportJudge != "off" && len(citedFindings) > 0',
+    },
+    {
+      id: 'takeJudgeItems',
+      kind: 'compute',
+      label: 'What the judge can check',
+      // Workspace citations carry a checked quote; web and other sources do not (uncheckable).
+      assign: [
+        {
+          field: 'judgeItems',
+          expr: `pick(citedFindings, positions(citedFindings, "${FILE_CITE}"))`,
+        },
+      ],
+    },
+    {
+      id: 'hasJudgeItems',
+      kind: 'condition',
+      label: 'Any to judge?',
+      expression: 'len(judgeItems) > 0',
+    },
+    {
+      id: 'judgeSupport',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Support judge',
+      // Isolated and on another family: it sees each quote and its claim, never the question or
+      // the answer, so it judges support, not plausibility.
+      isolated: true,
+      otherModel: true,
+      directive:
+        'For EVERY entry of `judgeItems`, in order, write one `supportRulings` entry: "F<n>: SUPPORTED — <why>" if the quoted text (in backticks), read as it stands, states what the claim says, or "F<n>: UNSUPPORTED — <why>" if it does not: it only mentions the subject, says something else, needs a step it does not show, or the claim adds a number, name or condition the quote lacks. Judge each one on its own quote and claim only; be strict, a quote that is merely near the claim is UNSUPPORTED. Start each entry with the id of its finding and nothing before it.',
+      reads: ['judgeItems'],
+      writes: ['supportRulings'],
+      fanOut: { over: 'judgeItems', per: 'judgeBatch', agents: 'agents' },
+      retries: 2,
+      maxVisits: 1,
+      checks: [
+        {
+          // By the id each ruling starts with, in order: an id named inside a reason does not count.
+          expr: 'heads(supportRulings, "^F[0-9]+") == ids(judgeItems)',
+          message:
+            "Give exactly one supportRulings entry per entry of judgeItems, in the same order, each starting with that finding's id.",
+        },
+        {
+          expr: 'len(unmatched(supportRulings, "^F[0-9]+: (SUPPORTED|UNSUPPORTED)( |$)")) == 0',
+          message: 'Write each entry as "F<n>: SUPPORTED — why" or "F<n>: UNSUPPORTED — why".',
+        },
+      ],
+    },
+    {
+      id: 'splitRulings',
+      kind: 'compute',
+      label: 'Record the rulings',
+      assign: [
+        {
+          field: 'unsupportedIds',
+          expr: 'heads(without(supportRulings, unmatched(supportRulings, "^F[0-9]+: UNSUPPORTED")), "^F[0-9]+")',
+        },
+        // What later runs remember: never a finding whose quote does not back its claim.
+        {
+          field: 'factsToKeep',
+          expr: 'without(citedFindings, withIds(citedFindings, unsupportedIds))',
+        },
+        {
+          field: 'doubts',
+          expr: `doubts + if(len(unsupportedIds) > 0, ["The support judge found these cited findings unsupported by their own quotes" + if(supportJudge == "shadow", " (shadow mode: reported, the outcome unchanged)", "") + ": " + join(without(supportRulings, unmatched(supportRulings, "^F[0-9]+: UNSUPPORTED")), "; ")], []) + if(len(citedFindings) > len(judgeItems), [text(len(citedFindings) - len(judgeItems)) + " cited findings cite web pages or other sources: the support judge cannot check them"], [])`,
         },
       ],
     },
@@ -1324,7 +1552,7 @@ export const investigate: Pattern = {
       label: 'Settled?',
       // Open objections, open sub-questions or low confidence are said in the outcome, not only
       // in the text. Confidence is the assessor's (from before any debate), so it is not enough.
-      expression: `len(unresolvedObjections) == 0 && len(${OPEN_ENTRIES('subAnswers')}) == 0 && len(${OPEN_ENTRIES('objectionResolutions')}) == 0 && confidence >= 0.5`,
+      expression: `(supportJudge != "enforce" || len(unsupportedIds) == 0) && len(unresolvedObjections) == 0 && len(${OPEN_ENTRIES('subAnswers')}) == 0 && len(${OPEN_ENTRIES('objectionResolutions')}) == 0 && confidence >= 0.5`,
     },
     {
       id: 'noteDoubts',
@@ -1333,7 +1561,7 @@ export const investigate: Pattern = {
       assign: [
         {
           field: 'doubts',
-          expr: `if(len(unresolvedObjections) > 0, ["Objections were still open when the debate reached its cap (maxDebateRounds): see unresolvedObjections"], []) + if(len(${OPEN_ENTRIES('subAnswers')}) > 0, ["Sub-questions the findings do not answer: " + join(${OPEN_ENTRIES('subAnswers')}, "; ")], []) + if(len(${OPEN_ENTRIES('objectionResolutions')}) > 0, ["Objections the answer could not settle: " + join(${OPEN_ENTRIES('objectionResolutions')}, "; ")], []) + if(confidence < 0.5, ["Confidence that the findings answer the question stayed below 0.5"], [])`,
+          expr: `doubts + if(len(unresolvedObjections) > 0, ["Objections were still open when the debate reached its cap (maxDebateRounds): see unresolvedObjections"], []) + if(len(${OPEN_ENTRIES('subAnswers')}) > 0, ["Sub-questions the findings do not answer: " + join(${OPEN_ENTRIES('subAnswers')}, "; ")], []) + if(len(${OPEN_ENTRIES('objectionResolutions')}) > 0, ["Objections the answer could not settle: " + join(${OPEN_ENTRIES('objectionResolutions')}, "; ")], []) + if(confidence < 0.5, ["Confidence that the findings answer the question stayed below 0.5"], [])`,
         },
       ],
     },
@@ -1345,7 +1573,7 @@ export const investigate: Pattern = {
       requireFiles: true,
     }),
     // The facts later runs get are the ones this answer used, not everything read on the way.
-    rememberCitedNode('rememberCited', 'citedFindings'),
+    rememberCitedNode('rememberCited', 'factsToKeep'),
     { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
     { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
   ],
@@ -1358,7 +1586,8 @@ export const investigate: Pattern = {
     { id: 'mergeRecall-queue', from: 'mergeRecall', to: 'queue' },
     { id: 'queue-hypothesize', from: 'queue', to: hypotheses.entry },
     ...hypotheses.edges,
-    { id: 'rating-needFiles', from: hypotheses.exit!, to: 'needFiles' },
+    { id: 'rating-leads', from: hypotheses.exit!, to: 'leads' },
+    { id: 'leads-needFiles', from: 'leads', to: 'needFiles' },
     { id: 'needFiles-inventory', from: 'needFiles', to: 'inventory', branch: 'then' },
     { id: 'needFiles-needWeb', from: 'needFiles', to: 'needWeb', branch: 'else' },
     { id: 'inventory-rank', from: 'inventory', to: 'rankFiles' },
@@ -1382,8 +1611,11 @@ export const investigate: Pattern = {
     { id: 'design-filesLeft', from: 'designExperiments', to: 'filesLeft' },
     { id: 'filesLeft-takeBatch', from: 'filesLeft', to: 'takeBatch', branch: 'then' },
     { id: 'filesLeft-deepQueue', from: 'filesLeft', to: 'deepQueue', branch: 'else' },
-    { id: 'takeBatch-triage', from: 'takeBatch', to: 'triage' },
+    { id: 'takeBatch-pass', from: 'takeBatch', to: 'singlePassOn' },
+    { id: 'pass-deep', from: 'singlePassOn', to: 'triageDeep', branch: 'then', label: 'pilot' },
+    { id: 'pass-triage', from: 'singlePassOn', to: 'triage', branch: 'else' },
     { id: 'triage-checkTriage', from: 'triage', to: 'checkTriage' },
+    { id: 'triageDeep-checkTriage', from: 'triageDeep', to: 'checkTriage' },
     { id: 'checkTriage-mergeTriage', from: 'checkTriage', to: 'mergeTriage' },
     { id: 'mergeTriage-filesLeft', from: 'mergeTriage', to: 'filesLeft', label: 'next batch' },
     { id: 'deepQueue-deepLeft', from: 'deepQueue', to: 'deepLeft' },
@@ -1458,7 +1690,14 @@ export const investigate: Pattern = {
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
-    { id: 'attachParts-settled', from: 'attachParts', to: 'settled' },
+    { id: 'attachParts-useJudge', from: 'attachParts', to: 'useJudge' },
+    { id: 'useJudge-take', from: 'useJudge', to: 'takeJudgeItems', branch: 'then' },
+    { id: 'useJudge-settled', from: 'useJudge', to: 'settled', branch: 'else' },
+    { id: 'take-hasItems', from: 'takeJudgeItems', to: 'hasJudgeItems' },
+    { id: 'hasItems-judge', from: 'hasJudgeItems', to: 'judgeSupport', branch: 'then' },
+    { id: 'hasItems-split', from: 'hasJudgeItems', to: 'splitRulings', branch: 'else' },
+    { id: 'judge-split', from: 'judgeSupport', to: 'splitRulings' },
+    { id: 'split-settled', from: 'splitRulings', to: 'settled' },
     { id: 'settled-learn', from: 'settled', to: 'learnAnswer', branch: 'then' },
     { id: 'settled-note', from: 'settled', to: 'noteDoubts', branch: 'else' },
     { id: 'learn-cited', from: 'learnAnswer', to: 'rememberCited' },
@@ -1588,6 +1827,19 @@ export const investigate: Pattern = {
           verdict: v(`triaged ${batch.length} files`),
         };
       },
+      triageDeep: (s) => {
+        const batch = (s.batch as string[]) ?? [];
+        const relevant = batch.filter((f) => RELEVANT.test(f));
+        return {
+          updates: {
+            triaged: batch,
+            batchRelevant: relevant,
+            readFully: relevant,
+            newFindings: relevant.map((f) => `${f}:1 — read in depth at triage`),
+          },
+          verdict: v(`triaged and read ${relevant.length} of ${batch.length} files`),
+        };
+      },
       deepRead: (s) => {
         const batch = (s.deepBatch as string[]) ?? [];
         return {
@@ -1599,7 +1851,7 @@ export const investigate: Pattern = {
               f.startsWith('http')
                 ? `${f} — state machines apply transitions only on valid input`
                 : f.endsWith('schema.ts')
-                  ? `${f}:115 — validateNodeResult checks verdict and typed updates [H1 for, H3 against]`
+                  ? `${f}:115 — validateNodeResult checks verdict and typed updates${tagged(s, ' [H1 for, H3 against]')}`
                   : `${f}:1 — reviewed fully`,
             ),
           },
@@ -1627,11 +1879,11 @@ export const investigate: Pattern = {
               verdict: v('one gap', 0.6),
             }
           : { updates: { gaps: [], confidence: 0.9 }, verdict: v('covered') },
-      chase: () => ({
+      chase: (s) => ({
         updates: {
           queries: ['git log -S validateNodeResult'],
           newFindings: [
-            'git-history | commit "feat(core): score/performance types and response validation" — validation added with the engine [H2 against]',
+            `git-history | commit "feat(core): score/performance types and response validation" — validation added with the engine${tagged(s, ' [H2 against]')}`,
           ],
         },
         verdict: v('gap closed'),
@@ -1683,6 +1935,14 @@ export const investigate: Pattern = {
           ],
         },
         verdict: v('hypotheses proposed'),
+      }),
+      judgeSupport: (s) => ({
+        updates: {
+          supportRulings: ((s.judgeItems as string[]) ?? []).map(
+            (f) => `${f.split(' ')[0]}: SUPPORTED — the quote states it`,
+          ),
+        },
+        verdict: v('judged'),
       }),
       challenge: (_s, visit) => ({
         updates: {

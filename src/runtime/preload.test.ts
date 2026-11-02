@@ -191,10 +191,13 @@ describe('preloadReport: the engine, not the AI, says what was not given whole',
       ...reader.state,
       { name: 'partly', type: 'string[]' },
       { name: 'partlyWhy', type: 'string[]' },
+      { name: 'given', type: 'string[]' },
     ],
     nodes: reader.nodes.map((n) =>
       n.id === 'read'
-        ? Object.assign({}, n, { preloadReport: { paths: 'partly', reasons: 'partlyWhy' } })
+        ? Object.assign({}, n, {
+            preloadReport: { paths: 'partly', reasons: 'partlyWhy', whole: 'given' },
+          })
         : n,
     ),
   };
@@ -232,6 +235,8 @@ describe('preloadReport: the engine, not the AI, says what was not given whole',
       expect.stringMatching(/^lines \d+-1001 left out of the prompt for the call's size/),
       'the engine could not read it (not found in the workspace)',
     ]);
+    // Only what the record shows was given whole: not the cut ones, not the missing one.
+    expect(s.given).toEqual(['src/a.ts', 'q1.txt', 'q2.txt']);
     expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
   });
 

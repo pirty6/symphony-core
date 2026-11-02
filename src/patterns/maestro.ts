@@ -1,3 +1,4 @@
+import { featureInputs } from '../core/catalog.js';
 import { compileScore } from '../core/compile.js';
 import { routeMatches } from './route.js';
 import {
@@ -488,6 +489,8 @@ ${SCORE_FORMAT}`,
       id: 'switch',
       kind: 'compute',
       label: 'Switch pattern',
+      // The critic reroutes once (rerouted); the engine holds it to that.
+      maxVisits: 1,
       assign: [
         { field: 'chosen', expr: 'recommended' },
         { field: 'template', expr: 'if(recommended == "new", {}, get(catalog, recommended))' },
@@ -997,7 +1000,12 @@ export function maestroThen(finalState: Readonly<Record<string, unknown>>): stri
 export function composedScore(
   maestroScore: ExecutableScore,
   finalState: Readonly<Record<string, unknown>>,
-  opts: { readonly generatedAt?: string; readonly improvisation?: Improvisation } = {},
+  opts: {
+    readonly generatedAt?: string;
+    readonly improvisation?: Improvisation;
+    /** Switches you chose (FEATURES), for the composed pattern if it has them. */
+    readonly features?: Readonly<Record<string, string>>;
+  } = {},
 ): { readonly pattern: Pattern; readonly score: ExecutableScore } | undefined {
   if (maestroScore.pattern !== 'maestro') return undefined;
   const parsed = parseDraft(finalState.finalPattern);
@@ -1007,7 +1015,10 @@ export function composedScore(
   const pattern = parsed.value;
   const score = compileScore(pattern, {
     goal: String(finalState.request ?? maestroScore.goal),
-    context: withBrief(pattern, typedContext(pattern, finalState.childContext), finalState),
+    context: {
+      ...withBrief(pattern, typedContext(pattern, finalState.childContext), finalState),
+      ...featureInputs(pattern, opts.features),
+    },
     complexity,
     improvisation: opts.improvisation ?? maestroScore.improvisation,
     ...(opts.generatedAt ? { generatedAt: opts.generatedAt } : {}),

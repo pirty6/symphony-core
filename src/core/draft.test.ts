@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import { fix, hangman } from '../patterns/index.js';
+import { fix, hangman, PATTERNS } from '../patterns/index.js';
 import {
   adaptPattern,
   camelName,
@@ -27,6 +27,18 @@ describe('parseDraft', () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value.nodes).toEqual(fix.nodes);
   });
+
+  // The maestro re-parses every score it composes: a field dropped here silently changes how
+  // the composed run plays (fewer sub-agents, no warm-up, no engine record of partial reads).
+  it.each(PATTERNS.map((p) => [p.name, p] as const))(
+    '%s survives the round trip the maestro gives it, field for field',
+    (_n, p) => {
+      const json = asJson(p);
+      const r = parseDraft(json);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(JSON.parse(JSON.stringify(r.value))).toEqual(json);
+    },
+  );
 
   it('collects structural and graph errors', () => {
     const r = parseDraft({

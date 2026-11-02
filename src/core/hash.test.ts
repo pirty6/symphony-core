@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { canonicalJson, HashError, hashOf, sha256 } from './hash.js';
+import { canonicalJson, HashError, hashOf, sha256, useSha256 } from './hash.js';
 
 const nodeSha = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -47,5 +47,29 @@ describe('canonicalJson only accepts plain JSON', () => {
       '{"a":{"c":2},"b":[1,"x",null,true]}',
     );
     expect(canonicalJson(Object.create(null))).toBe('{}');
+  });
+});
+
+const native = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+
+describe('useSha256', () => {
+  it('a native SHA-256 gives every id unchanged', () => {
+    const value = { b: [1, 'é 🎻'], a: { s: 'x\ud800' } };
+    const before = hashOf(value);
+    useSha256(native);
+    try {
+      expect(hashOf(value)).toBe(before);
+    } finally {
+      useSha256(sha256);
+    }
+  });
+
+  it('refuses an implementation that is not SHA-256 of the UTF-8 bytes', () => {
+    expect(() => useSha256((s) => createHash('sha1').update(s).digest('hex'))).toThrow(HashError);
+    // Latin-1 instead of UTF-8 differs on non-ASCII text only: still caught.
+    expect(() => useSha256((s) => createHash('sha256').update(s, 'latin1').digest('hex'))).toThrow(
+      HashError,
+    );
+    expect(hashOf('x')).toBe(sha256(canonicalJson('x')));
   });
 });

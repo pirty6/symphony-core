@@ -607,7 +607,8 @@ describe('investigate remembers what its answer used', () => {
     const { r } = runWith(['workspace']);
     expect(r.state.outcome).toBe('success');
     const node = score.nodes.find((n) => n.id === 'rememberCited');
-    expect(node).toMatchObject({ tool: 'memory.facts', inputs: { findings: 'citedFindings' } });
+    expect(node).toMatchObject({ tool: 'memory.facts', inputs: { findings: 'factsToKeep' } });
+    expect(r.state.state.factsToKeep).toEqual(r.state.state.citedFindings);
     const cited = (r.state.state.citedFindings as string[]).length;
     expect(cited).toBeGreaterThan(0);
     expect(r.state.state.factsSaved).toBe(cited);
@@ -626,7 +627,47 @@ describe('investigate keeps a tally per hypothesis', () => {
     const [, f, a] = /^H1: (\d+) for, (\d+) against/.exec(status[0]!)!;
     expect(Number(f) + Number(a)).toBe(tagged);
     const deep = r.state.steps.find((x) => x.nodeId === 'deepRead');
-    expect(deep?.input).toHaveProperty('hypothesisStatus');
+    // The tally as it stood when the deep read began, one line per hypothesis.
+    expect(deep?.input?.leadStatus).toHaveLength((s.hypotheses as string[]).length);
+    expect(deep?.input?.leadHypotheses).toEqual(s.hypotheses);
+  });
+
+  it('readerHypotheses off (an ablation): readers get none and may not tag; the answer still rules on each', () => {
+    let tagged = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        deepRead: (s, v) => {
+          const good = demo.agents!.deepRead!(s, v);
+          // The first answer tags anyway: it is sent back.
+          if (tagged++ > 0) return good;
+          const findings = (good.updates.newFindings as string[]).map((f) => `${f} [H1 for]`);
+          return { ...good, updates: { ...good.updates, newFindings: findings } };
+        },
+      },
+    };
+    const r = runScripted(
+      compileScore(investigate, {
+        goal: 'g',
+        context: { ...demo.context!, readerHypotheses: false },
+      }),
+      script,
+    );
+    const s = r.state.state;
+    for (const node of ['triage', 'deepRead', 'sweep', 'chase']) {
+      const step = r.state.steps.find((x) => x.nodeId === node);
+      if (!step) continue;
+      expect(step.input?.leadHypotheses, node).toEqual([]);
+      expect(step.input?.leadStatus, node).toEqual([]);
+      expect(step.input, node).not.toHaveProperty('hypotheses');
+    }
+    const rejected = r.state.events.flatMap((e) =>
+      e.type === 'response-rejected' && e.nodeId === 'deepRead' ? e.errors : [],
+    );
+    expect(rejected.join()).toMatch(/do not tag findings/);
+    expect(r.state.outcome).toBe('success');
+    expect((s.rulings as string[]).length).toBe((s.hypotheses as string[]).length);
   });
 });
 
@@ -809,4 +850,308 @@ describe('investigate holds "read completely" to what the engine gave', () => {
     // The demo's triage calls cli.ts irrelevant; it was not shown whole, so it is read in depth.
     expect(r.state.state.relevantFiles).toContain('src/cli.ts');
   });
+});
+
+describe('the support judge (off by default)', () => {
+  /** The demo, answering with these citations and judging with this responder. */
+  const judged = (
+    cites: string,
+    judge?: NonNullable<DemoScript['agents']>[string],
+    context: Record<string, unknown> = {},
+  ) => {
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        answer: (s, v) => {
+          const good = demo.agents!.answer!(s, v);
+          const subAnswers = ((s.subQuestions as string[]) ?? []).map(
+            (_, i) => `S${i + 1}: so ${cites}`,
+          );
+          return {
+            ...good,
+            updates: {
+              ...good.updates,
+              answer: `It is checked ${cites}.`,
+              subAnswers,
+              // Resolutions too, so these are the only findings cited.
+              objectionResolutions: ((s.realObjections as string[]) ?? []).map(
+                (o) => `${o.split(':')[0]}: RESOLVED — so ${cites}`,
+              ),
+            },
+          };
+        },
+        ...(judge ? { judgeSupport: judge } : {}),
+      },
+    };
+    const r = runScripted(
+      compileScore(investigate, { goal: 'g', context: { ...demo.context!, ...context } }),
+      script,
+    );
+    const ran = (id: string) => r.state.steps.filter((x) => x.nodeId === id).length;
+    return { r, s: r.state.state, ran };
+  };
+  const verdict = {
+    outcome: 'applied' as const,
+    confidence: 1,
+    shouldTerminate: false,
+    reason: 'r',
+  };
+  /** Rules these ids UNSUPPORTED, the rest SUPPORTED. */
+  const ruling =
+    (bad: string[]): NonNullable<DemoScript['agents']>[string] =>
+    (s) => ({
+      updates: {
+        supportRulings: ((s.judgeItems as string[]) ?? []).map((f) => {
+          const id = f.split(' ')[0]!;
+          return `${id}: ${bad.includes(id) ? 'UNSUPPORTED — the quote does not say it' : 'SUPPORTED — it does'}`;
+        }),
+      },
+      verdict,
+    });
+
+  it('off: no judge runs, and everything cited is remembered', () => {
+    const { s, ran } = judged('[F1] [F2]');
+    expect(ran('judgeSupport')).toBe(0);
+    expect(s.factsToKeep).toEqual(s.citedFindings);
+  });
+
+  it('(a) enforce: a finding the judge rules unsupported makes the answer partial, with the reason', () => {
+    const { r, s, ran } = judged('[F1] [F2]', ruling(['F1']), { supportJudge: 'enforce' });
+    expect(ran('judgeSupport')).toBe(1);
+    expect(r.state.outcome).toBe('partial');
+    expect(s.unsupportedIds).toEqual(['F1']);
+    expect(s.doubts).toEqual([
+      'The support judge found these cited findings unsupported by their own quotes: F1: UNSUPPORTED — the quote does not say it',
+    ]);
+    expect((s.factsToKeep as string[]).map((f) => f.split(' ')[0])).toEqual(['F2']);
+  });
+
+  it('shadow: the rulings are reported and the unsupported finding is not remembered; the outcome is unchanged', () => {
+    const { r, s, ran } = judged('[F1] [F2]', ruling(['F1']), { supportJudge: 'shadow' });
+    expect(r.state.outcome).toBe('success');
+    expect(String(s.doubts)).toMatch(
+      /\(shadow mode: reported, the outcome unchanged\): F1: UNSUPPORTED/,
+    );
+    expect(ran('rememberCited')).toBe(1);
+    expect((s.factsToKeep as string[]).map((f) => f.split(' ')[0])).toEqual(['F2']);
+  });
+
+  it('(b) a ruling counts by the id it starts with: an id named inside a reason does not cover it', () => {
+    let calls = 0;
+    const { r, s } = judged(
+      '[F1] [F2]',
+      (st, v) => {
+        calls += 1;
+        return calls === 1
+          ? { updates: { supportRulings: ['F1: SUPPORTED — F2 says the same'] }, verdict }
+          : ruling([])(st, v);
+      },
+      { supportJudge: 'enforce' },
+    );
+    const rejected = r.state.events.flatMap((e) =>
+      e.type === 'response-rejected' && e.nodeId === 'judgeSupport' ? e.errors : [],
+    );
+    expect(rejected.join()).toMatch(/one supportRulings entry per entry of judgeItems/);
+    expect(s.unsupportedIds).toEqual([]);
+    expect(r.state.outcome).toBe('success');
+  });
+
+  it('(c) with keepUnchallenged, an unsupported finding still ends partial, never stuck', () => {
+    const { r } = judged('[F1]', ruling(['F1']), {
+      supportJudge: 'enforce',
+      keepUnchallenged: true,
+    });
+    expect(r.state.kind).toBe('done');
+    expect(r.state.outcome).toBe('partial');
+  });
+
+  it('(d) web and other sources are uncheckable: said, never judged, never partial', () => {
+    const { r, s, ran } = judged('[F7] [F8]', ruling(['F7', 'F8']), { supportJudge: 'enforce' });
+    expect(ran('judgeSupport')).toBe(0);
+    expect(r.state.outcome).toBe('success');
+    expect(s.doubts).toEqual([
+      '2 cited findings cite web pages or other sources: the support judge cannot check them',
+    ]);
+  });
+
+  it('(e) judged in parallel parts, the rulings merge in order, one per finding', () => {
+    const { s, r } = judged('[F1] [F2] [F3] [F5]', ruling(['F3']), {
+      supportJudge: 'enforce',
+      judgeBatch: 1,
+    });
+    const pause = r.state.events.flatMap((e) =>
+      e.type === 'paused' && e.pause.kind === 'agent' && e.pause.nodeId === 'judgeSupport'
+        ? [e.pause]
+        : [],
+    )[0]!;
+    expect(pause.parts).toHaveLength(4);
+    expect((s.supportRulings as string[]).map((x) => x.split(':')[0])).toEqual([
+      'F1',
+      'F2',
+      'F3',
+      'F5',
+    ]);
+    expect(s.unsupportedIds).toEqual(['F3']);
+    // The judge sees each finding and its quote, not the question or the answer.
+    expect(pause.isolated).toBe(true);
+    expect(Object.keys(pause.input)).toEqual(['judgeItems']);
+  });
+});
+
+describe('single-pass triage pilot (off by default)', () => {
+  /** The demo with singlePass on; triage's transcript carries this preload record (none: no record). */
+  const pilot = (manifest?: (batch: readonly string[]) => PreloadRecord[]) => {
+    const score = compileScore(investigate, {
+      goal: 'g',
+      context: { ...demo.context!, singlePass: true, batchSize: 10 },
+      generatedAt: 't',
+    });
+    let r = createEngine(score, { startedAt: 't' });
+    for (let i = 0; i < 2000 && r.state.kind === 'running' && r.state.pause; i++) {
+      const pause = r.state.pause;
+      let res: Resolution = scriptedResolution(demo, pause, r.state, 't');
+      if (
+        manifest &&
+        pause.kind === 'agent' &&
+        pause.nodeId === 'triageDeep' &&
+        res.kind === 'agent'
+      )
+        res = {
+          ...res,
+          transcript: { ...res.transcript!, preloaded: manifest(pause.input.batch as string[]) },
+        };
+      r = advance(score, r.state, res);
+    }
+    const deepRead = r.state.steps
+      .filter((x) => x.nodeId === 'deepRead')
+      .flatMap((x) => (x.input?.deepBatch as string[]) ?? []);
+    return { r, s: r.state.state, deepRead, score };
+  };
+  const RELEVANT_FILES = ['src/core/engine.ts', 'src/core/schema.ts', 'src/core/validate.ts'];
+
+  it('off: the usual triage plays, and every relevant file is read in depth', () => {
+    const { r } = runWith(['workspace']);
+    const ran = r.state.steps.map((x) => x.nodeId);
+    expect(ran).toContain('triage');
+    expect(ran).not.toContain('triageDeep');
+  });
+
+  it('no preload record: nothing is assumed read whole, every relevant file still gets a deep read', () => {
+    const { r, deepRead } = pilot();
+    expect(r.state.steps.map((x) => x.nodeId)).toContain('triageDeep');
+    expect(deepRead).toEqual(expect.arrayContaining(RELEVANT_FILES));
+  });
+
+  it('files the record shows were given whole skip the deep read; one cut short does not, whatever triage says', () => {
+    const { r, s, deepRead, score } = pilot((batch) =>
+      batch.map(
+        (path): PreloadRecord =>
+          path.endsWith('validate.ts')
+            ? { path, lines: 900, omitted: [301, 900], cut: 'call' }
+            : { path, lines: 100 },
+      ),
+    );
+    expect(r.state.outcome).toBe('success');
+    // triage claimed all three read completely; the engine's record decides.
+    expect(deepRead).toContain('src/core/validate.ts');
+    expect(deepRead).not.toContain('src/core/engine.ts');
+    expect(deepRead).not.toContain('src/core/schema.ts');
+    expect(s.readFully).toEqual([]);
+    expect(replayPerformance(score, toPerformance(r.state)).divergence.reproduced).toBe(true);
+  });
+});
+
+describe('the step limit is a backstop, never the bound', () => {
+  /** Every loop pushed: one sub-agent, every file relevant, gaps never close, the skeptic always objects. */
+  const worst = (fileCount: number, context: Record<string, unknown> = {}) => {
+    const v = { outcome: 'applied' as const, confidence: 0.2, shouldTerminate: false, reason: 'r' };
+    const files = Array.from({ length: fileCount }, (_, i) => `src/m${i}.ts`);
+    const script: DemoScript = {
+      ...demo,
+      tools: {
+        ...demo.tools,
+        inventory: () => ({ files, excluded: [] }),
+        rankFiles: (s) => ({ ranked: s.repoFiles, matched: [] }),
+      },
+      approvals: {
+        ...demo.approvals,
+        clarify: () => ({ approved: true, updates: { hint: 'look harder' } }),
+      },
+      agents: {
+        ...demo.agents,
+        plan: (s) => ({
+          updates: {
+            subQuestions: ['q1', 'q2'],
+            searchTerms: ['t'],
+            useSources: s.sourceNames,
+            skipSources: [],
+            skipReasons: [],
+            parts: [],
+            agents: 1,
+          },
+          verdict: v,
+        }),
+        triage: (s) => ({
+          updates: { triaged: s.batch, batchRelevant: s.batch, newFindings: [] },
+          verdict: v,
+        }),
+        deepRead: (s) => {
+          // One item of each batch unreadable at first: the retry pass plays too.
+          const b = s.deepBatch as string[];
+          const bad = (s.unreadRetries as number) === 0 ? b.slice(0, 1) : [];
+          return {
+            updates: {
+              examined: b.filter((x) => !bad.includes(x)),
+              unreadable: bad,
+              unreadableReasons: bad.map(() => 'HTTP 429'),
+              newFindings: [],
+            },
+            verdict: v,
+          };
+        },
+        designExperiments: (s) => {
+          const all = Array.from({ length: s.maxExperiments as number }, (_, i) => `exp ${i}`);
+          return {
+            updates: { experiments: all, timedExperiments: all.slice(0, all.length / 2) },
+            verdict: v,
+          };
+        },
+        assess: (s) => ({
+          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          verdict: v,
+        }),
+        challenge: (_s, visit) => ({
+          updates: { objections: [`S1: F1 still open (round ${visit})`] },
+          verdict: v,
+        }),
+      },
+    };
+    const score = compileScore(investigate, {
+      goal: 'g',
+      context: { ...demo.context!, question: 'q', complexity: 4, ...context },
+    });
+    return { r: runScripted(score, script), max: score.maxSteps };
+  };
+
+  it('the worst case ends far below maxSteps, with the counters at default and raised', () => {
+    for (const raised of [
+      {},
+      { maxChaseRounds: 20, maxDebateRounds: 5, maxGapRounds: 5, maxExperiments: 20 },
+    ]) {
+      const { r, max } = worst(300, raised);
+      expect(r.state.kind).toBe('done');
+      expect(r.state.cursor).toBe('doubts');
+      expect(r.state.steps.length).toBeLessThanOrEqual(700);
+      expect(r.state.steps.length).toBeLessThanOrEqual(max / 3);
+    }
+  }, 30_000);
+
+  it('exhaustive on a huge repository stops at the citation check cap, not at maxSteps', () => {
+    const { r, max } = worst(700, { exhaustive: true, batchSize: 1 });
+    expect(r.state.outcome).toBe('partial');
+    expect(r.state.cursor).toBe('checkTriage');
+    expect(r.state.visits.checkTriage).toBe(200);
+    expect(r.state.steps.length).toBeLessThan(max);
+  }, 30_000);
 });

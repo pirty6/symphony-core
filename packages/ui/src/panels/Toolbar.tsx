@@ -36,6 +36,8 @@ interface Props {
   onStop: () => void
   onEdit: () => void
   tiers?: Tiers
+  /** The opening screen: the AI settings stay (the maestro uses them), nothing to run. */
+  home?: boolean
 }
 
 const ACTIVE = new Set<RunStatus>(['running', 'paused', 'awaiting-approval'])
@@ -48,9 +50,11 @@ export function Toolbar(p: Props) {
     <header className="toolbar">
       <div className="tb-title">
         <span className="tb-logo">♪</span> {p.title}
-        <span className={`status-pill status-${p.status}`} data-testid="run-status">
-          {p.mode === 'replay' ? `replay · ${p.status}` : p.status}
-        </span>
+        {!p.home && (
+          <span className={`status-pill status-${p.status}`} data-testid="run-status">
+            {p.mode === 'replay' ? `replay · ${p.status}` : p.status}
+          </span>
+        )}
       </div>
       <div className="tb-group">
         <label title="Who answers agent nodes">
@@ -114,41 +118,43 @@ export function Toolbar(p: Props) {
           step mode
         </label>
       </div>
-      <div className="tb-group tb-controls">
-        {!active ? (
-          <>
-            {p.mode !== 'idle' && (
-              <button type="button" onClick={p.onEdit}>
-                ✎ Edit
-              </button>
-            )}
-            <button type="button" className="primary" onClick={p.onRun} disabled={!p.canRun} title={p.canRun ? 'Run' : 'Fix the problems first'}>
-              ▶ Run
-            </button>
-          </>
-        ) : (
-          <>
-            {p.status === 'running' && (
-              <button type="button" onClick={p.onPause}>
-                ⏸ Pause
-              </button>
-            )}
-            {p.status === 'paused' && (
-              <>
-                <button type="button" className="primary" onClick={p.onResume}>
-                  ▶ Resume
+      {!p.home && (
+        <div className="tb-group tb-controls">
+          {!active ? (
+            <>
+              {p.mode !== 'idle' && (
+                <button type="button" onClick={p.onEdit}>
+                  ✎ Edit
                 </button>
-                <button type="button" onClick={p.onStep}>
-                  ⏭ Step
+              )}
+              <button type="button" className="primary" onClick={p.onRun} disabled={!p.canRun} title={p.canRun ? 'Run' : 'Fix the problems first'}>
+                ▶ Run
+              </button>
+            </>
+          ) : (
+            <>
+              {p.status === 'running' && (
+                <button type="button" onClick={p.onPause}>
+                  ⏸ Pause
                 </button>
-              </>
-            )}
-            <button type="button" className="danger" onClick={p.onStop}>
-              ⏹ Stop
-            </button>
-          </>
-        )}
-      </div>
+              )}
+              {p.status === 'paused' && (
+                <>
+                  <button type="button" className="primary" onClick={p.onResume}>
+                    ▶ Resume
+                  </button>
+                  <button type="button" onClick={p.onStep}>
+                    ⏭ Step
+                  </button>
+                </>
+              )}
+              <button type="button" className="danger" onClick={p.onStop}>
+                ⏹ Stop
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </header>
   )
 }

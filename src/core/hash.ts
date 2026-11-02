@@ -3,7 +3,8 @@
  *
  * Pure (no node:crypto) so the core runs unchanged in Node and the browser.
  * Every hash in the system (score id, stateHash, move keys) goes through
- * `hashOf`, so equal values always hash equally regardless of key order.
+ * `hashOf`, so equal values always hash equally regardless of key order. A Node
+ * runtime may install a native SHA-256 (`useSha256`): the same digest, faster.
  */
 
 /** A value that cannot be hashed faithfully: hashing it would let distinct values collide. */
@@ -116,6 +117,20 @@ export function sha256(input: string): string {
   return Array.from(h, (x) => x.toString(16).padStart(8, '0')).join('');
 }
 
+let digest: (input: string) => string = sha256;
+
+/**
+ * Use another SHA-256 implementation (e.g. node:crypto's) for every hash. It must be
+ * SHA-256 of the UTF-8 bytes: it is checked here on a few inputs, so a wrong one cannot
+ * silently change every id.
+ */
+export function useSha256(impl: (input: string) => string): void {
+  for (const probe of ['', 'abc', 'é 🎻 \ud800', '{"a":[1,2]}'.repeat(40)])
+    if (impl(probe) !== sha256(probe))
+      throw new HashError('useSha256: the implementation does not match SHA-256 of UTF-8');
+  digest = impl;
+}
+
 export function hashOf(value: unknown): string {
-  return sha256(canonicalJson(value));
+  return digest(canonicalJson(value));
 }

@@ -185,6 +185,18 @@ describe('eval harness', () => {
     expect(text).toMatch(/spread over repeats: mini-task: solved 2\/2, 1\.0k–1\.0k in, \d+s–\d+s/);
   });
 
+  it("reports how much of each step's first calls came from the cache", async () => {
+    const report = await evaluate(true, 1);
+    const r = {
+      ...report.results[0]!,
+      pattern: 'investigate',
+      firstCalls: { answerParts: { sessions: 8, inputTokens: 2_000_000, cacheReadTokens: 64_000 } },
+    };
+    expect(formatReport({ ...report, results: [r] })).toMatch(
+      /first-call cache: investigate answerParts 3% of 2000k over 8 sessions/,
+    );
+  });
+
   it('a run that errors after playing still reports the tokens it spent', async () => {
     const report = await runEval({
       tasks: [{ ...task, check: () => Promise.reject(new Error('check crashed')) }],
@@ -289,6 +301,18 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
         'The client waits 5000 ms: src/boot.js overrides the 30000 of src/config.js outside production.',
     },
   }),
+  'investigate-misread-quote': () => ({
+    state: {
+      answer:
+        'Twice: the loop in src/send.js:5 runs attempt 1 and 2 and stops before MAX_TRIES (3), so a failing request is tried 2 times.',
+    },
+  }),
+  'investigate-misread-quote-judged': () => ({
+    state: {
+      answer:
+        'Twice: the loop in src/send.js:5 runs attempt 1 and 2 and stops before MAX_TRIES (3), so a failing request is tried 2 times.',
+    },
+  }),
   'investigate-many-files': () => ({
     state: {
       answer:
@@ -377,9 +401,14 @@ describe('eval tasks', () => {
                         answer:
                           'It listens on 8080, set in src/server.js (also 3001 in some builds).',
                       }
-                    : t.id.startsWith('investigate-planted-flaw')
-                      ? { answer: 'The client waits 30000 ms, from src/config.js.' }
-                      : { answer: 'The README says 30 seconds; the docs say port 8080.' };
+                    : t.id.startsWith('investigate-misread-quote')
+                      ? {
+                          answer:
+                            'send() tries a failing request 3 times (src/send.js:1 `MAX_TRIES = 3`).',
+                        }
+                      : t.id.startsWith('investigate-planted-flaw')
+                        ? { answer: 'The client waits 30000 ms, from src/config.js.' }
+                        : { answer: 'The README says 30 seconds; the docs say port 8080.' };
         expect((await t.check({ workspace: dir, outcome: 'success', state: wrong })).pass).toBe(
           false,
         );

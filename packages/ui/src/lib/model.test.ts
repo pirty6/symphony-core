@@ -3,7 +3,7 @@ import { compileScore } from '@core/compile'
 import { patternToGraph } from '@core/graph'
 import { EMPTY_FRAME } from '@core/replay'
 import { validateGraph } from '@core/validate'
-import { fix, hangman, investigate } from '../../../../src/patterns/index'
+import { fix, hangman, investigate, maestro, PATTERNS } from '../../../../src/patterns/index'
 import { Run } from '../../../../src/runtime/driver'
 import { ScriptedProvider } from '../../../../src/runtime/scripted-provider'
 import type { RunMessage } from './api'
@@ -24,6 +24,8 @@ import {
   isOfflineDemo,
   musicianLines,
   parseStoredSettings,
+  featureRows,
+  chooseFeature,
   originSummary,
   originsByNode,
   resultMarkdown,
@@ -301,5 +303,36 @@ describe('sub-agents on the canvas', () => {
     // Inside a closed phase, they hang off the phase.
     const phase = { id: 'triagePhase', type: 'phase', position: { x: 0, y: 0 }, data: {} } as never
     expect(subAgentNodes(v.parts, [phase], new Map([['triage', 'triagePhase']])).edges[0]!.source).toBe('triagePhase')
+  })
+})
+
+describe('feature switches', () => {
+  it('lists the switches the open pattern has, with your choice or its default', () => {
+    const rows = featureRows(investigate, PATTERNS, { supportJudge: 'shadow' })
+    expect(rows.map((r) => r.feature.field)).toEqual([
+      'supportJudge',
+      'singlePass',
+      'readerHypotheses',
+      'keepUnchallenged',
+      'pragmatistFrom',
+      'gapsPerChase',
+    ])
+    expect(rows[0]).toMatchObject({ value: 'shadow', default: 'off' })
+    expect(rows.find((r) => r.feature.field === 'readerHypotheses')).toMatchObject({ value: 'true', default: 'true' })
+    // fix has the debate's switch only; hangman none; the maestro every one it may compose.
+    expect(featureRows(fix, PATTERNS, {}).map((r) => r.feature.field)).toEqual(['pragmatistFrom'])
+    expect(featureRows(hangman, PATTERNS, {})).toEqual([])
+    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(6)
+    expect(featureRows(maestro, PATTERNS, {})[4]!.patterns).toEqual(['investigate', 'fix', 'implement'])
+  })
+
+  it('keeps only choices away from the default, and remembers them between visits', () => {
+    const [judge] = featureRows(investigate, PATTERNS, {})
+    const on = chooseFeature({}, judge!, 'enforce')
+    expect(on).toEqual({ supportJudge: 'enforce' })
+    expect(chooseFeature(on, judge!, 'off')).toEqual({})
+    expect(parseStoredSettings(JSON.stringify({ features: { supportJudge: 'shadow', bad: 1 } }))).toEqual({
+      features: { supportJudge: 'shadow' },
+    })
   })
 })

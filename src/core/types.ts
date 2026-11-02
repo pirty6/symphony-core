@@ -110,7 +110,15 @@ export interface AgentNode extends NodeBase {
    * files of `preload` it could not give whole (lines left out, unreadable) and why, by
    * position. Checks and later steps can then hold "read completely" to what was given.
    */
-  readonly preloadReport?: { readonly paths: string; readonly reasons: string };
+  readonly preloadReport?: {
+    readonly paths: string;
+    readonly reasons: string;
+    /**
+     * Optional: the files the manifest shows were given whole. Empty when there is no
+     * manifest (no preload ran, or an old record): "read whole" is never assumed.
+     */
+    readonly whole?: string;
+  };
   readonly fanOut?: {
     readonly over: string;
     readonly per: number | string;
@@ -337,8 +345,31 @@ export interface AiTranscript {
   readonly musician?: Musician;
   /** Tokens the provider reported for this answer (all model calls of the session). */
   readonly usage?: TokenUsage;
+  /**
+   * Each model call of the session, in order: what it read, from the cache and anew. The
+   * first call's cache read says whether a shared prompt prefix was reused at all.
+   */
+  readonly calls?: readonly CallUsage[];
+  /** The context at the session's start, as the provider split it (tokens). */
+  readonly context?: ContextSplit;
   /** Files the engine read whole into the prompt (AgentNode.preload): which, how much, what failed. */
   readonly preloaded?: readonly PreloadRecord[];
+}
+
+export interface CallUsage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens?: number;
+  /** How long the call took (ms). */
+  readonly ms?: number;
+}
+
+export interface ContextSplit {
+  readonly systemTokens?: number;
+  readonly toolDefinitionsTokens?: number;
+  readonly conversationTokens?: number;
+  readonly tokenLimit?: number;
 }
 
 export interface PreloadRecord {

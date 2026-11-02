@@ -23,6 +23,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join, relative } from 'node:path'
+import { featureInputs } from '../../../src/core/catalog.js'
 import { CompileError, compileScore } from '../../../src/core/compile.js'
 import { parseDraft, patternToTypeScript } from '../../../src/core/draft.js'
 import { patternToGraph } from '../../../src/core/graph.js'
@@ -47,6 +48,12 @@ import {
 } from '../../../src/runtime/factory.js'
 import { isolate, editsFiles } from '../../../src/runtime/worktree.js'
 import { autoPrune, cachedReplayCheck, checkReplay, deleteRun, type ReplayCheck, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
+
+/** A JSON object of strings (anything else dropped). */
+function stringRecord(v: unknown): Record<string, string> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  return Object.fromEntries(Object.entries(v).filter((e): e is [string, string] => typeof e[1] === 'string'))
+}
 
 export interface ApiOptions {
   /** Repository root (where src/patterns lives). */
@@ -188,6 +195,8 @@ export function createApi(opts: ApiOptions) {
     readonly restore?: RunOptions['restore']
     /** Patterns (or backlog items) to play after this one. */
     readonly chain?: readonly ChainStep[]
+    /** Switches you chose (FEATURES), for this run and the runs it leads to. */
+    readonly features?: Readonly<Record<string, string>>
   }
 
   async function launch(score: ExecutableScore, pattern: Pattern, settings: Settings): Promise<Run> {
@@ -206,11 +215,13 @@ export function createApi(opts: ApiOptions) {
       maestroScore: score,
       // The composed score plays with the same settings, starting fresh (no breakpoints).
       start: async (s, p, chain) => (await launch(s, p, { ...settings, breakpoints: [], chain })).id,
+      ...(settings.features ? { features: settings.features } : {}),
     }) ?? chainNext({
       chain: settings.chain ?? [],
       score,
       library: async () => (await library()).map((l) => l.pattern),
       improvisation: score.improvisation,
+      ...(settings.features ? { features: settings.features } : {}),
       start: async (s, p, rest) => (await launch(s, p, { ...settings, breakpoints: [], chain: rest })).id,
     })
     const run = new Run({
@@ -253,9 +264,11 @@ export function createApi(opts: ApiOptions) {
     const pattern = asPattern(body.pattern)
     const complexity = [1, 2, 3, 4].includes(body.complexity as number) ? (body.complexity as Complexity) : undefined
     const improvisation = isImprovisation(body.improvisation) ? body.improvisation : undefined
+    const features = stringRecord(body.features)
     const score = compileScore(pattern, {
       goal: typeof body.goal === 'string' && body.goal.trim() ? body.goal : pattern.description || pattern.name,
-      context: (body.context as Record<string, unknown> | undefined) ?? {},
+      // The switches you chose, unless the run inputs say otherwise.
+      context: { ...featureInputs(pattern, features), ...((body.context as Record<string, unknown> | undefined) ?? {}) },
       ...(complexity ? { complexity } : {}),
       ...(improvisation !== undefined ? { improvisation } : {}),
     })
@@ -266,6 +279,7 @@ export function createApi(opts: ApiOptions) {
       stepMode: body.stepMode === true,
       breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
       chain: Array.isArray(body.chain) ? body.chain.filter((t): t is string => typeof t === 'string' && t !== 'maestro') : [],
+      features,
     })
   }
 

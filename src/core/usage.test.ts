@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AiTranscript, PerformedStep, TokenUsage } from './types.js';
 import {
   costliest,
+  firstCallCache,
   growthRatios,
   wallTimeByNode,
   formatUsage,
@@ -168,5 +169,38 @@ describe('time and growth per step', () => {
         { nodeId: 'answer', step: 6, usage: u(900, 0) },
       ]),
     ).toEqual({ assess: 2.5 });
+  });
+});
+
+/** A session whose first call read `first` tokens, `cached` of them from the cache. */
+const session = (first: number, cached: number) => ({
+  provider: 'p',
+  prompt: '',
+  output: '',
+  toolCalls: [],
+  calls: [
+    { inputTokens: first, outputTokens: 1, cacheReadTokens: cached },
+    { inputTokens: 999, outputTokens: 1, cacheReadTokens: 999 },
+  ],
+});
+
+describe('first-call cache', () => {
+  it("adds each session's first call per step, every part on its own", () => {
+    const steps = [
+      {
+        nodeId: 'parts',
+        transcript: { ...session(0, 0), parts: [session(100, 0), session(100, 90)] },
+      },
+      {
+        nodeId: 'one',
+        transcript: session(50, 10),
+        attempts: [{ errors: [], transcript: session(50, 0) }],
+      },
+      { nodeId: 'old', transcript: { provider: 'p', prompt: '', output: '', toolCalls: [] } },
+    ] as never;
+    expect(firstCallCache({ steps })).toEqual({
+      parts: { sessions: 2, inputTokens: 200, cacheReadTokens: 90 },
+      one: { sessions: 2, inputTokens: 100, cacheReadTokens: 10 },
+    });
   });
 });

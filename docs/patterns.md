@@ -15,7 +15,7 @@ Shared building blocks (in [`src/patterns/phases/`](../src/patterns/phases)):
 |---|---|---|
 | Competing hypotheses | investigate, fix, implement | At least 3 rival explanations (2 for a routine problem), one of them "none of these" or "the premise is wrong", before any evidence is read. |
 | Evidence and citations | investigate, fix, implement, review | Every finding cites `path:line` with a quote, or a URL / named source. The engine checks file citations; failures go to `unverified`, not into the answer. |
-| Challenge (debate) | investigate, fix, implement | By complexity: a skeptic (≥2; read-only tools and another model family; at most 5 objections, each naming the finding or quoted claim it attacks, no repeats of earlier rounds), a pragmatist who triages each one as REAL or THEORETICAL with a cited reason (≥3), a second independent investigator (4). REAL objections go back to research, bounded by `maxDebateRounds`; the next answer must resolve, rebut or mark OPEN each one by its tag; those still open are reported. |
+| Challenge (debate) | investigate, fix, implement | By complexity: a skeptic (≥2; read-only tools and another model family; at most 5 objections, each naming the finding or quoted claim it attacks; an objection repeated word for word from an earlier round is reported as unresolved instead of researched again, while a reworded one is treated as new), a pragmatist (from complexity `pragmatistFrom`, 3) who triages each one as REAL or THEORETICAL with a cited reason, a second independent investigator (4). REAL objections go back to research, bounded by `maxDebateRounds`; the next answer must resolve, rebut or mark OPEN each one by its tag; those still open are reported. |
 | Edit and verify | fix, refactor, implement | An executor edits; the engine captures the diff (an edit that changed nothing is caught), runs the tests and the linter, and triages failures: environment, wrong diagnosis (back to research), or try again, bounded by `maxAttempts`. |
 | PR review | fix, refactor, implement | A reviewer reads the diff; blocking comments go back to editing, bounded; you can accept despite the review. |
 
@@ -34,6 +34,8 @@ experiments, git history, GitHub, dependencies, MCP servers.
 2. **Hypotheses.** Competing answers before any evidence, each with what would confirm or
    refute it. The engine keeps a tally per hypothesis (`hypothesisStatus`: findings for and
    against, *untested*, *challenged*) after every batch, and later steps steer by it.
+   `readerHypotheses: false` (an ablation switch, on by default) keeps the hypotheses from the
+   evidence readers, who then may not tag findings; assess, the answer and the debate keep them.
 3. **List evidence.** Only what the plan needs. The engine ranks the files by the words they
    share with the question, sub-questions and search terms (`repo.rank`: git grep hits and
    path names, never the AI's hypotheses), so the likeliest are triaged first; it is an order,
@@ -49,6 +51,9 @@ experiments, git history, GitHub, dependencies, MCP servers.
    file triage saw only part of goes to the deep read. Unreadable items, and files cut for
    the budget, are retried once at the end, one per call, except PDFs, binaries and files
    too long for any prompt, which would fail the same way.
+   `singlePass: true` is an off-by-default pilot: triage also reads the relevant files in
+   depth (following references and history), and those it read completely skip the deep read
+   only if the engine's preload record shows it gave them whole (no record: none skip).
 5. **Experiments** (after your approval) and **source searches**, in parallel.
 6. **Close gaps.** Sub-questions the findings do not answer get targeted research, then a
    question to you for a hint.
@@ -58,7 +63,12 @@ experiments, git history, GitHub, dependencies, MCP servers.
 8. **Challenge.** The debate above; REAL objections reopen research (within the run-wide
    research budget). `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
    keep word for word the sub-answers no objection named, so it opens no new front.
-9. **Settle.** Settled means no unresolved objection, no OPEN sub-answer or objection
+9. **Support judge** (`supportJudge`: off by default; `shadow`, `enforce`). Each cited
+   workspace finding's quote is shown, with its claim and nothing else, to another model
+   family, which rules SUPPORTED or UNSUPPORTED. Unsupported findings are never remembered;
+   in `enforce` they also make the answer partial. Web and other sources are said to be
+   uncheckable, never judged.
+10. **Settle.** Settled means no unresolved objection, no OPEN sub-answer or objection
    resolution, and enough confidence. A settled answer ends `success`, remembers the findings
    it cited and a lesson built from its checked sub-answers (only when it names a workspace
    file, so the lesson goes stale with the code). Anything else ends `partial`, with the
@@ -84,13 +94,14 @@ flowchart TD
   n_doubts(["Answered, with open doubts · partial"])
   n_planPhase[["Plan research · 5 steps"]]
   n_hypothesesPhase[["Competing hypotheses · 2 steps"]]
-  n_listPhase[["List evidence · 12 steps"]]
-  n_triagePhase[["Triage files · 5 steps"]]
+  n_listPhase[["List evidence · 13 steps"]]
+  n_triagePhase[["Triage files · 7 steps"]]
   n_deepPhase[["Deep read · 8 steps"]]
   n_experimentPhase[["Run experiments · 12 steps"]]
   n_sourcePhase[["Search sources · 5 steps"]]
   n_gapPhase[["Close gaps · 8 steps"]]
-  n_challengePhase[["Challenge the answer · 15 steps"]]
+  n_challengePhase[["Challenge the answer · 18 steps"]]
+  n_judgePhase[["Support judge · 5 steps"]]
   n_start --> n_recall
   n_recall --> n_planPhase
   n_planPhase --> n_hypothesesPhase
@@ -108,7 +119,8 @@ flowchart TD
   n_listOpen --> n_challengePhase
   n_challengePhase --> n_attachParts
   n_challengePhase -.-> n_gapPhase
-  n_attachParts --> n_settled
+  n_attachParts --> n_judgePhase
+  n_judgePhase --> n_settled
   n_settled -->|"yes"| n_learnAnswer
   n_settled -->|"no"| n_noteDoubts
   n_learnAnswer --> n_rememberCited
@@ -120,13 +132,14 @@ flowchart TD
 | --- | --- | --- |
 | Plan research | Available sources, sub-questions, which evidence applies | List sources → Plan research → Recall for the sub-questions → Merge recalled leads → Queue sources |
 | Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
-| List evidence | Only what the plan needs: workspace files, likeliest first (a big repo is searched first), web pages, experiments | Workspace? → List every file → Rank files → Count files → Triage every file? → Queue files → Locate files → Queue located files → Web? → List web pages → Experiments? → Design experiments |
-| Triage files | Every listed file, in batches | Files left? → Next batch → Triage files → Check citations → Record triage |
+| List evidence | Only what the plan needs: workspace files, likeliest first (a big repo is searched first), web pages, experiments | Hypotheses for the readers → Workspace? → List every file → Rank files → Count files → Triage every file? → Queue files → Locate files → Queue located files → Web? → List web pages → Experiments? → Design experiments |
+| Triage files | Every listed file, in batches | Files left? → Next batch → Single pass? (pilot) → Triage files → Triage and read in depth → Check citations → Record triage |
 | Deep read | Every relevant file and listed page, completely | Queue deep reads → Deep reads left? → Next deep batch → Deep read → Check citations → Record deep read → Retry unreadable? → Queue unreadable again |
 | Run experiments | With your approval, run and measure | Experiments listed? → Allow experiments? → Queue experiments → Untimed experiments? → Run experiments side by side → Check citations → Record experiments → Timed experiments left? → Next experiment → Run timed experiment → Check citations → Record experiment |
 | Search sources | History, GitHub, dependencies, MCP | Sources left? → Next source → Search source → Check citations → Record source |
 | Close gaps | Targeted research, then a human hint | Find gaps → Chase gaps? → Close gaps → Check citations → Record gap research → Good enough? → Ask for a hint → Use hint |
-| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥3) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
+| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
+| Support judge | Off by default: does each cited finding's quote back its claim? | Support judge? → What the judge can check → Any to judge? → Support judge → Record the rulings |
 
 <!-- /flow:investigate -->
 
@@ -160,7 +173,7 @@ flowchart TD
   n_rejected(["Plan rejected · partial"])
   n_hypothesesPhase[["Competing hypotheses · 2 steps"]]
   n_diagnosePhase[["Diagnose · 4 steps"]]
-  n_challengePhase[["Challenge the answer · 15 steps"]]
+  n_challengePhase[["Challenge the answer · 18 steps"]]
   n_editPhase[["Edit and verify · 15 steps"]]
   n_prReviewPhase[["PR review · 5 steps"]]
   n_start --> n_snapshot
@@ -186,7 +199,7 @@ flowchart TD
 | --- | --- | --- |
 | Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
 | Diagnose | Evidence for and against every hypothesis, then the root cause | Gather evidence → Check citations → Record evidence → Diagnose |
-| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥3) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
+| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
 | PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 
@@ -274,7 +287,7 @@ flowchart TD
   n_baselinePhase[["Green baseline · 3 steps"]]
   n_hypothesesPhase[["Competing approaches · 2 steps"]]
   n_designPhase[["Design · 4 steps"]]
-  n_challengePhase[["Challenge the answer · 15 steps"]]
+  n_challengePhase[["Challenge the answer · 18 steps"]]
   n_testFirstPhase[["Tests first · 18 steps"]]
   n_editPhase[["Edit and verify · 15 steps"]]
   n_prReviewPhase[["PR review · 5 steps"]]
@@ -310,7 +323,7 @@ flowchart TD
 | Green baseline | Tests must pass before anything changes, or a failure could not be told apart | Run tests first → Green? → Snapshot workspace |
 | Competing approaches | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
 | Design | Evidence for and against each approach, then a design with acceptance criteria | Explore the code → Check citations → Record evidence → Design |
-| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥3) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
+| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
 | Tests first | Tests written before the code must fail for the right reason, then stay locked | Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
 | PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |

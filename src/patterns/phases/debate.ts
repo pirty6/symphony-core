@@ -211,6 +211,19 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       'disagreements',
       'unresolvedObjections',
     ).concat([
+      {
+        name: 'pragmatistFrom',
+        type: 'number',
+        initial: 3,
+        description:
+          'The complexity from which a pragmatist triages the objections (a switch for a trial)',
+      },
+      {
+        name: 'debateLog',
+        type: 'string[]',
+        description:
+          'One line per debate round: what went to research, and how much evidence there was',
+      },
       // The second opinion's evidence joins the numbered findings (a pattern's own definitions win).
       {
         name: 'openObjections',
@@ -234,6 +247,9 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       nodes: [
         'useSkeptic',
         'challenge',
+        'onlyRepeats',
+        'keepRepeats',
+        'dropRepeats',
         'hasObjections',
         'roundsLeft',
         'keepOpen',
@@ -281,11 +297,6 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         complexityShift: 1,
         checks: [
           {
-            expr: 'len(without(objections, pastObjections)) == len(objections)',
-            message:
-              'Do not repeat an objection of pastObjections word for word: raise it again only with the new evidence that reopens it.',
-          },
-          {
             // Single-quoted: the pattern itself holds double quotes.
             expr: `len(unmatched(objections, '${TARGET}')) == 0`,
             message:
@@ -306,6 +317,33 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         ],
       },
       {
+        // The skeptic still holds what it raised before, word for word: research did not
+        // settle it, and asking again only gets it reworded. Reported, not reopened.
+        id: 'onlyRepeats',
+        kind: 'condition',
+        label: 'Only repeats?',
+        expression: 'len(objections) > 0 && len(without(objections, pastObjections)) == 0',
+      },
+      {
+        id: 'keepRepeats',
+        kind: 'compute',
+        label: 'Report the repeats',
+        assign: [{ field: 'realObjections', expr: 'objections' }],
+      },
+      {
+        id: 'dropRepeats',
+        kind: 'compute',
+        label: 'Set repeats aside',
+        assign: [
+          // Repeats in a mixed round are reported as open; the new ones go on.
+          {
+            field: 'unresolvedObjections',
+            expr: 'unique(unresolvedObjections + without(objections, without(objections, pastObjections)))',
+          },
+          { field: 'objections', expr: 'without(objections, pastObjections)' },
+        ],
+      },
+      {
         id: 'hasObjections',
         kind: 'condition',
         label: 'Objections?',
@@ -320,8 +358,9 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       {
         id: 'usePragmatist',
         kind: 'condition',
-        label: 'Pragmatist? (≥3)',
-        expression: 'complexity >= 3',
+        label: 'Pragmatist? (≥pragmatistFrom)',
+        // pragmatistFrom (3) is a switch for a trial at complexity 2, not a tuning knob.
+        expression: 'complexity >= pragmatistFrom',
       },
       {
         id: 'triageObjections',
@@ -361,7 +400,9 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         kind: 'compute',
         label: 'Report open objections',
         // Out of rounds, not out of objections: the REAL ones are said in the result, not dropped.
-        assign: [{ field: 'unresolvedObjections', expr: 'realObjections' }],
+        assign: [
+          { field: 'unresolvedObjections', expr: 'unique(unresolvedObjections + realObjections)' },
+        ],
       },
       {
         id: 'keepAll',
@@ -385,6 +426,12 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
           { field: 'openObjections', expr: 'realObjections' },
           // The next skeptic sees what was already raised, not a blank slate.
           { field: 'pastObjections', expr: 'pastObjections + objections' },
+          // A record of each round (what was attacked, how much evidence there was): no rule
+          // stops on it, it is there to read.
+          {
+            field: 'debateLog',
+            expr: `append(debateLog, "Round " + text(debateRounds + 1) + ": " + text(len(realObjections)) + " of " + text(len(objections)) + " objections sent to research" + ${cfg.about ? `if(len(unique(heads(realObjections, "^S[0-9]+"))) > 0, " (on " + join(unique(heads(realObjections, "^S[0-9]+")), ", ") + ")", "")` : '""'} + ", " + text(len(${evidence})) + " findings so far")`,
+          },
           { field: 'debateRounds', expr: 'debateRounds + 1' },
           ...(cfg.resetOnReopen ? [{ field: cfg.resetOnReopen, expr: '0' }] : []),
         ],
@@ -457,7 +504,11 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
     edges: [
       { id: 'useSkeptic-challenge', from: 'useSkeptic', to: 'challenge', branch: 'then' },
       { id: 'useSkeptic-done', from: 'useSkeptic', to: done, branch: 'else', label: 'no debate' },
-      { id: 'challenge-hasObjections', from: 'challenge', to: 'hasObjections' },
+      { id: 'challenge-onlyRepeats', from: 'challenge', to: 'onlyRepeats' },
+      { id: 'onlyRepeats-keep', from: 'onlyRepeats', to: 'keepRepeats', branch: 'then' },
+      { id: 'onlyRepeats-drop', from: 'onlyRepeats', to: 'dropRepeats', branch: 'else' },
+      { id: 'keepRepeats-keepOpen', from: 'keepRepeats', to: 'keepOpen' },
+      { id: 'dropRepeats-hasObjections', from: 'dropRepeats', to: 'hasObjections' },
       {
         id: 'hasObjections-usePragmatist',
         from: 'hasObjections',

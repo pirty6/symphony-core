@@ -1257,3 +1257,176 @@ pre {
 .react-flow__edge.subagent-failed path {
   stroke: #f87171;
 }
+
+/* Collapsible sidebar sections: the title opens and closes them. */
+.collapse-toggle {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+.collapse-toggle:hover {
+  color: var(--text);
+}
+.collapse-toggle:focus-visible {
+  outline: 1px solid var(--accent, #7c9cff);
+  outline-offset: 2px;
+}
+.collapse-toggle .chevron {
+  width: 10px;
+  display: inline-block;
+}
+
+/* Feature switches. */
+.feature {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.feature.changed {
+  border-color: var(--accent, #7c9cff);
+}
+.feature label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
+}
+.feature label span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.feature select {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 9em;
+}
+.feature .tag {
+  font-size: 10px;
+}
+.feature small {
+  width: 100%;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+/* A choice's select on its own row under its title: it never crowds or overflows the card. */
+.feature label.feature-choice {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.feature label.feature-choice select {
+  width: 100%;
+  max-width: none;
+}
+.feature-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.section-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+/* ── opening screen ───────────────────────────────────── */
+
+.home-link {
+  text-align: left;
+  font-weight: 600;
+  background: transparent;
+  border-color: transparent;
+}
+.home-link.active,
+.home-link:disabled {
+  opacity: 1;
+  color: var(--text);
+  border-color: transparent;
+  cursor: default;
+}
+
+.studio.at-home {
+  grid-template-areas:
+    'toolbar toolbar toolbar'
+    'library home home'
+    'library home home';
+}
+.studio.at-home .canvas,
+.studio.at-home .inspector,
+.studio.at-home .timeline {
+  display: none;
+}
+
+.home {
+  grid-area: home;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  overflow: auto;
+  background: var(--bg);
+}
+.home-box {
+  width: min(720px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.home h1 {
+  font-size: 26px;
+  font-weight: 600;
+  text-align: center;
+  margin: 0;
+}
+.home-box > p {
+  text-align: center;
+  margin: 0;
+}
+.home-prompt {
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--panel);
+}
+.home-prompt .prompt-box > textarea {
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  min-height: 96px;
+}
+.home-prompt .prompt-box > textarea:focus {
+  outline: none;
+}
+.home-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+}
+.home-patterns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  align-items: center;
+}
+.home-chip {
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 12px;
+}

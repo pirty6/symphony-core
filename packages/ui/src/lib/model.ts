@@ -4,6 +4,7 @@
  * the canvas, inspector and timeline render.
  */
 import type { Edge, Node } from '@xyflow/react'
+import { FEATURES, type Feature } from '@core/catalog'
 import { originOf, type Origin, type StepOrigin } from '@core/compare'
 import { graphToPattern, groupFrames, phaseView, readsOf, writesOf, type VisualGraph } from '@core/graph'
 import { EMPTY_FRAME, framesOf, reduceFrame, type Frame, type NodeStatus } from '@core/replay'
@@ -602,6 +603,8 @@ export interface StoredSettings {
   model: string
   /** Optional patterns shown in the library (unset: as the server's SYMPHONY_EXTRAS says). */
   extras: boolean
+  /** Feature switches you turned away from their defaults, by field (as strings). */
+  features: Record<string, string>
 }
 
 /** The AI choice kept between visits, so a reload never silently switches to the offline demo. */
@@ -612,6 +615,13 @@ export function parseStoredSettings(raw: string | null): Partial<StoredSettings>
       ...(v.provider === 'scripted' || v.provider === 'copilot' ? { provider: v.provider } : {}),
       ...(typeof v.model === 'string' ? { model: v.model } : {}),
       ...(typeof v.extras === 'boolean' ? { extras: v.extras } : {}),
+      ...(v.features && typeof v.features === 'object' && !Array.isArray(v.features)
+        ? {
+            features: Object.fromEntries(
+              Object.entries(v.features as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === 'string'),
+            ),
+          }
+        : {}),
     }
   } catch {
     return {}
@@ -828,4 +838,46 @@ const MINIMAP: Record<NodeStatus | 'idle', { readonly fill: string; readonly str
 export function minimapStyle(status: NodeStatus | undefined): { fill: string; stroke: string; className: string } {
   const colours = MINIMAP[status ?? 'idle']
   return { ...colours, className: status ? `minimap-${status}` : '' }
+}
+
+// ── feature switches ─────────────────────────────────────────────────
+
+export interface FeatureRow {
+  readonly feature: Feature
+  /** What runs get: your choice, else the pattern's default. */
+  readonly value: string
+  readonly default: string
+  /** Library patterns that have it. */
+  readonly patterns: readonly string[]
+}
+
+const asText = (f: StateField) => String(f.initial ?? (f.type === 'boolean' ? false : f.type === 'number' ? 0 : ''))
+
+/**
+ * The switches for the open pattern: its own fields, or, for the maestro (which may compose
+ * any of them), every switch some library pattern has.
+ */
+export function featureRows(
+  open: { readonly name: string; readonly state: readonly StateField[] },
+  library: readonly { readonly name: string; readonly state: readonly StateField[] }[],
+  chosen: Readonly<Record<string, string>>,
+): FeatureRow[] {
+  return FEATURES.flatMap((feature) => {
+    const having = library.filter((p) => p.state.some((s) => s.name === feature.field))
+    const own = open.state.find((s) => s.name === feature.field)
+    const field = own ?? (open.name === 'maestro' ? having[0]?.state.find((s) => s.name === feature.field) : undefined)
+    if (!field) return []
+    const def = asText(field)
+    return [{ feature, value: chosen[feature.field] ?? def, default: def, patterns: having.map((p) => p.name) }]
+  })
+}
+
+/** Your choices after setting one switch: a default is not kept (the pattern's own stays in charge). */
+export function chooseFeature(
+  chosen: Readonly<Record<string, string>>,
+  row: FeatureRow,
+  value: string,
+): Record<string, string> {
+  const { [row.feature.field]: _was, ...rest } = chosen
+  return value === row.default ? rest : { ...rest, [row.feature.field]: value }
 }

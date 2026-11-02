@@ -306,6 +306,68 @@ describe('Library saved runs', () => {
     expect(opened).toEqual(['b'])
   })
 
+  it('opens and closes its sections from their titles, and remembers it', () => {
+    localStorage.clear()
+    const { unmount } = render(<Library {...props} saved={[]} />)
+    const toggle = screen.getByRole('button', { name: /Patterns/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('+ Blank pattern')).toBeInTheDocument()
+    fireEvent.click(toggle)
+    expect(screen.queryByText('+ Blank pattern')).toBeNull()
+    unmount()
+    render(<Library {...props} saved={[]} />)
+    expect(screen.getByRole('button', { name: /Patterns/ })).toHaveAttribute('aria-expanded', 'false')
+    localStorage.clear()
+  })
+
+  it('switches features: a checkbox for on/off, a select for choices', () => {
+    localStorage.clear()
+    const changes: [string, string][] = []
+    const feature = (field: string, choices?: { value: string; label: string }[]) => ({
+      field,
+      label: field,
+      description: `what ${field} does`,
+      ...(choices ? { choices } : {}),
+    })
+    const rows = [
+      { feature: feature('supportJudge', [{ value: 'off', label: 'off' }, { value: 'shadow', label: 'shadow' }]), value: 'shadow', default: 'off', patterns: ['investigate'] },
+      { feature: feature('singlePass'), value: 'false', default: 'false', patterns: ['investigate'] },
+    ]
+    render(<Library {...props} saved={[]} features={rows} onFeature={(r, v) => changes.push([r.feature.field, v])} />)
+    expect(screen.getByTestId('feature-supportJudge')).toHaveTextContent('changed')
+    expect(screen.getByTestId('feature-singlePass')).not.toHaveTextContent('changed')
+    fireEvent.change(screen.getByLabelText('supportJudge'), { target: { value: 'off' } })
+    fireEvent.click(screen.getByLabelText('singlePass'))
+    expect(changes).toEqual([
+      ['supportJudge', 'off'],
+      ['singlePass', 'true'],
+    ])
+  })
+
+  it('on the opening screen the maestro box is not repeated; a home link goes back there', () => {
+    const homes: number[] = []
+    const { rerender } = render(<Library {...props} saved={[]} home onHome={() => homes.push(1)} />)
+    expect(screen.queryByText('🎼 Ask the maestro')).toBeNull()
+    expect(screen.getByTestId('home-link')).toBeDisabled()
+    rerender(<Library {...props} saved={[]} home={false} onHome={() => homes.push(1)} />)
+    expect(screen.getByText('🎼 Ask the maestro')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('home-link'))
+    expect(homes).toEqual([1])
+  })
+
+  it('saved runs fold from their title; refresh stays at hand', () => {
+    localStorage.clear()
+    const refreshed: number[] = []
+    render(<Library {...props} saved={[run('real', false)]} onRefreshSaved={() => refreshed.push(1)} />)
+    fireEvent.click(screen.getByTitle('Refresh'))
+    // The refresh button does not fold the section.
+    expect(screen.getByText('real')).toBeInTheDocument()
+    expect(refreshed).toEqual([1])
+    fireEvent.click(screen.getByRole('button', { name: 'Saved runs' }))
+    expect(screen.queryByText('real')).toBeNull()
+    localStorage.clear()
+  })
+
   it('has no running section when nothing is playing', () => {
     render(<Library {...props} saved={[]} live={[{ id: 'c', pattern: 'review', goal: 'g', status: 'done' }]} />)
     expect(screen.queryByTestId('live-runs')).toBeNull()

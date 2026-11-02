@@ -18,7 +18,15 @@ import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
 import { addUsage } from '../core/usage.js';
 import { checkCitations } from './evidence.js';
 import { modelSettings } from './repertoire.js';
-import type { AgentPause, Complexity, Role, TokenUsage, ToolCallRecord } from '../core/types.js';
+import type {
+  AgentPause,
+  CallUsage,
+  Complexity,
+  ContextSplit,
+  Role,
+  TokenUsage,
+  ToolCallRecord,
+} from '../core/types.js';
 import type {
   AgentRequest,
   AgentResponse,
@@ -315,6 +323,16 @@ export function normalizeSubmission(raw: unknown): unknown {
 }
 
 /** Keep the record small: optional measurements the provider never reported are left out. */
+/** What one session produced. */
+interface SessionOutput {
+  readonly output: string;
+  readonly toolCalls: ToolCallRecord[];
+  readonly model?: string;
+  readonly usage?: TokenUsage;
+  readonly calls?: readonly CallUsage[];
+  readonly context?: ContextSplit;
+}
+
 function withoutZeros(u: TokenUsage): TokenUsage {
   const out: Record<string, number> = {};
   for (const [key, v] of Object.entries(u))
@@ -404,9 +422,7 @@ export class CopilotProvider implements Provider {
       : { signedIn: false, message: SIGN_IN_HELP, ...source };
   }
 
-  private async runSession(
-    run: SessionRun,
-  ): Promise<{ output: string; toolCalls: ToolCallRecord[]; model?: string; usage?: TokenUsage }> {
+  private async runSession(run: SessionRun): Promise<SessionOutput> {
     if (run.signal.aborted) throw abortError();
     if (!this.signInChecked) {
       let status = await this.authStatus().catch(() => undefined);
@@ -511,6 +527,8 @@ export class CopilotProvider implements Provider {
       compactions: 0,
     };
     const names = new Map<string, string>();
+    const calls: CallUsage[] = [];
+    let context: ContextSplit | undefined;
     let settle!: () => void;
     const idle = new Promise<void>((resolve) => {
       settle = resolve;
@@ -562,6 +580,30 @@ export class CopilotProvider implements Provider {
           usage.premiumRequests += n('cost');
           usage.nanoAiu += Number(
             (d.copilotUsage as { totalNanoAiu?: unknown } | undefined)?.totalNanoAiu ?? 0,
+          );
+          calls.push(
+            Object.assign(
+              {
+                inputTokens: n('inputTokens'),
+                outputTokens: n('outputTokens'),
+                cacheReadTokens: n('cacheReadTokens'),
+              },
+              n('cacheWriteTokens') ? { cacheWriteTokens: n('cacheWriteTokens') } : {},
+              n('duration') ? { ms: n('duration') } : {},
+            ),
+          );
+          break;
+        }
+        case 'session.usage_info': {
+          // The first split only: what the session started with (later ones grow with the talk).
+          if (context) break;
+          const n = (k: string) => (typeof d[k] === 'number' ? { [k]: d[k] as number } : {});
+          context = Object.assign(
+            {},
+            n('systemTokens'),
+            n('toolDefinitionsTokens'),
+            n('conversationTokens'),
+            n('tokenLimit'),
           );
           break;
         }
@@ -625,7 +667,8 @@ export class CopilotProvider implements Provider {
       output,
       toolCalls,
       ...(model ? { model } : {}),
-      ...(usage.calls ? { usage: withoutZeros(usage) } : {}),
+      ...(usage.calls ? { usage: withoutZeros(usage), calls } : {}),
+      ...(context ? { context } : {}),
     };
   }
 
@@ -841,6 +884,7 @@ export class CopilotProvider implements Provider {
     let out = await play(tier);
     let played: { model?: string } = tier;
     let usage = out.usage;
+    const calls = [...(out.calls ?? [])];
     const blockedOn: string[] = [];
     // A content filter blocks the same prompt on the same model every time, so the
     // engine's retries cannot help: let another model (the nearest tiers') answer.
@@ -854,6 +898,7 @@ export class CopilotProvider implements Provider {
         out = await play(alt);
         played = alt;
         usage = usage && out.usage ? addUsage(usage, out.usage) : (out.usage ?? usage);
+        calls.push(...(out.calls ?? []));
         if (submitted() !== undefined || !isProviderBlock(out.output)) break;
       }
     }
@@ -867,6 +912,8 @@ export class CopilotProvider implements Provider {
         output: out.output,
         toolCalls: out.toolCalls,
         ...(usage ? { usage } : {}),
+        ...(calls.length ? { calls } : {}),
+        ...(out.context ? { context: out.context } : {}),
         ...(startedAt ? { startedAt, completedAt: this.opts.clock!() } : {}),
         musician: {
           tier: pause.complexity,
@@ -961,10 +1008,7 @@ export class CopilotProvider implements Provider {
    * Copilot refused the credential. A configured token is dropped once for the
    * signed-in account (the step runs again); if that is refused too, stop and say why.
    */
-  private async refused(
-    run: SessionRun,
-    output: string,
-  ): Promise<{ output: string; toolCalls: ToolCallRecord[]; model?: string; usage?: TokenUsage }> {
+  private async refused(run: SessionRun, output: string): Promise<SessionOutput> {
     if (this.opts.gitHubToken && !this.tokenRejected) {
       this.tokenRejected = true;
       this.signInChecked = false;

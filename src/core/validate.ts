@@ -2,6 +2,7 @@
  * Static validation of a pattern graph. Pure.
  * Issues carry nodeId / edgeId so the UI can highlight them on the canvas.
  */
+import { unboundedLoops } from './loops.js';
 import { ExprError, exprFields, parseExpr } from './expr.js';
 import { checkValue, isFieldType, isValidFieldName } from './schema.js';
 import {
@@ -206,7 +207,8 @@ export function validateGraph(g: PatternGraph): ValidationReport {
             message: `preload '${n.preload}' must be a string[] field it reads`,
           });
         if (n.preloadReport) {
-          for (const field of [n.preloadReport.paths, n.preloadReport.reasons]) {
+          const { paths, reasons, whole } = n.preloadReport;
+          for (const field of [paths, reasons, ...(whole ? [whole] : [])]) {
             if (g.state.find((f) => f.name === field)?.type !== 'string[]')
               errors.push({ ...at, message: `preloadReport '${field}' must be a string[] field` });
             if (n.writes.includes(field))
@@ -372,6 +374,11 @@ export function validateGraph(g: PatternGraph): ValidationReport {
     if (!canFinish.has(id))
       warnings.push({ nodeId: id, message: `no path from '${id}' to an end node` });
   }
+  for (const loop of unboundedLoops(g))
+    warnings.push({
+      nodeId: loop[0]!,
+      message: `loop ${loop.join(' → ')} has no bound: give a node in it maxVisits (or visitsFrom), or guard it with a counter it increments against a max* field (only maxSteps stops it now)`,
+    });
 
   return { errors, warnings };
 }

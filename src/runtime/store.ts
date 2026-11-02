@@ -2,6 +2,8 @@
  * Filesystem side of the runtime: workspace fingerprint, run store and
  * user pattern files. Kept out of the pure core on purpose.
  */
+// Every Node surface (CLI, MCP, studio server) loads the store: hash natively there.
+import './native-hash.js';
 import { performanceUsage } from '../core/usage.js';
 import { execFile } from 'node:child_process';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
