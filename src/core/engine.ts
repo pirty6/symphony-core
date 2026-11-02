@@ -826,6 +826,9 @@ function preloadReportOf(
   const records = [transcript, ...(transcript?.parts ?? [])].flatMap((t) => t?.preloaded ?? []);
   const paths: string[] = [];
   const reasons: string[] = [];
+  const whole = [
+    ...new Set(records.filter((r) => !r.error && !r.omitted && r.lines > 0).map((r) => r.path)),
+  ];
   for (const r of records) {
     if (paths.includes(r.path)) continue;
     const lines = r.omitted ? `lines ${r.omitted[0]}-${r.omitted[1]}` : '';
@@ -840,7 +843,10 @@ function preloadReportOf(
     paths.push(r.path);
     reasons.push(why);
   }
-  return { [node.preloadReport.paths]: paths, [node.preloadReport.reasons]: reasons };
+  return Object.assign(
+    { [node.preloadReport.paths]: paths, [node.preloadReport.reasons]: reasons },
+    node.preloadReport.whole ? { [node.preloadReport.whole]: whole } : {},
+  );
 }
 
 function resolveAgent(

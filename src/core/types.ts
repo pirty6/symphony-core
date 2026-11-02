@@ -110,7 +110,15 @@ export interface AgentNode extends NodeBase {
    * files of `preload` it could not give whole (lines left out, unreadable) and why, by
    * position. Checks and later steps can then hold "read completely" to what was given.
    */
-  readonly preloadReport?: { readonly paths: string; readonly reasons: string };
+  readonly preloadReport?: {
+    readonly paths: string;
+    readonly reasons: string;
+    /**
+     * Optional: the files the manifest shows were given whole. Empty when there is no
+     * manifest (no preload ran, or an old record): "read whole" is never assumed.
+     */
+    readonly whole?: string;
+  };
   readonly fanOut?: {
     readonly over: string;
     readonly per: number | string;

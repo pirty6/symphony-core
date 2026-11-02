@@ -94,7 +94,14 @@ describe('graphToPattern', () => {
 describe('loop layout', () => {
   it('draws loop bodies as a row beside their condition', () => {
     const bodies = loopBodies(investigate);
-    expect(bodies.get('filesLeft')).toEqual(['takeBatch', 'triage', 'checkTriage', 'mergeTriage']);
+    expect(bodies.get('filesLeft')).toEqual([
+      'takeBatch',
+      'singlePassOn',
+      'triageDeep',
+      'triage',
+      'checkTriage',
+      'mergeTriage',
+    ]);
     expect(bodies.get('deepLeft')).toEqual(['takeDeep', 'deepRead', 'checkDeep', 'mergeDeep']);
     expect(bodies.get('sourcesLeft')).toEqual([
       'takeSource',

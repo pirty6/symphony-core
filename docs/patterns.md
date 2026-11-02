@@ -51,6 +51,9 @@ experiments, git history, GitHub, dependencies, MCP servers.
    file triage saw only part of goes to the deep read. Unreadable items, and files cut for
    the budget, are retried once at the end, one per call, except PDFs, binaries and files
    too long for any prompt, which would fail the same way.
+   `singlePass: true` is an off-by-default pilot: triage also reads the relevant files in
+   depth (following references and history), and those it read completely skip the deep read
+   only if the engine's preload record shows it gave them whole (no record: none skip).
 5. **Experiments** (after your approval) and **source searches**, in parallel.
 6. **Close gaps.** Sub-questions the findings do not answer get targeted research, then a
    question to you for a hint.
@@ -92,7 +95,7 @@ flowchart TD
   n_planPhase[["Plan research · 5 steps"]]
   n_hypothesesPhase[["Competing hypotheses · 2 steps"]]
   n_listPhase[["List evidence · 13 steps"]]
-  n_triagePhase[["Triage files · 5 steps"]]
+  n_triagePhase[["Triage files · 7 steps"]]
   n_deepPhase[["Deep read · 8 steps"]]
   n_experimentPhase[["Run experiments · 12 steps"]]
   n_sourcePhase[["Search sources · 5 steps"]]
@@ -130,7 +133,7 @@ flowchart TD
 | Plan research | Available sources, sub-questions, which evidence applies | List sources → Plan research → Recall for the sub-questions → Merge recalled leads → Queue sources |
 | Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
 | List evidence | Only what the plan needs: workspace files, likeliest first (a big repo is searched first), web pages, experiments | Hypotheses for the readers → Workspace? → List every file → Rank files → Count files → Triage every file? → Queue files → Locate files → Queue located files → Web? → List web pages → Experiments? → Design experiments |
-| Triage files | Every listed file, in batches | Files left? → Next batch → Triage files → Check citations → Record triage |
+| Triage files | Every listed file, in batches | Files left? → Next batch → Single pass? (pilot) → Triage files → Triage and read in depth → Check citations → Record triage |
 | Deep read | Every relevant file and listed page, completely | Queue deep reads → Deep reads left? → Next deep batch → Deep read → Check citations → Record deep read → Retry unreadable? → Queue unreadable again |
 | Run experiments | With your approval, run and measure | Experiments listed? → Allow experiments? → Queue experiments → Untimed experiments? → Run experiments side by side → Check citations → Record experiments → Timed experiments left? → Next experiment → Run timed experiment → Check citations → Record experiment |
 | Search sources | History, GitHub, dependencies, MCP | Sources left? → Next source → Search source → Check citations → Record source |

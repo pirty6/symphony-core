@@ -66,7 +66,12 @@ export function writesOf(node: ScoreNode, graph?: PatternGraph): string[] {
   switch (node.kind) {
     case 'agent':
       return node.preloadReport
-        ? [...node.writes, node.preloadReport.paths, node.preloadReport.reasons]
+        ? [
+            ...node.writes,
+            node.preloadReport.paths,
+            node.preloadReport.reasons,
+            ...(node.preloadReport.whole ? [node.preloadReport.whole] : []),
+          ]
         : [...node.writes];
     case 'approval':
       return [...node.writes];

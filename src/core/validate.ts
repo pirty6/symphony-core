@@ -207,7 +207,8 @@ export function validateGraph(g: PatternGraph): ValidationReport {
             message: `preload '${n.preload}' must be a string[] field it reads`,
           });
         if (n.preloadReport) {
-          for (const field of [n.preloadReport.paths, n.preloadReport.reasons]) {
+          const { paths, reasons, whole } = n.preloadReport;
+          for (const field of [paths, reasons, ...(whole ? [whole] : [])]) {
             if (g.state.find((f) => f.name === field)?.type !== 'string[]')
               errors.push({ ...at, message: `preloadReport '${field}' must be a string[] field` });
             if (n.writes.includes(field))

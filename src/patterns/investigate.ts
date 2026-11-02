@@ -1,4 +1,4 @@
-import { MAX_AGENTS, type Pattern } from '../core/types.js';
+import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import {
   checkFindings,
@@ -130,6 +130,73 @@ const tagged = (s: Readonly<Record<string, unknown>>, tag: string) =>
 /** Unreadable items another fetch will not fix: PDFs and binaries, by path or by the reason given. */
 const NO_RETRY =
   'unique(positions(notRead, "[.][Pp][Dd][Ff]([?#]|$)") + positions(notReadReasons, "[Bb]inary|PDF|[.]pdf|longer than one prompt|not found in the workspace|outside the workspace"))';
+
+/**
+ * Triage of a batch, whole files in the prompt. `deep` is the single-pass pilot (singlePass):
+ * it also reads the relevant files in depth, following references and history, and lists in
+ * `readFully` those it read completely, which then skip the deep read if the engine's own
+ * record shows they were given whole.
+ */
+function triageStep(deep: boolean): ScoreNode {
+  const node: ScoreNode = {
+    id: 'triage',
+    kind: 'agent',
+    role: 'assessor',
+    label: 'Triage files',
+    directive:
+      'Read EVERY file in `batch`: each one is given to you whole, with line numbers, at the end of this prompt (read all of it there, not just the top; open a file with tools only if it says lines were left out). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
+      AGAINST,
+    reads: ['leadHypotheses', 'leadStatus', 'question', 'hint', 'subQuestions', 'batch'],
+    // The engine reads the batch whole: one turn per part instead of a tool call per page.
+    preload: 'batch',
+    // The engine says which files it could not show whole: those are not dismissed unseen.
+    preloadReport: { paths: 'triagePartial', reasons: 'triagePartialReasons' },
+    fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
+    writes: ['triaged', 'batchRelevant', 'newFindings'],
+    cites: 'newFindings',
+    retries: 2,
+    complexityShift: -1,
+    checks: [
+      {
+        expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
+        message: 'No hypotheses were given: do not tag findings with [H…].',
+      },
+      {
+        expr: 'subset(batch, triaged)',
+        message: 'You skipped files. Open and list EVERY file of batch in triaged.',
+      },
+      { expr: 'subset(triaged, batch)', message: 'triaged may only contain files from batch.' },
+      {
+        expr: 'subset(batchRelevant, batch)',
+        message: 'batchRelevant may only contain files from batch.',
+      },
+    ],
+  };
+  if (!deep || node.kind !== 'agent') return node;
+  return {
+    ...node,
+    id: 'triageDeep',
+    label: 'Triage and read in depth',
+    directive:
+      node.directive +
+      ' For each file you count as relevant, also read it as the deep read would: follow the references out of it that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame), and record every fact that bears on the question in `newFindings`. List in `readFully` the relevant files you read that way, completely; leave out any you only skimmed, and any the prompt says were not given whole: those get a deep read of their own.',
+    // The engine says which it gave whole: readFully counts only for those.
+    preloadReport: {
+      paths: 'triagePartial',
+      reasons: 'triagePartialReasons',
+      whole: 'triageWhole',
+    },
+    writes: [...node.writes, 'readFully'],
+    complexityShift: 0,
+    checks: [
+      ...(node.checks ?? []),
+      {
+        expr: 'subset(readFully, batchRelevant)',
+        message: 'readFully may only list files of batchRelevant.',
+      },
+    ],
+  };
+}
 
 export const investigate: Pattern = {
   name: 'investigate',
@@ -336,6 +403,23 @@ export const investigate: Pattern = {
       },
       { name: 'triagePartialReasons', type: 'string[]', description: 'Why, by position' },
       {
+        name: 'singlePass',
+        type: 'boolean',
+        description:
+          'Pilot (off): triage also reads relevant files in depth, and those the engine shows it gave whole skip the deep read',
+      },
+      {
+        name: 'readFully',
+        type: 'string[]',
+        description: 'Relevant files the pilot triage read completely',
+      },
+      {
+        name: 'triageWhole',
+        type: 'string[]',
+        description:
+          'Files of the triage batch the engine gave whole (engine-filled; empty without a record)',
+      },
+      {
         name: 'supportJudge',
         type: 'string',
         initial: 'off',
@@ -465,7 +549,15 @@ export const investigate: Pattern = {
       id: 'triagePhase',
       label: 'Triage files',
       description: 'Every listed file, in batches',
-      nodes: ['filesLeft', 'takeBatch', 'triage', 'checkTriage', 'mergeTriage'],
+      nodes: [
+        'filesLeft',
+        'takeBatch',
+        'singlePassOn',
+        'triage',
+        'triageDeep',
+        'checkTriage',
+        'mergeTriage',
+      ],
     },
     {
       id: 'deepPhase',
@@ -796,39 +888,13 @@ export const investigate: Pattern = {
       ],
     },
     {
-      id: 'triage',
-      kind: 'agent',
-      role: 'assessor',
-      label: 'Triage files',
-      directive:
-        'Read EVERY file in `batch`: each one is given to you whole, with line numbers, at the end of this prompt (read all of it there, not just the top; open a file with tools only if it says lines were left out). Decide whether it is relevant to the question or any sub-question; when unsure, count it as relevant. Put every path of `batch` in `triaged`, the relevant ones in `batchRelevant`, and any concrete evidence you saw in `newFindings` as "path:line — fact".' +
-        AGAINST,
-      reads: ['leadHypotheses', 'leadStatus', 'question', 'hint', 'subQuestions', 'batch'],
-      // The engine reads the batch whole: one turn per part instead of a tool call per page.
-      preload: 'batch',
-      // The engine says which files it could not show whole: those are not dismissed unseen.
-      preloadReport: { paths: 'triagePartial', reasons: 'triagePartialReasons' },
-      fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
-      writes: ['triaged', 'batchRelevant', 'newFindings'],
-      cites: 'newFindings',
-      retries: 2,
-      complexityShift: -1,
-      checks: [
-        {
-          expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
-          message: 'No hypotheses were given: do not tag findings with [H…].',
-        },
-        {
-          expr: 'subset(batch, triaged)',
-          message: 'You skipped files. Open and list EVERY file of batch in triaged.',
-        },
-        { expr: 'subset(triaged, batch)', message: 'triaged may only contain files from batch.' },
-        {
-          expr: 'subset(batchRelevant, batch)',
-          message: 'batchRelevant may only contain files from batch.',
-        },
-      ],
+      id: 'singlePassOn',
+      kind: 'condition',
+      label: 'Single pass? (pilot)',
+      expression: 'singlePass',
     },
+    triageStep(false),
+    triageStep(true),
     checkFindings('checkTriage', 'newFindings', false),
     {
       id: 'mergeTriage',
@@ -838,10 +904,15 @@ export const investigate: Pattern = {
         {
           field: 'relevantFiles',
           // A file triage saw only part of goes to the deep read, whatever triage said.
-          expr: 'relevantFiles + batchRelevant + without(pick(triagePartial, positions(triagePartialReasons, "^(lines|longer)")), batchRelevant)',
+          // The pilot's readFully skip the deep read only where the engine's record shows the
+          // file was given whole (an intersection: without a record, none skip).
+          expr: 'relevantFiles + without(batchRelevant, without(readFully, without(readFully, triageWhole))) + without(pick(triagePartial, positions(triagePartialReasons, "^(lines|longer)")), batchRelevant)',
         },
         ...MERGE_FINDINGS,
         ...STATUS,
+        // Each wave's claims are its own.
+        { field: 'readFully', expr: '[]' },
+        { field: 'triageWhole', expr: '[]' },
       ],
     },
     {
@@ -1536,8 +1607,11 @@ export const investigate: Pattern = {
     { id: 'design-filesLeft', from: 'designExperiments', to: 'filesLeft' },
     { id: 'filesLeft-takeBatch', from: 'filesLeft', to: 'takeBatch', branch: 'then' },
     { id: 'filesLeft-deepQueue', from: 'filesLeft', to: 'deepQueue', branch: 'else' },
-    { id: 'takeBatch-triage', from: 'takeBatch', to: 'triage' },
+    { id: 'takeBatch-pass', from: 'takeBatch', to: 'singlePassOn' },
+    { id: 'pass-deep', from: 'singlePassOn', to: 'triageDeep', branch: 'then', label: 'pilot' },
+    { id: 'pass-triage', from: 'singlePassOn', to: 'triage', branch: 'else' },
     { id: 'triage-checkTriage', from: 'triage', to: 'checkTriage' },
+    { id: 'triageDeep-checkTriage', from: 'triageDeep', to: 'checkTriage' },
     { id: 'checkTriage-mergeTriage', from: 'checkTriage', to: 'mergeTriage' },
     { id: 'mergeTriage-filesLeft', from: 'mergeTriage', to: 'filesLeft', label: 'next batch' },
     { id: 'deepQueue-deepLeft', from: 'deepQueue', to: 'deepLeft' },
@@ -1747,6 +1821,19 @@ export const investigate: Pattern = {
             newFindings: relevant.map((f) => `${f}:1 — mentions validation`),
           },
           verdict: v(`triaged ${batch.length} files`),
+        };
+      },
+      triageDeep: (s) => {
+        const batch = (s.batch as string[]) ?? [];
+        const relevant = batch.filter((f) => RELEVANT.test(f));
+        return {
+          updates: {
+            triaged: batch,
+            batchRelevant: relevant,
+            readFully: relevant,
+            newFindings: relevant.map((f) => `${f}:1 — read in depth at triage`),
+          },
+          verdict: v(`triaged and read ${relevant.length} of ${batch.length} files`),
         };
       },
       deepRead: (s) => {

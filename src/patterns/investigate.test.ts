@@ -998,3 +998,66 @@ describe('the support judge (off by default)', () => {
     expect(Object.keys(pause.input)).toEqual(['judgeItems']);
   });
 });
+
+describe('single-pass triage pilot (off by default)', () => {
+  /** The demo with singlePass on; triage's transcript carries this preload record (none: no record). */
+  const pilot = (manifest?: (batch: readonly string[]) => PreloadRecord[]) => {
+    const score = compileScore(investigate, {
+      goal: 'g',
+      context: { ...demo.context!, singlePass: true, batchSize: 10 },
+      generatedAt: 't',
+    });
+    let r = createEngine(score, { startedAt: 't' });
+    for (let i = 0; i < 2000 && r.state.kind === 'running' && r.state.pause; i++) {
+      const pause = r.state.pause;
+      let res: Resolution = scriptedResolution(demo, pause, r.state, 't');
+      if (
+        manifest &&
+        pause.kind === 'agent' &&
+        pause.nodeId === 'triageDeep' &&
+        res.kind === 'agent'
+      )
+        res = {
+          ...res,
+          transcript: { ...res.transcript!, preloaded: manifest(pause.input.batch as string[]) },
+        };
+      r = advance(score, r.state, res);
+    }
+    const deepRead = r.state.steps
+      .filter((x) => x.nodeId === 'deepRead')
+      .flatMap((x) => (x.input?.deepBatch as string[]) ?? []);
+    return { r, s: r.state.state, deepRead, score };
+  };
+  const RELEVANT_FILES = ['src/core/engine.ts', 'src/core/schema.ts', 'src/core/validate.ts'];
+
+  it('off: the usual triage plays, and every relevant file is read in depth', () => {
+    const { r } = runWith(['workspace']);
+    const ran = r.state.steps.map((x) => x.nodeId);
+    expect(ran).toContain('triage');
+    expect(ran).not.toContain('triageDeep');
+  });
+
+  it('no preload record: nothing is assumed read whole, every relevant file still gets a deep read', () => {
+    const { r, deepRead } = pilot();
+    expect(r.state.steps.map((x) => x.nodeId)).toContain('triageDeep');
+    expect(deepRead).toEqual(expect.arrayContaining(RELEVANT_FILES));
+  });
+
+  it('files the record shows were given whole skip the deep read; one cut short does not, whatever triage says', () => {
+    const { r, s, deepRead, score } = pilot((batch) =>
+      batch.map(
+        (path): PreloadRecord =>
+          path.endsWith('validate.ts')
+            ? { path, lines: 900, omitted: [301, 900], cut: 'call' }
+            : { path, lines: 100 },
+      ),
+    );
+    expect(r.state.outcome).toBe('success');
+    // triage claimed all three read completely; the engine's record decides.
+    expect(deepRead).toContain('src/core/validate.ts');
+    expect(deepRead).not.toContain('src/core/engine.ts');
+    expect(deepRead).not.toContain('src/core/schema.ts');
+    expect(s.readFully).toEqual([]);
+    expect(replayPerformance(score, toPerformance(r.state)).divergence.reproduced).toBe(true);
+  });
+});
