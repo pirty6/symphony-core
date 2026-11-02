@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { canonicalJson, HashError, hashOf, sha256, useSha256 } from './hash.js';
+import { canonicalJson, freezeJson, HashError, hashOf, sha256, useSha256 } from './hash.js';
 
 const nodeSha = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -28,6 +28,25 @@ describe('canonicalJson', () => {
   it('hashOf is key-order independent', () => {
     expect(hashOf({ a: 1, b: 2 })).toBe(hashOf({ b: 2, a: 1 }));
     expect(hashOf({ a: 1 })).not.toBe(hashOf({ a: 2 }));
+  });
+});
+
+describe('frozen values', () => {
+  it('hash the same as unfrozen ones, and their text is reused', () => {
+    const value = { b: [1, { c: 'x' }], a: 'y' };
+    const plain = canonicalJson(structuredClone(value));
+    const frozen = freezeJson(structuredClone(value));
+    expect(Object.isFrozen(frozen.b[1])).toBe(true);
+    expect(canonicalJson(frozen)).toBe(plain);
+    expect(canonicalJson({ s: frozen })).toBe(canonicalJson({ s: structuredClone(value) }));
+    // Unfrozen values are read afresh every time: changing one changes its hash.
+    const open: { n: number[] } = { n: [1] };
+    const before = hashOf(open);
+    open.n.push(2);
+    expect(hashOf(open)).not.toBe(before);
+    // Freezing is a no-op on what is already frozen, and on plain values.
+    expect(freezeJson(frozen)).toBe(frozen);
+    expect(freezeJson('s')).toBe('s');
   });
 });
 
