@@ -55,7 +55,9 @@ experiments, git history, GitHub, dependencies, MCP servers.
 7. **Answer.** Cited by finding id, one answer per sub-question (or OPEN), one ruling per
    hypothesis. The engine appends a coverage section: files not triaged, pages, experiments,
    what could not be read, sources searched and skipped, findings taken on trust.
-8. **Challenge.** The debate above; REAL objections reopen research.
+8. **Challenge.** The debate above; REAL objections reopen research (within the run-wide
+   research budget). `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
+   keep word for word the sub-answers no objection named, so it opens no new front.
 9. **Settle.** Settled means no unresolved objection, no OPEN sub-answer or objection
    resolution, and enough confidence. A settled answer ends `success`, remembers the findings
    it cited and a lesson built from its checked sub-answers (only when it names a workspace

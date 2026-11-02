@@ -45,6 +45,9 @@ const challenge = challengePhase({
 /** Most independent parts one investigation answers side by side. */
 export const MAX_PARTS = 8;
 
+/** The S tag of each entry ("S2"). */
+const TAGS = (field: string) => `heads(${field}, "^S[0-9]+")`;
+
 /** The entries of a "S<n>: …" list that say OPEN. */
 const OPEN_ENTRIES = (field: string) =>
   `without(${field}, unmatched(${field}, "^S[0-9]+: OPEN([^A-Za-z]|$)"))`;
@@ -159,6 +162,17 @@ export const investigate: Pattern = {
         name: 'subAnswers',
         type: 'string[]',
         description: 'One per sub-question, in order: "S1: answer [F3]" or "S1: OPEN — why"',
+      },
+      {
+        name: 'keepUnchallenged',
+        type: 'boolean',
+        description:
+          'A rewrite after a challenge keeps word for word the sub-answers no REAL objection names (off: an A/B to run before turning it on)',
+      },
+      {
+        name: 'prevSubAnswers',
+        type: 'string[]',
+        description: 'The sub-answers of the previous answer',
       },
       {
         name: 'objectionResolutions',
@@ -1190,7 +1204,7 @@ export const investigate: Pattern = {
       directive:
         'Answer `question` using only `findings`. ' +
         CITE_BY_ID +
-        ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). In `subAnswers`, give one entry per entry of `subQuestions`, in order: "S<n>: <its answer in one or two sentences> [F…]" citing the findings it rests on, or "S<n>: OPEN — <what is missing>" when the findings do not answer it. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it, and say why when a ruling goes against the tally in `hypothesisStatus`. If `realObjections` is set, the answer was challenged: in `objectionResolutions` give one entry per objection, in order, starting with its S tag: "S<n>: RESOLVED — what the evidence now shows [F…]", "S<n>: REBUTTED — why it does not hold [F…]", or "S<n>: OPEN — what is still missing" (open ones are reported as open questions); leave it empty when nothing was challenged. Before you finish, read your answer as its skeptic will: every claim backed by a cited finding, no hypothesis dismissed without evidence against it, no alternative explanation the evidence also fits left unsaid, no path nobody followed (a caller, a config, a version, an environment) presented as settled. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
+        ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). In `subAnswers`, give one entry per entry of `subQuestions`, in order: "S<n>: <its answer in one or two sentences> [F…]" citing the findings it rests on, or "S<n>: OPEN — <what is missing>" when the findings do not answer it. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it, and say why when a ruling goes against the tally in `hypothesisStatus`. If `realObjections` is set, the answer was challenged: in `objectionResolutions` give one entry per objection, in order, starting with its S tag: "S<n>: RESOLVED — what the evidence now shows [F…]", "S<n>: REBUTTED — why it does not hold [F…]", or "S<n>: OPEN — what is still missing" (open ones are reported as open questions); leave it empty when nothing was challenged. When `keepUnchallenged` is true, keep word for word every `prevSubAnswers` entry no objection names by its S tag. Before you finish, read your answer as its skeptic will: every claim backed by a cited finding, no hypothesis dismissed without evidence against it, no alternative explanation the evidence also fits left unsaid, no path nobody followed (a caller, a config, a version, an environment) presented as settled. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
       reads: [
         'question',
         'hint',
@@ -1214,6 +1228,8 @@ export const investigate: Pattern = {
         'partAnswers',
         // The objections it must answer when it was challenged.
         'realObjections',
+        'prevSubAnswers',
+        'keepUnchallenged',
       ],
       writes: ['answer', 'openQuestions', 'rulings', 'subAnswers', 'objectionResolutions'],
       verifyBelow: 0.6,
@@ -1257,6 +1273,13 @@ export const investigate: Pattern = {
           expr: 'subset(refs(objectionResolutions), ids(findings))',
           message: 'objectionResolutions may cite only ids that exist in findings.',
         },
+        {
+          // keepUnchallenged (off by default, for an A/B): a rewrite after a challenge leaves
+          // alone what no REAL objection named, so it opens no new front for the next skeptic.
+          expr: `if(keepUnchallenged && len(prevSubAnswers) > 0 && !includes(${TAGS('realObjections')}, "S0"), subset(pick(prevSubAnswers, outside(${TAGS('prevSubAnswers')}, ${TAGS('realObjections')})), subAnswers), true)`,
+          message:
+            'Keep every subAnswers entry that no entry of realObjections names (by its S tag) word for word as it was in prevSubAnswers; change only the challenged ones.',
+        },
       ],
     },
     {
@@ -1270,6 +1293,8 @@ export const investigate: Pattern = {
           // Sub-questions the answer says are open are open questions, word for word.
           expr: `unique(gaps + openQuestions + unresolvedObjections + ${OPEN_ENTRIES('subAnswers')} + ${OPEN_ENTRIES('objectionResolutions')})`,
         },
+        // What a rewrite after a challenge is compared with (keepUnchallenged).
+        { field: 'prevSubAnswers', expr: 'subAnswers' },
       ],
     },
     ...hypotheses.nodes,

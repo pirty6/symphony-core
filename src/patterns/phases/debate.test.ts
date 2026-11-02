@@ -399,6 +399,78 @@ describe('the skeptic', () => {
   });
 });
 
+describe('keepUnchallenged (an A/B option)', () => {
+  /** An answer that rewrites every sub-answer each time, challenged or not. */
+  const rewriting: DemoScript = {
+    ...demo,
+    agents: {
+      ...agents,
+      answer: (s, v) => {
+        const good = agents.answer!(s, v);
+        const subAnswers = ((s.subQuestions as string[]) ?? []).map(
+          (_, i) => `S${i + 1}: rewritten (visit ${v}) [F1]`,
+        );
+        return { ...good, updates: { ...good.updates, subAnswers } };
+      },
+    },
+  };
+  const playWith = (keepUnchallenged: boolean) => {
+    const score = compileScore(investigate, {
+      context: { ...demo.context!, keepUnchallenged },
+      complexity: 2,
+      generatedAt: 't',
+    });
+    return runScripted(score, rewriting, { at: 't' });
+  };
+
+  it('off (default): a rewrite may change every sub-answer', () => {
+    const r = playWith(false);
+    expect(r.state.outcome).toBe('success');
+    expect(rejections(r, 'answer')).toEqual([]);
+  });
+
+  it('on: a sub-answer no REAL objection named must stay word for word', () => {
+    const r = playWith(true);
+    // The demo's objection names S2: rewriting S1 is sent back (and the scripted answer
+    // keeps rewriting, so the step ends stuck).
+    expect(rejections(r, 'answer').join()).toMatch(
+      /Keep every subAnswers entry that no entry of realObjections names/,
+    );
+  });
+
+  it('on: rewriting only the challenged sub-answer is accepted', () => {
+    const score = compileScore(investigate, {
+      context: { ...demo.context!, keepUnchallenged: true },
+      complexity: 2,
+      generatedAt: 't',
+    });
+    const careful: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        answer: (s, v) => {
+          const good = agents.answer!(s, v);
+          const prev = (s.prevSubAnswers as string[]) ?? [];
+          const tags = new Set(((s.realObjections as string[]) ?? []).map((o) => o.split(':')[0]));
+          const subAnswers = ((s.subQuestions as string[]) ?? []).map((_, i) =>
+            prev[i] && !tags.has(`S${i + 1}`)
+              ? prev[i]!
+              : `S${i + 1}: answered again (visit ${v}) [F1]`,
+          );
+          return { ...good, updates: { ...good.updates, subAnswers } };
+        },
+      },
+    };
+    const r = runScripted(score, careful, { at: 't' });
+    expect(r.state.outcome).toBe('success');
+    expect(rejections(r, 'answer')).toEqual([]);
+    expect(r.state.state.subAnswers).toEqual([
+      'S1: answered again (visit 0) [F1]',
+      'S2: answered again (visit 1) [F1]',
+    ]);
+  });
+});
+
 describe('the answer meets every REAL objection by its tag', () => {
   it('a challenged answer resolves each objection; one left out is sent back', () => {
     let answers = 0;
