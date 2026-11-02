@@ -84,6 +84,9 @@ export interface PromptSources {
 }
 
 /** Inputs and context are compact JSON: pretty-printing made them about 1.5x longer. */
+/** Characters of input after which the prompt ends with a reminder of the step. */
+export const LONG_INPUT = 20_000;
+
 export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {}): string {
   // Say each thing once: the goal is often a run input too (investigate's question).
   const goalKey = Object.keys(pause.input).find((k) => pause.input[k] === pause.goal);
@@ -172,6 +175,21 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
   }
   if (pause.preload && sources.files?.length)
     lines.push(...preloadSection(pause.preload, sources.files));
+  // After a long input, the step and its contract again: the model attends least to the
+  // middle of a long prompt. After the input, so the cached prefix is the same.
+  const inputChars =
+    JSON.stringify(pause.input).length +
+    (sources.files ?? []).reduce((n, f) => n + f.text.length, 0);
+  if (inputChars > LONG_INPUT) {
+    const goal = goalKey ? String(pause.input[goalKey]) : pause.goal;
+    lines.push(
+      '',
+      '## Reminder (after the long input above)',
+      `- Goal: ${goal.length > 400 ? `${goal.slice(0, 400)}…` : goal}`,
+      `- Your step: ${pause.label}. Do only this step, as directed above.`,
+      `- Submit once with \`${SUBMIT_TOOL}\`: updates with exactly ${pause.outputSchema.map((f) => `\`${f.name}\``).join(', ') || 'no keys'}, and a verdict.`,
+    );
+  }
   if (pause.feedback && pause.feedback.length > 0) {
     lines.push(
       '',
