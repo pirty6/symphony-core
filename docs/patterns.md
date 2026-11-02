@@ -38,8 +38,12 @@ experiments, git history, GitHub, dependencies, MCP servers.
 4. **Triage → deep read.** Files are read whole by the engine (`preload`) and given to
    sub-agents in parallel batches; an answer that skips a file of its batch is rejected. A
    file the engine could not read is named in the prompt so the step reads it with tools.
-   Every relevant file and page is then read completely. Unreadable items are retried once
-   at the end, except PDFs and binaries, which would fail the same way.
+   Every relevant file and page is then read completely, and "completely" is the engine's
+   call, not the AI's: a file the engine could not give whole (too long for one prompt, or
+   cut by the call's size budget) is reported as not read in full whatever the AI says, and a
+   file triage saw only part of goes to the deep read. Unreadable items, and files cut for
+   the budget, are retried once at the end, one per call, except PDFs, binaries and files
+   too long for any prompt, which would fail the same way.
 5. **Experiments** (after your approval) and **source searches**, in parallel.
 6. **Close gaps.** Sub-questions the findings do not answer get targeted research, then a
    question to you for a hint.

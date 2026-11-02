@@ -401,7 +401,7 @@ export class Run {
     // The record says what the engine put in the prompt, without the text itself.
     const preloaded = files.map((f) => {
       const entry: PreloadRecord = { path: f.path, lines: f.lines };
-      if (f.omitted) Object.assign(entry, { omitted: f.omitted });
+      if (f.omitted) Object.assign(entry, { omitted: f.omitted, ...(f.cut ? { cut: f.cut } : {}) });
       if (f.error) Object.assign(entry, { error: f.error });
       return entry;
     });

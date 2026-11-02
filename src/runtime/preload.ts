@@ -64,7 +64,12 @@ export async function preloadFiles(
       path,
       text: numbered.join('\n'),
       lines: all.length,
-      ...(shown < all.length ? { omitted: [shown + 1, all.length] as const } : {}),
+      ...(shown < all.length
+        ? {
+            omitted: [shown + 1, all.length] as const,
+            cut: MAX_FILE_CHARS <= cap ? ('file' as const) : ('call' as const),
+          }
+        : {}),
     });
   }
   return out;

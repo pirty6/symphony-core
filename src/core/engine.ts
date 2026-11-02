@@ -813,6 +813,36 @@ function lowConfidence(
   return `You reported confidence ${c}, below ${node.verifyBelow} for this step. Re-check the claims you were least sure of against the evidence, fix or drop what does not hold, and answer again.`;
 }
 
+/**
+ * AgentNode.preloadReport: the files of `preload` the runtime could not give whole, and why,
+ * from the preload record in the transcript (each part's, for a fanned-out step). Replay
+ * reads the recorded transcript, so this is as deterministic as the answer itself.
+ */
+function preloadReportOf(
+  node: ScoreNode,
+  transcript: AiTranscript | undefined,
+): Record<string, string[]> {
+  if (node.kind !== 'agent' || !node.preloadReport) return {};
+  const records = [transcript, ...(transcript?.parts ?? [])].flatMap((t) => t?.preloaded ?? []);
+  const paths: string[] = [];
+  const reasons: string[] = [];
+  for (const r of records) {
+    if (paths.includes(r.path)) continue;
+    const lines = r.omitted ? `lines ${r.omitted[0]}-${r.omitted[1]}` : '';
+    const why = r.error
+      ? `the engine could not read it (${r.error})`
+      : !r.omitted
+        ? undefined
+        : r.cut === 'file'
+          ? `longer than one prompt can hold: ${lines} were not given whole (read with tools, as the AI reports)`
+          : `${lines} left out of the prompt for the call's size: read again on its own`;
+    if (!why) continue;
+    paths.push(r.path);
+    reasons.push(why);
+  }
+  return { [node.preloadReport.paths]: paths, [node.preloadReport.reasons]: reasons };
+}
+
 function resolveAgent(
   score: ExecutableScore,
   ctx: Ctx,
@@ -825,10 +855,20 @@ function resolveAgent(
     (res.result === undefined
       ? { ok: false, errors: [noResult(res.transcript)] }
       : checkAgentResult(res.result, pause.outputSchema, pause.choices));
+  // What the runtime could not put in the prompt is the engine's to say, from its record.
+  const reported: typeof routed = routed.ok
+    ? {
+        ok: true,
+        value: {
+          ...routed.value,
+          updates: { ...routed.value.updates, ...preloadReportOf(node, res.transcript) },
+        },
+      }
+    : routed;
   const accepted =
-    routed.ok && node.kind === 'agent' && node.checks?.length
-      ? acceptance(node.checks, ctx.state, routed.value)
-      : routed;
+    reported.ok && node.kind === 'agent' && node.checks?.length
+      ? acceptance(node.checks, ctx.state, reported.value)
+      : reported;
   const doubt = accepted.ok ? lowConfidence(node, ctx, pause, accepted.value) : undefined;
   const checked: typeof accepted = doubt ? { ok: false, errors: [doubt] } : accepted;
   const hashBefore = stateHashOf(ctx.state, ctx.env);

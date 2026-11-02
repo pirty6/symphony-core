@@ -105,6 +105,12 @@ export interface AgentNode extends NodeBase {
    * it with tool calls, and cannot skip part of a file.
    */
   readonly preload?: string;
+  /**
+   * Fields (string[]) the ENGINE fills from the runtime's preload record, not the AI: the
+   * files of `preload` it could not give whole (lines left out, unreadable) and why, by
+   * position. Checks and later steps can then hold "read completely" to what was given.
+   */
+  readonly preloadReport?: { readonly paths: string; readonly reasons: string };
   readonly fanOut?: {
     readonly over: string;
     readonly per: number | string;
@@ -340,6 +346,8 @@ export interface PreloadRecord {
   readonly lines: number;
   /** Lines left out for size: [from, to]. */
   readonly omitted?: readonly [number, number];
+  /** What cut it: the file is longer than one prompt allows, or the call's budget ran out. */
+  readonly cut?: 'file' | 'call';
   /** Why it is not in the prompt (missing, binary, outside the workspace, the read failed). */
   readonly error?: string;
 }

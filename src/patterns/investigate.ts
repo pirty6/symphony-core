@@ -116,7 +116,7 @@ const RELEVANT = /engine|schema|validate/;
  */
 /** Unreadable items another fetch will not fix: PDFs and binaries, by path or by the reason given. */
 const NO_RETRY =
-  'unique(positions(notRead, "[.][Pp][Dd][Ff]([?#]|$)") + positions(notReadReasons, "[Bb]inary|PDF|[.]pdf"))';
+  'unique(positions(notRead, "[.][Pp][Dd][Ff]([?#]|$)") + positions(notReadReasons, "[Bb]inary|PDF|[.]pdf|longer than one prompt|not found in the workspace|outside the workspace"))';
 
 export const investigate: Pattern = {
   name: 'investigate',
@@ -273,6 +273,23 @@ export const investigate: Pattern = {
       },
       { name: 'notReadReasons', type: 'string[]', description: 'Why, per notRead item' },
       { name: 'unreadRetries', type: 'number' },
+      {
+        name: 'partlyRead',
+        type: 'string[]',
+        description: 'Files of the deep batch the engine could not give whole (engine-filled)',
+      },
+      { name: 'partlyReadReasons', type: 'string[]', description: 'Why, by position' },
+      {
+        name: 'partialAt',
+        type: 'number[]',
+        description: 'Positions of partlyRead not yet reported',
+      },
+      {
+        name: 'triagePartial',
+        type: 'string[]',
+        description: 'Files of the triage batch the engine could not give whole (engine-filled)',
+      },
+      { name: 'triagePartialReasons', type: 'string[]', description: 'Why, by position' },
       {
         name: 'hypothesisStatus',
         type: 'string[]',
@@ -639,6 +656,8 @@ export const investigate: Pattern = {
       reads: ['hypotheses', 'hypothesisStatus', 'question', 'hint', 'subQuestions', 'batch'],
       // The engine reads the batch whole: one turn per part instead of a tool call per page.
       preload: 'batch',
+      // The engine says which files it could not show whole: those are not dismissed unseen.
+      preloadReport: { paths: 'triagePartial', reasons: 'triagePartialReasons' },
       fanOut: { over: 'batch', per: 'batchSize', agents: 'agents' },
       writes: ['triaged', 'batchRelevant', 'newFindings'],
       cites: 'newFindings',
@@ -662,7 +681,11 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Record triage',
       assign: [
-        { field: 'relevantFiles', expr: 'relevantFiles + batchRelevant' },
+        {
+          field: 'relevantFiles',
+          // A file triage saw only part of goes to the deep read, whatever triage said.
+          expr: 'relevantFiles + batchRelevant + without(pick(triagePartial, positions(triagePartialReasons, "^(lines|longer)")), batchRelevant)',
+        },
         ...MERGE_FINDINGS,
         STATUS,
       ],
@@ -699,6 +722,8 @@ export const investigate: Pattern = {
         AGAINST,
       // The engine reads the workspace files of the batch whole: one turn, nothing skipped.
       preload: 'deepBatch',
+      // "Read completely" is held to what the engine gave, not to what the AI says it read.
+      preloadReport: { paths: 'partlyRead', reasons: 'partlyReadReasons' },
       reads: ['hypotheses', 'hypothesisStatus', 'question', 'hint', 'subQuestions', 'deepBatch'],
       fanOut: { over: 'deepBatch', per: 'deepBatchSize', agents: 'agents' },
       writes: ['examined', 'newFindings', 'unreadable', 'unreadableReasons'],
@@ -739,6 +764,8 @@ export const investigate: Pattern = {
         { field: 'notReadReasons', expr: 'pick(notReadReasons, noRetryAt)' },
         { field: 'notRead', expr: 'pick(notRead, noRetryAt)' },
         { field: 'unreadRetries', expr: 'unreadRetries + 1' },
+        // One item per call: a file cut for the call's size gets the whole budget to itself.
+        { field: 'deepBatchSize', expr: '1' },
       ],
     },
     checkFindings('checkDeep', 'newFindings', false),
@@ -749,8 +776,14 @@ export const investigate: Pattern = {
       assign: [
         ...MERGE_FINDINGS,
         STATUS,
-        { field: 'notRead', expr: 'notRead + unreadable' },
-        { field: 'notReadReasons', expr: 'notReadReasons + unreadableReasons' },
+        // Files the engine could not give whole are not read completely, whatever the AI says:
+        // they are reported (and retried once, alone, at the end) like the unreadable ones.
+        { field: 'partialAt', expr: 'outside(partlyRead, notRead + unreadable)' },
+        { field: 'notRead', expr: 'notRead + unreadable + pick(partlyRead, partialAt)' },
+        {
+          field: 'notReadReasons',
+          expr: 'notReadReasons + unreadableReasons + pick(partlyReadReasons, partialAt)',
+        },
         { field: 'unreadable', expr: '[]' },
         { field: 'unreadableReasons', expr: '[]' },
       ],

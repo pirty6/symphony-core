@@ -47,9 +47,15 @@ export function repertoireFrom(runs: readonly { run: SavedRun; file: string }[])
       if (s.kind !== 'agent' || !s.verdict || !s.transcript) continue;
       const key = keyOf(run.score.id, s.moveKey, s.transcript.provider, settingsOf(s.transcript));
       if (index.has(key)) continue;
+      // Only what the AI wrote: what the engine filled (preloadReport) it fills again.
+      const node = run.score.nodes.find((n) => n.id === s.nodeId);
+      const writes = node?.kind === 'agent' ? node.writes : undefined;
+      const updates = Object.fromEntries(
+        Object.entries(s.updates ?? {}).filter(([k]) => !writes || writes.includes(k)),
+      );
       index.set(key, {
         result: {
-          updates: s.updates ?? {},
+          updates,
           verdict: s.verdict,
           ...(s.next ? { next: s.next } : {}),
         },

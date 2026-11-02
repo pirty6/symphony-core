@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
-import { runScripted } from '../core/scripted.js';
-import type { DemoScript } from '../core/types.js';
+import { advance, createEngine, toPerformance } from '../core/engine.js';
+import { replayPerformance } from '../core/replay.js';
+import { runScripted, scriptedResolution } from '../core/scripted.js';
+import type { DemoScript, PreloadRecord, Resolution } from '../core/types.js';
 import { investigate } from './index.js';
 
 const demo = investigate.demo!;
@@ -604,5 +606,84 @@ describe('investigate answers every sub-question', () => {
         expect.stringMatching(new RegExp(`^S${i + 1}: `)),
       ),
     );
+  });
+});
+
+describe('investigate holds "read completely" to what the engine gave', () => {
+  /** The demo, with the runtime's preload record on each deep read: what it could not give whole. */
+  function withManifest(manifest: (batch: readonly string[], visit: number) => PreloadRecord[]) {
+    const score = compileScore(investigate, {
+      goal: 'g',
+      context: demo.context!,
+      generatedAt: 't',
+    });
+    let r = createEngine(score, { startedAt: 't' });
+    const deepBatches: string[][] = [];
+    for (let i = 0; i < 2000 && r.state.kind === 'running' && r.state.pause; i++) {
+      const pause = r.state.pause;
+      let res: Resolution = scriptedResolution(demo, pause, r.state, 't');
+      if (pause.kind === 'agent' && pause.nodeId === 'deepRead' && res.kind === 'agent') {
+        const batch = (
+          pause.parts?.flatMap((p) => p.deepBatch as string[]) ??
+          (pause.input.deepBatch as string[])
+        ).filter((x) => !x.startsWith('http'));
+        deepBatches.push(batch);
+        res = {
+          ...res,
+          transcript: { ...res.transcript!, preloaded: manifest(batch, deepBatches.length - 1) },
+        };
+      }
+      r = advance(score, r.state, res);
+    }
+    return { score, r, deepBatches };
+  }
+
+  it('a file cut for the call budget is reported, then read again on its own; one too long for any prompt is reported', () => {
+    const { score, r, deepBatches } = withManifest((batch, visit) =>
+      batch.flatMap((path): PreloadRecord[] =>
+        path.endsWith('engine.ts')
+          ? [{ path, lines: 9000, omitted: [4001, 9000], cut: 'file' }]
+          : path.endsWith('validate.ts') && visit === 0
+            ? [{ path, lines: 900, omitted: [301, 900], cut: 'call' }]
+            : [{ path, lines: 100 }],
+      ),
+    );
+    expect(r.state.kind).toBe('done');
+    const s = r.state.state;
+    // The AI said it examined everything; the engine's record decides.
+    expect(s.notRead).toContain('src/core/engine.ts');
+    expect(s.notRead).not.toContain('src/core/validate.ts');
+    const at = (s.notRead as string[]).indexOf('src/core/engine.ts');
+    expect((s.notReadReasons as string[])[at]).toMatch(
+      /^longer than one prompt can hold: lines 4001-9000/,
+    );
+    // The retry read validate.ts alone (one item per call), and not engine.ts again.
+    expect(deepBatches.at(-1)).toEqual(['src/core/validate.ts']);
+    expect(String(s.answer)).toMatch(/Could not read in full: .*src\/core\/engine\.ts/);
+    expect(replayPerformance(score, toPerformance(r.state)).divergence.reproduced).toBe(true);
+  });
+
+  it('a file triage saw only part of goes to the deep read whatever triage said', () => {
+    const score = compileScore(investigate, {
+      goal: 'g',
+      context: demo.context!,
+      generatedAt: 't',
+    });
+    let r = createEngine(score, { startedAt: 't' });
+    for (let i = 0; i < 2000 && r.state.kind === 'running' && r.state.pause; i++) {
+      const pause = r.state.pause;
+      let res: Resolution = scriptedResolution(demo, pause, r.state, 't');
+      if (pause.kind === 'agent' && pause.nodeId === 'triage' && res.kind === 'agent')
+        res = {
+          ...res,
+          transcript: {
+            ...res.transcript!,
+            preloaded: [{ path: 'src/cli.ts', lines: 5000, omitted: [3001, 5000], cut: 'file' }],
+          },
+        };
+      r = advance(score, r.state, res);
+    }
+    // The demo's triage calls cli.ts irrelevant; it was not shown whole, so it is read in depth.
+    expect(r.state.state.relevantFiles).toContain('src/cli.ts');
   });
 });

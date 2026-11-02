@@ -55,7 +55,8 @@ type FnName =
   | 'count'
   | 'positions'
   | 'stances'
-  | 'heads';
+  | 'heads'
+  | 'outside';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -87,6 +88,7 @@ const FNS: Record<FnName, number> = {
   positions: 2,
   stances: 2,
   heads: 2,
+  outside: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -487,6 +489,14 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
         case 'refs': {
           const text = typeof x === 'string' ? x : strings('refs', x).join('\n');
           return [...new Set(text.match(ANY_ID) ?? [])];
+        }
+        case 'outside': {
+          // outside(partlyRead, notRead): 1-based positions of the entries not in the other
+          // list, for pick() on a list that runs alongside (reasons).
+          const y = args[1];
+          if (!Array.isArray(x) || !Array.isArray(y))
+            throw new ExprError('outside() needs two lists');
+          return x.flatMap((v, i) => (y.some((w) => deepEqual(v, w)) ? [] : [i + 1]));
         }
         case 'without': {
           const y = args[1];

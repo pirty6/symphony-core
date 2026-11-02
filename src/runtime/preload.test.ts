@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import type { AgentPause, Pattern } from '../core/types.js';
+import { replayPerformance } from '../core/replay.js';
 import { validatePattern } from '../core/validate.js';
 import { defaultTools } from './builtin-tools.js';
 import { Run } from './driver.js';
@@ -177,6 +178,72 @@ describe('a step with preload', () => {
     const bad: Pattern = { ...reader, nodes };
     expect(validatePattern(bad).errors.map((e) => e.message)).toContain(
       "preload 'files' must be a string[] field it reads",
+    );
+  });
+});
+
+describe('preloadReport: the engine, not the AI, says what was not given whole', () => {
+  const quarter = `${'y'.repeat(99)}\n`.repeat(1000);
+  for (const n of [1, 2, 3, 4]) writeFileSync(join(ws, `q${n}.txt`), quarter);
+  const reporter: Pattern = {
+    ...reader,
+    state: [
+      ...reader.state,
+      { name: 'partly', type: 'string[]' },
+      { name: 'partlyWhy', type: 'string[]' },
+    ],
+    nodes: reader.nodes.map((n) =>
+      n.id === 'read'
+        ? Object.assign({}, n, { preloadReport: { paths: 'partly', reasons: 'partlyWhy' } })
+        : n,
+    ),
+  };
+  const provider: Provider = {
+    name: 'reader',
+    runAgent: async () => ({
+      result: {
+        // The AI claims it read everything.
+        updates: { notes: ['read it all'] },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+      },
+      transcript: { provider: 'reader', prompt: '', output: '', toolCalls: [] },
+    }),
+    draft: () => Promise.reject(new Error('n/a')),
+  };
+
+  it('fills the files cut by size or the call budget, and those it could not read; replay agrees', async () => {
+    const score = compileScore(reporter, {
+      goal: 'g',
+      context: { files: ['src/a.ts', 'big.txt', 'q1.txt', 'q2.txt', 'q3.txt', 'nope.ts'] },
+    });
+    const perf = await new Run({
+      score,
+      provider,
+      tools: defaultTools({ probeGitHub: false, mcp: { includeUser: false } }),
+      toolContext: { workspace: ws, repoRoot: ws },
+    }).start();
+    expect(perf.outcome).toBe('success');
+    const s = perf.finalState;
+    expect(s.partly).toEqual(['big.txt', 'q3.txt', 'nope.ts']);
+    expect(s.partlyWhy).toEqual([
+      expect.stringMatching(
+        /^longer than one prompt can hold: lines \d+-2001 were not given whole/,
+      ),
+      expect.stringMatching(/^lines \d+-1001 left out of the prompt for the call's size/),
+      'the engine could not read it (not found in the workspace)',
+    ]);
+    expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
+  });
+
+  it('is validated: string[] fields the AI may not write, on a step that preloads', () => {
+    const bad: Pattern = {
+      ...reporter,
+      nodes: reporter.nodes.map((n) =>
+        n.id === 'read' ? Object.assign({}, n, { writes: ['notes', 'partly'] }) : n,
+      ),
+    };
+    expect(validatePattern(bad).errors.map((e) => e.message)).toContain(
+      "preloadReport 'partly' is filled by the engine: the AI may not write it",
     );
   });
 });

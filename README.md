@@ -167,7 +167,7 @@ Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the V
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
 state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + - *`,
-`len empty includes lower append if chars subset take drop first unique without pick join withIds brief unmatched count positions heads stances text`, and
+`len empty includes lower append if chars subset take drop first unique without pick join withIds brief unmatched count positions heads outside stances text`, and
 `verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
@@ -655,7 +655,11 @@ solved rate or citation validity.
   triage and deep read, review's per-file review) gets each workspace file whole, with line numbers, in its
   prompt, instead of paging through it with tool calls. It reads everything in one turn and
   cannot skip part of a file (a file over 120k characters says which lines were left out); it
-  still follows references and history with tools, and still lists every item it read. On the
+  still follows references and history with tools, and still lists every item it read. With
+  `preloadReport`, the engine, not the AI, records which files it could not give whole (too long
+  for one prompt, cut for the call's 360k-character budget, unreadable): investigate's deep read
+  reports those as not read in full and reads the budget-cut ones again on their own, and its
+  triage sends a file it saw only part of to the deep read. On the
   largest recorded run the deep read made about 48 model calls per part (1,531 in all) and used
   142M input tokens, while the whole text of the 113 files it read is about 357k tokens.
 - **Lean findings.** investigate's assess, gap chaser, part answers and debaters read

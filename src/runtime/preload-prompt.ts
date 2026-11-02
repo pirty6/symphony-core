@@ -7,6 +7,8 @@ export interface PreloadedFile {
   readonly lines: number;
   /** Lines left out for size (read them with tools), if any: [from, to]. */
   readonly omitted?: readonly [number, number];
+  /** What cut it: longer than one file may fill ('file'), or the call's budget ran out ('call'). */
+  readonly cut?: 'file' | 'call';
   /** Why the file is not shown (the AI reads it with tools instead). */
   readonly error?: string;
 }
