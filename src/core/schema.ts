@@ -30,15 +30,17 @@ export function zeroValue(type: FieldType): unknown {
   }
 }
 
-/** checkValue, and a number field's declared minimum. */
+/** checkValue, and a number field's declared range. */
 export function checkFieldValue(
-  field: { readonly type: FieldType; readonly min?: number },
+  field: { readonly type: FieldType; readonly min?: number; readonly max?: number },
   value: unknown,
 ): string | undefined {
   const err = checkValue(field.type, value);
   if (err) return err;
   if (field.min !== undefined && typeof value === 'number' && value < field.min)
     return `must be at least ${field.min}, got ${value}`;
+  if (field.max !== undefined && typeof value === 'number' && value > field.max)
+    return `must be at most ${field.max}, got ${value}`;
   return undefined;
 }
 

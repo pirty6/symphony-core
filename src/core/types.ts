@@ -48,6 +48,8 @@ export interface StateField {
    * declares it, so such a run is refused at compile instead of stuck at the step.
    */
   readonly min?: number;
+  /** number fields: the most it may be given (agentsCap: more than 6 at once does nothing). */
+  readonly max?: number;
 }
 
 // ── Nodes ──────────────────────────────────────────────────────────
