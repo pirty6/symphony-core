@@ -217,13 +217,24 @@ describe('eval harness', () => {
       },
       rateLimits: { provider: 4, reads: 1 },
       recordSize: { run: 10_000, readNotes: 1500, preloaded: 500 },
+      evidence: { findings: 12, subQuestions: 4, open: 1 },
     };
     const text = formatReport({ ...report, results: [r] });
     expect(text).toMatch(
       /rejection reasons: 2× investigate assess: Give exactly one assessment entry; 1× investigate deepRead/,
     );
     expect(text).toMatch(/rate limits: 4 model calls · 1 items unreadable/);
+    expect(text).toMatch(/evidence: 12 findings · sub-questions answered 3\/4/);
     expect(text).toMatch(/read record: 2\.0k of 10\.0k saved characters \(20%\)/);
+  });
+
+  it('names what each side of an A/B was played with', async () => {
+    const report = await evaluate(true, 1);
+    const tried = { ...report, settings: ['deepBatchSize=8', 'SYMPHONY_DELTA_REPAIR=1'] };
+    expect(formatReport(tried, report).split('\n')[0]).toBe(
+      'with deepBatchSize=8 SYMPHONY_DELTA_REPAIR=1 (baseline: defaults)',
+    );
+    expect(formatReport(report)).not.toMatch(/^with /);
   });
 
   it('a run that errors after playing still reports the tokens it spent', async () => {
