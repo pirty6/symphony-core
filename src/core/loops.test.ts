@@ -103,11 +103,13 @@ describe('every loop is bounded (a warning when not)', () => {
     const flipped: Pattern = {
       ...p,
       nodes: p.nodes.map((n) =>
-        n.id === 'gate' ? { ...n, expression: 'maxN <= n' } : n,
-      ) as Pattern['nodes'],
+        n.id === 'gate' ? Object.assign({}, n, { expression: 'maxN <= n' }) : n,
+      ),
       edges: p.edges.map((x) =>
-        x.from === 'gate' ? { ...x, branch: x.branch === 'then' ? 'else' : 'then' } : x,
-      ) as Pattern['edges'],
+        x.from === 'gate'
+          ? Object.assign({}, x, { branch: x.branch === 'then' ? 'else' : 'then' })
+          : x,
+      ),
     };
     expect(unboundedLoops(flipped)).toEqual([['top', 'gate', 'loop']]);
   });

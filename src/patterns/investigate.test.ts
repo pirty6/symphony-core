@@ -3,7 +3,13 @@ import { compileScore } from '../core/compile.js';
 import { advance, createEngine, toPerformance } from '../core/engine.js';
 import { replayPerformance } from '../core/replay.js';
 import { runScripted, scriptedResolution } from '../core/scripted.js';
-import type { DemoResponder, DemoScript, PreloadRecord, Resolution } from '../core/types.js';
+import type {
+  DemoResponder,
+  DemoScript,
+  EngineEvent,
+  PreloadRecord,
+  Resolution,
+} from '../core/types.js';
 import { buildAgentPrompt } from '../runtime/provider.js';
 import { itemOf } from '../core/items.js';
 import { investigate } from './index.js';
@@ -293,6 +299,12 @@ describe('items that cannot be read', () => {
   });
 });
 
+/** The assess answers the engine sent back. */
+const assessRejections = (r: { state: { events: readonly EngineEvent[] } }) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'assess' ? [JSON.stringify(e)] : [],
+  );
+
 describe('the gap check: one structured entry per sub-question', () => {
   const v = { outcome: 'applied' as const, confidence: 0.9, shouldTerminate: false, reason: 'r' };
   const assessing = (assess: DemoResponder) =>
@@ -300,11 +312,6 @@ describe('the gap check: one structured entry per sub-question', () => {
       ...demo,
       agents: { ...demo.agents, assess },
     });
-  const rejections = (r: ReturnType<typeof assessing>) =>
-    r.state.events.flatMap((e) =>
-      e.type === 'response-rejected' && e.nodeId === 'assess' ? [JSON.stringify(e)] : [],
-    );
-
   it('the engine derives the gaps from the GAP entries, not from a list the AI writes', () => {
     let seen = 0;
     const r = assessing((s, visit) => {
@@ -377,7 +384,7 @@ describe('the gap check: one structured entry per sub-question', () => {
         verdict: v,
       }));
       expect(r.state.outcome).toBe('partial');
-      expect(rejections(r).length).toBeGreaterThan(0);
+      expect(assessRejections(r).length).toBeGreaterThan(0);
     }
   });
 });
