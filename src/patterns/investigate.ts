@@ -22,7 +22,8 @@ const challenge = challengePhase({
   evidence: 'findingsBrief',
   draft: 'answer',
   gaps: 'gaps',
-  reopen: 'chase',
+  // Through the gap check, so the run-wide research budget holds for objections too.
+  reopen: 'moreGaps',
   done: 'attachParts',
   research: ['subQuestions', 'sourceInfo', 'useSources', 'hint'],
   // The skeptic sees what was asked, what could not be read and what did not check out.
@@ -329,6 +330,21 @@ export const investigate: Pattern = {
       { name: 'gaps', type: 'string[]', description: 'Sub-questions without enough evidence' },
       { name: 'gapRounds', type: 'number' },
       { name: 'maxGapRounds', type: 'number', initial: 2 },
+      { name: 'chaseRounds', type: 'number', description: 'Gap research rounds in the whole run' },
+      {
+        name: 'maxChaseRounds',
+        type: 'number',
+        // gapRounds starts again after a hint and on each debate round; this one never does.
+        initial: 8,
+        description: 'Gap research rounds for the whole run, across hints and debate rounds',
+      },
+      {
+        name: 'gapsPerChase',
+        type: 'number',
+        initial: 99,
+        description:
+          'Gaps per gap-research call: 99 researches them all in one call; 1 gives each gap its own sub-agent (faster, more tokens)',
+      },
       { name: 'confidence', type: 'number', description: '0..1 that findings answer the question' },
       { name: 'answer', type: 'string', description: 'Final answer citing evidence' },
       { name: 'openQuestions', type: 'string[]', description: 'Sub-questions still unanswered' },
@@ -982,7 +998,7 @@ export const investigate: Pattern = {
       id: 'moreGaps',
       kind: 'condition',
       label: 'Chase gaps?',
-      expression: 'len(gaps) > 0 && gapRounds < maxGapRounds',
+      expression: 'len(gaps) > 0 && gapRounds < maxGapRounds && chaseRounds < maxChaseRounds',
     },
     {
       id: 'chase',
@@ -990,6 +1006,8 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Close gaps',
       capabilities: ['web', 'mcp'],
+      // gapsPerChase 1: one sub-agent per gap, each with the whole brief (for an A/B).
+      fanOut: { over: 'gaps', per: 'gapsPerChase', agents: 'agents', warm: true },
       directive:
         'Close every gap in `gaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
@@ -1023,7 +1041,12 @@ export const investigate: Pattern = {
       id: 'mergeChase',
       kind: 'compute',
       label: 'Record gap research',
-      assign: [...MERGE_FINDINGS, STATUS, { field: 'gapRounds', expr: 'gapRounds + 1' }],
+      assign: [
+        ...MERGE_FINDINGS,
+        STATUS,
+        { field: 'gapRounds', expr: 'gapRounds + 1' },
+        { field: 'chaseRounds', expr: 'chaseRounds + 1' },
+      ],
     },
     {
       id: 'confident',
@@ -1328,6 +1351,7 @@ export const investigate: Pattern = {
     { id: 'multiPart-answerParts', from: 'multiPart', to: 'answerParts', branch: 'then' },
     { id: 'multiPart-answer', from: 'multiPart', to: 'answer', branch: 'else' },
     { id: 'answerParts-answer', from: 'answerParts', to: 'answer' },
+    // A hint you gave always gets its round of research (counted in chaseRounds).
     { id: 'useHint-chase', from: 'useHint', to: 'chase' },
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },

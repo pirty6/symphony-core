@@ -407,6 +407,52 @@ describe('investigate always ends: research rounds are bounded', () => {
       demo,
     );
     expect(normal.state.state.unresolvedObjections).toEqual([]);
+    // One budget for the whole run, whatever resets the per-round one.
+    expect(chases).toBe(s.chaseRounds);
+    expect(chases).toBeLessThanOrEqual(s.maxChaseRounds as number);
+    const capped = runScripted(
+      compileScore(investigate, {
+        goal: 'g',
+        context: { ...demo.context!, complexity: 2, maxChaseRounds: 3 },
+      }),
+      script,
+    );
+    expect(capped.state.kind).toBe('done');
+    expect(capped.state.steps.filter((x) => x.nodeId === 'chase')).toHaveLength(3);
+    expect(capped.state.state.chaseRounds).toBe(3);
+    // Out of research, the objections still reach the answer, which must resolve each one.
+    const lastAnswer = capped.state.steps.findLast((x) => x.nodeId === 'answer')!;
+    expect(lastAnswer.input?.realObjections).not.toEqual([]);
+  });
+
+  it('gapsPerChase 1 gives each gap its own sub-agent', () => {
+    const v = { outcome: 'applied' as const, confidence: 0.6, shouldTerminate: false, reason: 'r' };
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        assess: (s, visit) => ({
+          updates: {
+            gaps: visit === 0 ? ((s.subQuestions as string[]) ?? []) : [],
+            confidence: 0.9,
+          },
+          verdict: v,
+        }),
+      },
+    };
+    const r = runScripted(
+      compileScore(investigate, { goal: 'g', context: { ...demo.context!, gapsPerChase: 1 } }),
+      script,
+    );
+    expect(r.state.outcome).toBe('success');
+    const pause = r.state.events.flatMap((e) =>
+      e.type === 'paused' && e.pause.kind === 'agent' && e.pause.nodeId === 'chase'
+        ? [e.pause]
+        : [],
+    )[0]!;
+    const gaps = r.state.state.subQuestions as string[];
+    expect(gaps.length).toBeGreaterThan(1);
+    expect(pause.parts?.map((p) => p.gaps)).toEqual(gaps.map((g) => [g]));
   });
 });
 

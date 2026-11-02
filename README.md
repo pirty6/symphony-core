@@ -361,7 +361,9 @@ the listing adapts to the question: "is this on the internet?", "does this work 
 6. **Search sources** (loop): each remaining source (git, GitHub, dependencies, MCP…) searched as
    fits; every query is recorded.
 7. **Close gaps** (loop): unanswered sub-questions get targeted research (up to `maxGapRounds`),
-   then a human hint if confidence stays low.
+   then a human hint if confidence stays low. Every research round, including those for a hint
+   and for objections, counts toward one run-wide budget (`maxChaseRounds`, 8).
+   `gapsPerChase: 1` gives each gap its own sub-agent (faster, more tokens: an A/B option).
 8. **Answer**: cites evidence and ends with a coverage report: files triaged and excluded, pages
    read, experiments run, sources searched and skipped, what is still unknown. It must give a
    ruling (CONFIRMED, REFUTED or UNKNOWN, with evidence) on every hypothesis.
