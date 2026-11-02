@@ -63,6 +63,8 @@ const FILE_CITE = '[A-Za-z0-9_@.-]+[.][A-Za-z0-9]+:[0-9]';
 const COVERAGE = [
   '"## Coverage\n\n- Files not triaged: "',
   listed('excludedFiles', 'none'),
+  '"\n- Not located, so not triaged: "',
+  listed('unlocatedFiles', 'none'),
   '"\n- Pages read: "',
   listed('pages', 'none'),
   '"\n- Experiments run: "',
@@ -285,6 +287,11 @@ export const investigate: Pattern = {
       { name: 'skipSources', type: 'string[]', description: 'Sources not used' },
       { name: 'skipReasons', type: 'string[]', description: 'Why each skipped source was skipped' },
       { name: 'repoFiles', type: 'string[]', description: 'Every file in the workspace' },
+      {
+        name: 'unlocatedFiles',
+        type: 'string[]',
+        description: "A big repository's files Locate did not find: not triaged, each one listed",
+      },
       {
         name: 'rankedFiles',
         type: 'string[]',
@@ -822,9 +829,11 @@ export const investigate: Pattern = {
       assign: [
         // What Locate found, plus the engine's candidates: a union, so neither can hide a file.
         { field: 'pendingFiles', expr: 'unique(scopeFiles + candidateFiles)' },
+        // Every file not triaged is named, not summed up: the coverage lists them all.
+        { field: 'unlocatedFiles', expr: 'without(repoFiles, pendingFiles)' },
         {
           field: 'excludedFiles',
-          expr: 'append(excludedFiles, "files the search did not locate were not triaged (the repository has more than maxTriageFiles files; set exhaustive to triage every file)")',
+          expr: 'append(excludedFiles, text(len(unlocatedFiles)) + " files the search did not locate were not triaged (more than maxTriageFiles files; set exhaustive to triage every file): see unlocatedFiles")',
         },
       ],
     },

@@ -95,8 +95,20 @@ describe('investigate adapts its evidence to the question', () => {
     expect(ran).toContain('locate');
     expect(r.state.state.repoFileCount).toBe(403);
     expect(triaged(r).toSorted()).toEqual([...(r.state.state.scopeFiles as string[])].toSorted());
-    expect(r.state.state.excludedFiles).toEqual(
-      expect.arrayContaining([expect.stringMatching(/did not locate were not triaged/)]),
+    // Every file not triaged is named: 403 minus the located ones, each listed in the coverage.
+    const s = r.state.state;
+    const unlocated = s.unlocatedFiles as string[];
+    expect(unlocated.length + triaged(r).length).toBe(403);
+    expect(unlocated.toSorted()).toEqual(
+      (s.repoFiles as string[]).filter((f) => !triaged(r).includes(f)).toSorted(),
+    );
+    expect(s.excludedFiles).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^\d+ files the search did not locate were not triaged/),
+      ]),
+    );
+    expect(String(s.answer)).toMatch(
+      /- Not located, so not triaged: src\/gen\/file\d+\.ts; .* … \(all in unlocatedFiles\)/,
     );
     // Asked for every file: no search, all 403 triaged.
     const all = runWith(['workspace'], demo.approvals, {
