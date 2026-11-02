@@ -33,7 +33,7 @@ Requires **Node.js 20.19+ or 22.12+** (npm ships with Node). No pnpm, no build s
 git clone https://github.com/pirty6/symphony-core.git
 cd symphony-core
 npm install
-npm start            # opens the studio at http://localhost:5173
+npm start            # opens the studio home page at http://localhost:5173
 ```
 
 Type a request in **🎼 Ask the maestro** and press **Compose & perform**, or pick **hangman** in
