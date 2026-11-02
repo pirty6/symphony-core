@@ -56,7 +56,8 @@ type FnName =
   | 'positions'
   | 'stances'
   | 'heads'
-  | 'outside';
+  | 'outside'
+  | 'seq';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -89,6 +90,7 @@ const FNS: Record<FnName, number> = {
   stances: 2,
   heads: 2,
   outside: 2,
+  seq: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -358,6 +360,14 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           if (!Array.isArray(x) || !Array.isArray(y))
             throw new ExprError('subset() needs two lists');
           return x.every((v) => y.some((w) => deepEqual(v, w)));
+        }
+        case 'seq': {
+          // seq("S", 3): ["S1", "S2", "S3"], the tags a list of n entries should start with.
+          const n = args[1];
+          if (typeof x !== 'string') throw new ExprError('seq() needs a prefix string');
+          if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 10_000)
+            throw new ExprError('seq() needs a whole count from 0 to 10000');
+          return Array.from({ length: n }, (_, i) => `${x}${i + 1}`);
         }
         case 'take':
         case 'drop': {

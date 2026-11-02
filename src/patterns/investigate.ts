@@ -96,6 +96,28 @@ const STATUS = [
   { field: 'leadStatus', expr: 'if(readerHypotheses, hypothesisStatus, [])' },
 ];
 
+/**
+ * An assess answer in the fixed structure, from the gaps it should leave: each sub-question
+ * listed is a GAP, the rest ANSWERED citing the first finding; open objections listed stay open.
+ * For the demo and tests.
+ */
+export function assessFor(
+  s: Readonly<Record<string, unknown>>,
+  gaps: readonly string[],
+): { assessment: string[]; objectionGaps: string[] } {
+  const subs = (s.subQuestions as string[] | undefined) ?? [];
+  const cite = /^(F[0-9]+)\s/.exec(((s.findings as string[] | undefined) ?? [])[0] ?? '')?.[1];
+  const open = (s.openObjections as string[] | undefined) ?? [];
+  return {
+    assessment: subs.map((q, i) =>
+      gaps.includes(q) || !cite
+        ? `S${i + 1}: GAP — no cited evidence yet for ${q}`
+        : `S${i + 1}: ANSWERED [${cite}]`,
+    ),
+    objectionGaps: open.filter((o) => gaps.includes(o)),
+  };
+}
+
 const AGAINST =
   ' Look for evidence for AND against every entry of `leadHypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]". `leadStatus` counts those tags so far: look hardest at the hypotheses it marks untested or challenged. If `leadHypotheses` is empty, gather evidence on the question and sub-questions alone and do not tag findings.';
 
@@ -520,6 +542,18 @@ export const investigate: Pattern = {
       ...EVIDENCE_STATE,
       ...MEMORY_STATE,
       { name: 'gaps', type: 'string[]', description: 'Sub-questions without enough evidence' },
+      {
+        name: 'assessment',
+        type: 'string[]',
+        description:
+          'One per sub-question, in order: "S<n>: ANSWERED [F…]" or "S<n>: GAP — what is missing"',
+      },
+      {
+        name: 'objectionGaps',
+        type: 'string[]',
+        description: 'Open objections the findings do not yet settle',
+      },
+      { name: 'gapNotes', type: 'string[]', description: 'The GAP entries of the assessment' },
       { name: 'gapRounds', type: 'number' },
       { name: 'maxGapRounds', type: 'number', initial: 2 },
       { name: 'chaseRounds', type: 'number', description: 'Gap research rounds in the whole run' },
@@ -634,6 +668,7 @@ export const investigate: Pattern = {
       description: 'Targeted research, then a human hint',
       nodes: [
         'assess',
+        'recordGaps',
         'moreGaps',
         'chase',
         'checkChase',
@@ -1244,7 +1279,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Find gaps',
       directive:
-        'For EACH sub-question, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. Copy every sub-question that is not fully answered into `gaps` exactly as written. Do the same for every entry of `openObjections` (objections to the last answer, sent back to research) that the findings do not yet settle. A hypothesis that `hypothesisStatus` marks untested is a gap only if a sub-question needs it settled. Set `confidence` (0..1) that the findings fully answer `question`.',
+        'For EACH sub-question, in order, decide whether `findingsBrief` (the findings, quotes left out) answer it with concrete, cited evidence. In `assessment`, give one entry per sub-question, in order: "S<n>: ANSWERED [F…]" citing the findings that answer it, or "S<n>: GAP — what is missing" (the evidence still needed, and where it might be: name files, functions or terms). In `objectionGaps`, copy exactly every entry of `openObjections` (objections to the last answer, sent back to research) that the findings do not yet settle. A hypothesis that `hypothesisStatus` marks untested is a gap only if a sub-question needs it settled. Set `confidence` (0..1) that the findings fully answer `question`: it is reported; the gaps, not the confidence, decide whether research goes on.',
       reads: [
         'question',
         'hint',
@@ -1255,12 +1290,39 @@ export const investigate: Pattern = {
         'skipSources',
         'skipReasons',
       ],
-      writes: ['gaps', 'confidence'],
+      writes: ['assessment', 'objectionGaps', 'confidence'],
       retries: 2,
       checks: [
         {
-          expr: 'subset(gaps, subQuestions + openObjections)',
-          message: 'gaps must be copied exactly from subQuestions or openObjections.',
+          expr: `${TAGS('assessment')} == seq("S", len(subQuestions))`,
+          message:
+            'Give exactly one assessment entry per sub-question, in order, starting "S1: ", "S2: " and so on.',
+        },
+        {
+          expr: 'len(unmatched(assessment, "^S[0-9]+: (ANSWERED .*[[]F[0-9]+|GAP .*[A-Za-z])")) == 0',
+          message:
+            'Write each assessment entry as "S<n>: ANSWERED [F…]" citing findings, or "S<n>: GAP — what is missing".',
+        },
+        {
+          expr: 'subset(refs(assessment), ids(findings))',
+          message: 'assessment may cite only ids that exist in findings.',
+        },
+        {
+          expr: 'subset(objectionGaps, openObjections)',
+          message: 'objectionGaps must be copied exactly from openObjections.',
+        },
+      ],
+    },
+    {
+      id: 'recordGaps',
+      kind: 'compute',
+      label: 'Record gaps',
+      // The gaps follow from the assessment, entry by entry: the engine derives them.
+      assign: [
+        { field: 'gapNotes', expr: 'pick(assessment, positions(assessment, "^S[0-9]+: GAP"))' },
+        {
+          field: 'gaps',
+          expr: 'pick(subQuestions, positions(assessment, "^S[0-9]+: GAP")) + objectionGaps',
         },
       ],
     },
@@ -1717,7 +1779,8 @@ export const investigate: Pattern = {
     { id: 'sweep-checkSource', from: 'sweep', to: 'checkSource' },
     { id: 'checkSource-mergeSource', from: 'checkSource', to: 'mergeSource' },
     { id: 'mergeSource-sourcesLeft', from: 'mergeSource', to: 'sourcesLeft', label: 'next source' },
-    { id: 'assess-moreGaps', from: 'assess', to: 'moreGaps' },
+    { id: 'assess-recordGaps', from: 'assess', to: 'recordGaps' },
+    { id: 'recordGaps-moreGaps', from: 'recordGaps', to: 'moreGaps' },
     { id: 'moreGaps-chase', from: 'moreGaps', to: 'chase', branch: 'then' },
     { id: 'moreGaps-confident', from: 'moreGaps', to: 'confident', branch: 'else' },
     { id: 'chase-checkChase', from: 'chase', to: 'checkChase' },
@@ -1919,12 +1982,12 @@ export const investigate: Pattern = {
         visit === 0
           ? {
               updates: {
-                gaps: [((s.subQuestions as string[]) ?? [])[1] ?? ''].filter(Boolean),
+                ...assessFor(s, [((s.subQuestions as string[]) ?? [])[1] ?? ''].filter(Boolean)),
                 confidence: 0.6,
               },
               verdict: v('one gap', 0.6),
             }
-          : { updates: { gaps: [], confidence: 0.9 }, verdict: v('covered') },
+          : { updates: { ...assessFor(s, []), confidence: 0.9 }, verdict: v('covered') },
       chase: (s) => ({
         updates: {
           queries: ['git log -S validateNodeResult'],

@@ -7,6 +7,7 @@ import type { DemoResponder, DemoScript, PreloadRecord, Resolution } from '../co
 import { buildAgentPrompt } from '../runtime/provider.js';
 import { itemOf } from '../core/items.js';
 import { investigate } from './index.js';
+import { assessFor } from './investigate.js';
 
 const demo = investigate.demo!;
 
@@ -292,6 +293,63 @@ describe('items that cannot be read', () => {
   });
 });
 
+describe('the gap check: one structured entry per sub-question', () => {
+  const v = { outcome: 'applied' as const, confidence: 0.9, shouldTerminate: false, reason: 'r' };
+  const assessing = (assess: DemoResponder) =>
+    runScripted(compileScore(investigate, { context: demo.context! }), {
+      ...demo,
+      agents: { ...demo.agents, assess },
+    });
+  const rejections = (r: ReturnType<typeof assessing>) =>
+    r.state.events.flatMap((e) =>
+      e.type === 'response-rejected' && e.nodeId === 'assess' ? [JSON.stringify(e)] : [],
+    );
+
+  it('the engine derives the gaps from the GAP entries, not from a list the AI writes', () => {
+    let seen = 0;
+    const r = assessing((s, visit) => {
+      seen += 1;
+      const subs = s.subQuestions as string[];
+      return visit === 0
+        ? {
+            updates: {
+              assessment: subs.map((_, i) =>
+                i === 1 ? 'S2: GAP — no test of the rejection path' : `S${i + 1}: ANSWERED [F1]`,
+              ),
+              objectionGaps: [],
+              confidence: 0.95,
+            },
+            verdict: v,
+          }
+        : { updates: { ...assessFor(s, []), confidence: 0.2 }, verdict: v };
+    });
+    const first = r.state.steps.find((x) => x.nodeId === 'recordGaps')!;
+    const subs = r.state.state.subQuestions as string[];
+    const after = (key: string) => first.changes.find((c) => c.key === key)?.after;
+    expect(after('gaps')).toEqual([subs[1]]);
+    expect(after('gapNotes')).toEqual(['S2: GAP — no test of the rejection path']);
+    // A confident assessment with a gap is still chased.
+    expect(r.state.steps.map((x) => x.nodeId)).toContain('chase');
+    expect(seen).toBeGreaterThan(1);
+  });
+
+  it('sends back an entry left out, one out of order, an ANSWERED without a citation or one citing an unknown id', () => {
+    for (const bad of [
+      (subs: string[]) => subs.slice(1).map((_, i) => `S${i + 1}: ANSWERED [F1]`),
+      (subs: string[]) => subs.map((_, i) => `S${subs.length - i}: ANSWERED [F1]`),
+      (subs: string[]) => subs.map((_, i) => `S${i + 1}: ANSWERED, clearly`),
+      (subs: string[]) => subs.map((_, i) => `S${i + 1}: ANSWERED [F9999]`),
+    ]) {
+      const r = assessing((s) => ({
+        updates: { assessment: bad(s.subQuestions as string[]), objectionGaps: [], confidence: 1 },
+        verdict: v,
+      }));
+      expect(r.state.outcome).toBe('partial');
+      expect(rejections(r).length).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe('open questions', () => {
   // Regression: a live run failed at the answer because the AI reworded the remaining gaps
   // instead of copying them verbatim. The engine now adds them itself.
@@ -302,7 +360,7 @@ describe('open questions', () => {
       agents: {
         ...demo.agents,
         assess: (s) => ({
-          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.9 },
+          updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 0.9 },
           verdict: v,
         }),
         answer: (s, n) => {
@@ -397,7 +455,7 @@ describe('investigate always ends: research rounds are bounded', () => {
       agents: {
         ...demo.agents,
         assess: (s) => ({
-          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 0.2 },
           verdict: v,
         }),
         challenge: (_s, visit) => ({
@@ -457,7 +515,7 @@ describe('investigate always ends: research rounds are bounded', () => {
         ...demo.agents,
         assess: (s, visit) => ({
           updates: {
-            gaps: visit === 0 ? ((s.subQuestions as string[]) ?? []) : [],
+            ...assessFor(s, visit === 0 ? ((s.subQuestions as string[]) ?? []) : []),
             confidence: 0.9,
           },
           verdict: v,
@@ -564,7 +622,7 @@ describe('investigate asks for a hint once', () => {
       agents: {
         ...demo.agents,
         assess: (s) => ({
-          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 0.2 },
           verdict: v,
         }),
       },
@@ -1195,7 +1253,7 @@ describe('the step limit is a backstop, never the bound', () => {
           };
         },
         assess: (s) => ({
-          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 0.2 },
           verdict: v,
         }),
         challenge: (_s, visit) => ({

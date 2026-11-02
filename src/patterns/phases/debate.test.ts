@@ -4,6 +4,7 @@ import { runScripted } from '../../core/scripted.js';
 import type { Complexity, DemoScript, EngineEvent } from '../../core/types.js';
 import { validatePattern } from '../../core/validate.js';
 import { investigate } from '../index.js';
+import { assessFor } from '../investigate.js';
 import { challengePhase, hypothesesPhase, withState } from './debate.js';
 
 const demo = investigate.demo!;
@@ -176,7 +177,10 @@ describe('debate phases in investigate', () => {
         assess: (s, v) => {
           const open = (s.openObjections as string[]) ?? [];
           return open.length && assessed++ === 0
-            ? { ...agents.assess!(s, v), updates: { gaps: [open[0]!], confidence: 0.8 } }
+            ? {
+                ...agents.assess!(s, v),
+                updates: { ...assessFor(s, [open[0]!]), confidence: 0.8 },
+              }
             : agents.assess!(s, v);
         },
       },
@@ -186,7 +190,7 @@ describe('debate phases in investigate', () => {
     const kept = r.state.steps.filter(
       (st) =>
         st.nodeId === 'assess' &&
-        (st.updates?.gaps as string[] | undefined)?.[0]?.startsWith('S2: '),
+        (st.updates?.objectionGaps as string[] | undefined)?.[0]?.startsWith('S2: '),
     );
     expect(kept).toHaveLength(1);
     expect(
