@@ -185,6 +185,21 @@ export const investigate: Pattern = {
       { name: 'skipSources', type: 'string[]', description: 'Sources not used' },
       { name: 'skipReasons', type: 'string[]', description: 'Why each skipped source was skipped' },
       { name: 'repoFiles', type: 'string[]', description: 'Every file in the workspace' },
+      {
+        name: 'rankedFiles',
+        type: 'string[]',
+        description: 'repoFiles, likeliest first (engine-ranked by the words of the question)',
+      },
+      {
+        name: 'matchedFiles',
+        type: 'string[]',
+        description: 'Files sharing a word with the question',
+      },
+      {
+        name: 'candidateFiles',
+        type: 'string[]',
+        description: "Locate's lead: the top matched files",
+      },
       { name: 'excludedFiles', type: 'string[]', description: 'Files not triaged, with reasons' },
       { name: 'repoFileCount', type: 'number' },
       {
@@ -365,10 +380,11 @@ export const investigate: Pattern = {
       id: 'listPhase',
       label: 'List evidence',
       description:
-        'Only what the plan needs: workspace files (a big repo is searched first), web pages, experiments',
+        'Only what the plan needs: workspace files, likeliest first (a big repo is searched first), web pages, experiments',
       nodes: [
         'needFiles',
         'inventory',
+        'rankFiles',
         'countFiles',
         'smallRepo',
         'queueFiles',
@@ -532,10 +548,30 @@ export const investigate: Pattern = {
       output: { files: 'repoFiles', excluded: 'excludedFiles' },
     },
     {
+      // An order for reading, not a filter: every file is still triaged (small repos), and
+      // the likeliest come first, so the first waves carry most of the evidence.
+      id: 'rankFiles',
+      kind: 'tool',
+      label: 'Rank files',
+      tool: 'repo.rank',
+      inputs: {
+        paths: 'repoFiles',
+        question: 'question',
+        subQuestions: 'subQuestions',
+        searchTerms: 'searchTerms',
+        hint: 'hint',
+      },
+      output: { ranked: 'rankedFiles', matched: 'matchedFiles' },
+    },
+    {
       id: 'countFiles',
       kind: 'compute',
       label: 'Count files',
-      assign: [{ field: 'repoFileCount', expr: 'len(repoFiles)' }],
+      assign: [
+        { field: 'repoFileCount', expr: 'len(repoFiles)' },
+        // The engine's lexical candidates, a lead for Locate in a big repository.
+        { field: 'candidateFiles', expr: 'take(matchedFiles, 50)' },
+      ],
     },
     {
       id: 'smallRepo',
@@ -547,7 +583,13 @@ export const investigate: Pattern = {
       id: 'queueFiles',
       kind: 'compute',
       label: 'Queue files',
-      assign: [{ field: 'pendingFiles', expr: 'repoFiles' }],
+      assign: [
+        {
+          field: 'pendingFiles',
+          // The ranked order only when it is the same files: an order never drops one.
+          expr: 'if(len(rankedFiles) == len(repoFiles) && subset(repoFiles, rankedFiles), rankedFiles, repoFiles)',
+        },
+      ],
     },
     {
       id: 'locate',
@@ -555,7 +597,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Locate files',
       directive:
-        'This repository has too many files (`repoFileCount`) to triage each one, so first locate where the evidence can be. Search the workspace (read-only): `git grep` or ripgrep for the names, identifiers, error messages, test names and paths in `question`, `hint` and `searchTerms`; `git log` and `git show` for the commits, pull requests, branches or dates it mentions (the files a change touched come first); then follow imports, callers and tests one level out from what you find. List in `scopeFiles` the files that could hold evidence for or against any entry of `hypotheses`, most likely first, at most `maxTriageFiles`, as paths relative to the repository root exactly as `git ls-files` prints them (files, not folders). At the same position in `scopeReasons`, say why: which search found it. Record every search you ran in `scopeQueries`.',
+        "This repository has too many files (`repoFileCount`) to triage each one, so first locate where the evidence can be. Search the workspace (read-only): `git grep` or ripgrep for the names, identifiers, error messages, test names and paths in `question`, `hint` and `searchTerms`; `git log` and `git show` for the commits, pull requests, branches or dates it mentions (the files a change touched come first); then follow imports, callers and tests one level out from what you find. `candidateFiles` are the files the engine's own search ranked highest for these words: a lead, check them, and look beyond them. List in `scopeFiles` the files that could hold evidence for or against any entry of `hypotheses`, most likely first, at most `maxTriageFiles`, as paths relative to the repository root exactly as `git ls-files` prints them (files, not folders). At the same position in `scopeReasons`, say why: which search found it. Record every search you ran in `scopeQueries`.",
       reads: [
         'question',
         'hint',
@@ -565,6 +607,7 @@ export const investigate: Pattern = {
         'repoFileCount',
         'maxTriageFiles',
         'knownFacts',
+        'candidateFiles',
       ],
       writes: ['scopeFiles', 'scopeReasons', 'scopeQueries'],
       retries: 2,
@@ -591,7 +634,8 @@ export const investigate: Pattern = {
       kind: 'compute',
       label: 'Queue located files',
       assign: [
-        { field: 'pendingFiles', expr: 'unique(scopeFiles)' },
+        // What Locate found, plus the engine's candidates: a union, so neither can hide a file.
+        { field: 'pendingFiles', expr: 'unique(scopeFiles + candidateFiles)' },
         {
           field: 'excludedFiles',
           expr: 'append(excludedFiles, "files the search did not locate were not triaged (the repository has more than maxTriageFiles files; set exhaustive to triage every file)")',
@@ -1260,7 +1304,8 @@ export const investigate: Pattern = {
     { id: 'rating-needFiles', from: hypotheses.exit!, to: 'needFiles' },
     { id: 'needFiles-inventory', from: 'needFiles', to: 'inventory', branch: 'then' },
     { id: 'needFiles-needWeb', from: 'needFiles', to: 'needWeb', branch: 'else' },
-    { id: 'inventory-count', from: 'inventory', to: 'countFiles' },
+    { id: 'inventory-rank', from: 'inventory', to: 'rankFiles' },
+    { id: 'rank-count', from: 'rankFiles', to: 'countFiles' },
     { id: 'count-small', from: 'countFiles', to: 'smallRepo' },
     { id: 'small-queueFiles', from: 'smallRepo', to: 'queueFiles', branch: 'then' },
     { id: 'small-locate', from: 'smallRepo', to: 'locate', branch: 'else', label: 'big repo' },
@@ -1403,6 +1448,11 @@ export const investigate: Pattern = {
         ],
         excluded: ['logo.png — binary file'],
       }),
+      rankFiles: (s) => {
+        const files = (s.repoFiles as string[]) ?? [];
+        const hit = files.filter((f) => RELEVANT.test(f));
+        return { ranked: [...hit, ...files.filter((f) => !hit.includes(f))], matched: hit };
+      },
     },
     agents: {
       locate: () => ({

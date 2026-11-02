@@ -682,6 +682,30 @@ describe('investigate answers every sub-question', () => {
   });
 });
 
+describe('investigate reads the likeliest files first, and still every file', () => {
+  it('the triage queue follows the engine ranking, which is an order and not a filter', () => {
+    const { r } = runWith(['workspace']);
+    const s = r.state.state;
+    const batch = r.state.steps.find((x) => x.nodeId === 'triage')!.input!.batch as string[];
+    expect(batch.slice(0, 3)).toEqual([
+      'src/core/engine.ts',
+      'src/core/schema.ts',
+      'src/core/validate.ts',
+    ]);
+    expect((s.rankedFiles as string[]).toSorted()).toEqual((s.repoFiles as string[]).toSorted());
+  });
+
+  it('a ranking that is not the same files is ignored: the plain list is read', () => {
+    const { r } = runWith(['workspace'], demo.approvals, {
+      tools: {
+        rankFiles: (s) => ({ ranked: ((s.repoFiles as string[]) ?? []).slice(1), matched: [] }),
+      },
+    });
+    const batch = r.state.steps.find((x) => x.nodeId === 'triage')!.input!.batch as string[];
+    expect(batch).toEqual(r.state.state.repoFiles);
+  });
+});
+
 describe('investigate holds "read completely" to what the engine gave', () => {
   /** The demo, with the runtime's preload record on each deep read: what it could not give whole. */
   function withManifest(manifest: (batch: readonly string[], visit: number) => PreloadRecord[]) {

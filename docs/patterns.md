@@ -33,8 +33,12 @@ experiments, git history, GitHub, dependencies, MCP servers.
 2. **Hypotheses.** Competing answers before any evidence, each with what would confirm or
    refute it. The engine keeps a tally per hypothesis (`hypothesisStatus`: findings for and
    against, *untested*, *challenged*) after every batch, and later steps steer by it.
-3. **List evidence.** Only what the plan needs. A large repository is searched first
-   (locate) instead of triaging every file, unless `exhaustive` is set.
+3. **List evidence.** Only what the plan needs. The engine ranks the files by the words they
+   share with the question, sub-questions and search terms (`repo.rank`: git grep hits and
+   path names, never the AI's hypotheses), so the likeliest are triaged first; it is an order,
+   every file is still read. A large repository is searched first (locate, given the engine's
+   top matches as a lead and unioned with them) instead of triaging every file, unless
+   `exhaustive` is set.
 4. **Triage → deep read.** Files are read whole by the engine (`preload`) and given to
    sub-agents in parallel batches; an answer that skips a file of its batch is rejected. A
    file the engine could not read is named in the prompt so the step reads it with tools.
@@ -74,7 +78,7 @@ flowchart TD
   n_doubts(["Answered, with open doubts · partial"])
   n_planPhase[["Plan research · 3 steps"]]
   n_hypothesesPhase[["Competing hypotheses · 2 steps"]]
-  n_listPhase[["List evidence · 11 steps"]]
+  n_listPhase[["List evidence · 12 steps"]]
   n_triagePhase[["Triage files · 5 steps"]]
   n_deepPhase[["Deep read · 8 steps"]]
   n_experimentPhase[["Run experiments · 12 steps"]]
@@ -110,7 +114,7 @@ flowchart TD
 | --- | --- | --- |
 | Plan research | Available sources, sub-questions, which evidence applies | List sources → Plan research → Queue sources |
 | Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
-| List evidence | Only what the plan needs: workspace files (a big repo is searched first), web pages, experiments | Workspace? → List every file → Count files → Triage every file? → Queue files → Locate files → Queue located files → Web? → List web pages → Experiments? → Design experiments |
+| List evidence | Only what the plan needs: workspace files, likeliest first (a big repo is searched first), web pages, experiments | Workspace? → List every file → Rank files → Count files → Triage every file? → Queue files → Locate files → Queue located files → Web? → List web pages → Experiments? → Design experiments |
 | Triage files | Every listed file, in batches | Files left? → Next batch → Triage files → Check citations → Record triage |
 | Deep read | Every relevant file and listed page, completely | Queue deep reads → Deep reads left? → Next deep batch → Deep read → Check citations → Record deep read → Retry unreadable? → Queue unreadable again |
 | Run experiments | With your approval, run and measure | Experiments listed? → Allow experiments? → Queue experiments → Untimed experiments? → Run experiments side by side → Check citations → Record experiments → Timed experiments left? → Next experiment → Run timed experiment → Check citations → Record experiment |
