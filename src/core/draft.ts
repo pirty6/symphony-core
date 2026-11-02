@@ -5,7 +5,7 @@
  * nothing runs until a human approves it, and an approved draft is
  * persisted as a TypeScript module via `patternToTypeScript`.
  */
-import { checkValue, isFieldType } from './schema.js';
+import { checkFieldValue, isFieldType } from './schema.js';
 import type { Checked } from './schema.js';
 import { isImprovisation } from './jazz.js';
 import type { Capability, Complexity, Pattern, ScoreEdge, ScoreNode, StateField } from './types.js';
@@ -206,6 +206,7 @@ export function parseDraft(raw: unknown): Checked<Pattern> {
       type: f.type,
       ...(str(f.description) ? { description: str(f.description)! } : {}),
       ...(f.initial !== undefined ? { initial: f.initial } : {}),
+      ...(typeof f.min === 'number' ? { min: f.min } : {}),
     });
   });
   const nodes = (Array.isArray(raw.nodes) ? raw.nodes : [])
@@ -358,7 +359,7 @@ export function adaptPattern(
   }
   const state = pattern.state.map((f) => {
     if (!(f.name in initial)) return f;
-    const problem = checkValue(f.type, initial[f.name]);
+    const problem = checkFieldValue(f, initial[f.name]);
     if (problem) {
       errors.push(`adaptation.initial.${f.name}: ${problem}`);
       return f;
@@ -392,7 +393,7 @@ export function outlinePattern(pattern: Pattern): { steps: string[]; settings: s
     )
     .map(
       (f) =>
-        `${f.name} = ${JSON.stringify(f.initial ?? false)}${f.description ? ` — ${f.description}` : ''}`,
+        `${f.name} = ${JSON.stringify(f.initial ?? false)}${f.min !== undefined ? ` (at least ${f.min})` : ''}${f.description ? ` — ${f.description}` : ''}`,
     );
   return { steps, settings };
 }

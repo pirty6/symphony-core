@@ -4,7 +4,7 @@
  */
 import { unboundedLoops } from './loops.js';
 import { ExprError, exprFields, parseExpr } from './expr.js';
-import { checkValue, isFieldType, isValidFieldName } from './schema.js';
+import { checkFieldValue, isFieldType, isValidFieldName } from './schema.js';
 import {
   CAPABILITIES,
   type Pattern,
@@ -142,9 +142,11 @@ export function validateGraph(g: PatternGraph): ValidationReport {
     if (!isFieldType(f.type)) {
       errors.push({ message: `state field '${f.name}' has invalid type '${String(f.type)}'` });
     } else if (f.initial !== undefined) {
-      const err = checkValue(f.type, f.initial);
+      const err = checkFieldValue(f, f.initial);
       if (err) errors.push({ message: `state field '${f.name}' initial value: ${err}` });
     }
+    if (f.min !== undefined && (f.type !== 'number' || !Number.isFinite(f.min)))
+      errors.push({ message: `state field '${f.name}': min is for number fields, as a number` });
   }
   const guardFields = new Set([...fieldNames, 'verdict']);
 

@@ -42,6 +42,12 @@ export interface StateField {
   readonly description?: string;
   /** Initial value; defaults to the zero value of `type`. */
   readonly initial?: unknown;
+  /**
+   * number fields: the least value an input or a tailoring may give it. A step that cannot
+   * work below it (investigate's maxExperiments: 0 would ask for experiments and allow none)
+   * declares it, so such a run is refused at compile instead of stuck at the step.
+   */
+  readonly min?: number;
 }
 
 // ── Nodes ──────────────────────────────────────────────────────────

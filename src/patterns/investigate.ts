@@ -385,7 +385,16 @@ export const investigate: Pattern = {
         type: 'string[]',
         description: 'The other experiments, run side by side',
       },
-      { name: 'maxExperiments', type: 'number', initial: 12 },
+      {
+        name: 'maxExperiments',
+        type: 'number',
+        initial: 12,
+        // On whenever the plan needs them: commands run in the workspace (after your approval).
+        // 0 would ask for experiments and allow none.
+        min: 1,
+        description:
+          'Experiments the plan may run when it needs them (commands in the workspace, after approval)',
+      },
       {
         name: 'agents',
         type: 'number',

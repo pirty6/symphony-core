@@ -30,6 +30,18 @@ export function zeroValue(type: FieldType): unknown {
   }
 }
 
+/** checkValue, and a number field's declared minimum. */
+export function checkFieldValue(
+  field: { readonly type: FieldType; readonly min?: number },
+  value: unknown,
+): string | undefined {
+  const err = checkValue(field.type, value);
+  if (err) return err;
+  if (field.min !== undefined && typeof value === 'number' && value < field.min)
+    return `must be at least ${field.min}, got ${value}`;
+  return undefined;
+}
+
 export function checkValue(type: FieldType, value: unknown): string | undefined {
   const got = Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value;
   switch (type) {
