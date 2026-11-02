@@ -154,6 +154,11 @@ describe('memory across runs', () => {
     expect(m.facts).toHaveLength(MAX_FACTS_PER_RUN + 10);
   });
 
+  it('without a run id, one call still adds at most MAX_FACTS_PER_RUN', async () => {
+    const ws = workspace();
+    expect(await rememberFacts(ws, many(MAX_FACTS_PER_RUN + 50))).toBe(MAX_FACTS_PER_RUN);
+  });
+
   it('a stored file from before the rules is tidied as it is read', async () => {
     const ws = workspace();
     mkdirSync(join(ws, '.symphony'), { recursive: true });
