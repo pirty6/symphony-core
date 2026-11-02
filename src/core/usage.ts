@@ -54,6 +54,22 @@ export interface VisitUsage {
   readonly usage: TokenUsage;
 }
 
+/**
+ * Wall time per node, in ms: each AI answer from its transcript's start to end (rejected
+ * attempts included; a fanned-out step from its first part's start to its last part's end).
+ */
+export function wallTimeByNode(perf: Pick<Performance, 'steps'>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const s of perf.steps)
+    for (const t of [...(s.attempts ?? []).map((a) => a.transcript), s.transcript]) {
+      const from = Date.parse(t?.startedAt ?? '');
+      const to = Date.parse(t?.completedAt ?? '');
+      if (Number.isFinite(from) && Number.isFinite(to) && to >= from)
+        out[s.nodeId] = (out[s.nodeId] ?? 0) + (to - from);
+    }
+  return out;
+}
+
 /** Every AI answer of a run (rejected attempts included), per node, per visit and in total. */
 export function performanceUsage(perf: Pick<Performance, 'steps'>): {
   readonly total: TokenUsage;
@@ -78,6 +94,17 @@ export function performanceUsage(perf: Pick<Performance, 'steps'>): {
  * Steps visited more than once whose input grows visit by visit, worst first, as
  * "assess: 40k → 120k → 210k in": where re-sent context piles up.
  */
+/** Per node visited more than once: last visit's input over the first's (2 = it doubled). */
+export function growthRatios(byVisit: readonly VisitUsage[]): Record<string, number> {
+  const per = new Map<string, number[]>();
+  for (const v of byVisit) per.set(v.nodeId, [...(per.get(v.nodeId) ?? []), v.usage.inputTokens]);
+  return Object.fromEntries(
+    [...per]
+      .filter(([, ins]) => ins.length > 1 && ins[0]! > 0)
+      .map(([id, ins]) => [id, +(ins.at(-1)! / ins[0]!).toFixed(2)]),
+  );
+}
+
 export function growth(byVisit: readonly VisitUsage[], n = 5): string[] {
   const per = new Map<string, number[]>();
   for (const v of byVisit) per.set(v.nodeId, [...(per.get(v.nodeId) ?? []), v.usage.inputTokens]);

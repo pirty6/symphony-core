@@ -4,9 +4,11 @@
  * (hidden tests, exact facts), never by asking an AI.
  */
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import type { Complexity } from '../core/types.js';
 
 const run = promisify(execFile);
 
@@ -31,6 +33,10 @@ export interface EvalTask {
   /** Written after the fixture is committed: uncommitted work (e.g. for a review). */
   readonly changes?: Readonly<Record<string, string>>;
   readonly check: (ctx: EvalContext) => Promise<EvalCheck>;
+  /** Play at this complexity instead of the rated one (e.g. a debate on/off pair). */
+  readonly complexity?: Complexity;
+  /** Costly (many files): not in the default run; name it with --task. */
+  readonly heavy?: boolean;
 }
 
 /** Write the fixture and commit it, so editing patterns have a clean git baseline. */
@@ -141,6 +147,48 @@ export function requirementCoverage(
 
 const PKG = '{ "name": "fixture", "type": "module", "scripts": { "test": "node --test" } }\n';
 const IGNORE = '.symphony/\nnode_modules/\n';
+/** Content hash as memory.json stores it for lessons (16 hex characters of sha256). */
+const hash16 = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
+const STALE_CONFIG = 'export const DEFAULT_PORT = 3000;\n';
+const STALE_SERVER =
+  "import { DEFAULT_PORT } from './config.js';\n\nexport const port = Number(process.env.PORT ?? DEFAULT_PORT + 1);\n";
+
+/**
+ * A flaw the first reading misses: the timeout is set in config.js, and overridden at boot
+ * outside production. Played twice, with the debate (complexity 3) and without (1): how
+ * often each catches it is what the debate is worth here.
+ */
+function plantedFlaw(): EvalTask[] {
+  const files = {
+    'package.json': PKG,
+    '.gitignore': IGNORE,
+    'src/config.js':
+      '/** Request timeout in milliseconds. */\nexport const config = { timeoutMs: 30000 };\n',
+    'src/boot.js':
+      "import { config } from './config.js';\n\n// Shorter outside production, so tests fail fast.\nif (process.env.NODE_ENV !== 'production') config.timeoutMs = 5000;\n",
+    'src/client.js':
+      "import { config } from './config.js';\n\nexport const request = (url) => fetch(url, { signal: AbortSignal.timeout(config.timeoutMs) });\n",
+    'src/index.js': "import './boot.js';\nexport { request } from './client.js';\n",
+  };
+  const check: EvalTask['check'] = async ({ outcome, state }) =>
+    both(succeeded(outcome), mentions(String(state.answer ?? ''), ['5000', 'src/boot.js']));
+  const inputs = {
+    question:
+      'With NODE_ENV unset, what timeout (in milliseconds) does the client use, and where is it decided?',
+  };
+  return [
+    { id: 'investigate-planted-flaw', pattern: 'investigate', complexity: 3, inputs, files, check },
+    {
+      id: 'investigate-planted-flaw-nodebate',
+      pattern: 'investigate',
+      complexity: 1,
+      inputs,
+      files,
+      check,
+    },
+  ];
+}
+
 const SUM_RIGHT =
   '/** Sum of the numbers from 1 to n. */\nexport function sumTo(n) {\n  let total = 0;\n  for (let i = 1; i <= n; i++) total += i;\n  return total;\n}\n';
 const TEST_HEAD = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n";
@@ -375,6 +423,106 @@ export const EVAL_TASKS: readonly EvalTask[] = [
         ],
       };
     },
+  },
+  {
+    // A real quote that does not support the claim: the comment and README say "retries", the
+    // code does not. Quoting them passes the citation check; the answer must follow the code.
+    id: 'investigate-unsupporting-quote',
+    pattern: 'investigate',
+    inputs: { question: 'How many times does fetchData retry a failed request?' },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'README.md': '# client\n\n`fetchData` retries a failed request 3 times before it gives up.\n',
+      'src/net.js':
+        '// Retries 3 times on failure, with backoff.\nexport async function fetchData(url, http = fetch) {\n  const res = await http(url);\n  if (!res.ok) throw new Error(`${url}: ${res.status}`);\n  return res.json();\n}\n',
+    },
+    // No retry anywhere: the comment and the README are wrong.
+    check: async ({ outcome, state }) => {
+      const answer = String(state.answer ?? '');
+      const denies = /\b(no|not|never|doesn't|does not|without|zero|0)\b[^.]{0,60}\bretr/i.test(
+        answer,
+      );
+      const trusts =
+        /\bretries?\b[^.]{0,30}\b(three|3) times\b/i.test(answer) &&
+        !/\b(comment|README|claims?|says|stale|wrong|outdated)\b/i.test(answer);
+      return {
+        pass: outcome === 'success' && denies && !trusts,
+        notes: [
+          `outcome ${outcome}`,
+          denies ? 'says it does not retry' : 'does not say it does not retry',
+          ...(trusts ? ['takes the comment or README as the code'] : []),
+        ],
+      };
+    },
+  },
+  {
+    // A wrong lesson from an earlier run, on files that have not changed since: recall brings
+    // it back (the hashes match), and the evidence must still win over it.
+    id: 'investigate-stale-lesson',
+    pattern: 'investigate',
+    inputs: { question: 'Which port does the server listen on when PORT is not set?' },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/config.js': STALE_CONFIG,
+      'src/server.js': STALE_SERVER,
+      // Not committed (.symphony is ignored), as a real store is not.
+      '.symphony/memory.json': JSON.stringify({
+        facts: [],
+        lessons: [
+          {
+            text: 'Answered "Which port does the server listen on?": S1: 8080, set by DEFAULT_PORT (files: src/config.js, src/server.js)',
+            files: ['src/config.js', 'src/server.js'],
+            at: new Date().toISOString(),
+            hashes: {
+              'src/config.js': hash16(STALE_CONFIG),
+              'src/server.js': hash16(STALE_SERVER),
+            },
+          },
+        ],
+      }),
+    },
+    // DEFAULT_PORT + 1 = 3001; the lesson's 8080 is wrong.
+    check: async ({ outcome, state }) => {
+      const answer = String(state.answer ?? '');
+      const right = mentions(answer, ['3001', 'src/server.js']);
+      const trusts =
+        /\b8080\b/.test(answer) && !/\b(lesson|earlier run|memory|wrong|stale|not)\b/i.test(answer);
+      return {
+        pass: succeeded(outcome).pass && right.pass && !trusts,
+        notes: [
+          ...succeeded(outcome).notes,
+          ...right.notes,
+          ...(trusts ? ['takes the stale lesson (8080) as the answer'] : []),
+        ],
+      };
+    },
+  },
+  ...plantedFlaw(),
+  {
+    // Many files, several triage waves, the answer in one file deep in the list: does the
+    // evidence survive growing context? Costly: name it with --task.
+    id: 'investigate-many-files',
+    pattern: 'investigate',
+    heavy: true,
+    inputs: { question: 'What retry limit does the queue use, and which file sets it?' },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      ...Object.fromEntries(
+        Array.from({ length: 240 }, (_, i) => [
+          `src/mod${String(i).padStart(3, '0')}.js`,
+          i === 217
+            ? 'export const RETRY_LIMIT = 7; // the queue gives up after this many tries\n'
+            : `export const name${i} = 'module ${i}';\n`,
+        ]),
+      ),
+      'src/queue.js':
+        "import { RETRY_LIMIT } from './mod217.js';\n\nexport function shouldRetry(tries) {\n  return tries < RETRY_LIMIT;\n}\n",
+    },
+    check: async ({ outcome, state }) =>
+      both(succeeded(outcome), mentions(String(state.answer ?? ''), ['7', 'src/mod217.js'])),
   },
   {
     // The maestro, judged on what it composed: every requirement met by a real step.

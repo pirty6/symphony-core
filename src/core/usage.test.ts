@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { AiTranscript, PerformedStep, TokenUsage } from './types.js';
 import {
   costliest,
+  growthRatios,
+  wallTimeByNode,
   formatUsage,
   performanceUsage,
   growth,
@@ -134,5 +136,37 @@ describe('token usage', () => {
       '1.2M in (800k cached) · 45k out · 37 calls',
     );
     expect(formatUsage(u(0, 0, 0))).toBe('no AI tokens');
+  });
+});
+
+/** A transcript that ran from :from to :to seconds past the minute. */
+const timed = (from: string, to: string) => ({
+  provider: 'p',
+  prompt: '',
+  output: '',
+  toolCalls: [],
+  startedAt: `2026-01-01T00:00:${from}Z`,
+  completedAt: `2026-01-01T00:00:${to}Z`,
+});
+
+describe('time and growth per step', () => {
+  it('wall time adds every answer of a step, rejected ones too; growth is last visit over first', () => {
+    const steps = [
+      {
+        nodeId: 'read',
+        transcript: timed('00', '10'),
+        attempts: [{ errors: [], transcript: timed('10', '12') }],
+      },
+      { nodeId: 'read', transcript: timed('20', '25') },
+      { nodeId: 'end' },
+    ] as never;
+    expect(wallTimeByNode({ steps })).toEqual({ read: 17_000 });
+    expect(
+      growthRatios([
+        { nodeId: 'assess', step: 1, usage: u(100, 0) },
+        { nodeId: 'assess', step: 5, usage: u(250, 0) },
+        { nodeId: 'answer', step: 6, usage: u(900, 0) },
+      ]),
+    ).toEqual({ assess: 2.5 });
   });
 });

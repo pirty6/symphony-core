@@ -605,7 +605,14 @@ solved rate or citation validity.
   analysis of a small CSV (the answer and its margin, cited), and a backlog judged on the items
   it extracts (each real one once, the done one skipped). It records solved, citations valid, tokens, time and
   models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline: fewer
-  solved, more invalid citations, none checked, or 25% more input tokens per run. `--task routing` adds 21 maestro requests (compose only) judged in code on the
+  solved, more invalid citations, none checked, 25% more input tokens per run, 50% more time per
+  run, a step whose cached share of input drops 15 points, or a step whose input grows more over
+  its visits. The report shows each costly step's share of cost and model time, the slowest
+  steps, and with `-n` the spread over repeats (runs vary: there is no seed). Investigate
+  fixtures also cover a real quote that does not support the claim, a stale lesson in memory
+  on unchanged files, a false hint, and a planted flaw played with the debate (complexity 3)
+  and without (1), so what the debate catches is measured; `investigate-many-files` (240 files,
+  several waves) is heavy and runs only when named. `--task routing` adds 21 maestro requests (compose only) judged in code on the
   pattern chosen, a complexity band and the chained pattern; `rehearse maestro --fields
   chosen,complexity` measures how often routing agrees with itself.
 - **Checked evidence.** Findings are written `path:line — fact \`quote\``. A **Check citations**
@@ -615,7 +622,8 @@ solved rate or citation validity.
   (F1, F2…) and answers, root causes and designs must cite existing ids (`refs`, `ids`).
   The citation is found wherever it sits and however it is written (bold, backticks, "a.ts line
   3", "a.ts | line 3"), so dressing it up cannot skip the check; quotes need 8+ characters and
-  ranges at most 26 lines. A finding that cites nothing (no path:line, URL, "source | location",
+  two or more words or identifiers (one word is found near almost any line), and ranges at most
+  26 lines. A finding that cites nothing (no path:line, URL, "source | location",
   commit or issue) is rejected. `evidence.check` reports how many it `checked`, and the eval
   never counts zero checked as all valid.
 - **The step's own checks run in-session** too ("at least 3 hypotheses"), so a bad answer is fixed

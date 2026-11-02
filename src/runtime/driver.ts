@@ -585,11 +585,17 @@ export class Run {
     for (const i of todo) out[i] ??= { result: undefined, transcript: note('not played: stopped') };
     const transcripts = out.map((o) => o.transcript);
     const model = transcripts.find((t) => t.model)?.model;
+    // The step's own clock: first part's start to last part's end (parts kept from an earlier
+    // attempt are not timed again).
+    const starts = transcripts.flatMap((t) => (t.startedAt ? [t.startedAt] : [])).toSorted();
+    const ends = transcripts.flatMap((t) => (t.completedAt ? [t.completedAt] : [])).toSorted();
     return {
       result: { parts: out.map((o) => o.result) },
       transcript: {
         provider: this.opts.provider.name,
         ...(model ? { model } : {}),
+        ...(starts.length ? { startedAt: starts[0]! } : {}),
+        ...(ends.length ? { completedAt: ends.at(-1)! } : {}),
         prompt: transcripts[0]?.prompt ?? pause.directive,
         output: transcripts
           .map((t, i) => `## Part ${i + 1} of ${all.length}\n${t.output}`)

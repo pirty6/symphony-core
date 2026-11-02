@@ -578,7 +578,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     ? every.filter(
         (t) => wanted.includes(t.id) || (wanted.includes('routing') && ROUTING_TASKS.includes(t)),
       )
-    : EVAL_TASKS;
+    : EVAL_TASKS.filter((t) => !t.heavy);
   if (tasks.length === 0) {
     console.error(`no such task; tasks: routing, ${every.map((t) => t.id).join(', ')}`);
     return 1;

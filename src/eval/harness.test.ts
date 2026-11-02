@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Pattern } from '../core/types.js';
+import { recall } from '../runtime/memory.js';
 import type { Provider } from '../runtime/provider.js';
 import {
   formatReport,
@@ -153,6 +154,37 @@ describe('eval harness', () => {
     expect(formatReport(twice, baseline)).toMatch(/tokens 2\.0k in \(\+0%\) per run/);
   });
 
+  it("gates time, a step's cache share and its context growth; shows the slowest steps and the spread", async () => {
+    const report = await evaluate(true, 2);
+    const base = summarize(report.results);
+    expect(
+      regressions({ ...base, ms: base.ms * 2 + 1000 }, { ...base, ms: base.ms + 500 }),
+    ).toEqual([expect.stringMatching(/^time per run up \d+%$/)]);
+    const big = {
+      calls: 1,
+      inputTokens: 200_000,
+      outputTokens: 1,
+      cacheReadTokens: 180_000,
+      reasoningTokens: 0,
+    };
+    const was = { ...base, byNode: { 'investigate answerParts': big } };
+    const now = {
+      ...base,
+      byNode: { 'investigate answerParts': { ...big, cacheReadTokens: 100_000 } },
+    };
+    expect(regressions(now, was)).toEqual([
+      'cache share of investigate answerParts down from 90% to 50%',
+    ]);
+    expect(
+      regressions(
+        { ...base, growth: { 'investigate assess': 3 } },
+        { ...base, growth: { 'investigate assess': 1.4 } },
+      ),
+    ).toEqual(['context of investigate assess grows 3× over its visits (baseline 1.4×)']);
+    const text = formatReport(report);
+    expect(text).toMatch(/spread over repeats: mini-task: solved 2\/2, 1\.0k–1\.0k in, \d+s–\d+s/);
+  });
+
   it('a run that errors after playing still reports the tokens it spent', async () => {
     const report = await runEval({
       tasks: [{ ...task, check: () => Promise.reject(new Error('check crashed')) }],
@@ -233,6 +265,36 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
         'It listens on 3001: src/server.js:3 uses DEFAULT_PORT + 1 from src/config.js. src/legacy-config.js (8080) is not imported by anything.',
     },
   }),
+  'investigate-unsupporting-quote': () => ({
+    state: {
+      answer:
+        'It does not retry at all: fetchData calls http once and throws on failure (src/net.js:3). The comment and the README that say 3 times are wrong.',
+    },
+  }),
+  'investigate-stale-lesson': () => ({
+    state: {
+      answer:
+        'It listens on 3001: src/server.js:3 uses DEFAULT_PORT + 1, and DEFAULT_PORT is 3000. The earlier lesson that said 8080 is wrong.',
+    },
+  }),
+  'investigate-planted-flaw': () => ({
+    state: {
+      answer:
+        'The client waits 5000 ms: src/boot.js overrides the 30000 of src/config.js outside production.',
+    },
+  }),
+  'investigate-planted-flaw-nodebate': () => ({
+    state: {
+      answer:
+        'The client waits 5000 ms: src/boot.js overrides the 30000 of src/config.js outside production.',
+    },
+  }),
+  'investigate-many-files': () => ({
+    state: {
+      answer:
+        'The queue gives up after 7 tries: RETRY_LIMIT in src/mod217.js, used by src/queue.js.',
+    },
+  }),
   'maestro-requirements': () => ({
     state: {
       requirements: [
@@ -308,7 +370,16 @@ describe('eval tasks', () => {
                     answer:
                       'The port is 8080, set in src/legacy-config.js (src/server.js reads 3001 only in tests).',
                   }
-                : { answer: 'The README says 30 seconds; the docs say port 8080.' };
+                : t.id === 'investigate-unsupporting-quote'
+                  ? { answer: 'fetchData retries 3 times on failure, with backoff (src/net.js:1).' }
+                  : t.id === 'investigate-stale-lesson'
+                    ? {
+                        answer:
+                          'It listens on 8080, set in src/server.js (also 3001 in some builds).',
+                      }
+                    : t.id.startsWith('investigate-planted-flaw')
+                      ? { answer: 'The client waits 30000 ms, from src/config.js.' }
+                      : { answer: 'The README says 30 seconds; the docs say port 8080.' };
         expect((await t.check({ workspace: dir, outcome: 'success', state: wrong })).pass).toBe(
           false,
         );
@@ -379,5 +450,24 @@ describe('routing judge', () => {
       expect(r.complexity[0]).toBeLessThanOrEqual(r.complexity[1]);
     }
     expect(new Set(ROUTING_TASKS.map((t) => t.id)).size).toBe(ROUTES.length);
+  });
+});
+
+describe('memory fixtures', () => {
+  it('the stale lesson is recalled as a real store would give it (its files are unchanged)', async () => {
+    const t = EVAL_TASKS.find((x) => x.id === 'investigate-stale-lesson')!;
+    const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
+    try {
+      await buildFixture(dir, t.files);
+      expect((await recall(dir, String(t.inputs.question))).lessons).toEqual([
+        expect.stringMatching(/S1: 8080, set by DEFAULT_PORT/),
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('heavy tasks are only played when named', () => {
+    expect(EVAL_TASKS.filter((x) => x.heavy).map((x) => x.id)).toEqual(['investigate-many-files']);
   });
 });
