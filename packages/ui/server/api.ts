@@ -231,7 +231,7 @@ export function createApi(opts: ApiOptions) {
       tools,
       toolContext,
       ...(demo ? { demo } : {}),
-      ...(playsFromRepertoire(score.improvisation) ? { repertoire: await loadRepertoire(runsDir) } : {}),
+      ...(playsFromRepertoire(score.improvisation) ? { repertoire: await loadRepertoire(runsDir, score.id) } : {}),
       autoApprove: settings.autoApprove,
       stepMode: settings.stepMode,
       breakpoints: settings.breakpoints,

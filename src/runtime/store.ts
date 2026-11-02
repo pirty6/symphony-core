@@ -451,8 +451,15 @@ export async function loadPatternFiles(
 }
 
 /** Load every saved run, oldest first, so the first performance of a song is the one replayed. */
-export async function loadRepertoire(runsDir: string): Promise<Repertoire> {
-  const summaries = (await listRuns(runsDir)).toReversed();
+/**
+ * The recorded answers a run of this score can replay. Answers are found by score id, so with
+ * `scoreId` only that score's runs are read: not every saved run (a store of 1.1 GB was parsed
+ * whole at the default improvisation before).
+ */
+export async function loadRepertoire(runsDir: string, scoreId?: string): Promise<Repertoire> {
+  const summaries = (await listRuns(runsDir))
+    .filter((s) => scoreId === undefined || s.scoreId === scoreId)
+    .toReversed();
   const runs: { run: SavedRun; file: string }[] = [];
   for (const s of summaries) {
     try {

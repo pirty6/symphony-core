@@ -258,7 +258,7 @@ async function play(
     }),
     ...(demo ? { demo } : {}),
     ...(playsFromRepertoire(score.improvisation) && !o.fresh
-      ? { repertoire: await loadRepertoire(runsDir) }
+      ? { repertoire: await loadRepertoire(runsDir, score.id) }
       : {}),
     autoApprove: o.autoApprove,
     stepMode: o.step,
