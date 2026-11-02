@@ -227,6 +227,29 @@ export interface RunView {
   readonly next?: NextPerformance
   /** A step over its time limit, waiting for you: keep waiting, or stop it keeping what it has. */
   readonly overtime?: { readonly nodeId: string; readonly afterMs: number }
+  /** The sub-agents of the latest fanned-out step, one state per part. */
+  readonly parts?: SubAgents
+}
+
+export type SubAgentState = 'waiting' | 'running' | 'done' | 'failed' | 'kept'
+export interface SubAgents {
+  readonly nodeId: string
+  readonly step: number
+  readonly attempt: number
+  readonly states: readonly SubAgentState[]
+}
+
+/** What each sub-agent works on: the first entries of the list the step was split over. */
+export function subAgentItems(pause: Pause | undefined, nodeId: string): string[] | undefined {
+  if (pause?.kind !== 'agent' || pause.nodeId !== nodeId || !pause.parts || pause.parts.length < 2) return undefined
+  const [a, b] = pause.parts
+  const key = Object.keys(a!).find((k) => Array.isArray(a![k]) && JSON.stringify(a![k]) !== JSON.stringify(b![k]))
+  if (!key) return undefined
+  return pause.parts.map((p) => {
+    const list = (p[key] as unknown[]).map(String)
+    const first = list[0]?.split('/').pop() ?? ''
+    return list.length > 1 ? `${first} +${list.length - 1}` : first
+  })
 }
 
 export const IDLE_VIEW: RunView = { mode: 'idle', status: 'idle', frames: [], cursor: null, streams: [] }
@@ -351,6 +374,12 @@ export function applyMessage(v: RunView, m: RunMessage): RunView {
       return { ...v, performance: m.performance, ...(m.savedTo ? { savedTo: m.savedTo } : {}) }
     case 'next':
       return { ...v, next: m }
+    case 'part': {
+      const same = v.parts && v.parts.nodeId === m.nodeId && v.parts.step === m.step && v.parts.attempt === m.attempt
+      const states: SubAgentState[] = same ? [...v.parts!.states] : Array.from({ length: m.total }, () => 'waiting' as const)
+      states[m.part - 1] = m.state
+      return { ...v, parts: { nodeId: m.nodeId, step: m.step, attempt: m.attempt, states } }
+    }
     case 'overtime': {
       const { overtime: _o, ...rest } = v
       return m.state === 'asking' ? { ...rest, overtime: { nodeId: m.nodeId, afterMs: m.afterMs } } : rest
@@ -616,7 +645,58 @@ export type PhaseNodeData = {
   onExpand?: (id: string) => void
 }
 export type FrameNodeData = { label: string; width: number; height: number; onCollapse?: (id: string) => void }
-export type CanvasNode = FlowNode | Node<PhaseNodeData, 'phase'> | Node<FrameNodeData, 'frame'>
+export interface SubAgentNodeData extends Record<string, unknown> {
+  readonly parent: string
+  readonly part: number
+  readonly total: number
+  readonly state: SubAgentState
+  readonly item?: string
+}
+
+export type CanvasNode =
+  | FlowNode
+  | Node<PhaseNodeData, 'phase'>
+  | Node<FrameNodeData, 'frame'>
+  | Node<SubAgentNodeData, 'subagent'>
+
+/** Gap between a step and its sub-agents, and between sub-agents. */
+const SUB_X = 300
+const SUB_Y = 62
+
+/**
+ * The sub-agents of a fanned-out step as nodes beside it (or beside its closed phase),
+ * each joined to it by an edge that moves while that sub-agent runs.
+ */
+export function subAgentNodes(
+  parts: SubAgents | undefined,
+  shown: readonly CanvasNode[],
+  phaseOf: ReadonlyMap<string, string>,
+  items?: readonly string[],
+): { nodes: CanvasNode[]; edges: FlowEdge[] } {
+  if (!parts || parts.states.length < 2) return { nodes: [], edges: [] }
+  const anchor = shown.find((n) => n.id === parts.nodeId) ?? shown.find((n) => n.id === phaseOf.get(parts.nodeId))
+  if (!anchor) return { nodes: [], edges: [] }
+  const top = anchor.position.y - ((parts.states.length - 1) * SUB_Y) / 2 + 20
+  const nodes: CanvasNode[] = parts.states.map((state, i) => ({
+    id: `sub:${parts.nodeId}:${i + 1}`,
+    type: 'subagent',
+    position: { x: anchor.position.x + SUB_X, y: top + i * SUB_Y },
+    data: { parent: parts.nodeId, part: i + 1, total: parts.states.length, state, ...(items?.[i] ? { item: items[i] } : {}) },
+    draggable: false,
+    connectable: false,
+  }))
+  const edges: FlowEdge[] = parts.states.map((state, i) => ({
+    id: `sub:${parts.nodeId}:${i + 1}:edge`,
+    source: anchor.id,
+    sourceHandle: null,
+    target: `sub:${parts.nodeId}:${i + 1}`,
+    type: 'straight',
+    animated: state === 'running',
+    className: `subagent-edge subagent-${state}`,
+    selectable: false,
+  }))
+  return { nodes, edges }
+}
 
 const STATUS_RANK: Record<NodeStatus, number> = { paused: 4, active: 3, failed: 2, done: 1 }
 

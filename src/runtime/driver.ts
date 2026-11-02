@@ -35,6 +35,7 @@ import type {
   ExecutableScore,
   Pattern,
   Performance,
+  PreloadRecord,
   Resolution,
   SavedRun,
 } from '../core/types.js';
@@ -52,6 +53,7 @@ export type RunStatus =
   | 'failed'
   | 'cancelled';
 export type GatePhase = 'before' | 'after';
+export type PartState = 'waiting' | 'running' | 'done' | 'failed' | 'kept';
 
 export type RunMessage =
   | { readonly seq: number; readonly type: 'engine'; readonly event: EngineEvent }
@@ -83,6 +85,18 @@ export type RunMessage =
   | ({ readonly seq: number; readonly type: 'next' } & NextPerformance)
   | {
       readonly seq: number;
+      readonly type: 'part';
+      /** One sub-agent of a fanned-out step (1-based part of `total`). */
+      readonly nodeId: string;
+      readonly step: number;
+      readonly attempt: number;
+      readonly part: number;
+      readonly total: number;
+      /** waiting for a slot, running, done (answered), failed (no answer), kept (from an earlier attempt). */
+      readonly state: PartState;
+    }
+  | {
+      readonly seq: number;
       readonly type: 'overtime';
       readonly nodeId: string;
       /** How long the step has run when asked. */
@@ -104,6 +118,8 @@ export interface NextPerformance {
 type Unsequenced<T> = T extends { seq: number } ? Omit<T, 'seq'> : never;
 
 const DEFAULT_PARALLEL = 4;
+/** fanOut.warm: the longest the other parts wait for the first one to start answering. */
+const WARM_MS = 30_000;
 
 export interface RunOptions {
   readonly id?: string;
@@ -169,6 +185,16 @@ export interface HumanAnswer {
 export type RecoveryAnswer = Omit<Recovery, 'at'>;
 
 let counter = 0;
+
+/** A step that can browse and was given a URL to read: its answer depends on the web now. */
+export const readsPages = (pause: AgentPause): boolean =>
+  pause.capabilities.includes('web') &&
+  Object.values(pause.input).some((v) =>
+    (Array.isArray(v) ? v : [v]).some((x) => typeof x === 'string' && URL_LIKE.test(x.trim())),
+  );
+
+/** A URL, not a workspace path: the step fetches it itself. */
+const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 export class Run {
   readonly id: string;
@@ -368,7 +394,7 @@ export class Run {
   ): Promise<{ result: unknown; transcript: AiTranscript }> {
     const onEvent = this.emitFor(pause, extra.integrate ? 0 : extra.take);
     const files = await this.preload(pause, onEvent);
-    return this.opts.provider.runAgent({
+    const played = await this.opts.provider.runAgent({
       pause,
       state: this.engine.state,
       visit: (this.engine.visits[pause.nodeId] ?? 1) - 1,
@@ -378,6 +404,15 @@ export class Run {
       ...(files.length ? { files } : {}),
       ...extra,
     });
+    if (files.length === 0) return played;
+    // The record says what the engine put in the prompt, without the text itself.
+    const preloaded = files.map((f) => {
+      const entry: PreloadRecord = { path: f.path, lines: f.lines };
+      if (f.omitted) Object.assign(entry, { omitted: f.omitted, ...(f.cut ? { cut: f.cut } : {}) });
+      if (f.error) Object.assign(entry, { error: f.error });
+      return entry;
+    });
+    return { ...played, transcript: { ...played.transcript, preloaded } };
   }
 
   /** What tools get: the run's context (memoryRoot too), its id and a signal. */
@@ -401,13 +436,20 @@ export class Run {
     if (!Array.isArray(list) || list.length === 0 || !read) return [];
     const out = await read
       .run({ paths: list }, this.toolContext(new AbortController().signal))
-      .catch(() => ({ files: [] }));
+      .catch((e: unknown) => {
+        // The step still runs; it is told, file by file, to read them with tools.
+        const error = `read failed: ${e instanceof Error ? e.message : String(e)}`;
+        const paths = list.filter((p): p is string => typeof p === 'string' && !URL_LIKE.test(p));
+        return { files: paths.map((path) => ({ path, text: `(${error})`, lines: 0, error })) };
+      });
     const files = (Array.isArray(out.files) ? out.files : []) as PreloadedFile[];
-    const lines = files.reduce((n, f) => n + f.lines, 0);
+    const shown = files.filter((f) => !f.error);
+    const lines = shown.reduce((n, f) => n + f.lines, 0);
+    const failed = files.filter((f) => f.error);
     if (files.length > 0)
       onEvent({
         type: 'info',
-        text: `the engine read ${files.length} file(s) in full (${lines} lines) into the prompt`,
+        text: `the engine read ${shown.length} file(s) in full (${lines} lines) into the prompt${failed.length ? `; ${failed.length} could not be read (${failed.map((f) => `${f.path}: ${f.error}`).join(', ')}): the step reads them with tools` : ''}`,
       });
     return files;
   }
@@ -418,6 +460,9 @@ export class Run {
   ): Promise<{ result: unknown; transcript: AiTranscript } | undefined> {
     if (!playsFromRepertoire(pause.improvisation) || pause.role !== 'assessor') return undefined;
     if (!this.opts.repertoire) return undefined;
+    // The replay key holds the workspace's state, not a web page's: a step that reads pages
+    // is played again, since what the page says today may differ.
+    if (readsPages(pause)) return undefined;
     // Only answers recorded with the model settings this step asks for now.
     const settings = (await this.opts.provider.requested?.(pause)) ?? '';
     const take = this.opts.repertoire.find(
@@ -467,6 +512,17 @@ export class Run {
     });
     // Parts that passed at an earlier attempt are not played again.
     const todo = all.map((_, i) => i).filter((i) => !partsDone?.[i]);
+    const tell = (i: number, state: PartState) =>
+      this.push({
+        type: 'part',
+        nodeId: pause.nodeId,
+        step: pause.step,
+        attempt: pause.attempt,
+        part: i + 1,
+        total: all.length,
+        state,
+      });
+    all.forEach((_, i) => tell(i, partsDone?.[i] ? 'kept' : 'waiting'));
     for (const [i, kept] of (partsDone ?? []).entries())
       if (kept) out[i] = { result: kept, transcript: note('(kept from an earlier attempt)') };
     if (todo.length < all.length)
@@ -487,6 +543,7 @@ export class Run {
         const unwatch = ownClock
           ? this.watch(pause.nodeId, () => ctrl.abort(KEEP_ANSWER), false)
           : () => undefined;
+        tell(i, 'running');
         out[i] = await this.play({ ...single, input: part }, ctrl.signal, {
           take: i + 1,
           state: { ...this.engine.state, ...part },
@@ -506,6 +563,7 @@ export class Run {
             unwatch();
             signal.removeEventListener('abort', follow);
           });
+        tell(i, out[i]?.result === undefined ? 'failed' : 'done');
       }
     };
     const width = Math.min(
@@ -513,18 +571,31 @@ export class Run {
       MAX_AGENTS,
       Math.max(1, todo.length),
     );
-    await Promise.all(Array.from({ length: width }, worker));
+    // Warm: one part first; the rest start once the model is answering it (its prompt cached).
+    const warm = pause.warmFirst && width > 1 && todo.length > 1;
+    const first = warm ? worker() : undefined;
+    if (warm) await this.warmUp(pause.nodeId, todo[0]! + 1, signal);
+    await Promise.all([
+      ...(first ? [first] : []),
+      ...Array.from({ length: warm ? width - 1 : width }, worker),
+    ]);
     // Stopped at the time limit: finished parts count; the rest are retried.
     if (signal.aborted && signal.reason !== KEEP_ANSWER)
       throw new DOMException('aborted', 'AbortError');
     for (const i of todo) out[i] ??= { result: undefined, transcript: note('not played: stopped') };
     const transcripts = out.map((o) => o.transcript);
     const model = transcripts.find((t) => t.model)?.model;
+    // The step's own clock: first part's start to last part's end (parts kept from an earlier
+    // attempt are not timed again).
+    const starts = transcripts.flatMap((t) => (t.startedAt ? [t.startedAt] : [])).toSorted();
+    const ends = transcripts.flatMap((t) => (t.completedAt ? [t.completedAt] : [])).toSorted();
     return {
       result: { parts: out.map((o) => o.result) },
       transcript: {
         provider: this.opts.provider.name,
         ...(model ? { model } : {}),
+        ...(starts.length ? { startedAt: starts[0]! } : {}),
+        ...(ends.length ? { completedAt: ends.at(-1)! } : {}),
         prompt: transcripts[0]?.prompt ?? pause.directive,
         output: transcripts
           .map((t, i) => `## Part ${i + 1} of ${all.length}\n${t.output}`)
@@ -533,6 +604,37 @@ export class Run {
         parts: transcripts,
       },
     };
+  }
+
+  /**
+   * Resolves once part `take` of this step shows model output (not the engine's own notes),
+   * ends, or WARM_MS passes: never later, so a slow first part delays the rest by at most that.
+   */
+  private warmUp(nodeId: string, take: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        off();
+        signal.removeEventListener('abort', done);
+        resolve();
+      };
+      const timer = setTimeout(done, WARM_MS);
+      signal.addEventListener('abort', done, { once: true });
+      const off = this.subscribe((m) => {
+        const answering =
+          m.type === 'provider' &&
+          m.nodeId === nodeId &&
+          m.take === take &&
+          m.event.type !== 'info';
+        const ended =
+          m.type === 'part' &&
+          m.nodeId === nodeId &&
+          m.part === take &&
+          (m.state === 'done' || m.state === 'failed');
+        if (answering || ended) done();
+      });
+    });
   }
 
   /** Jazz: independent takes in parallel, then a bandleader merges them. */

@@ -267,7 +267,7 @@ describe('get_run usage', () => {
     const u = usageOf(fixRun, [maestroRun, fixRun]);
     expect(u.premiumRequests).toBe(5);
     expect(Object.keys(u.byStep)).toEqual(['diagnose', 'apply']);
-    expect(u.byStep.diagnose).toMatch(/^60k in .* 2 calls · 4 premium requests$/);
+    expect(u.byStep.diagnose).toMatch(/^80% of the cost: 60k in .* 2 calls · 4 premium requests$/);
     expect(u.rejected).toMatch(
       /^1 attempts \(20k in .* 2 premium requests\) · 1 answers sent updates as text$/,
     );

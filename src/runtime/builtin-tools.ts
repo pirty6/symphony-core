@@ -5,6 +5,7 @@
  *   sources.catalog  every evidence source available to agents right now
  */
 import { DEMO_ONLY } from '../core/catalog.js';
+import { rankFiles } from './rank.js';
 import { workspaceTools } from './workspace-tools.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -259,6 +260,10 @@ export async function sourceCatalog(
   return { names: entries.map(([n]) => n), descriptions: entries.map(([n, d]) => `${n}: ${d}`) };
 }
 
+/** A string or a list of them, as strings (anything else dropped). */
+const strings = (v: unknown): string[] =>
+  (Array.isArray(v) ? v : [v]).filter((x): x is string => typeof x === 'string');
+
 export function builtinTools(opts: CatalogOptions = {}): ToolSpec[] {
   return [
     {
@@ -271,6 +276,20 @@ export function builtinTools(opts: CatalogOptions = {}): ToolSpec[] {
           includeLockfiles: args.includeLockfiles === true,
           signal: ctx.signal,
         }),
+    },
+    {
+      name: 'repo.rank',
+      description:
+        'Order `paths` by the words they share with `question`, `subQuestions`, `searchTerms` and `hint` (git grep hits, path names): { ranked (every path), matched (those with a hit) }. An order, never a filter.',
+      outputs: ['ranked', 'matched'],
+      run: (args, ctx) => {
+        return rankFiles(
+          ctx.workspace,
+          strings(args.paths),
+          [args.question, args.subQuestions, args.searchTerms, args.hint].flatMap(strings),
+          ctx.signal,
+        );
+      },
     },
     {
       name: 'sources.catalog',

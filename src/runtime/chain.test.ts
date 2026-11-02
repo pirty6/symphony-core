@@ -119,4 +119,24 @@ describe('chainNext with backlog items', () => {
     expect(await items.next!(end('cancelled'))).toBeUndefined();
     expect([...plain.started, ...items.started]).toEqual([]);
   });
+
+  it('a chained pattern plays after a partial run: it gets the answer and its doubts', async () => {
+    const after = hook(['fix']);
+    await after.next!(
+      end('partial', { answer: 'probably the cache', doubts: ['one objection open'] }),
+    );
+    expect(after.started.map((s) => s.score.pattern)).toEqual(['fix']);
+  });
+});
+
+describe('the hint carries on', () => {
+  it("a chained pattern that takes a hint gets the first run's, unless given its own", async () => {
+    const inv = compileScore(PATTERNS.find((p) => p.name === 'investigate')!, {
+      context: { question: 'why?', hint: 'only the CLI' },
+      generatedAt: 't',
+    });
+    const { next, started } = hook(['fix'], inv);
+    await next!(end('success', { hint: 'only the CLI', answer: 'because' }));
+    expect(started[0]!.score.context.hint).toBe('only the CLI');
+  });
 });

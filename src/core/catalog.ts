@@ -11,11 +11,13 @@ export const DEMO_ONLY: ReadonlySet<string> = new Set(['hangman']);
 /** The built-in tools and what each one returns (src/runtime/builtin-tools.ts). */
 export const TOOL_OUTPUTS: Readonly<Record<string, readonly string[]>> = {
   'repo.files': ['files', 'excluded'],
+  'repo.rank': ['ranked', 'matched'],
   'sources.catalog': ['names', 'descriptions'],
   'tests.run': ['passed', 'output', 'command'],
   'git.diff': ['diff', 'hash', 'files'],
   'files.read': ['files'],
   'evidence.check': ['valid', 'invalid', 'checked'],
+  'memory.facts': ['saved'],
   'memory.recall': ['facts', 'lessons'],
   'memory.lesson': ['saved'],
   'patterns.list': ['names', 'summaries', 'catalog'],

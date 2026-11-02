@@ -284,17 +284,25 @@ function partsOf(
   const list = state[node.fanOut.over];
   const per = typeof node.fanOut.per === 'number' ? node.fanOut.per : state[node.fanOut.per];
   if (!Array.isArray(list) || typeof per !== 'number' || per < 1) return {};
-  const input = pick(state, node.reads);
+  const { over } = node.fanOut;
+  // What the parts share first, the part's own slice last: the prompts share a longer
+  // prefix, which the provider's prompt cache reuses.
+  const shared = Object.entries(pick(state, node.reads)).filter(([k]) => k !== over);
   const parts: Readonly<Record<string, unknown>>[] = [];
   for (let i = 0; i < list.length; i += per) {
-    parts.push({ ...input, [node.fanOut.over]: list.slice(i, i + per) });
+    parts.push(Object.fromEntries([...shared, [over, list.slice(i, i + per)]]));
   }
   const agents = node.fanOut.agents ? state[node.fanOut.agents] : undefined;
   const parallel =
     typeof agents === 'number' && Number.isFinite(agents)
       ? Math.min(MAX_AGENTS, Math.max(1, Math.round(agents)))
       : undefined;
-  return parts.length > 1 ? { parts, ...(parallel ? { parallel } : {}) } : {};
+  if (parts.length < 2) return {};
+  return Object.assign(
+    { parts },
+    parallel ? { parallel } : {},
+    node.fanOut.warm ? { warmFirst: true } : {},
+  );
 }
 
 /** One part's answer, checked as if it were the whole step (shape, then the step's checks). */
@@ -753,10 +761,11 @@ function resolveRecovery(
       { input, attempts: ctx.attempts, recoveries: ctx.recoveries, at: res.at },
       hashBefore,
     );
-    fail(
+    // Stopped at a step that could not answer: the work so far is kept, the run is partial.
+    finish(
       ctx,
-      `'${node.id}' gave no valid response after ${ctx.attempts.length} attempt(s): ${pause.feedback.join('; ')}`,
-      node.id,
+      'partial',
+      `'${node.id}' gave no valid response after ${ctx.attempts.length} attempt(s), and the run was stopped there; the work so far is kept: ${pause.feedback.join('; ')}`,
       res.at,
     );
     return;
@@ -804,6 +813,36 @@ function lowConfidence(
   return `You reported confidence ${c}, below ${node.verifyBelow} for this step. Re-check the claims you were least sure of against the evidence, fix or drop what does not hold, and answer again.`;
 }
 
+/**
+ * AgentNode.preloadReport: the files of `preload` the runtime could not give whole, and why,
+ * from the preload record in the transcript (each part's, for a fanned-out step). Replay
+ * reads the recorded transcript, so this is as deterministic as the answer itself.
+ */
+function preloadReportOf(
+  node: ScoreNode,
+  transcript: AiTranscript | undefined,
+): Record<string, string[]> {
+  if (node.kind !== 'agent' || !node.preloadReport) return {};
+  const records = [transcript, ...(transcript?.parts ?? [])].flatMap((t) => t?.preloaded ?? []);
+  const paths: string[] = [];
+  const reasons: string[] = [];
+  for (const r of records) {
+    if (paths.includes(r.path)) continue;
+    const lines = r.omitted ? `lines ${r.omitted[0]}-${r.omitted[1]}` : '';
+    const why = r.error
+      ? `the engine could not read it (${r.error})`
+      : !r.omitted
+        ? undefined
+        : r.cut === 'file'
+          ? `longer than one prompt can hold: ${lines} were not given whole (read with tools, as the AI reports)`
+          : `${lines} left out of the prompt for the call's size: read again on its own`;
+    if (!why) continue;
+    paths.push(r.path);
+    reasons.push(why);
+  }
+  return { [node.preloadReport.paths]: paths, [node.preloadReport.reasons]: reasons };
+}
+
 function resolveAgent(
   score: ExecutableScore,
   ctx: Ctx,
@@ -816,10 +855,20 @@ function resolveAgent(
     (res.result === undefined
       ? { ok: false, errors: [noResult(res.transcript)] }
       : checkAgentResult(res.result, pause.outputSchema, pause.choices));
+  // What the runtime could not put in the prompt is the engine's to say, from its record.
+  const reported: typeof routed = routed.ok
+    ? {
+        ok: true,
+        value: {
+          ...routed.value,
+          updates: { ...routed.value.updates, ...preloadReportOf(node, res.transcript) },
+        },
+      }
+    : routed;
   const accepted =
-    routed.ok && node.kind === 'agent' && node.checks?.length
-      ? acceptance(node.checks, ctx.state, routed.value)
-      : routed;
+    reported.ok && node.kind === 'agent' && node.checks?.length
+      ? acceptance(node.checks, ctx.state, reported.value)
+      : reported;
   const doubt = accepted.ok ? lowConfidence(node, ctx, pause, accepted.value) : undefined;
   const checked: typeof accepted = doubt ? { ok: false, errors: [doubt] } : accepted;
   const hashBefore = stateHashOf(ctx.state, ctx.env);

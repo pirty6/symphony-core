@@ -171,7 +171,8 @@ describe('engine: response validation', () => {
       /does not match pause 'stuck'/,
     );
     r = recover(score, r, 'stop');
-    expect(r.state.kind).toBe('failed');
+    // Stopped there: the run is partial, with its state as it was.
+    expect(r.state).toMatchObject({ kind: 'done', outcome: 'partial' });
     expect(r.state.reason).toMatch(/no valid response after 3 attempt/);
     expect(r.state.state.word).toBe('');
     expect(r.state.steps.at(-1)).toMatchObject({
@@ -423,7 +424,7 @@ describe('engine: acceptance checks', () => {
     r = answerAgent(s, r, ok({}, { outcome: 'failed' }));
     expect(r.state.pause?.kind).toBe('stuck');
     r = recover(s, r, 'stop');
-    expect(r.state.kind).toBe('failed');
+    expect(r.state.outcome).toBe('partial');
     expect(r.state.reason).toMatch(/Report on every file/);
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentPause } from '../core/types.js';
 import {
   buildAgentPrompt,
+  LONG_INPUT,
   decidePermission,
   extractJson,
   isReadOnlyCommand,
@@ -32,6 +33,19 @@ const pause: AgentPause = {
 };
 
 describe('buildAgentPrompt', () => {
+  it('after a long input, restates the goal, the step and the keys; never for a short one', () => {
+    expect(buildAgentPrompt(pause)).not.toContain('## Reminder');
+    const long = { ...pause, input: { question: 'why?', findings: ['x'.repeat(LONG_INPUT)] } };
+    const p = buildAgentPrompt(long);
+    const reminder = p.indexOf('## Reminder (after the long input above)');
+    expect(reminder).toBeGreaterThan(p.indexOf('"findings":['));
+    expect(p.slice(reminder)).toMatch(
+      /- Goal: Find the bug\n- Your step: Gather\. .*\n- Submit once with `submit_result`: updates with exactly `findings`, and a verdict\./,
+    );
+    // Feedback, which changes between attempts, still comes last.
+    expect(reminder).toBeLessThan(p.indexOf('attempt 2 of 2'));
+  });
+
   it('includes goal, directive, input, schema, rules and feedback', () => {
     const p = buildAgentPrompt(pause);
     expect(p).toContain('Find the bug');

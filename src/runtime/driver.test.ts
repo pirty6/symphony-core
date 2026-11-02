@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { hashOf } from '../core/hash.js';
 import { replayPerformance, restoreEngine, RestoreError } from '../core/replay.js';
-import type { Pattern, SavedRun } from '../core/types.js';
+import type { AgentPause, Pattern, SavedRun } from '../core/types.js';
 import { fix, hangman } from '../patterns/index.js';
-import { performScore, Run, type RunMessage, type RunStatus } from './driver.js';
+import { performScore, readsPages, Run, type RunMessage, type RunStatus } from './driver.js';
 import { KEEP_ANSWER, type AgentRequest, type AgentResponse, type Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
 import { registry } from './tools.js';
@@ -169,7 +169,7 @@ describe('Run', () => {
       clock,
       autoApprove: true,
     }).start();
-    expect(perf.outcome).toBe('failed');
+    expect(perf.outcome).toBe('partial');
     expect(perf.reason).toMatch(/no valid response after 3 attempt/);
     expect(perf.steps.at(-1)?.attempts?.[0]?.transcript?.output).toMatch(/network down/);
     expect(perf.steps.at(-1)?.recoveries).toEqual([{ action: 'stop', by: 'scripted', at: 't' }]);
@@ -961,5 +961,19 @@ describe('setup errors', () => {
     expect(calls).toBe(1);
     expect(perf.outcome).toBe('cancelled');
     expect(perf.reason).toMatch(/^Copilot is not signed in on this machine\./);
+  });
+});
+
+const pageStep = (input: Record<string, unknown>, capabilities: string[]) =>
+  ({ input, capabilities }) as unknown as AgentPause;
+
+describe('classical replay and the web', () => {
+  it('a step that can browse and is given a URL is played again, not replayed', () => {
+    expect(readsPages(pageStep({ deepBatch: ['src/a.ts', 'https://x.dev/p'] }, ['web']))).toBe(
+      true,
+    );
+    expect(readsPages(pageStep({ deepBatch: ['src/a.ts'] }, ['web']))).toBe(false);
+    // Without web access a URL is only text: the workspace key still holds.
+    expect(readsPages(pageStep({ note: 'https://x.dev/p' }, []))).toBe(false);
   });
 });

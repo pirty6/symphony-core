@@ -1234,3 +1234,26 @@ pre {
     opacity: 0.55;
   }
 }
+
+/* Sub-agents of a fanned-out step, drawn beside it */
+.subagent-node {
+  width: 210px;
+  padding: 6px 10px;
+  border-style: dashed;
+}
+.subagent-node.subagent-waiting {
+  opacity: 0.55;
+}
+.subagent-node.subagent-kept .fn-kind {
+  font-style: italic;
+}
+.react-flow__edge.subagent-edge path {
+  stroke-dasharray: 4 4;
+  stroke: #5b6488;
+}
+.react-flow__edge.subagent-running path {
+  stroke: #60a5fa;
+}
+.react-flow__edge.subagent-failed path {
+  stroke: #f87171;
+}

@@ -12,9 +12,12 @@ import type { Pattern, SavedRun, TokenUsage } from '../core/types.js';
 import {
   addUsage,
   costliest,
+  growth,
+  growthRatios,
   formatUsage,
   performanceUsage,
   rejectionUsage,
+  wallTimeByNode,
 } from '../core/usage.js';
 import { Run } from '../runtime/driver.js';
 import { checkCitations } from '../runtime/evidence.js';
@@ -33,6 +36,12 @@ export interface EvalResult {
   readonly tokens: TokenUsage;
   /** Tokens per step of the run (rejected attempts included). */
   readonly byNode?: Readonly<Record<string, TokenUsage>>;
+  /** Steps whose input grew visit by visit ("assess: 40k → 120k in"). */
+  readonly growing?: readonly string[];
+  /** Per step visited more than once: last visit's input over the first's. */
+  readonly growth?: Readonly<Record<string, number>>;
+  /** Wall time per step, ms (AI answers, rejected ones included). */
+  readonly msByNode?: Readonly<Record<string, number>>;
   readonly models: readonly string[];
   /** Workspace citations among the run's findings: how many were checked, how many held. */
   readonly citations: { readonly checked: number; readonly invalid: number };
@@ -83,6 +92,7 @@ async function runTask(
     const score = compileScore(pattern, {
       context: task.inputs,
       ...(pattern.goalFrom ? {} : { goal: task.goal ?? task.id }),
+      ...(task.complexity ? { complexity: task.complexity } : {}),
     });
     const started = Date.now();
     const run = new Run({
@@ -130,6 +140,9 @@ async function runTask(
       steps: perf.steps.length,
       tokens: performanceUsage(perf).total,
       byNode: performanceUsage(perf).byNode,
+      growing: growth(performanceUsage(perf).byVisit),
+      growth: growthRatios(performanceUsage(perf).byVisit),
+      msByNode: wallTimeByNode(perf),
       rejected: (({ attempts, attemptUsage, textUpdates }) => ({
         attempts,
         premiumRequests: attemptUsage.premiumRequests ?? 0,
@@ -203,6 +216,10 @@ export interface EvalSummary {
   readonly perform: TokenUsage;
   /** Tokens per "<pattern> <step>", over every run. */
   readonly byNode: Readonly<Record<string, TokenUsage>>;
+  /** Wall time per "<pattern> <step>", ms, over every run. */
+  readonly msByNode: Readonly<Record<string, number>>;
+  /** Largest input growth per "<pattern> <step>" over its visits, in any run. */
+  readonly growth: Readonly<Record<string, number>>;
 }
 
 const NO_TOKENS: TokenUsage = {
@@ -239,6 +256,16 @@ export function summarize(results: readonly EvalResult[]): EvalSummary {
         acc[`${r.pattern} ${node}`] = addUsage(acc[`${r.pattern} ${node}`] ?? NO_TOKENS, u);
       return acc;
     }, {}),
+    msByNode: results.reduce<Record<string, number>>((acc, r) => {
+      for (const [node, ms] of Object.entries(r.msByNode ?? {}))
+        acc[`${r.pattern} ${node}`] = (acc[`${r.pattern} ${node}`] ?? 0) + ms;
+      return acc;
+    }, {}),
+    growth: results.reduce<Record<string, number>>((acc, r) => {
+      for (const [node, g] of Object.entries(r.growth ?? {}))
+        acc[`${r.pattern} ${node}`] = Math.max(acc[`${r.pattern} ${node}`] ?? 0, g);
+      return acc;
+    }, {}),
   };
 }
 
@@ -246,6 +273,14 @@ const rate = (a: number, b: number) => (b === 0 ? 0 : a / b);
 
 /** Input tokens per run may grow this much over the baseline before it counts as worse. */
 export const COST_SLACK = 1.25;
+/** Wall time per run: looser, live latency is noisy. */
+export const TIME_SLACK = 1.5;
+/** A step's cached share of input may drop this many points before it counts as worse. */
+export const CACHE_DROP = 0.15;
+/** Only steps with this much input in both reports are judged on their cache share. */
+const CACHE_MIN_INPUT = 100_000;
+
+const cacheShare = (u: TokenUsage) => (u.inputTokens > 0 ? u.cacheReadTokens / u.inputTokens : 0);
 
 /**
  * Why a run is worse than its baseline (empty = not worse): fewer tasks solved, more
@@ -261,6 +296,23 @@ export function regressions(s: EvalSummary, b: EvalSummary): string[] {
   const perRun = (x: EvalSummary) => rate(x.inputTokens, x.runs);
   if (perRun(b) > 0 && perRun(s) > perRun(b) * COST_SLACK)
     out.push(`input tokens per run up ${Math.round((perRun(s) / perRun(b) - 1) * 100)}%`);
+  const timePerRun = (x: EvalSummary) => rate(x.ms, x.runs);
+  if (timePerRun(b) > 0 && timePerRun(s) > timePerRun(b) * TIME_SLACK)
+    out.push(`time per run up ${Math.round((timePerRun(s) / timePerRun(b) - 1) * 100)}%`);
+  // Reports from before these were recorded have none: nothing to compare.
+  for (const [node, u] of Object.entries(s.byNode)) {
+    const was = b.byNode[node];
+    if (!was || u.inputTokens < CACHE_MIN_INPUT || was.inputTokens < CACHE_MIN_INPUT) continue;
+    if (cacheShare(u) < cacheShare(was) - CACHE_DROP)
+      out.push(
+        `cache share of ${node} down from ${Math.round(cacheShare(was) * 100)}% to ${Math.round(cacheShare(u) * 100)}%`,
+      );
+  }
+  for (const [node, g] of Object.entries(s.growth ?? {})) {
+    const was = b.growth?.[node];
+    if (was !== undefined && g > 1.5 && g > was * COST_SLACK)
+      out.push(`context of ${node} grows ${g}× over its visits (baseline ${was}×)`);
+  }
   return out;
 }
 
@@ -299,6 +351,34 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   const top = costliest(s.byNode, 5);
   if (top.length > 0)
     lines.push(`costliest steps: ${top.map((t) => `${t.node} (${t.text})`).join('; ')}`);
+  const slowest = Object.entries(s.msByNode)
+    .toSorted(([, x], [, y]) => y - x)
+    .slice(0, 5);
+  const allMs = Object.values(s.msByNode).reduce((a, x) => a + x, 0);
+  if (slowest.length > 0 && allMs > 0)
+    lines.push(
+      `slowest steps: ${slowest.map(([n, ms]) => `${n} (${(ms / 1000).toFixed(0)}s, ${Math.round((100 * ms) / allMs)}% of AI time)`).join('; ')}`,
+    );
+  // Runs vary (no seed): with repeats, say how much, per task.
+  const byTask = new Map<string, EvalResult[]>();
+  for (const r of report.results) byTask.set(r.task, [...(byTask.get(r.task) ?? []), r]);
+  const spread = [...byTask]
+    .filter(([, rs]) => rs.length > 1)
+    .map(([task, rs]) => {
+      const range = (f: (r: EvalResult) => number, unit: (n: number) => string) => {
+        const xs = rs.map(f);
+        return `${unit(Math.min(...xs))}–${unit(Math.max(...xs))}`;
+      };
+      return `${task}: solved ${rs.filter((r) => r.pass).length}/${rs.length}, ${range((r) => r.tokens.inputTokens, k)} in, ${range(
+        (r) => r.ms / 1000,
+        (n) => `${n.toFixed(0)}s`,
+      )}`;
+    });
+  if (spread.length > 0) lines.push(`spread over repeats: ${spread.join('; ')}`);
+  const growing = report.results
+    .flatMap((r) => (r.growing ?? []).map((g) => `${r.task} ${g}`))
+    .slice(0, 5);
+  if (growing.length > 0) lines.push(`growing context: ${growing.join('; ')}`);
   const worse = b ? regressions(s, b) : [];
   if (worse.length > 0) lines.push(`⚠ worse than the baseline: ${worse.join(', ')}`);
   return lines.join('\n');

@@ -38,6 +38,18 @@ const v = (reason: string, confidence = 0.9) => ({
   reason,
 });
 
+/** The maestro's log, one line per fact, from the state (see logComposition). */
+const COMPOSITION_LOG = [
+  '["Pattern: " + chosen + if(reused, " (reused an approved composition: no classification, no debate)", if(chosen == "new", " (a new pattern, drafted)", if(len(keys(adaptation)) > 0, " (the tested library pattern, tailored)", " (the tested library pattern, as is)")))]',
+  'if(empty(suggested), [], ["Verb triggers suggested: " + suggested])',
+  'if(rerouted, ["The template-critic rerouted it (fit: " + fit + ")"], [])',
+  'if(empty(thenPattern), [], ["Then: " + thenPattern + ", with what it finds"])',
+  '["Complexity: " + text(complexity) + if(presetComplexity > 0, " (you set it; the classifier rated " + text(ratedComplexity) + ")", "")]',
+  'if(empty(classifyReason), [], ["Why: " + classifyReason])',
+  '["Rounds: " + text(round) + " of " + text(maxRounds)]',
+  'if(len(draftErrors) > 0, ["Last validation errors: " + join(draftErrors, "; ")], [])',
+].join(' + ');
+
 export const maestro: Pattern = {
   name: 'maestro',
   description:
@@ -46,7 +58,16 @@ export const maestro: Pattern = {
   requiredContext: ['request'],
   goalFrom: 'request',
   // Feedback that came after the last round, kept rather than dropped (like unresolvedObjections).
-  result: ['unappliedFeedback'],
+  // What it did, not only what it made: the log you read when it finishes or fails.
+  result: [
+    'composition',
+    'requirements',
+    'coverage',
+    'uncovered',
+    'debateNotes',
+    'adaptation',
+    'unappliedFeedback',
+  ],
   maxSteps: 400,
   state: [
     { name: 'request', type: 'string', description: "The user's problem, verbatim" },
@@ -73,6 +94,11 @@ export const maestro: Pattern = {
       description: '1..4; picks the model tier and the debate roster',
     },
     { name: 'classifyReason', type: 'string' },
+    {
+      name: 'composition',
+      type: 'string[]',
+      description: 'What the maestro did: the pattern it chose and how, complexity, rounds',
+    },
     {
       name: 'requirements',
       type: 'string[]',
@@ -605,7 +631,7 @@ ${SCORE_FORMAT}`,
         'The maestro composed this score. Approve with empty feedback to perform it. Write feedback to send it back for another round, at the same complexity unless you tick smarter (one tier higher: a deeper debate on a stronger model). Reject to stop.',
       writes: ['feedback', 'smarter'],
       // How each requirement is met, and any that are not (out of rounds): shown before the go.
-      shows: ['coverage', 'uncovered'],
+      shows: ['composition', 'coverage', 'uncovered'],
       maxVisits: 6,
     },
     {
@@ -621,6 +647,19 @@ ${SCORE_FORMAT}`,
         // Feedback on a reused composition composes it afresh.
         { field: 'reused', expr: 'false' },
       ],
+    },
+    {
+      id: 'logComposition',
+      kind: 'compute',
+      label: 'Log the composition',
+      // Written by the engine from the state, so the log cannot differ from what happened.
+      assign: [{ field: 'composition', expr: COMPOSITION_LOG }],
+    },
+    {
+      id: 'logGaveUp',
+      kind: 'compute',
+      label: 'Log the composition',
+      assign: [{ field: 'composition', expr: COMPOSITION_LOG }],
     },
     {
       id: 'finalize',
@@ -734,10 +773,12 @@ ${SCORE_FORMAT}`,
     { id: 'requeue-propose', from: 'requeue', to: 'propose', label: 'meet the requirements' },
     { id: 'valid-roundsLeft', from: 'valid', to: 'roundsLeft', branch: 'else' },
     { id: 'roundsLeft-retry', from: 'roundsLeft', to: 'retry', branch: 'then' },
-    { id: 'roundsLeft-gaveUp', from: 'roundsLeft', to: 'gaveUp', branch: 'else' },
+    { id: 'roundsLeft-gaveUp', from: 'roundsLeft', to: 'logGaveUp', branch: 'else' },
+    { id: 'logGaveUp-gaveUp', from: 'logGaveUp', to: 'gaveUp' },
     // Structural errors are the conductor's to fix: no need to debate the whole score again.
     { id: 'retry-revise', from: 'retry', to: 'revise', label: 'fix errors' },
-    { id: 'context-gate', from: 'context', to: 'gate' },
+    { id: 'context-log', from: 'context', to: 'logComposition' },
+    { id: 'log-gate', from: 'logComposition', to: 'gate' },
     {
       id: 'gate-escalate',
       from: 'gate',

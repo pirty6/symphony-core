@@ -20,6 +20,11 @@ pattern, judges its **complexity**, and runs a debate sized to that complexity. 
 conductor: it makes every musician (AI agent) play exactly the notes of the score, in order. How
 much the musicians may **improvise** is one knob, from 🎻 Classical (same song, same notes) to 🥁 Free jazz.
 
+**Guides:** [how Symphony Studio works](docs/studio.md) (who keeps track, how lies and failures
+are caught, stopping and resuming) · [the maestro](docs/maestro.md) (a search engine for patterns,
+and its log) · [the algorithm flows](docs/patterns.md) (investigate, fix, refactor, implement,
+backlog, review, analyze; diagrams generated from the patterns by `npm run docs`).
+
 ## Quick start (only Node.js needed)
 
 Requires **Node.js 20.19+ or 22.12+** (npm ships with Node). No pnpm, no build step.
@@ -162,7 +167,7 @@ Set `SYMPHONY_MCP=off` to disable MCP or `SYMPHONY_MCP_USER=off` to ignore the V
 
 Guards, conditions and compute nodes use a small, safe language (no `eval`, no coercion):
 state keys by name, literals and list literals (`["a", b]`), `== != < <= > >= && || ! + - *`,
-`len empty includes lower append if chars subset take drop first unique without pick join withIds brief`, and
+`len empty includes lower append if chars subset take drop first unique without pick join withIds brief unmatched count positions heads outside stances text`, and
 `verdict.outcome` / `verdict.confidence` of the last agent.
 
 ```ts
@@ -347,7 +352,7 @@ the listing adapts to the question: "is this on the internet?", "does this work 
    triaged, and the coverage says the rest were not. Pass `-c exhaustive=true` to triage every file. *Web* has the AI search and list
    the pages worth reading. *Experiment* has the AI design the commands to run (benchmarks, timing,
    profiling).
-3. **Triage files** (loop): every listed file, in batches of `batchSize` (25). An answer that leaves
+3. **Triage files** (loop): every listed file, in batches of `batchSize` (10). An answer that leaves
    out a file is rejected.
 4. **Deep read** (loop): every relevant file *and* every listed page, read completely,
    `deepBatchSize` (4) at a time.
@@ -356,7 +361,9 @@ the listing adapts to the question: "is this on the internet?", "does this work 
 6. **Search sources** (loop): each remaining source (git, GitHub, dependencies, MCP…) searched as
    fits; every query is recorded.
 7. **Close gaps** (loop): unanswered sub-questions get targeted research (up to `maxGapRounds`),
-   then a human hint if confidence stays low.
+   then a human hint if confidence stays low. Every research round, including those for a hint
+   and for objections, counts toward one run-wide budget (`maxChaseRounds`, 8).
+   `gapsPerChase: 1` gives each gap its own sub-agent (faster, more tokens: an A/B option).
 8. **Answer**: cites evidence and ends with a coverage report: files triaged and excluded, pages
    read, experiments run, sources searched and skipped, what is still unknown. It must give a
    ruling (CONFIRMED, REFUTED or UNKNOWN, with evidence) on every hypothesis.
@@ -598,7 +605,14 @@ solved rate or citation validity.
   analysis of a small CSV (the answer and its margin, cited), and a backlog judged on the items
   it extracts (each real one once, the done one skipped). It records solved, citations valid, tokens, time and
   models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline: fewer
-  solved, more invalid citations, none checked, or 25% more input tokens per run. `--task routing` adds 21 maestro requests (compose only) judged in code on the
+  solved, more invalid citations, none checked, 25% more input tokens per run, 50% more time per
+  run, a step whose cached share of input drops 15 points, or a step whose input grows more over
+  its visits. The report shows each costly step's share of cost and model time, the slowest
+  steps, and with `-n` the spread over repeats (runs vary: there is no seed). Investigate
+  fixtures also cover a real quote that does not support the claim, a stale lesson in memory
+  on unchanged files, a false hint, and a planted flaw played with the debate (complexity 3)
+  and without (1), so what the debate catches is measured; `investigate-many-files` (240 files,
+  several waves) is heavy and runs only when named. `--task routing` adds 21 maestro requests (compose only) judged in code on the
   pattern chosen, a complexity band and the chained pattern; `rehearse maestro --fields
   chosen,complexity` measures how often routing agrees with itself.
 - **Checked evidence.** Findings are written `path:line — fact \`quote\``. A **Check citations**
@@ -608,7 +622,8 @@ solved rate or citation validity.
   (F1, F2…) and answers, root causes and designs must cite existing ids (`refs`, `ids`).
   The citation is found wherever it sits and however it is written (bold, backticks, "a.ts line
   3", "a.ts | line 3"), so dressing it up cannot skip the check; quotes need 8+ characters and
-  ranges at most 26 lines. A finding that cites nothing (no path:line, URL, "source | location",
+  two or more words or identifiers (one word is found near almost any line), and ranges at most
+  26 lines. A finding that cites nothing (no path:line, URL, "source | location",
   commit or issue) is rejected. `evidence.check` reports how many it `checked`, and the eval
   never counts zero checked as all valid.
 - **The step's own checks run in-session** too ("at least 3 hypotheses"), so a bad answer is fixed
@@ -622,18 +637,25 @@ solved rate or citation validity.
   of a maestro run before; the CLI and `eval` report them (`rejected: N attempts …`).
 - **The last valid answer wins, but an empty one never replaces one with content**: a skeptic's
   eight real concerns were once lost to an empty second call. The AI is told, and the run notes it.
-- **Parallel parts (`fanOut`).** investigate's triage and deep reads take a wave of four batches
-  (100 files to triage, 16 items to read in full) and play them at once (at most 4 calls); answers are checked per part and merged in part order,
+- **Parallel parts (`fanOut`).** investigate's triage and deep reads take a wave of three batches
+  per sub-agent (with the default 6 sub-agents: 180 files to triage in batches of 10, 72 items to
+  read in full in batches of 4) and play them at once (at most 6 calls; the plan picks 1-6);
+  answers are checked per part and merged in part order,
   so the result does not depend on timing and replays exactly.
 - **Memory across runs** (`.symphony/memory.json`). Facts that passed the citation check are
   remembered; a **Recall earlier runs** step brings back those that share words with the question
   *and still match the files today* (re-checked at recall), plus lessons from earlier fix and
   implement runs. They are leads to check, never evidence. The store stays clean: run tags such
   as `[H2 against]` are stripped, only the newest fact per `path:line` is kept, one run writes at
-  most 200 facts (so a few runs cannot replace the whole store), lessons expire after 90 days or
-  when their files are gone, and recall weights rare words above common ones. A run never
-  recalls its own facts, investigate remembers each answer as a lesson too, and a run playing in
-  its own worktree reads and adds to your workspace's memory, not a copy deleted with it.
+  most 200 facts (so a few runs cannot replace the whole store), lessons expire after 90 days (30
+  for one that names no file), when their files are gone or when one of them changes, a newer
+  lesson on the same problem replaces the older, each is shown with its date and commit, and
+  recall weights rare words above common ones. A run never recalls its own facts; investigate
+  recalls again with its sub-questions, and remembers a settled answer as a lesson built from its
+  checked sub-answers (only when it names a workspace file), plus the findings it cited. A run
+  playing in its own worktree reads and adds to your workspace's memory, not a copy deleted with
+  it. Classical replay never reuses an answer about a web page: what the page says may have
+  changed, and the replay key only knows the workspace.
 - **Replays know who played.** A recorded answer is reused only for the same move *and* the same
   model settings (tier, requested model, effort); `compare` names "played by different models"
   as a cause instead of calling two runs identical.
@@ -647,10 +669,14 @@ solved rate or citation validity.
   for a human like any stuck step. Mechanical steps already play a tier lower (smaller model,
   lower reasoning effort) through `complexityShift`.
 - **Files read by the engine (`preload`).** A step that reads a known list of files (investigate's
-  deep read, review's per-file review) gets each workspace file whole, with line numbers, in its
+  triage and deep read, review's per-file review) gets each workspace file whole, with line numbers, in its
   prompt, instead of paging through it with tool calls. It reads everything in one turn and
   cannot skip part of a file (a file over 120k characters says which lines were left out); it
-  still follows references and history with tools, and still lists every item it read. On the
+  still follows references and history with tools, and still lists every item it read. With
+  `preloadReport`, the engine, not the AI, records which files it could not give whole (too long
+  for one prompt, cut for the call's 360k-character budget, unreadable): investigate's deep read
+  reports those as not read in full and reads the budget-cut ones again on their own, and its
+  triage sends a file it saw only part of to the deep read. On the
   largest recorded run the deep read made about 48 model calls per part (1,531 in all) and used
   142M input tokens, while the whole text of the 113 files it read is about 357k tokens.
 - **Lean findings.** investigate's assess, gap chaser, part answers and debaters read
@@ -661,6 +687,12 @@ solved rate or citation validity.
 - **Compact JSON in prompts.** Inputs are sent unindented: about 3-4% fewer prompt characters
   (measured on 549 recorded Copilot prompts), less than the 1.5x a pretty-printing estimate
   suggests, because most of a prompt's JSON is long strings.
+
+- **Partial means "the work so far is kept, with what is missing said".** Limits, an AI stopping
+  early, a stop at a step that cannot answer, and an investigate answer with REAL objections
+  still open at the debate cap all end partial. A chain goes on after a partial run (the next
+  pattern gets the answer and its `doubts`, and has its own gates); the eval never counts a
+  partial run as solved. Engine 1.2.0: older saved runs replay with that noted.
 
 **Decided, and left alone (until the eval says otherwise):**
 
@@ -722,6 +754,7 @@ npm test             # core + runtime + CLI (vitest)
 npm run test:ui      # studio unit + integration + API tests
 npm run typecheck && npm run lint
 npm run build        # library to dist/
+npm run docs         # redraw the flow diagrams in docs/ from the patterns (a test checks they are current)
 cd packages/ui && npx playwright install chromium && npx playwright test   # browser e2e
 ```
 

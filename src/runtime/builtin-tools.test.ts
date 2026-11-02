@@ -117,11 +117,13 @@ describe('sources.catalog', () => {
     const tools = defaultTools({ probeGitHub: false, mcp: { includeUser: false } });
     expect([...tools.keys()]).toEqual([
       'repo.files',
+      'repo.rank',
       'sources.catalog',
       'tests.run',
       'files.read',
       'git.diff',
       'evidence.check',
+      'memory.facts',
       'memory.recall',
       'memory.lesson',
       'patterns.list',

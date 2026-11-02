@@ -154,7 +154,7 @@ describe('divergence', () => {
       action: 'stop',
       at: 't',
     });
-    expect(f.state.kind).toBe('failed');
+    expect(f.state.outcome).toBe('partial');
     const failed = replayPerformance(score, toPerformance(f.state));
     expect(failed.divergence.reproduced).toBe(true);
     expect(failed.result.state.events).toEqual(f.state.events);

@@ -62,6 +62,19 @@ describe('debate phases in investigate', () => {
     // Independent: it never saw the first answer or its evidence.
     expect(Object.keys(second.input ?? {})).not.toContain('answer');
     expect(Object.keys(second.input ?? {})).not.toContain('findings');
+    // Its evidence is checked and numbered, and the reconciled answer must cite findings.
+    expect(ran('checkSecond')).toBe(1);
+    expect(r.state.state.findings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^F\d+ src\/core\/engine.ts:1 — resolveAgent checks/),
+      ]),
+    );
+    const reconcile = investigate.nodes.find((n) => n.id === 'reconcile') as unknown as {
+      checks: { expr: string }[];
+    };
+    expect(reconcile.checks.map((c) => c.expr)).toContain(
+      'len(refs(answer)) > 0 && subset(refs(answer), ids(findings))',
+    );
   });
 
   it('a skeptic that never stops objecting is cut off after maxDebateRounds', () => {
@@ -71,7 +84,7 @@ describe('debate phases in investigate', () => {
         ...agents,
         challenge: (s, v) => ({
           ...agents.challenge!(s, v),
-          updates: { objections: [`objection ${v}`] },
+          updates: { objections: [`S1: F1 objection ${v}`] },
         }),
       },
     };
@@ -79,8 +92,119 @@ describe('debate phases in investigate', () => {
     // It ends, and says so: an answer with objections still open is partial.
     expect(r.state.outcome).toBe('partial');
     expect(r.state.cursor).toBe('doubts');
+    // Why it is partial is recorded, and the open objections are open questions.
+    expect(state.doubts).toEqual([expect.stringMatching(/^Objections were still open/)]);
+    expect(state.openQuestions).toEqual(
+      expect.arrayContaining(state.unresolvedObjections as string[]),
+    );
+    // An unsettled answer teaches nothing: no lesson, and no facts remembered.
+    expect(ran('learnAnswer')).toBe(0);
+    expect(ran('rememberCited')).toBe(0);
     expect(state.debateRounds).toBe(state.maxDebateRounds);
     expect(ran('challenge')).toBe((state.maxDebateRounds as number) + 1);
+  });
+
+  it('at the cap only REAL objections leave doubts; theoretical ones do not', () => {
+    const objecting = (realAtCap: boolean): DemoScript => ({
+      ...demo,
+      agents: {
+        ...agents,
+        challenge: (s, v) => ({
+          ...agents.challenge!(s, v),
+          updates: { objections: [`S1: F1 objection ${v}`, `S0: F1 nit ${v}`] },
+        }),
+        triageObjections: (s, v) => {
+          const objections = s.objections as string[];
+          const last = v >= (s.maxDebateRounds as number);
+          const real = last && !realAtCap ? [] : [objections[0]!];
+          return {
+            ...agents.triageObjections!(s, v),
+            updates: {
+              objectionTriage: objections.map(
+                (o) => `${o}: ${real.includes(o) ? 'REAL' : 'THEORETICAL'} — it bears on S1`,
+              ),
+              realObjections: real,
+            },
+          };
+        },
+      },
+    });
+    const real = play(3, objecting(true));
+    expect(real.r.state.outcome).toBe('partial');
+    // Only the REAL one is open; the nit is not.
+    expect(real.state.unresolvedObjections).toEqual([
+      `S1: F1 objection ${real.state.maxDebateRounds}`,
+    ]);
+    const theoretical = play(3, objecting(false));
+    expect(theoretical.r.state.outcome).toBe('success');
+    expect(theoretical.state.unresolvedObjections).toEqual([]);
+  });
+
+  it('objections name their sub-question, and stay open through research until it settles them', () => {
+    const untagged: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        challenge: (s, v) => ({
+          ...agents.challenge!(s, v),
+          updates: { objections: v === 0 ? ['no sub-question named'] : [] },
+        }),
+      },
+    };
+    const rejected = play(2, untagged).r.state.events.some(
+      (e) =>
+        e.type === 'response-rejected' && e.nodeId === 'challenge' && /S1: …/.test(e.errors.join()),
+    );
+    expect(rejected).toBe(true);
+    // An objection the research did not settle stays a gap (assess may keep it now).
+    let assessed = 0;
+    const unsettled: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        assess: (s, v) => {
+          const open = (s.openObjections as string[]) ?? [];
+          return open.length && assessed++ === 0
+            ? { ...agents.assess!(s, v), updates: { gaps: [open[0]!], confidence: 0.8 } }
+            : agents.assess!(s, v);
+        },
+      },
+    };
+    const { r, state } = play(2, unsettled);
+    expect(state.openObjections).toEqual([expect.stringMatching(/^S2: /)]);
+    const kept = r.state.steps.filter(
+      (st) =>
+        st.nodeId === 'assess' &&
+        (st.updates?.gaps as string[] | undefined)?.[0]?.startsWith('S2: '),
+    );
+    expect(kept).toHaveLength(1);
+    expect(
+      r.state.events.some((e) => e.type === 'response-rejected' && e.nodeId === 'assess'),
+    ).toBe(false);
+  });
+
+  it('a skeptic raises at most 5 objections a round', () => {
+    const many: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        challenge: (s, v) => ({
+          ...agents.challenge!(s, v),
+          updates: {
+            objections: ['S1: F1 a', 'S1: F1 b', 'S1: F1 c', 'S1: F1 d', 'S1: F1 e', 'S1: F1 f'],
+          },
+        }),
+      },
+    };
+    const { r } = play(2, many);
+    expect(
+      r.state.events.some(
+        (e) =>
+          e.type === 'response-rejected' &&
+          e.nodeId === 'challenge' &&
+          /at most 5/.test(e.errors.join()),
+      ),
+    ).toBe(true);
   });
 
   it('a routine problem needs 2 hypotheses, a harder one 3', () => {
@@ -137,6 +261,286 @@ describe('debate phases in investigate', () => {
         (e) => e.nodeId === 'answer' && /one ruling per hypothesis/.test(e.errors.join()),
       ),
     ).toBe(true);
+  });
+
+  it('rejects hypotheses without a "none of these" or "premise is wrong" rival', () => {
+    let proposals = 0;
+    const narrow: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        hypothesize: (s, v) =>
+          proposals++ === 0
+            ? {
+                ...agents.hypothesize!(s, v),
+                updates: {
+                  hypotheses: [
+                    'H1: a | confirm if x | refute if y',
+                    'H2: b | confirm if z | refute if w',
+                  ],
+                  ratedComplexity: 2,
+                },
+              }
+            : agents.hypothesize!(s, v),
+      },
+    };
+    const { r } = play(2, narrow);
+    expect(r.state.outcome).toBe('success');
+    const rejected = r.state.events.flatMap((e) => (e.type === 'response-rejected' ? [e] : []));
+    expect(
+      rejected.some((e) => e.nodeId === 'hypothesize' && /premise is wrong/.test(e.errors.join())),
+    ).toBe(true);
+  });
+});
+
+const rejections = (r: ReturnType<typeof play>['r'], node: string) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === node ? [e.errors.join()] : [],
+  );
+
+describe('the debate remembers its earlier rounds', () => {
+  it('the next skeptic reads past objections and their triage, and may not repeat one word for word', () => {
+    const inputs: Record<string, unknown>[] = [];
+    let calls = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        challenge: (s, v) => {
+          inputs.push({ ...s });
+          calls += 1;
+          // Round 2 first repeats round 1 verbatim; the correction raises nothing.
+          const objections =
+            calls === 1
+              ? ['S1: x was never read (F1)']
+              : calls === 2
+                ? ['S1: x was never read (F1)']
+                : [];
+          return { ...agents.challenge!(s, v), updates: { objections } };
+        },
+      },
+    };
+    const { r } = play(3, script);
+    expect(r.state.outcome).toBe('success');
+    expect(inputs[0]!.pastObjections).toEqual([]);
+    expect(inputs[1]!.pastObjections).toEqual(['S1: x was never read (F1)']);
+    expect(String(inputs[1]!.objectionTriage)).toMatch(/REAL/);
+    expect(inputs[1]!.openObjections).toEqual(['S1: x was never read (F1)']);
+    expect(rejections(r, 'challenge').join()).toMatch(/word for word/);
+  });
+
+  it("a pragmatist's reason names its ground (an F-id or S<n>), and only F-ids that exist", () => {
+    let calls = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        triageObjections: (s, v) => {
+          calls += 1;
+          const good = agents.triageObjections!(s, v);
+          const objections = s.objections as string[];
+          const reason = calls === 1 ? 'REAL — it matters' : calls === 2 ? 'REAL — see F999' : '';
+          return reason
+            ? {
+                ...good,
+                updates: {
+                  ...good.updates,
+                  objectionTriage: objections.map((o) => `${o}: ${reason}`),
+                },
+              }
+            : good;
+        },
+      },
+    };
+    const { r } = play(3, script);
+    expect(r.state.outcome).toBe('success');
+    const errors = rejections(r, 'triageObjections').join('\n');
+    expect(errors).toMatch(/name what the reason rests on/);
+    expect(errors).toMatch(/Cite only F-ids that are in findingsBrief/);
+  });
+});
+
+describe('the skeptic', () => {
+  it('works with read-only tools on another model family, and names what each objection attacks', () => {
+    let calls = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        challenge: (s, v) => {
+          calls += 1;
+          const objections =
+            calls === 1
+              ? ['S2: the answer is vague about retries']
+              : calls === 2
+                ? [
+                    'S2: "rejected answers keep their move key" is not backed',
+                    'S1: F1 says nothing about schema',
+                  ]
+                : [];
+          return { ...agents.challenge!(s, v), updates: { objections } };
+        },
+      },
+    };
+    const { r } = play(2, script);
+    const pause = r.state.events.flatMap((e) =>
+      e.type === 'paused' && e.pause.kind === 'agent' && e.pause.nodeId === 'challenge'
+        ? [e.pause]
+        : [],
+    )[0]!;
+    expect(pause.isolated).toBe(false);
+    expect(pause.role).toBe('assessor');
+    expect(pause.otherModel).toBe(true);
+    expect(rejections(r, 'challenge').join()).toMatch(/Name what each objection attacks/);
+    expect(r.state.state.pastObjections).toEqual([
+      'S2: "rejected answers keep their move key" is not backed',
+      'S1: F1 says nothing about schema',
+    ]);
+  });
+});
+
+describe('keepUnchallenged (an A/B option)', () => {
+  /** An answer that rewrites every sub-answer each time, challenged or not. */
+  const rewriting: DemoScript = {
+    ...demo,
+    agents: {
+      ...agents,
+      answer: (s, v) => {
+        const good = agents.answer!(s, v);
+        const subAnswers = ((s.subQuestions as string[]) ?? []).map(
+          (_, i) => `S${i + 1}: rewritten (visit ${v}) [F1]`,
+        );
+        return { ...good, updates: { ...good.updates, subAnswers } };
+      },
+    },
+  };
+  const playWith = (keepUnchallenged: boolean) => {
+    const score = compileScore(investigate, {
+      context: { ...demo.context!, keepUnchallenged },
+      complexity: 2,
+      generatedAt: 't',
+    });
+    return runScripted(score, rewriting, { at: 't' });
+  };
+
+  it('off (default): a rewrite may change every sub-answer', () => {
+    const r = playWith(false);
+    expect(r.state.outcome).toBe('success');
+    expect(rejections(r, 'answer')).toEqual([]);
+  });
+
+  it('on: a sub-answer no REAL objection named must stay word for word', () => {
+    const r = playWith(true);
+    // The demo's objection names S2: rewriting S1 is sent back (and the scripted answer
+    // keeps rewriting, so the step ends stuck).
+    expect(rejections(r, 'answer').join()).toMatch(
+      /Keep every subAnswers entry that no entry of realObjections names/,
+    );
+  });
+
+  it('on: rewriting only the challenged sub-answer is accepted', () => {
+    const score = compileScore(investigate, {
+      context: { ...demo.context!, keepUnchallenged: true },
+      complexity: 2,
+      generatedAt: 't',
+    });
+    const careful: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        answer: (s, v) => {
+          const good = agents.answer!(s, v);
+          const prev = (s.prevSubAnswers as string[]) ?? [];
+          const tags = new Set(((s.realObjections as string[]) ?? []).map((o) => o.split(':')[0]));
+          const subAnswers = ((s.subQuestions as string[]) ?? []).map((_, i) =>
+            prev[i] && !tags.has(`S${i + 1}`)
+              ? prev[i]!
+              : `S${i + 1}: answered again (visit ${v}) [F1]`,
+          );
+          return { ...good, updates: { ...good.updates, subAnswers } };
+        },
+      },
+    };
+    const r = runScripted(score, careful, { at: 't' });
+    expect(r.state.outcome).toBe('success');
+    expect(rejections(r, 'answer')).toEqual([]);
+    expect(r.state.state.subAnswers).toEqual([
+      'S1: answered again (visit 0) [F1]',
+      'S2: answered again (visit 1) [F1]',
+    ]);
+  });
+});
+
+describe('the answer meets every REAL objection by its tag', () => {
+  it('a challenged answer resolves each objection; one left out is sent back', () => {
+    let answers = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        answer: (s, v) => {
+          const good = agents.answer!(s, v);
+          answers += 1;
+          // The first answer after the challenge forgets the objection.
+          return answers === 2
+            ? { ...good, updates: { ...good.updates, objectionResolutions: [] } }
+            : good;
+        },
+      },
+    };
+    const { r, state } = play(2, script);
+    expect(r.state.outcome).toBe('success');
+    expect(rejections(r, 'answer').join()).toMatch(
+      /one objectionResolutions entry per entry of realObjections/,
+    );
+    expect(state.objectionResolutions).toEqual([
+      expect.stringMatching(/^S2: RESOLVED — .*\[F1\]$/),
+    ]);
+    // The parts are written against the same objections.
+    const parts = r.state.steps.filter((x) => x.nodeId === 'answerParts');
+    for (const p of parts) expect(p.input).toHaveProperty('realObjections');
+  });
+
+  it('an objection the answer cannot settle is an open question, and the run ends partial', () => {
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        answer: (s, v) => {
+          const good = agents.answer!(s, v);
+          const open = ((s.realObjections as string[]) ?? []).map(
+            (o) => `${o.split(':')[0]}: OPEN — nothing found on the move key`,
+          );
+          return { ...good, updates: { ...good.updates, objectionResolutions: open } };
+        },
+      },
+    };
+    const { r, state } = play(2, script);
+    expect(r.state.outcome).toBe('partial');
+    expect(state.openQuestions).toContain('S2: OPEN — nothing found on the move key');
+    expect(state.doubts).toEqual([
+      'Objections the answer could not settle: S2: OPEN — nothing found on the move key',
+    ]);
+  });
+
+  it('findings cited only in a sub-answer count as cited (memory and chains get them)', () => {
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        answer: (s, v) => {
+          const good = agents.answer!(s, v);
+          const subAnswers = ((s.subQuestions as string[]) ?? []).map(
+            (_, i) => `S${i + 1}: answered by the validation path [F${i === 0 ? 2 : 1}]`,
+          );
+          return { ...good, updates: { ...good.updates, subAnswers } };
+        },
+      },
+    };
+    const { r, state } = play(1, script);
+    expect(r.state.outcome).toBe('success');
+    expect(String(state.answer)).not.toMatch(/\[F2\]/);
+    expect((state.citedFindings as string[]).map((f) => f.split(' ')[0])).toContain('F2');
   });
 });
 

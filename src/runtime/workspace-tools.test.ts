@@ -227,7 +227,77 @@ describe('evidence.check', () => {
   });
 });
 
+describe('memory.lesson', () => {
+  const recalled = async (d: string, q: string) =>
+    ((await tool('memory.recall').run({ query: q }, ctx(d))) as { lessons: string[] }).lessons;
+
+  it('with requireFiles, a lesson that names no workspace file is not saved', async () => {
+    const d = dir();
+    const out = await tool('memory.lesson').run(
+      {
+        kind: 'answered',
+        problem: 'how do retries work',
+        cause: ['S1: they back off [F2]'],
+        files: ['F2 https://example.com/retries | docs — backoff'],
+        requireFiles: true,
+      },
+      ctx(d),
+    );
+    expect(out).toEqual({ saved: false });
+  });
+
+  it('keeps checked entries whole, at the commit it was learned, and replaces an older lesson on the same problem', async () => {
+    const d = dir();
+    writeFileSync(join(d, 'retry.js'), 'export const backoff = (n) => 2 ** n;\n');
+    execFileSync('git', ['add', '.'], { cwd: d });
+    execFileSync('git', ['-c', 'user.email=a@b', '-c', 'user.name=a', 'commit', '-qm', 'x'], {
+      cwd: d,
+    });
+    const long = `S2: ${'x'.repeat(480)} [F3]`;
+    const lesson = (cause: string[]) =>
+      tool('memory.lesson').run(
+        {
+          kind: 'answered',
+          problem: 'How do retries back off?',
+          cause,
+          files: ['F1 retry.js:1 — doubles `backoff = (n) => 2 ** n`'],
+          requireFiles: true,
+        },
+        ctx(d),
+      );
+    expect(await lesson(['S1: exponentially [F1]', long])).toEqual({ saved: true });
+    const [first] = await recalled(d, 'how do retries back off');
+    // The long entry did not fit: it is left out, not cut mid-claim. Ids are meaningless later.
+    expect(first).toMatch(
+      /^\d{4}-\d{2}-\d{2} @[0-9a-f]{8} \| Answered "How do retries back off\?": S1: exponentially \(files: retry\.js\)$/,
+    );
+    await lesson(['S1: linearly, since the last change [F1]']);
+    const after = await recalled(d, 'how do retries back off');
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatch(/S1: linearly/);
+  });
+});
+
 describe('memory tools', () => {
+  it('remember: false checks without remembering; memory.facts remembers only what it is given', async () => {
+    const d = dir();
+    writeFileSync(
+      join(d, 'config.js'),
+      'export const port = DEFAULTS.port + 1;\nexport const host = "h";\n',
+    );
+    const read = 'config.js:2 — the host is h `export const host = "h"`';
+    const cited = 'F2 config.js:1 — the default port is one above DEFAULTS `DEFAULTS.port + 1`';
+    const out = await tool('evidence.check').run({ findings: [read], remember: false }, ctx(d));
+    expect(out.valid).toEqual([read]);
+    const recalled = async (q: string) =>
+      ((await tool('memory.recall').run({ query: q }, ctx(d))) as { facts: string[] }).facts;
+    expect(await recalled('what is the host?')).toEqual([]);
+    expect(await tool('memory.facts').run({ findings: [cited] }, ctx(d))).toEqual({ saved: 1 });
+    expect(await recalled('what is the default port?')).toEqual([
+      'config.js:1 — the default port is one above DEFAULTS `DEFAULTS.port + 1`',
+    ]);
+  });
+
   it('what one run verified, the next run recalls; lessons too', async () => {
     const d = dir();
     writeFileSync(join(d, 'config.js'), 'export const port = DEFAULTS.port + 1;\n');
@@ -247,6 +317,47 @@ describe('memory tools', () => {
       'config.js:1 — the default port is one above DEFAULTS `DEFAULTS.port + 1`',
     ]);
     expect(r.lessons[0]).toMatch(/Fixed "wrong default port": off by one \(files: config.js\)$/);
+  });
+
+  it('a lesson keeps its files from cited findings, drops run ids, says how it ended', async () => {
+    const d = dir();
+    const r = await tool('memory.lesson').run(
+      {
+        kind: 'answered',
+        outcome: 'partial',
+        problem: 'which port?',
+        cause: '## Answer\nIt is 8081 [F3, F7] because of the offset [F9].',
+        files: ['F3 src/config.js:1 — port `x`', 'F7 src/config.js:4 — y', 'not a finding'],
+        open: ['Is PORT ever set in CI?'],
+      },
+      ctx(d),
+    );
+    expect(r).toEqual({ saved: true });
+    const m = JSON.parse(readFileSync(join(d, '.symphony', 'memory.json'), 'utf8')) as {
+      lessons: { text: string; files: string[] }[];
+    };
+    expect(m.lessons[0]).toMatchObject({
+      text: 'Answered (with open doubts) "which port?": It is 8081 because of the offset . Open: Is PORT ever set in CI? (files: src/config.js)',
+      files: ['src/config.js'],
+    });
+    expect(
+      await tool('memory.lesson').run({ kind: 'failed', problem: '', failure: '' }, ctx(d)),
+    ).toEqual({ saved: true });
+  });
+
+  it('a memory file that cannot be read is never overwritten', async () => {
+    const d = dir();
+    mkdirSync(join(d, '.symphony'));
+    writeFileSync(join(d, '.symphony', 'memory.json'), '{ broken');
+    // Reading still works (nothing recalled); writing refuses instead of wiping it.
+    expect(await tool('memory.recall').run({ query: 'port' }, ctx(d))).toEqual({
+      facts: [],
+      lessons: [],
+    });
+    await expect(
+      tool('memory.lesson').run({ kind: 'fixed', problem: 'p', cause: 'c' }, ctx(d)),
+    ).rejects.toThrow(/not valid JSON; not overwriting it/);
+    expect(readFileSync(join(d, '.symphony', 'memory.json'), 'utf8')).toBe('{ broken');
   });
 
   it('a fact whose line moved is pointed at its new line, not dropped', async () => {

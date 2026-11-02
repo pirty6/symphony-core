@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   cleanFact,
+  FILELESS_LESSON_DAYS,
   LESSON_DAYS,
   MAX_FACTS_PER_RUN,
   memoryPath,
@@ -85,6 +86,42 @@ describe('memory across runs', () => {
       day(LESSON_DAYS + 1),
     );
     expect((await recall(ws, 'page skips an item')).lessons.join()).not.toMatch(/old/);
+  });
+
+  it('a lesson keeps its run and file hashes; once a cited file changes it is not recalled', async () => {
+    const ws = workspace();
+    const store = workspace();
+    writeFileSync(join(ws, 'src', 'paginate.ts'), 'export const page = 1;\n');
+    const lesson = 'Answered "how does paginate count pages": from one';
+    await rememberLesson(store, lesson, ['src/paginate.ts'], undefined, {
+      run: 'r1',
+      workspace: ws,
+    });
+    const saved = JSON.parse(readFileSync(memoryPath(store), 'utf8')).lessons[0];
+    expect(saved.run).toBe('r1');
+    expect(Object.keys(saved.hashes)).toEqual(['src/paginate.ts']);
+    expect((await recall(ws, 'paginate count pages', 12, { store })).lessons).toHaveLength(1);
+    writeFileSync(join(ws, 'src', 'paginate.ts'), 'export const page = 0;\n');
+    expect((await recall(ws, 'paginate count pages', 12, { store })).lessons).toEqual([]);
+  });
+
+  it('a lesson that names no file lives a shorter time than one tied to files', async () => {
+    const ws = workspace();
+    writeFileSync(join(ws, 'src', 'paginate.ts'), 'export {};\n');
+    await rememberLesson(
+      ws,
+      'Answered "how pages are counted": from one',
+      [],
+      day(FILELESS_LESSON_DAYS + 1),
+    );
+    await rememberLesson(
+      ws,
+      'Answered "how pages are sized": twenty',
+      ['src/paginate.ts'],
+      day(FILELESS_LESSON_DAYS + 1),
+    );
+    const r = await recall(ws, 'how pages are counted and sized');
+    expect(r.lessons).toEqual([expect.stringMatching(/how pages are sized/)]);
   });
 
   it('stores facts without run annotations, one per path:line, the newest', async () => {

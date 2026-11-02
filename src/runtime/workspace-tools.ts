@@ -5,7 +5,7 @@
  * project's own test script, never from the AI.
  */
 import { checkCitations } from './evidence.js';
-import { recall, rememberFacts, rememberLesson } from './memory.js';
+import { recall, rememberFacts, rememberLesson, sameRequest } from './memory.js';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -168,6 +168,27 @@ export type WorkspaceDiff = {
   readonly hash: string;
   readonly files: readonly string[];
 };
+
+/** A lesson is a lead, not a report: plain text, without this run's finding ids or headings. */
+/** Entries joined with "; ", as many whole ones as fit in `max` characters. */
+function wholeEntries(entries: readonly string[], max: number): string {
+  const kept: string[] = [];
+  let len = 0;
+  for (const e of entries) {
+    if (len + e.length > max) break;
+    kept.push(e);
+    len += e.length + 2;
+  }
+  return kept.join('; ');
+}
+
+function plain(s: unknown): string {
+  return String(s ?? '')
+    .replace(/\[(?:F\d+[,\s]*)+\]/g, '')
+    .replace(/^#+\s.*$/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 /** Baseline test results by workspace state; a few dozen at most. */
 const REUSED = new Map<string, Readonly<Record<string, unknown>>>();
@@ -333,10 +354,12 @@ export function workspaceTools(): ToolSpec[] {
           ? args.findings.filter((f): f is string => typeof f === 'string')
           : [];
         const r = await checkCitations(ctx.workspace, findings);
-        // What held is remembered for later runs (re-checked whenever it is recalled).
-        await rememberFacts(ctx.memoryRoot ?? ctx.workspace, r.valid, undefined, ctx.runId).catch(
-          () => 0,
-        );
+        // What held is remembered for later runs (re-checked whenever it is recalled), unless
+        // the pattern remembers only what its answer used (remember: false, then memory.facts).
+        if (args.remember !== false)
+          await rememberFacts(ctx.memoryRoot ?? ctx.workspace, r.valid, undefined, ctx.runId).catch(
+            () => 0,
+          );
         return {
           valid: r.valid,
           invalid: r.invalid.map((i) => `${i.finding} ✗ ${i.reason}`),
@@ -344,6 +367,22 @@ export function workspaceTools(): ToolSpec[] {
           checked: r.checked,
         };
       },
+    },
+    {
+      name: 'memory.facts',
+      description:
+        'Remember checked findings for later runs (only quoted path:line ones; re-checked when recalled): { findings } → { saved }.',
+      outputs: ['saved'],
+      run: async (args, ctx) => ({
+        saved: await rememberFacts(
+          ctx.memoryRoot ?? ctx.workspace,
+          Array.isArray(args.findings)
+            ? args.findings.filter((f): f is string => typeof f === 'string')
+            : [],
+          undefined,
+          ctx.runId,
+        ).catch(() => 0),
+      }),
     },
     {
       name: 'memory.recall',
@@ -359,20 +398,44 @@ export function workspaceTools(): ToolSpec[] {
     {
       name: 'memory.lesson',
       description:
-        'Remember how a run ended: { kind: "fixed" | "failed" | "implemented" | "answered" | …, problem, cause, files, failure }. Returns { saved }.',
+        'Remember how a run ended: { kind: "fixed" | "failed" | "implemented" | "answered" | …, problem, cause (text, or a list of checked entries), files, failure, requireFiles }. With requireFiles, nothing is saved unless it names a workspace file. Returns { saved }.',
       outputs: ['saved'],
       run: async (args, ctx) => {
-        const files = Array.isArray(args.files) ? args.files.map(String) : [];
+        // Paths, or cited findings ("F3 src/a.ts:12 — …"): a lesson's files tell when it is stale.
+        const files = [
+          ...new Set(
+            (Array.isArray(args.files) ? args.files : []).flatMap((f) => {
+              const m = /^(?:F\d+\s+)?([\w@./-]+\.[A-Za-z0-9]+)(?::\d|\s|$)/.exec(String(f).trim());
+              return m ? [m[1]!] : [];
+            }),
+          ),
+        ].slice(0, 12);
+        // A lesson that names no file cannot go stale with the code: some patterns refuse those.
+        if (args.requireFiles === true && files.length === 0) return { saved: false };
         const kind = String(args.kind ?? 'fixed');
         const problem = String(args.problem ?? '').slice(0, 300);
-        // A lesson is a lead, not a report: keep it short.
-        const cause = String(args.cause ?? '').slice(0, 600);
+        // A list (checked sub-answers) is kept whole entry by entry, never cut mid-claim.
+        const cause = Array.isArray(args.cause)
+          ? wholeEntries(args.cause.map(plain).filter(Boolean), 500)
+          : plain(args.cause).slice(0, 500);
+        const open = (Array.isArray(args.open) ? args.open : []).slice(0, 3).map(plain);
+        const doubtful = args.outcome === 'partial';
+        const commit = await git('git', ['rev-parse', 'HEAD'], { cwd: ctx.workspace }).then(
+          (r) => r.stdout.trim(),
+          () => '',
+        );
         const text =
           kind === 'failed'
-            ? `FAILED to fix "${problem}": ${String(args.failure ?? 'unknown').slice(0, 600)}`
-            : `${kind.charAt(0).toUpperCase()}${kind.slice(1)} "${problem}": ${cause}${files.length ? ` (files: ${files.join(', ')})` : ''}`;
-        await rememberLesson(ctx.memoryRoot ?? ctx.workspace, text, files);
-        return { saved: true };
+            ? `FAILED to fix "${problem}": ${plain(args.failure ?? 'unknown').slice(0, 500)}`
+            : `${kind.charAt(0).toUpperCase()}${kind.slice(1)}${doubtful ? ' (with open doubts)' : ''} "${problem}": ${cause}${open.length ? ` Open: ${open.join('; ')}` : ''}${files.length ? ` (files: ${files.join(', ')})` : ''}`;
+        return {
+          saved: await rememberLesson(ctx.memoryRoot ?? ctx.workspace, text, files, undefined, {
+            workspace: ctx.workspace,
+            ...(ctx.runId ? { run: ctx.runId } : {}),
+            ...(commit ? { commit } : {}),
+            key: `${kind}:${sameRequest(problem)}`,
+          }),
+        };
       },
     },
   ];

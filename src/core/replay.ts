@@ -180,7 +180,12 @@ export function divergence(a: Performance, b: Performance): Divergence {
 // ── Replay ─────────────────────────────────────────────────────────
 
 /** The n-th answer (0-based) recorded for a step: rejected attempts first, then the accepted one. */
-function resolutionFrom(step: PerformedStep, pauseId: string, n: number): Resolution | undefined {
+function resolutionFrom(
+  step: PerformedStep,
+  pauseId: string,
+  n: number,
+  writable?: readonly string[],
+): Resolution | undefined {
   const attempts = step.attempts ?? [];
   if (n < attempts.length) {
     const a = attempts[n]!;
@@ -224,7 +229,12 @@ function resolutionFrom(step: PerformedStep, pauseId: string, n: number): Resolu
       kind: 'agent',
       pauseId,
       result: {
-        updates: step.updates ?? {},
+        // Only what the AI wrote: fields the engine filled (preloadReport) it fills again.
+        updates: writable
+          ? Object.fromEntries(
+              Object.entries(step.updates ?? {}).filter(([k]) => writable.includes(k)),
+            )
+          : (step.updates ?? {}),
         verdict: step.verdict,
         ...(step.next ? { next: step.next } : {}),
       },
@@ -268,7 +278,12 @@ function recordedAnswers(perf: Performance): (pause: Pause) => Resolution | unde
     }
     const n = fed.get(pause.step) ?? 0;
     fed.set(pause.step, n + 1);
-    return resolutionFrom(recorded, pause.pauseId, n);
+    return resolutionFrom(
+      recorded,
+      pause.pauseId,
+      n,
+      pause.kind === 'agent' ? pause.outputSchema.map((f) => f.name) : undefined,
+    );
   };
 }
 

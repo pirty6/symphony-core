@@ -54,8 +54,8 @@ describe('checkCitations', () => {
 
   it('requires a quote for a file citation', async () => {
     const r = await checkCitations(ws, ['src/config.js:3 — reads PORT']);
-    expect(r.invalid[0]?.reason).toBe(
-      'no quote: add a short verbatim quote from src/config.js:3 in backticks',
+    expect(r.invalid[0]?.reason).toMatch(
+      /^no quote: add a short verbatim quote from src\/config\.js:3 in backticks/,
     );
   });
 
@@ -106,6 +106,29 @@ describe('checkCitations', () => {
     expect(ok.invalid).toEqual([]);
   });
 
+  it('a one-word quote proves nothing; two identifiers do, even without a space or across lines', async () => {
+    writeFileSync(
+      join(ws, 'src', 'reads.ts'),
+      ['const node = {', '  reads: [', "    'question',", "    'findings',", '  ],', '};'].join(
+        '\n',
+      ),
+    );
+    const r = await checkCitations(ws, [
+      'src/reads.ts:4 — the answer reads the full findings `findings`',
+      "src/reads.ts:4 — the answer reads the full findings `'findings',`",
+      "src/reads.ts:3-4 — the answer reads the question and the findings `'question', 'findings',`",
+      'src/config.js:3 — the port comes from the env `Number(process.env.PORT`',
+    ]);
+    expect(r.valid).toEqual([
+      "src/reads.ts:3-4 — the answer reads the question and the findings `'question', 'findings',`",
+      'src/config.js:3 — the port comes from the env `Number(process.env.PORT`',
+    ]);
+    expect(r.invalid.map((i) => i.reason)).toEqual([
+      expect.stringMatching(/^no quote: .*at least 2 words or identifiers/),
+      expect.stringMatching(/^no quote: /),
+    ]);
+  });
+
   it('rejects quotes too short to prove anything, ranges as wide as the file, and claims that cite nothing', async () => {
     const r = await checkCitations(ws, [
       'src/config.js:3 — reads the port `port`',
@@ -127,5 +150,28 @@ describe('checkCitations', () => {
     ]);
     expect(other.invalid).toEqual([]);
     expect(other.checked).toBe(0);
+  });
+
+  it('every cited location must be real, and a bare #N or hex-looking word is not a source', async () => {
+    const r = await checkCitations(ws, [
+      'src/config.js:3 and src/server.js:9 — the port `port: Number(process.env.PORT ?? 8080)`',
+      '#42 — the default was discussed',
+      'deadbeef — a word that only looks like a commit',
+    ]);
+    expect(r.valid).toEqual([]);
+    expect(r.invalid.map((x) => x.reason)).toEqual([
+      'src/server.js does not exist in the workspace',
+      expect.stringMatching(/^cites nothing/),
+      expect.stringMatching(/^cites nothing/),
+    ]);
+    const ok = await checkCitations(ws, [
+      'commit deadbeef — added the default',
+      'a1b2c3d4 — added the default',
+      'pirty6/symphony-core#3 — the default was discussed',
+      'issue #42 — the default was discussed',
+      // Two real places: the quote is at one of them.
+      'README.md:3 and src/config.js:3 — `port: Number(process.env.PORT ?? 8080)`',
+    ]);
+    expect(ok.invalid).toEqual([]);
   });
 });
