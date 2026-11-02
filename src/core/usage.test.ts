@@ -12,6 +12,7 @@ import {
   recordSize,
   rejectionReasons,
   rejectionUsage,
+  stepShares,
   transcriptUsage,
 } from './usage.js';
 
@@ -225,6 +226,45 @@ describe('time and growth per step', () => {
         { nodeId: 'answer', step: 6, usage: u(900, 0) },
       ]),
     ).toEqual({ assess: 2.5 });
+  });
+
+  it('a fan-out recorded without its own clock is timed from its first part to its last', () => {
+    // Older runs: the parent transcript had no times, only its parts did.
+    const parts = [
+      timed('00', '30'),
+      timed('05', '40'),
+      { provider: 'p', prompt: '', output: '', toolCalls: [] },
+    ];
+    const steps = [
+      {
+        nodeId: 'chase',
+        transcript: { provider: 'p', prompt: '', output: '', toolCalls: [], parts },
+      },
+      // With its own clock, that is used (parts kept from an earlier attempt are not re-timed).
+      { nodeId: 'deepRead', transcript: { ...timed('00', '05'), parts: [timed('00', '50')] } },
+    ] as never;
+    expect(wallTimeByNode({ steps })).toEqual({ chase: 40_000, deepRead: 5_000 });
+  });
+
+  it("each step's share of the run, parts and rejected answers counted", () => {
+    const steps = [
+      {
+        nodeId: 'chase',
+        transcript: { ...t(u(0, 0)), parts: [{ ...timed('00', '30'), usage: u(300, 1) }] },
+      },
+      {
+        nodeId: 'answer',
+        transcript: { ...timed('30', '40'), usage: u(50, 1) },
+        attempts: [{ errors: ['x'], transcript: { ...timed('40', '50'), usage: u(50, 1) } }],
+      },
+    ] as never;
+    const rows = stepShares({ steps });
+    expect(rows.map((r) => [r.node, r.usage.inputTokens, r.inputShare, r.ms, r.timeShare])).toEqual(
+      [
+        ['chase', 300, 0.75, 30_000, 0.6],
+        ['answer', 100, 0.25, 20_000, 0.4],
+      ],
+    );
   });
 });
 

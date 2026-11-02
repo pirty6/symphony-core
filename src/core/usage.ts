@@ -62,12 +62,54 @@ export function wallTimeByNode(perf: Pick<Performance, 'steps'>): Record<string,
   const out: Record<string, number> = {};
   for (const s of perf.steps)
     for (const t of [...(s.attempts ?? []).map((a) => a.transcript), s.transcript]) {
-      const from = Date.parse(t?.startedAt ?? '');
-      const to = Date.parse(t?.completedAt ?? '');
-      if (Number.isFinite(from) && Number.isFinite(to) && to >= from)
-        out[s.nodeId] = (out[s.nodeId] ?? 0) + (to - from);
+      const span = spanOf(t);
+      if (span) out[s.nodeId] = (out[s.nodeId] ?? 0) + (span[1] - span[0]);
     }
   return out;
+}
+
+/**
+ * When an answer ran: its own start and end, or (a fanned-out step recorded before the step
+ * kept its own clock) its first part's start to its last part's end.
+ */
+function spanOf(t: AiTranscript | undefined): [number, number] | undefined {
+  if (!t) return undefined;
+  const from = Date.parse(t.startedAt ?? '');
+  const to = Date.parse(t.completedAt ?? '');
+  if (Number.isFinite(from) && Number.isFinite(to) && to >= from) return [from, to];
+  const spans = (t.parts ?? []).map(spanOf).filter((x): x is [number, number] => x !== undefined);
+  if (spans.length === 0) return undefined;
+  return [Math.min(...spans.map((x) => x[0])), Math.max(...spans.map((x) => x[1]))];
+}
+
+/** One step's part of a run: tokens over every visit (parts and rejected answers included) and wall time. */
+export interface StepShare {
+  readonly node: string;
+  readonly usage: TokenUsage;
+  readonly ms: number;
+  /** Shares of the run's input tokens and of its summed AI wall time, 0..1. */
+  readonly inputShare: number;
+  readonly timeShare: number;
+}
+
+/** Every AI step's share of a run's input and wall time, most input first. */
+export function stepShares(perf: Pick<Performance, 'steps'>): StepShare[] {
+  const { total, byNode } = performanceUsage(perf);
+  const ms = wallTimeByNode(perf);
+  const allMs = Object.values(ms).reduce((a, x) => a + x, 0);
+  const nodes = [...new Set([...Object.keys(byNode), ...Object.keys(ms)])];
+  return nodes
+    .map((node) => {
+      const usage = byNode[node] ?? NO_USAGE;
+      return {
+        node,
+        usage,
+        ms: ms[node] ?? 0,
+        inputShare: total.inputTokens ? usage.inputTokens / total.inputTokens : 0,
+        timeShare: allMs ? (ms[node] ?? 0) / allMs : 0,
+      };
+    })
+    .toSorted((x, y) => y.usage.inputTokens - x.usage.inputTokens || y.ms - x.ms);
 }
 
 export interface FirstCalls {

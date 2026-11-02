@@ -30,7 +30,7 @@ import {
   stepContext,
   stepPattern,
 } from './core/chain.js';
-import { formatUsage, performanceUsage, rejectionUsage } from './core/usage.js';
+import { formatUsage, performanceUsage, rejectionUsage, stepShares } from './core/usage.js';
 import { describeEdits } from './core/edits.js';
 import { agreement, compareRuns } from './core/compare.js';
 import { engineNote, RUN_SCHEMA_VERSION } from './core/migrate.js';
@@ -962,6 +962,27 @@ async function cmdVerify(file: string | undefined): Promise<number> {
   return divergence.reproduced ? 0 : 2;
 }
 
+const share = (x: number) => `${Math.round(x * 1000) / 10}%`.padStart(6);
+
+/** Each AI step's share of a saved run's input tokens and AI wall time. */
+async function cmdCost(files: string[]): Promise<number> {
+  if (files.length === 0) {
+    console.error('usage: symphony cost <run.json> [more.json]');
+    return 1;
+  }
+  for (const file of files) {
+    const { run } = await loadRun(resolve(file));
+    const perf = run.performance;
+    console.log(`${c.cyan(file)}\n  ${formatUsage(performanceUsage(perf).total)}`);
+    console.log(c.dim('  step                     input  share   time  share'));
+    for (const r of stepShares(perf))
+      console.log(
+        `  ${r.node.padEnd(22)} ${`${Math.round(r.usage.inputTokens / 1000)}k`.padStart(8)} ${share(r.inputShare)} ${`${Math.round(r.ms / 1000)}s`.padStart(6)} ${share(r.timeShare)}`,
+      );
+  }
+  return 0;
+}
+
 const CAUSE_TEXT = {
   plan: 'the plan: the two scores differ',
   environment: 'the environment: a tool, the workspace or a failure outside the score',
@@ -1033,6 +1054,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       return cmdDraft(rest, cwd);
     case 'verify':
       return cmdVerify(rest[0]);
+    case 'cost':
+      return cmdCost(rest);
     case 'compare':
       return cmdCompare(rest);
     case 'rehearse':
@@ -1078,6 +1101,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       --auto-approve  --step  --break <nodeId>  --no-save
   draft "<request>"            AI drafts a pattern (--provider copilot, --save)
   verify <run.json>            integrity + deterministic replay check
+  cost <run.json>...           each step's share of input tokens and AI time (parts, retries included)
   compare <a.json> <b.json>    where two runs diverge and why (plan, environment, AI, human, engine)
   rehearse <pattern> -n 3      play the same score N times with fresh answers; per-node agreement
       --fields a,b               compare only these fields (maestro: --fields chosen,complexity)
