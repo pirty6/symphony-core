@@ -4,11 +4,19 @@ import { advance, createEngine, toPerformance } from '../core/engine.js';
 import { replayPerformance } from '../core/replay.js';
 import { runScripted, scriptedResolution } from '../core/scripted.js';
 import type { DemoScript, PreloadRecord, Resolution } from '../core/types.js';
+import { buildAgentPrompt } from '../runtime/provider.js';
 import { investigate } from './index.js';
 
 const demo = investigate.demo!;
 
 /** Run investigate with the plan using exactly `use` (everything else skipped). */
+/** How many leading characters two prompts share. */
+const sharedPrefix = (a: string, b: string) => {
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  return i;
+};
+
 function runWith(
   use: string[],
   approvals: DemoScript['approvals'] = demo.approvals,
@@ -404,6 +412,25 @@ describe('investigate always ends: research rounds are bounded', () => {
 
 describe('investigate answers several subjects side by side', () => {
   const ALGOS = ['fix', 'refactor', 'review'];
+  it('the parts share one prompt up to their own subject, which comes last (the cache reuses the rest)', () => {
+    const { r } = runWith(['workspace'], demo.approvals, { parts: ALGOS });
+    const pause = r.state.events.flatMap((e) =>
+      e.type === 'paused' && e.pause.kind === 'agent' && e.pause.nodeId === 'answerParts'
+        ? [e.pause]
+        : [],
+    )[0]!;
+    expect(pause.warmFirst).toBe(true);
+    // As the driver plays a part: the step's pause with the part's input.
+    const { parts, partsDone: _done, ...single } = pause;
+    const prompts = parts!.map((input) => buildAgentPrompt({ ...single, input }));
+    const common = sharedPrefix(prompts[0]!, prompts[1]!);
+    const tail = prompts[0]!.slice(common);
+    // Everything up to the part's own subject is shared, the findings included.
+    expect(prompts[0]!.indexOf('"findingsBrief"')).toBeLessThan(common);
+    expect(prompts[0]!.lastIndexOf('"parts"')).toBeLessThan(common);
+    expect(tail.length).toBeLessThan(200);
+  });
+
   it('gathers evidence once, answers each part in its own call, and attaches every part', () => {
     const { r, ran } = runWith(['workspace'], demo.approvals, { parts: ALGOS });
     expect(r.state.outcome).toBe('success');
