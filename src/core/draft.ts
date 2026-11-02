@@ -72,6 +72,7 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(raw.isolated === true ? { isolated: true } : {}),
         ...(typeof raw.cites === 'string' && raw.cites ? { cites: raw.cites } : {}),
         ...(typeof raw.preload === 'string' && raw.preload ? { preload: raw.preload } : {}),
+        ...preloadReportOf(raw.preloadReport),
         ...(typeof raw.verifyBelow === 'number' ? { verifyBelow: raw.verifyBelow } : {}),
         ...(raw.otherModel === true ? { otherModel: true } : {}),
         ...fanOutOf(raw.fanOut),
@@ -151,10 +152,31 @@ function parseEdge(raw: unknown, i: number, errors: string[]): ScoreEdge | undef
   };
 }
 
-function fanOutOf(raw: unknown): { fanOut?: { over: string; per: number | string } } {
-  const f = raw as { over?: unknown; per?: unknown } | null | undefined;
+function fanOutOf(raw: unknown): {
+  fanOut?: { over: string; per: number | string; agents?: string; warm?: boolean };
+} {
+  const f = raw as { over?: unknown; per?: unknown; agents?: unknown; warm?: unknown } | null;
   return typeof f?.over === 'string' && (typeof f.per === 'number' || typeof f.per === 'string')
-    ? { fanOut: { over: f.over, per: f.per } }
+    ? {
+        fanOut: {
+          over: f.over,
+          per: f.per,
+          // How many play at once, and the cache warm-up: lost here, a composed score ran
+          // narrower and colder than the tested pattern.
+          ...(typeof f.agents === 'string' && f.agents ? { agents: f.agents } : {}),
+          ...(f.warm === true ? { warm: true } : {}),
+        },
+      }
+    : {};
+}
+
+/** AgentNode.preloadReport: the engine's record of what it could not give whole. */
+function preloadReportOf(raw: unknown): {
+  preloadReport?: { paths: string; reasons: string };
+} {
+  const r = raw as { paths?: unknown; reasons?: unknown } | null | undefined;
+  return typeof r?.paths === 'string' && r.paths && typeof r.reasons === 'string' && r.reasons
+    ? { preloadReport: { paths: r.paths, reasons: r.reasons } }
     : {};
 }
 
