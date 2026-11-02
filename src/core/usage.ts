@@ -256,9 +256,11 @@ export function rateLimits(perf: Pick<Performance, 'steps'>): {
   let provider = 0;
   let reads = 0;
   for (const s of perf.steps) {
-    provider += stepTranscripts(s).filter(
-      (t) => t.output.startsWith('provider error') && RATE_LIMIT.test(t.output),
-    ).length;
+    for (const t of stepTranscripts(s)) {
+      // Calls that failed with one, and sessions that waited one out and started again.
+      if (t.output.startsWith('provider error') && RATE_LIMIT.test(t.output)) provider += 1;
+      provider += t.musician?.rateLimitWaits ?? 0;
+    }
     const why = s.updates?.unreadableReasons;
     if (Array.isArray(why))
       reads += why.filter((w) => typeof w === 'string' && RATE_LIMIT.test(w)).length;

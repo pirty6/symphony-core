@@ -437,6 +437,8 @@ export interface Musician {
   readonly sampling: string;
   /** Models whose content filter blocked this answer before another model gave it. */
   readonly blockedOn?: readonly string[];
+  /** Times a rate limit (HTTP 429) stopped the session before it began, and it waited to retry. */
+  readonly rateLimitWaits?: number;
 }
 
 // ── Engine: pauses and resolutions ─────────────────────────────────

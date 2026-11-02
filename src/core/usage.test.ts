@@ -146,8 +146,12 @@ describe('token usage', () => {
         updates: { unreadableReasons: ['HTTP 429 twice', 'binary file'] },
       }),
       step('chase', { transcript: t(u(1, 1), { output: 'it said 429 lines' }) }),
+      // Sessions that waited a rate limit out and started again count too.
+      step('answer', {
+        transcript: t(u(1, 1), { musician: { tier: 2, sampling: 's', rateLimitWaits: 2 } }),
+      }),
     ];
-    expect(rateLimits({ steps })).toEqual({ provider: 2, reads: 1 });
+    expect(rateLimits({ steps })).toEqual({ provider: 4, reads: 1 });
   });
 
   it('measures the saved run, and what the read notes and preload records add', () => {

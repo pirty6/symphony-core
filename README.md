@@ -88,6 +88,7 @@ Recover instead of starting over:
 | The AI provider blocks an answer (content filtering) | The same model blocks the same prompt every time, so retrying it cannot help: the provider asks the nearest tiers' other models (up to two) and records which ones blocked (`musician.blockedOn`). If all of them block, the step's error says so ("the AI provider blocked the response…") instead of a shape error; retry at another tier or with a hint. A run saved mid-step keeps the step's rejected attempts, with what the AI said, in `performance.pending`. |
 | The run was interrupted or stopped | It was saved after every answer: **▶ Resume** (or `cli resume <file>`) continues from there. |
 | You want to redo a step that finished | Open the saved run, move the timeline to the step, **⑂ Fork from step N** (or `cli fork <file> --at N`). Earlier steps are kept, the rest plays again. |
+| The model is rate limited (HTTP 429) | A session stopped by a rate limit before it did anything waits (10 s, 30 s, 60 s, or the Retry-After it was given) and starts again; each wait is recorded (`musician.rateLimitWaits`) and counted in the eval's rate limits. A used-up quota is not retried: the run stops and says so. |
 | A page or file could not be read (HTTP 429, timeout) | Investigate reports it with a reason instead of failing, tries it once more at the end of deep reading, and lists what still could not be read in the answer's coverage. |
 
 Edit flows visually: drag nodes from the palette, connect handles (conditions have `then`/`else`,
