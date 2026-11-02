@@ -218,6 +218,10 @@ export const investigate: Pattern = {
     'subAnswers',
   ],
   goalFrom: 'question',
+  // A backstop, never the bound: the loops are bounded by their counters and the citation
+  // checks' visit caps (a scripted worst case takes about 400-525 steps; exhaustive stops at a
+  // check's cap near 1,200). Steps do not bound tokens or time, so a tighter number buys nothing,
+  // and it must leave room for counters the maestro may raise per request.
   maxSteps: 5000,
   state: withState(
     [

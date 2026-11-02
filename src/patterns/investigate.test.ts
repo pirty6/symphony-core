@@ -1061,3 +1061,97 @@ describe('single-pass triage pilot (off by default)', () => {
     expect(replayPerformance(score, toPerformance(r.state)).divergence.reproduced).toBe(true);
   });
 });
+
+describe('the step limit is a backstop, never the bound', () => {
+  /** Every loop pushed: one sub-agent, every file relevant, gaps never close, the skeptic always objects. */
+  const worst = (fileCount: number, context: Record<string, unknown> = {}) => {
+    const v = { outcome: 'applied' as const, confidence: 0.2, shouldTerminate: false, reason: 'r' };
+    const files = Array.from({ length: fileCount }, (_, i) => `src/m${i}.ts`);
+    const script: DemoScript = {
+      ...demo,
+      tools: {
+        ...demo.tools,
+        inventory: () => ({ files, excluded: [] }),
+        rankFiles: (s) => ({ ranked: s.repoFiles, matched: [] }),
+      },
+      approvals: {
+        ...demo.approvals,
+        clarify: () => ({ approved: true, updates: { hint: 'look harder' } }),
+      },
+      agents: {
+        ...demo.agents,
+        plan: (s) => ({
+          updates: {
+            subQuestions: ['q1', 'q2'],
+            searchTerms: ['t'],
+            useSources: s.sourceNames,
+            skipSources: [],
+            skipReasons: [],
+            parts: [],
+            agents: 1,
+          },
+          verdict: v,
+        }),
+        triage: (s) => ({
+          updates: { triaged: s.batch, batchRelevant: s.batch, newFindings: [] },
+          verdict: v,
+        }),
+        deepRead: (s) => {
+          // One item of each batch unreadable at first: the retry pass plays too.
+          const b = s.deepBatch as string[];
+          const bad = (s.unreadRetries as number) === 0 ? b.slice(0, 1) : [];
+          return {
+            updates: {
+              examined: b.filter((x) => !bad.includes(x)),
+              unreadable: bad,
+              unreadableReasons: bad.map(() => 'HTTP 429'),
+              newFindings: [],
+            },
+            verdict: v,
+          };
+        },
+        designExperiments: (s) => {
+          const all = Array.from({ length: s.maxExperiments as number }, (_, i) => `exp ${i}`);
+          return {
+            updates: { experiments: all, timedExperiments: all.slice(0, all.length / 2) },
+            verdict: v,
+          };
+        },
+        assess: (s) => ({
+          updates: { gaps: [(s.subQuestions as string[])[0]!], confidence: 0.2 },
+          verdict: v,
+        }),
+        challenge: (_s, visit) => ({
+          updates: { objections: [`S1: F1 still open (round ${visit})`] },
+          verdict: v,
+        }),
+      },
+    };
+    const score = compileScore(investigate, {
+      goal: 'g',
+      context: { ...demo.context!, question: 'q', complexity: 4, ...context },
+    });
+    return { r: runScripted(score, script), max: score.maxSteps };
+  };
+
+  it('the worst case ends far below maxSteps, with the counters at default and raised', () => {
+    for (const raised of [
+      {},
+      { maxChaseRounds: 20, maxDebateRounds: 5, maxGapRounds: 5, maxExperiments: 20 },
+    ]) {
+      const { r, max } = worst(300, raised);
+      expect(r.state.kind).toBe('done');
+      expect(r.state.cursor).toBe('doubts');
+      expect(r.state.steps.length).toBeLessThanOrEqual(700);
+      expect(r.state.steps.length).toBeLessThanOrEqual(max / 3);
+    }
+  }, 30_000);
+
+  it('exhaustive on a huge repository stops at the citation check cap, not at maxSteps', () => {
+    const { r, max } = worst(700, { exhaustive: true, batchSize: 1 });
+    expect(r.state.outcome).toBe('partial');
+    expect(r.state.cursor).toBe('checkTriage');
+    expect(r.state.visits.checkTriage).toBe(200);
+    expect(r.state.steps.length).toBeLessThan(max);
+  }, 30_000);
+});
