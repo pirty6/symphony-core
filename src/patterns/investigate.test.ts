@@ -281,7 +281,11 @@ describe('open questions', () => {
       compileScore(investigate, { context: demo.context!, complexity: 1 }),
       script,
     );
-    expect(r.state.outcome).toBe('success');
+    // An open sub-question is an open doubt: the outcome says so, not only the text.
+    expect(r.state.outcome).toBe('partial');
+    expect(r.state.state.doubts).toEqual([
+      expect.stringMatching(/^Sub-questions the findings do not answer: S1: OPEN — /),
+    ]);
     const gap = (r.state.state.subQuestions as string[])[0];
     // The gap verbatim, the AI's own wording, and the sub-answer that says it is open.
     expect(r.state.state.openQuestions).toEqual([
@@ -337,6 +341,7 @@ describe('investigate only records evidence that holds', () => {
             rulings: ((s.hypotheses as string[]) ?? []).map(
               (h) => `${h.split(':')[0]}: UNKNOWN — x`,
             ),
+            objectionResolutions: [],
           },
           verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
         }),

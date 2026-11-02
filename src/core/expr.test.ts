@@ -90,6 +90,8 @@ describe('evalExpr values', () => {
     ['"round " + text(2) + ", ok " + text(true)', 'round 2, ok true'],
     ['count(["a.ts:1", "web | x", "b.ts:2"], "^[a-z.]+:[0-9]")', 2],
     ['positions(["x", "binary", "y", "pdf"], "binary|pdf")', [2, 4]],
+    ['heads(["S2: a", "b", "S10: c"], "^S[0-9]+")', ['S2', '', 'S10']],
+    ['heads(["S2: x"], "^S[0-9]+") == heads(["S2: y"], "^S[0-9]+")', true],
     [
       'stances(["F1 a.ts:1 — x [H1 for, H2 against]", "F2 b.ts:2 — y [h2 against]", "F3 c — z"], ["H1: a | c", "H2: b | c", "H3: none of these"])',
       [

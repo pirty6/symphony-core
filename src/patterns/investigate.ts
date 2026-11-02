@@ -26,7 +26,14 @@ const challenge = challengePhase({
   done: 'attachParts',
   research: ['subQuestions', 'sourceInfo', 'useSources', 'hint'],
   // The skeptic sees what was asked, what could not be read and what did not check out.
-  alongside: ['partAnswers', 'subQuestions', 'notRead', 'unverified', 'hypothesisStatus'],
+  alongside: [
+    'partAnswers',
+    'subQuestions',
+    'notRead',
+    'unverified',
+    'hypothesisStatus',
+    'objectionResolutions',
+  ],
   // A debate round gets its own gap-research budget instead of the one already spent.
   resetOnReopen: 'gapRounds',
   // Each objection names the sub-question it bears on.
@@ -36,6 +43,10 @@ const challenge = challengePhase({
 
 /** Most independent parts one investigation answers side by side. */
 export const MAX_PARTS = 8;
+
+/** The entries of a "S<n>: …" list that say OPEN. */
+const OPEN_ENTRIES = (field: string) =>
+  `without(${field}, unmatched(${field}, "^S[0-9]+: OPEN([^A-Za-z]|$)"))`;
 
 /** Lists the coverage report shows; long ones end with a pointer to the full field. */
 const listed = (field: string, none: string) =>
@@ -140,6 +151,12 @@ export const investigate: Pattern = {
         name: 'subAnswers',
         type: 'string[]',
         description: 'One per sub-question, in order: "S1: answer [F3]" or "S1: OPEN — why"',
+      },
+      {
+        name: 'objectionResolutions',
+        type: 'string[]',
+        description:
+          'One per REAL objection the answer had to meet, in order and with its S tag: "S2: RESOLVED — how [F7]", "S2: REBUTTED — why it does not hold [F7]" or "S2: OPEN — what is missing"',
       },
       {
         name: 'doubts',
@@ -1018,8 +1035,17 @@ export const investigate: Pattern = {
       directive:
         'Answer `question` for the ONE subject in `parts` only, using only `findingsBrief` (the findings, quotes left out). ' +
         CITE_BY_ID +
-        ' Findings in `unverified` could not be verified: do not rely on them. Write exactly one `partAnswers` entry: a Markdown section that starts with "## " and the subject, says what the evidence shows about it and what follows from it (for the question asked), and cites finding ids. Stay on your subject: say what holds for every subject in one closing line starting "Shared:" rather than at length. No coverage section; the overall answer has it.',
-      reads: ['question', 'parts', 'subQuestions', 'hint', 'findingsBrief', 'gaps', 'unverified'],
+        ' Findings in `unverified` could not be verified: do not rely on them. Write exactly one `partAnswers` entry: a Markdown section that starts with "## " and the subject, says what the evidence shows about it and what follows from it (for the question asked), and cites finding ids. Stay on your subject: say what holds for every subject in one closing line starting "Shared:" rather than at length. If `realObjections` (objections to the last answer, tagged with the sub-question they bear on) touch your subject, meet them with the evidence. No coverage section; the overall answer has it.',
+      reads: [
+        'question',
+        'parts',
+        'subQuestions',
+        'hint',
+        'findingsBrief',
+        'gaps',
+        'unverified',
+        'realObjections',
+      ],
       writes: ['partAnswers'],
       retries: 2,
       checks: [
@@ -1038,7 +1064,7 @@ export const investigate: Pattern = {
       directive:
         'Answer `question` using only `findings`. ' +
         CITE_BY_ID +
-        ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). In `subAnswers`, give one entry per entry of `subQuestions`, in order: "S<n>: <its answer in one or two sentences> [F…]" citing the findings it rests on, or "S<n>: OPEN — <what is missing>" when the findings do not answer it. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it, and say why when a ruling goes against the tally in `hypothesisStatus`. If the answer was challenged, address the objections it answered. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
+        ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). In `subAnswers`, give one entry per entry of `subQuestions`, in order: "S<n>: <its answer in one or two sentences> [F…]" citing the findings it rests on, or "S<n>: OPEN — <what is missing>" when the findings do not answer it. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it, and say why when a ruling goes against the tally in `hypothesisStatus`. If `realObjections` is set, the answer was challenged: in `objectionResolutions` give one entry per objection, in order, starting with its S tag: "S<n>: RESOLVED — what the evidence now shows [F…]", "S<n>: REBUTTED — why it does not hold [F…]", or "S<n>: OPEN — what is still missing" (open ones are reported as open questions); leave it empty when nothing was challenged. Before you finish, read your answer as its skeptic will: every claim backed by a cited finding, no hypothesis dismissed without evidence against it, no alternative explanation the evidence also fits left unsaid, no path nobody followed (a caller, a config, a version, an environment) presented as settled. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
       reads: [
         'question',
         'hint',
@@ -1063,7 +1089,7 @@ export const investigate: Pattern = {
         // The objections it must answer when it was challenged.
         'realObjections',
       ],
-      writes: ['answer', 'openQuestions', 'rulings', 'subAnswers'],
+      writes: ['answer', 'openQuestions', 'rulings', 'subAnswers', 'objectionResolutions'],
       verifyBelow: 0.6,
       retries: 2,
       complexityShift: 1,
@@ -1090,6 +1116,21 @@ export const investigate: Pattern = {
           message:
             'Give exactly one ruling per hypothesis: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence".',
         },
+        // Every REAL objection is met, by its tag: mentioned is not enough, it needs a verdict.
+        {
+          expr: 'heads(objectionResolutions, "^S[0-9]+") == heads(realObjections, "^S[0-9]+")',
+          message:
+            "Give exactly one objectionResolutions entry per entry of realObjections, in the same order, each starting with that objection's S tag (none when realObjections is empty).",
+        },
+        {
+          expr: 'len(unmatched(objectionResolutions, "^S[0-9]+: (OPEN([^A-Za-z]|$)|(RESOLVED|REBUTTED)([^A-Za-z]).*[[]F[0-9]+)")) == 0',
+          message:
+            'Write each objectionResolutions entry as "S<n>: RESOLVED — how [F…]", "S<n>: REBUTTED — why [F…]" (citing findings) or "S<n>: OPEN — what is missing".',
+        },
+        {
+          expr: 'subset(refs(objectionResolutions), ids(findings))',
+          message: 'objectionResolutions may cite only ids that exist in findings.',
+        },
       ],
     },
     {
@@ -1101,7 +1142,7 @@ export const investigate: Pattern = {
         {
           field: 'openQuestions',
           // Sub-questions the answer says are open are open questions, word for word.
-          expr: 'unique(gaps + openQuestions + unresolvedObjections + without(subAnswers, unmatched(subAnswers, "^S[0-9]+: OPEN([^A-Za-z]|$)")))',
+          expr: `unique(gaps + openQuestions + unresolvedObjections + ${OPEN_ENTRIES('subAnswers')} + ${OPEN_ENTRIES('objectionResolutions')})`,
         },
       ],
     },
@@ -1117,7 +1158,8 @@ export const investigate: Pattern = {
         { field: 'openQuestions', expr: 'unique(openQuestions + unresolvedObjections)' },
         {
           field: 'citedFindings',
-          expr: 'withIds(findings, refs(answer + " " + join(partAnswers, " ")))',
+          // Whatever the answer rests on, wherever it cites it: summary, parts, sub-answers, resolutions.
+          expr: 'withIds(findings, refs(answer + " " + join(partAnswers + subAnswers + objectionResolutions, " ")))',
         },
         {
           field: 'answer',
@@ -1129,8 +1171,9 @@ export const investigate: Pattern = {
       id: 'settled',
       kind: 'condition',
       label: 'Settled?',
-      // Open objections or low confidence are said in the outcome, not only in the text.
-      expression: 'len(unresolvedObjections) == 0 && confidence >= 0.5',
+      // Open objections, open sub-questions or low confidence are said in the outcome, not only
+      // in the text. Confidence is the assessor's (from before any debate), so it is not enough.
+      expression: `len(unresolvedObjections) == 0 && len(${OPEN_ENTRIES('subAnswers')}) == 0 && len(${OPEN_ENTRIES('objectionResolutions')}) == 0 && confidence >= 0.5`,
     },
     {
       id: 'noteDoubts',
@@ -1139,7 +1182,7 @@ export const investigate: Pattern = {
       assign: [
         {
           field: 'doubts',
-          expr: 'if(len(unresolvedObjections) > 0, ["Objections were still open when the debate reached its cap (maxDebateRounds): see unresolvedObjections"], []) + if(confidence < 0.5, ["Confidence that the findings answer the question stayed below 0.5"], [])',
+          expr: `if(len(unresolvedObjections) > 0, ["Objections were still open when the debate reached its cap (maxDebateRounds): see unresolvedObjections"], []) + if(len(${OPEN_ENTRIES('subAnswers')}) > 0, ["Sub-questions the findings do not answer: " + join(${OPEN_ENTRIES('subAnswers')}, "; ")], []) + if(len(${OPEN_ENTRIES('objectionResolutions')}) > 0, ["Objections the answer could not settle: " + join(${OPEN_ENTRIES('objectionResolutions')}, "; ")], []) + if(confidence < 0.5, ["Confidence that the findings answer the question stayed below 0.5"], [])`,
         },
       ],
     },
@@ -1459,6 +1502,9 @@ export const investigate: Pattern = {
             i === 0
               ? `${h.split(':')[0]}: CONFIRMED — src/core/engine.ts resolveAgent validates before applying`
               : `${h.split(':')[0]}: REFUTED — no state change happens outside advance()`,
+          ),
+          objectionResolutions: ((s.realObjections as string[]) ?? []).map(
+            (o) => `${o.split(':')[0]}: RESOLVED — the move key is the same after a rejection [F1]`,
           ),
         },
         verdict: v('answered'),

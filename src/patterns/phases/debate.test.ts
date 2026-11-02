@@ -354,6 +354,79 @@ describe('the debate remembers its earlier rounds', () => {
   });
 });
 
+describe('the answer meets every REAL objection by its tag', () => {
+  it('a challenged answer resolves each objection; one left out is sent back', () => {
+    let answers = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        answer: (s, v) => {
+          const good = agents.answer!(s, v);
+          answers += 1;
+          // The first answer after the challenge forgets the objection.
+          return answers === 2
+            ? { ...good, updates: { ...good.updates, objectionResolutions: [] } }
+            : good;
+        },
+      },
+    };
+    const { r, state } = play(2, script);
+    expect(r.state.outcome).toBe('success');
+    expect(rejections(r, 'answer').join()).toMatch(
+      /one objectionResolutions entry per entry of realObjections/,
+    );
+    expect(state.objectionResolutions).toEqual([
+      expect.stringMatching(/^S2: RESOLVED — .*\[F1\]$/),
+    ]);
+    // The parts are written against the same objections.
+    const parts = r.state.steps.filter((x) => x.nodeId === 'answerParts');
+    for (const p of parts) expect(p.input).toHaveProperty('realObjections');
+  });
+
+  it('an objection the answer cannot settle is an open question, and the run ends partial', () => {
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        answer: (s, v) => {
+          const good = agents.answer!(s, v);
+          const open = ((s.realObjections as string[]) ?? []).map(
+            (o) => `${o.split(':')[0]}: OPEN — nothing found on the move key`,
+          );
+          return { ...good, updates: { ...good.updates, objectionResolutions: open } };
+        },
+      },
+    };
+    const { r, state } = play(2, script);
+    expect(r.state.outcome).toBe('partial');
+    expect(state.openQuestions).toContain('S2: OPEN — nothing found on the move key');
+    expect(state.doubts).toEqual([
+      'Objections the answer could not settle: S2: OPEN — nothing found on the move key',
+    ]);
+  });
+
+  it('findings cited only in a sub-answer count as cited (memory and chains get them)', () => {
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        answer: (s, v) => {
+          const good = agents.answer!(s, v);
+          const subAnswers = ((s.subQuestions as string[]) ?? []).map(
+            (_, i) => `S${i + 1}: answered by the validation path [F${i === 0 ? 2 : 1}]`,
+          );
+          return { ...good, updates: { ...good.updates, subAnswers } };
+        },
+      },
+    };
+    const { r, state } = play(1, script);
+    expect(r.state.outcome).toBe('success');
+    expect(String(state.answer)).not.toMatch(/\[F2\]/);
+    expect((state.citedFindings as string[]).map((f) => f.split(' ')[0])).toContain('F2');
+  });
+});
+
 /** The tier each AI step was played at. */
 const tiers = (st: { events: readonly EngineEvent[] }) =>
   Object.fromEntries(

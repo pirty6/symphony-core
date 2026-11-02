@@ -54,7 +54,8 @@ type FnName =
   | 'text'
   | 'count'
   | 'positions'
-  | 'stances';
+  | 'stances'
+  | 'heads';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -85,6 +86,7 @@ const FNS: Record<FnName, number> = {
   count: 2,
   positions: 2,
   stances: 2,
+  heads: 2,
 };
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
@@ -398,7 +400,8 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           if (typeof x === 'number' || typeof x === 'boolean') return String(x);
           throw new ExprError('text() needs a string, number or boolean');
         case 'count':
-        case 'positions': {
+        case 'positions':
+        case 'heads': {
           // count(findings, "pattern"): how many entries match.
           // positions(reasons, "pattern"): their 1-based positions, for pick() on a parallel list.
           if (typeof args[1] !== 'string' || args[1].length > 200)
@@ -409,6 +412,9 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           } catch {
             throw new ExprError(`${e.fn}(): invalid pattern ${JSON.stringify(args[1])}`);
           }
+          // heads(objections, "^S[0-9]+"): the first match in each entry ("" when none), so two
+          // lists can be compared tag by tag.
+          if (e.fn === 'heads') return strings(e.fn, x).map((s) => re.exec(s)?.[0] ?? '');
           const hits = strings(e.fn, x).flatMap((s, i) => (re.test(s) ? [i + 1] : []));
           return e.fn === 'count' ? hits.length : hits;
         }
