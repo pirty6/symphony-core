@@ -688,7 +688,7 @@ describe('investigate coverage', () => {
     const { r } = runWith(['workspace']);
     const answer = String(r.state.state.answer);
     expect(answer).toMatch(
-      /\n## Coverage\n\n- Files not triaged: .+\n- Pages read: .+\n- Experiments run: none\n/,
+      /\n## Coverage\n\n- Files not triaged: .+\n- Not located, so not triaged: none\n- Pages read: .+\n- Experiments run: none\n/,
     );
     expect(answer.match(/## Coverage/g)).toHaveLength(1);
     const findings = r.state.state.findings as string[];
