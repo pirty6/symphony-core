@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -15,6 +15,11 @@ import { createSymphonyServer } from './server.js';
 const workspace = mkdtempSync(join(tmpdir(), 'symphony-mcp-'));
 // Patterns that edit start from a git snapshot of the workspace.
 execFileSync('git', ['init', '-q'], { cwd: workspace });
+// fix runs the tests before it edits: a slow suite keeps the composed run going until it is stopped.
+writeFileSync(
+  join(workspace, 'package.json'),
+  JSON.stringify({ scripts: { test: 'node -e "setTimeout(() => {}, 30000)"' } }),
+);
 afterAll(() => rmSync(workspace, { recursive: true, force: true }));
 const env = { SYMPHONY_MCP: 'off' } as NodeJS.ProcessEnv;
 const manager = (editsAllowed = true) =>
@@ -130,7 +135,12 @@ describe('Symphony MCP server', () => {
       requirements: [expect.stringMatching(/^R1: \w+ — /)],
     });
     await call(client, 'answer_approval', { run_id: body.run_id, approved: true });
-    const next = await settle(client, body.run_id);
+    // The composed fix is running its tests (slow on purpose): follow it without waiting.
+    let next = (await call(client, 'get_run', { run_id: body.run_id, wait_seconds: 0 })).body;
+    for (let i = 0; i < 50 && next.pattern !== 'fix'; i++) {
+      await new Promise((done) => setTimeout(done, 50));
+      next = (await call(client, 'get_run', { run_id: body.run_id, wait_seconds: 0 })).body;
+    }
     expect(next.chain).toHaveLength(2);
     expect(next.pattern).toBe('fix');
     // Stopping by the maestro's id stops the composed run, and says so once it has ended.
