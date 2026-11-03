@@ -273,7 +273,7 @@ describe('sub-agents on the canvas', () => {
   it('each part of a fanned-out step is a node beside it, with its state', async () => {
     const score = compileScore(investigate, {
       goal: 'g',
-      context: { ...investigate.demo!.context!, batchSize: 1, agents: 2 },
+      context: { ...investigate.demo!.context!, lean: false, batchSize: 1, agents: 2 },
       generatedAt: 't',
     })
     const run = new Run({ score, provider: ScriptedProvider.forPattern(investigate), demo: investigate.demo, autoApprove: true, clock: () => 't' })
@@ -310,6 +310,7 @@ describe('feature switches', () => {
   it('lists the switches the open pattern has, with your choice or its default', () => {
     const rows = featureRows(investigate, PATTERNS, { supportJudge: 'shadow' })
     expect(rows.map((r) => r.feature.field)).toEqual([
+      'lean',
       'supportJudge',
       'singlePass',
       'readerHypotheses',
@@ -320,7 +321,8 @@ describe('feature switches', () => {
       'narrowRead',
       'gapAimed',
     ])
-    expect(rows[0]).toMatchObject({ value: 'shadow', default: 'off' })
+    expect(rows[0]).toMatchObject({ value: 'true', default: 'true' })
+    expect(rows[1]).toMatchObject({ value: 'shadow', default: 'off' })
     expect(rows.find((r) => r.feature.field === 'maxExpandRounds')).toMatchObject({ value: '2', default: '2' })
     expect(rows.find((r) => r.feature.field === 'narrowRead')).toMatchObject({ value: 'false', default: 'false' })
     expect(rows.find((r) => r.feature.field === 'readerHypotheses')).toMatchObject({ value: 'true', default: 'true' })
@@ -331,12 +333,15 @@ describe('feature switches', () => {
       'hypothesesPerResearch',
     ])
     expect(featureRows(hangman, PATTERNS, {})).toEqual([])
-    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(11)
-    expect(featureRows(maestro, PATTERNS, {})[4]!.patterns).toEqual(['investigate', 'fix', 'implement'])
+    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(12)
+    expect(featureRows(maestro, PATTERNS, {})[5]!.patterns).toEqual(['investigate', 'fix', 'implement'])
   })
 
   it('keeps only choices away from the default, and remembers them between visits', () => {
-    const [judge] = featureRows(investigate, PATTERNS, {})
+    const [lean, judge] = featureRows(investigate, PATTERNS, {})
+    // Lean is on by default: turning it off is the choice kept.
+    expect(chooseFeature({}, lean!, 'false')).toEqual({ lean: 'false' })
+    expect(chooseFeature({ lean: 'false' }, lean!, 'true')).toEqual({})
     const on = chooseFeature({}, judge!, 'enforce')
     expect(on).toEqual({ supportJudge: 'enforce' })
     expect(chooseFeature(on, judge!, 'off')).toEqual({})

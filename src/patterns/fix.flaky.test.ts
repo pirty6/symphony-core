@@ -147,6 +147,7 @@ const gateRuns =
     return (s: State) =>
       fails(s, ++run) ? tests(false, out.targetFails) : tests(true, passOutput);
   };
+
 /** maxStabilityRuns 1 is raised to runsNeeded(0.25, maxEdits 2) = 13. */
 /** A file's header in git.diff's output. */
 const head = (f: string) => `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1 @@`;
@@ -156,6 +157,37 @@ const masked = (files: string[], diff: string) => () => {
   return () => ({ diff: `${diff} // ${++k}`, hash: `m${k}`, files });
 };
 const armed = { maxStabilityRuns: 1, stabilityTolerance: 0.25, maxEdits: 2 };
+/** Edits that can hide a flake, and the flag each raises. */
+const MASKING_CASES: [string[], string, RegExp][] = [
+  [
+    ['src/eval/harness.ts'],
+    `${head('src/eval/harness.ts')}\n+export const TIME_SLACK = 3;`,
+    /slack/,
+  ],
+  [['src/a.ts'], `${head('src/a.ts')}\n+  await sleep(50);`, /code touches/],
+  [['src/a.test.ts'], `${head('src/a.test.ts')}\n+  it.skip('another', () => {});`, /skip, invert/],
+  [['src/a.test.ts'], `${head('src/a.test.ts')}\n+  it('x', { retry: 3 }, () => {});`, /own file/],
+  [['src/b.test.ts'], `${head('src/b.test.ts')}\n+jest.retryTimes(3);`, /retry/],
+  [['test/b.js'], `${head('test/b.js')}\n+  this.retries(3);`, /retry/],
+  [['tests/test_b.py'], `${head('tests/test_b.py')}\n+@pytest.mark.flaky(reruns=3)`, /retry/],
+  [
+    ['src/my thing.test.ts'],
+    `${head('src/a.ts')}\n+ok()\ndiff --git a/src/my thing.test.ts b/src/my thing.test.ts\n--- a/src/my thing.test.ts\n+++ b/src/my thing.test.ts\n@@ -1 +1 @@\n+it.skip('x')`,
+    /skip, invert/,
+  ],
+  [
+    ['src/a.test.ts'],
+    `${head('src/a.test.ts')}\n-  it('loads in time', async () => {\n+  it('loads in time', async () => { // ok`,
+    /existing test lines/,
+  ],
+  [
+    ['src/a.ts'],
+    `${head('src/a.ts')}\n-  expect(ms).toBeLessThan(10);\n+  run();`,
+    /assertions removed/,
+  ],
+  [['package.json'], `${head('package.json')}\n+  "test": "vitest run"`, /configure the tests/],
+  [['img.png'], 'untracked files:\n  img.png', /cannot show/],
+];
 const flaky = { diagnose: flakyDiagnose() };
 
 describe('fix: the stability gate (opt-in)', () => {
@@ -302,46 +334,10 @@ describe('fix: the stability gate (opt-in)', () => {
     expect(r.state.stabilityReport).toMatch(/no flaky test was named/);
   });
 
-  it('edits that can hide a flake go to a person: unattended not certified, accepted certified with a note', () => {
-    const cases: [string[], string, RegExp][] = [
-      [
-        ['src/eval/harness.ts'],
-        `${head('src/eval/harness.ts')}\n+export const TIME_SLACK = 3;`,
-        /slack/,
-      ],
-      [['src/a.ts'], `${head('src/a.ts')}\n+  await sleep(50);`, /code touches/],
-      [
-        ['src/a.test.ts'],
-        `${head('src/a.test.ts')}\n+  it.skip('another', () => {});`,
-        /skip, invert/,
-      ],
-      [
-        ['src/a.test.ts'],
-        `${head('src/a.test.ts')}\n+  it('x', { retry: 3 }, () => {});`,
-        /own file/,
-      ],
-      [['src/b.test.ts'], `${head('src/b.test.ts')}\n+jest.retryTimes(3);`, /retry/],
-      [['test/b.js'], `${head('test/b.js')}\n+  this.retries(3);`, /retry/],
-      [['tests/test_b.py'], `${head('tests/test_b.py')}\n+@pytest.mark.flaky(reruns=3)`, /retry/],
-      [
-        ['src/my thing.test.ts'],
-        `${head('src/a.ts')}\n+ok()\ndiff --git a/src/my thing.test.ts b/src/my thing.test.ts\n--- a/src/my thing.test.ts\n+++ b/src/my thing.test.ts\n@@ -1 +1 @@\n+it.skip('x')`,
-        /skip, invert/,
-      ],
-      [
-        ['src/a.test.ts'],
-        `${head('src/a.test.ts')}\n-  it('loads in time', async () => {\n+  it('loads in time', async () => { // ok`,
-        /existing test lines/,
-      ],
-      [
-        ['src/a.ts'],
-        `${head('src/a.ts')}\n-  expect(ms).toBeLessThan(10);\n+  run();`,
-        /assertions removed/,
-      ],
-      [['package.json'], `${head('package.json')}\n+  "test": "vitest run"`, /configure the tests/],
-      [['img.png'], 'untracked files:\n  img.png', /cannot show/],
-    ];
-    for (const [files, diff, flag] of cases) {
+  // One case per test: each plays a whole gated run.
+  it.each(MASKING_CASES.map((c) => [c[2].source, ...c] as const))(
+    'edits that can hide a flake go to a person, unattended not certified: %s',
+    (_name, files, diff, flag) => {
       const r = play(
         { agents: flaky, tools: { captureDiff: masked(files, diff)(), runStable: gateRuns()() } },
         armed,
@@ -349,12 +345,15 @@ describe('fix: the stability gate (opt-in)', () => {
       expect((r.state.maskingFlags as string[]).join('; '), diff).toMatch(flag);
       expect(r.end).toBe('uncertified');
       expect(r.state.stabilityReport).toMatch(/did not accept the masking flags/);
-    }
+    },
+  );
+
+  it('a person who accepts the flags certifies the patch, with a note', () => {
     const accepted = play(
       {
         agents: flaky,
         tools: {
-          captureDiff: masked(...(cases[0]!.slice(0, 2) as [string[], string]))(),
+          captureDiff: masked(...(MASKING_CASES[0]!.slice(0, 2) as [string[], string]))(),
           runStable: gateRuns()(),
         },
         approvals: { ...demo.approvals, maskingReview: () => ({ approved: true }) },
@@ -363,6 +362,9 @@ describe('fix: the stability gate (opt-in)', () => {
     );
     expect(accepted.end).toBe('fixed');
     expect(accepted.state.stabilityReport).toMatch(/^certified: .*a person accepted: added code/);
+  });
+
+  it('a regression test in a new file is not flagged; next to the flaky test, a person looks', () => {
     // A root-cause fix plus a new regression test (with a sleep to order the answers). In a new
     // file: nothing to flag, certified unattended. Next to the flaky test: a person looks, since
     // a retry or a sleep added there would look the same.

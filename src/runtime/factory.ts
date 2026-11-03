@@ -84,12 +84,13 @@ export function envConfig(env: NodeJS.ProcessEnv): {
     ...(tiers ? { tiers } : {}),
     ...(env.SYMPHONY_ALT_MODEL ? { alternateModel: env.SYMPHONY_ALT_MODEL } : {}),
     ...(nodeModels ? { nodeModels } : {}),
-    ...(on(env.SYMPHONY_DELTA_REPAIR) ? { deltaRepair: true } : {}),
-    ...(on(env.SYMPHONY_HEADER_IN_SYSTEM) ? { headerInSystem: true } : {}),
+    // On by default (they cut time and tokens); 0, false, off or no turns each off.
+    deltaRepair: !off(env.SYMPHONY_DELTA_REPAIR),
+    headerInSystem: !off(env.SYMPHONY_HEADER_IN_SYSTEM),
   };
 }
 
-const on = (v: string | undefined) => v !== undefined && /^(1|true|on|yes)$/i.test(v.trim());
+const off = (v: string | undefined) => v !== undefined && /^(0|false|off|no)$/i.test(v.trim());
 
 /** "deepRead=claude-opus-4.5,triage=gpt-5-mini": a model per step id. */
 export function parseNodeModels(text: string): Record<string, string> | undefined {

@@ -74,7 +74,7 @@ commands only).
 | Result | When a run ends, its result (the last data carried toward the end, e.g. `answer` and `openQuestions`) appears formatted at the top of the inspector. **Read full result** opens a wide reader with Copy and Download .md; long results open it automatically. Esc closes it. |
 | Timeline | Every engine event. Scrub back and forth; the canvas and inspector follow. |
 | Opening screen | With no pattern open (no `#pattern` in the URL) the canvas asks the maestro: describe the work and compose, or open a pattern from the quick links. **⌂ Home** in the sidebar comes back here (a run keeps playing; it stays under **Running now**). |
-| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, **Features** (the open pattern's switches: support judge, single-pass triage, hypotheses to readers, keep unchallenged sub-answers, pragmatist from, gap research; kept between visits and applied to every run you start, and to the runs the maestro composes, unless a run input says otherwise; patterns, features, the palette and saved runs fold from their titles and stay as you left them; the maestro box shows here once a pattern or run is open), and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). Offline-demo runs are hidden behind **Show N offline-demo runs**, so the list holds your real runs. **Running now** lists every run the server is playing; click one to switch to it (its stream replays from the start). |
+| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, **Features** (the open pattern's switches: lean run (on by default), support judge, single-pass triage, hypotheses to readers, keep unchallenged sub-answers, pragmatist from, gap research; kept between visits and applied to every run you start, and to the runs the maestro composes, unless a run input says otherwise; patterns, features, the palette and saved runs fold from their titles and stay as you left them; the maestro box shows here once a pattern or run is open), and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). Offline-demo runs are hidden behind **Show N offline-demo runs**, so the list holds your real runs. **Running now** lists every run the server is playing; click one to switch to it (its stream replays from the start). |
 
 Stop mid-process: **Pause** halts at the next gate, **breakpoints** (the dot on a node) halt
 before and after that node, **step mode** halts at every gate, and **Stop** aborts the live AI call
@@ -670,10 +670,11 @@ solved rate or citation validity.
 - **Low confidence is re-checked** (`verifyBelow`, 0.6 on answers, diagnoses and designs): once,
   one tier smarter. **Second opinions use another model family** (`otherModel`; set
   `SYMPHONY_ALT_MODEL`, default `gpt-6.1-sol`).
-- **Trial switches** (off by default, for the offline trials in [docs/trials.md](docs/trials.md)):
-  `SYMPHONY_NODE_MODELS=deepRead=claude-opus-5.5` plays the named steps on their own model;
-  `SYMPHONY_DELTA_REPAIR=1` lets a rejected `submit_result` be corrected by resending only the
-  fields that change; `SYMPHONY_HEADER_IN_SYSTEM=1` sends each step's fixed instructions as the
+- **Switches** (for the offline trials in [docs/trials.md](docs/trials.md)):
+  `SYMPHONY_NODE_MODELS=deepRead=claude-opus-5.5` plays the named steps on their own model.
+  On by default, `=0` turns each off if a trial shows it makes things worse:
+  `SYMPHONY_DELTA_REPAIR` lets a rejected `submit_result` be corrected by resending only the
+  fields that change; `SYMPHONY_HEADER_IN_SYSTEM` sends each step's fixed instructions as the
   system message and only its input as the prompt.
 - **Prompts**: what is fixed for a step comes first and the changing input last, so repeat visits
   reuse the model's prompt cache; steps with no workspace tools get a short system prompt instead
