@@ -179,6 +179,8 @@ flowchart TD
   n_snapshot[/"🔧 Snapshot workspace"/]
   n_recall[/"🔧 Recall earlier runs"/]
   n_approve{{"👤 Approve plan"}}
+  n_reproduceFirstOn{"Reproduce first?"}
+  n_reproduced{"Tests locked?"}
   n_reviewStopped(["Stopped at review · partial"])
   n_learnFixed[/"🔧 Remember the outcome"/]
   n_learnFailed[/"🔧 Remember the failure"/]
@@ -188,6 +190,7 @@ flowchart TD
   n_hypothesesPhase[["Competing hypotheses · 2 steps"]]
   n_diagnosePhase[["Diagnose · 4 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
+  n_testFirstPhase[["Tests first · 19 steps"]]
   n_editPhase[["Edit and verify · 19 steps"]]
   n_prReviewPhase[["PR review · 5 steps"]]
   n_start --> n_baseline
@@ -200,10 +203,18 @@ flowchart TD
   n_diagnosePhase --> n_challengePhase
   n_challengePhase --> n_approve
   n_challengePhase -.-> n_diagnosePhase
-  n_approve -->|"approved"| n_editPhase
+  n_approve -->|"approved"| n_reproduceFirstOn
+  n_reproduceFirstOn -->|"tests first"| n_testFirstPhase
+  n_reproduceFirstOn -->|"no"| n_editPhase
+  n_reproduced -.->|"yes"| n_testFirstPhase
+  n_reproduced -->|"no"| n_prReviewPhase
+  n_testFirstPhase --> n_reviewStopped
+  n_testFirstPhase --> n_editPhase
+  n_testFirstPhase --> n_prReviewPhase
   n_approve -->|"rejected"| n_rejected
-  n_editPhase --> n_prReviewPhase
+  n_editPhase --> n_reproduced
   n_editPhase --> n_learnFailed
+  n_editPhase --> n_prReviewPhase
   n_editPhase -.-> n_diagnosePhase
   n_prReviewPhase --> n_learnFixed
   n_prReviewPhase -.-> n_editPhase
@@ -215,6 +226,7 @@ flowchart TD
 | Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
 | Diagnose | Evidence for and against every hypothesis, then the root cause | Gather evidence → Check citations → Record evidence → Diagnose |
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
+| Tests first | Tests written before the code must fail for the right reason, then stay locked | Plan the reproducing test → Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
 | PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 

@@ -169,6 +169,62 @@ describe('fix', () => {
     expect(reads('diagnose')).toContain('findings');
   });
 
+  it('reproduceFirst (opt-in): the bug is reproduced by a locked, red test before the fix', () => {
+    const reproducing = {
+      agents: {
+        planReproduce: () => ({
+          updates: {
+            acceptanceCriteria: ['C1: page 2 starts after the last item of page 1'],
+            testsToAdd: ['src/paginate.test.ts: page 2 of [1..20] by 10 starts at 11'],
+          },
+          verdict: v,
+        }),
+        writeTests: () => ({ updates: { testFiles: ['src/paginate.test.ts'] }, verdict: v }),
+        checkRed: () => ({
+          updates: { redReport: ['C1: RED — page 2 starts at 10 — the bug'], wrongRed: [] },
+          verdict: v,
+        }),
+      },
+      tools: {
+        captureTests: () => ({ diff: '+test', hash: 'tests-1', files: ['src/paginate.test.ts'] }),
+        runRed: () => tests(false, 'FAIL page 2 starts at 10'),
+        lockTests: () => ({ diff: '', hash: 'locked', files: ['src/paginate.test.ts'] }),
+        checkTests: () => ({ diff: '', hash: 'locked', files: ['src/paginate.test.ts'] }),
+      },
+    };
+    const on = play(reproducing, { reproduceFirst: true });
+    expect(on.r.state.outcome).toBe('success');
+    const order = on.r.state.steps.map((x) => x.nodeId);
+    for (const [a, b] of [
+      ['approve', 'planReproduce'],
+      ['planReproduce', 'writeTests'],
+      ['lockTests', 'apply'],
+      ['checkTests', 'prReview'],
+    ])
+      expect(order.indexOf(a!), `${a} before ${b}`).toBeLessThan(order.indexOf(b!));
+    // The edit has to change more than the tests.
+    expect(on.state.baseDiffHash).toBe('tests-1');
+    // Off (the default): none of it plays.
+    const off = play(reproducing);
+    expect(off.r.state.steps.map((x) => x.nodeId)).not.toContain('planReproduce');
+    expect(off.r.state.outcome).toBe('success');
+  });
+
+  it('research may split its hypotheses across sub-agents (a trial; one call by default)', () => {
+    const parts = (context: Record<string, unknown>) => {
+      const r = play({}, context).r;
+      return r.state.events.flatMap((e) =>
+        e.type === 'paused' && e.pause.kind === 'agent' && e.pause.nodeId === 'research'
+          ? [e.pause.parts?.map((p) => p.hypotheses) ?? []]
+          : [],
+      )[0]!;
+    };
+    expect(parts({})).toEqual([]);
+    const split = parts({ hypothesesPerResearch: 1 });
+    expect(split.length).toBeGreaterThan(1);
+    expect(split.every((h) => (h as string[]).length === 1)).toBe(true);
+  });
+
   it('lists changed files that configure the checks, for the reviewer', () => {
     let n = 0;
     const { state } = play({
