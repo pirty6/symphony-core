@@ -870,7 +870,11 @@ export class CopilotProvider implements Provider {
     let corrections = 0;
     const tool = defineTool(SUBMIT_TOOL, {
       description: `Submit the result of step '${pause.label}'. Call exactly once when done.`,
-      parameters: resultJsonSchema(pause.outputSchema, pause.choices),
+      // With delta repair a correction sends only what changes: the schema must not refuse it
+      // (the handler checks the merged result against every field).
+      parameters: resultJsonSchema(pause.outputSchema, pause.choices, {
+        partialUpdates: this.opts.deltaRepair === true,
+      }),
       skipPermission: true,
       handler: async (raw: unknown) => {
         // Delta repair: after a rejection, the fields sent replace those of the rejected answer.
