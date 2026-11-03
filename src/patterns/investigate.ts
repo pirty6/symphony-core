@@ -49,6 +49,12 @@ const challenge = challengePhase({
 /** Most independent parts one investigation answers side by side. */
 export const MAX_PARTS = 8;
 
+/**
+ * The item a read note starts with: everything before its " — " (paths may hold spaces, e.g.
+ * "Loop Experiences/a.md — …"); a note with no dash falls back to its first word, as before.
+ */
+export const NOTE_ITEM = '^(.+?(?= [—–] )|[^ ]+)';
+
 /** The S tag of each entry ("S2"). */
 const TAGS = (field: string) => `heads(${field}, "^S[0-9]+")`;
 
@@ -1194,7 +1200,7 @@ export const investigate: Pattern = {
         },
         {
           // Output for every item, by the item each note starts with: none left out.
-          expr: 'heads(readNotes, "^[^ ]+") == deepBatch',
+          expr: `heads(readNotes, "${NOTE_ITEM}") == deepBatch`,
           message:
             'Give exactly one readNotes entry per item of deepBatch, in the same order, each starting with the item exactly as listed, then " — " and what it holds.',
         },

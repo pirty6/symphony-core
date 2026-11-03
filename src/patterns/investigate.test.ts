@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { advance, createEngine, toPerformance } from '../core/engine.js';
+import { evaluateGuard } from '../core/expr.js';
 import { replayPerformance } from '../core/replay.js';
 import { runScripted, scriptedResolution } from '../core/scripted.js';
 import type {
@@ -1218,6 +1219,32 @@ describe('investigate holds "read completely" to what the engine gave', () => {
     const at = (s.notRead as string[]).indexOf('src/core/engine.ts');
     expect((s.notReadReasons as string[])[at]).toMatch(/not in the engine's record/);
     expect(String(s.answer)).toMatch(/Could not read in full: .*src\/core\/engine\.ts/);
+  });
+
+  it("each read note is matched to its item by what comes before ' — ', so paths may hold spaces", () => {
+    const check = (
+      investigate.nodes.find((n) => n.id === 'deepRead') as unknown as {
+        checks: { expr: string }[];
+      }
+    ).checks.find((c) => c.expr.includes('readNotes'))!.expr;
+    const deepBatch = ['Loop Experiences/plan.md', 'src/a.ts#chunk=401-800', 'src/b.ts'];
+    const ok = (readNotes: string[]) => evaluateGuard(check, { deepBatch, readNotes });
+    expect(
+      ok([
+        'Loop Experiences/plan.md — the rollout plan',
+        'src/a.ts#chunk=401-800 — nothing relevant',
+        'src/b.ts – the retry loop',
+      ]),
+    ).toBe(true);
+    // No dash: the first word, as before.
+    expect(ok(['Loop Experiences/plan.md — x', 'src/a.ts#chunk=401-800 x', 'src/b.ts x'])).toBe(
+      true,
+    );
+    expect(ok(['Loop Experiences/plan.md — x', 'src/b.ts — x'])).toBe(false);
+    expect(ok(['src/b.ts — x', 'src/a.ts#chunk=401-800 — x', 'Loop Experiences/plan.md — x'])).toBe(
+      false,
+    );
+    expect(ok(['Loop — x', 'src/a.ts#chunk=401-800 — x', 'src/b.ts — x'])).toBe(false);
   });
 
   it('a reader that leaves out the note for an item is sent back', () => {
