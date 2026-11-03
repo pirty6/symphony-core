@@ -1408,6 +1408,37 @@ describe('single-pass triage pilot (off by default)', () => {
   };
   const RELEVANT_FILES = ['src/core/engine.ts', 'src/core/schema.ts', 'src/core/validate.ts'];
 
+  it('the single-pass reader writes a note per file it read in depth, as the deep read does', () => {
+    const r = runScripted(
+      compileScore(investigate, { context: { ...demo.context!, singlePass: true } }),
+      {
+        ...demo,
+        agents: {
+          ...demo.agents,
+          triageDeep: (s, visit) => {
+            const good = demo.agents!.triageDeep!(s, visit);
+            return {
+              ...good,
+              updates: {
+                ...good.updates,
+                readNotes: (good.updates.readNotes as string[]).slice(1),
+              },
+            };
+          },
+        },
+      },
+    );
+    expect(r.state.outcome).toBe('partial');
+    expect(r.state.reason).toMatch(/one readNotes entry per file of readFully/);
+    const ok = runScripted(
+      compileScore(investigate, { context: { ...demo.context!, singlePass: true } }),
+      demo,
+    );
+    expect(ok.state.state.readLog).toEqual(
+      expect.arrayContaining([expect.stringMatching(/ — read in depth at triage/)]),
+    );
+  });
+
   it('off: the usual triage plays, and every relevant file is read in depth', () => {
     const { r } = runWith(['workspace']);
     const ran = r.state.steps.map((x) => x.nodeId);

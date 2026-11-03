@@ -212,20 +212,26 @@ function triageStep(deep: boolean): ScoreNode {
     label: 'Triage and read in depth',
     directive:
       node.directive +
-      ' For each file you count as relevant, also read it as the deep read would: follow the references out of it that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame), and record every fact that bears on the question in `newFindings`. List in `readFully` the relevant files you read that way, completely; leave out any you only skimmed, and any the prompt says were not given whole: those get a deep read of their own.',
+      ' For each file you count as relevant, also read it as the deep read would: follow the references out of it that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame), and record every fact that bears on the question in `newFindings`. List in `readFully` the relevant files you read that way, completely; leave out any you only skimmed, and any the prompt says were not given whole: those get a deep read of their own. In `readNotes`, give one entry per file of `readFully`, in the same order, starting with the file exactly as listed: "<file> — what it holds for the question, and the callers, imports, tests or history you followed".',
     // The engine says which it gave whole: readFully counts only for those.
     preloadReport: {
       paths: 'triagePartial',
       reasons: 'triagePartialReasons',
       whole: 'triageWhole',
     },
-    writes: [...node.writes, 'readFully'],
+    writes: [...node.writes, 'readFully', 'readNotes'],
     complexityShift: 0,
     checks: [
       ...(node.checks ?? []),
       {
         expr: 'subset(readFully, batchRelevant)',
         message: 'readFully may only list files of batchRelevant.',
+      },
+      {
+        // As the deep read: a note for every file it says it read in depth, none left out.
+        expr: 'heads(readNotes, "^[^ ]+") == readFully',
+        message:
+          'Give exactly one readNotes entry per file of readFully, in the same order, each starting with the file exactly as listed, then " — " and what it holds.',
       },
     ],
   };
@@ -1095,7 +1101,9 @@ export const investigate: Pattern = {
         },
         ...MERGE_FINDINGS,
         ...STATUS,
-        // Each wave's claims are its own.
+        // Each wave's claims are its own; what the single-pass reader said of each file is kept.
+        { field: 'readLog', expr: 'readLog + readNotes' },
+        { field: 'readNotes', expr: '[]' },
         { field: 'readFully', expr: '[]' },
         { field: 'triageWhole', expr: '[]' },
       ],
@@ -2156,6 +2164,7 @@ export const investigate: Pattern = {
             triaged: batch,
             batchRelevant: relevant,
             readFully: relevant,
+            readNotes: relevant.map((f) => `${f} — read in depth at triage, callers followed`),
             newFindings: relevant.map((f) => `${f}:1 — read in depth at triage`),
           },
           verdict: v(`triaged and read ${relevant.length} of ${batch.length} files`),
