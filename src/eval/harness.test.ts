@@ -104,7 +104,8 @@ const evaluate = (fix: boolean, repeat = 1) =>
     repeat,
   });
 
-describe('eval harness', () => {
+// Git fixtures and scripted runs: 0.2-0.5 s per test alone, over 5 s when the machine is loaded.
+describe('eval harness', { timeout: 30_000 }, () => {
   it('runs each task in a fresh fixture and records solved, citations, tokens and models', async () => {
     const report = await evaluate(true, 2);
     expect(report.results[0]!.notes).toEqual(['a.txt fixed']);

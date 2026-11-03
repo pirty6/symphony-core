@@ -121,7 +121,8 @@ setInterval(() => {}, 1000);`,
   });
 });
 
-describe('tests.run reuse', () => {
+// git spawns: 0.2-0.6 s per test alone, over 5 s when the machine is loaded (seen locally and on CI).
+describe('tests.run reuse', { timeout: 30_000 }, () => {
   it('a baseline on an unchanged workspace is reused; any change runs it again', async () => {
     const d = dir();
     const counter = join(root, `runs-${n}`);
@@ -145,7 +146,8 @@ describe('tests.run reuse', () => {
   });
 });
 
-describe('git.diff', () => {
+// git spawns: 0.2-0.6 s per test alone, over 5 s when the machine is loaded (seen locally and on CI).
+describe('git.diff', { timeout: 30_000 }, () => {
   it('works in a repository with no commits yet', async () => {
     const d = dir();
     const before = await workspaceDiff(ctx(d));
