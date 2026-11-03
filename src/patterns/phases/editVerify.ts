@@ -14,7 +14,7 @@
  * earlier attempt is no progress: it goes back to diagnosis or stops, instead of
  * spending attempts on a patch already tried (or on no patch at all).
  */
-import type { ScoreEdge, ScoreNode, StateField } from '../../core/types.js';
+import type { AcceptanceCheck, ScoreEdge, ScoreNode, StateField } from '../../core/types.js';
 import type { Fragment } from './debate.js';
 
 export interface EditVerifyConfig {
@@ -26,6 +26,10 @@ export interface EditVerifyConfig {
   readonly applyWrites?: readonly string[];
   /** Fields the triage reads to judge the failure (the plan, the root cause…). */
   readonly triageReads: readonly string[];
+  /** Added to the triage directive (fix: a flake of the target is not ENVIRONMENT). */
+  readonly triageNote?: string;
+  /** Checks on the triage besides the shared ones. */
+  readonly triageChecks?: readonly AcceptanceCheck[];
   /** Node to continue to when tests (and lint) pass. */
   readonly success: string;
   /** Node to continue to when attempts run out or the failure is environmental. */
@@ -239,7 +243,8 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       role: 'assessor',
       label: 'Triage failure',
       directive:
-        'The edit was applied and the engine ran the checks: they failed. Read `testOutput`, `lintOutput`, `diff` and the plan, and classify the failure in `failureKind`: PATCH if the edit is wrong or incomplete but the plan is sound; DIAGNOSIS if the plan or root cause is wrong (the failure points elsewhere, or the edit cannot work); ENVIRONMENT if the failure is not caused by the edit (flaky test, missing dependency or tool, network, a test that also fails without the change: `baselineOutput` is the run before any edit). Put the specific evidence (test name, file:line, error) in `failureReason`.',
+        'The edit was applied and the engine ran the checks: they failed. Read `testOutput`, `lintOutput`, `diff` and the plan, and classify the failure in `failureKind`: PATCH if the edit is wrong or incomplete but the plan is sound; DIAGNOSIS if the plan or root cause is wrong (the failure points elsewhere, or the edit cannot work); ENVIRONMENT if the failure is not caused by the edit (flaky test, missing dependency or tool, network, a test that also fails without the change: `baselineOutput` is the run before any edit). Put the specific evidence (test name, file:line, error) in `failureReason`.' +
+        (cfg.triageNote ?? ''),
       reads: ['testOutput', 'lintOutput', 'diff', 'changes', 'baselineOutput', ...cfg.triageReads],
       writes: ['failureKind', 'failureReason'],
       retries: 2,
@@ -254,6 +259,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
           message: 'failureKind must be PATCH, DIAGNOSIS or ENVIRONMENT.',
         },
         { expr: 'len(failureReason) > 0', message: 'Give the evidence in failureReason.' },
+        ...(cfg.triageChecks ?? []),
       ],
     },
     {

@@ -22,6 +22,24 @@ const v = (reason: string, confidence = 0.9) => ({
   reason,
 });
 
+/**
+ * A test's own lines in a run's output (vitest --reporter=verbose, jest --verbose, node --test,
+ * pytest -v): failed, passed, passed only on a retry. Read with linesWith(output, flakyTarget).
+ */
+export const FAILED_LINE = '^ *(FAIL|×|✕|✖|✗) |FAILED|ERROR';
+export const PASSED_LINE = '^ *(✓|✔|PASS) |PASSED';
+export const RETRIED_LINE = 'retry x|RERUN';
+/** The flaky test's failure is in this run's output (not another test's, not a timeout). */
+const targetFailed = (output: string) =>
+  `!empty(flakyTarget) && count(linesWith(${output}, flakyTarget), "${FAILED_LINE}") > 0`;
+
+/** Where intermittent failures come from (Luo et al. 2014, Fowler, Parry et al. 2021). */
+const NONDETERMINISM =
+  ' If the failure is intermittent (it passes on a re-run, only under load, only in CI or in some test orders), look for the usual causes of nondeterminism: waiting for async work by time instead of on the event, a race between concurrent code, state shared between tests or left behind by one (test order), leaked resources (ports, files, timers, handles), the real clock or time zone, randomness, unordered collections, the network or another service, and limits such as timeouts and parallel workers under load.';
+/** Edits that make a flaky test pass without fixing it. */
+const MASKING =
+  'retries, skip, todo or expected-fail markers, removed or loosened assertions, longer sleeps or timeouts, wider tolerances or slack, fewer workers, or quarantining the test';
+
 const hypotheses = hypothesesPhase({
   subject: 'issue',
   context: ['hint', 'knownFacts', 'pastLessons'],
@@ -38,9 +56,19 @@ const challenge = challengePhase({
 });
 const edit = editVerifyPhase({
   applyDirective:
-    'Implement `plan` by editing `files` (others only if the plan truly needs them). Fix the root cause in `rootCause`, not the symptom, and add or update a test that fails without the fix when that is feasible.',
+    'Implement `plan` by editing `files` (others only if the plan truly needs them). Fix the root cause in `rootCause`, not the symptom, and add or update a test that fails without the fix when that is feasible. ' +
+    `Do not hide a failure instead of fixing it (${MASKING}), unless the plan shows the old limit was wrong for work measured to take that long: then say so in \`changes\`.`,
   applyReads: ['issue', 'rootCause', 'files', 'plan', 'reviewComments'],
-  triageReads: ['issue', 'rootCause', 'plan'],
+  triageReads: ['issue', 'rootCause', 'plan', 'flakyTarget'],
+  triageNote:
+    ' A failure of the intermittent test this fix is about (`flakyTarget`) is never ENVIRONMENT: the patch did not make it stable.',
+  triageChecks: [
+    {
+      expr: `failureKind != "ENVIRONMENT" || !(${targetFailed('testOutput')})`,
+      message:
+        'The test this fix is about (flakyTarget) failed: the patch did not make it stable. Classify it PATCH or DIAGNOSIS.',
+    },
+  ],
   // With reproduceFirst, the locked reproducing test is checked before the review.
   success: 'reproduced',
   giveUp: 'learnFailed',
@@ -102,6 +130,22 @@ export const fix: Pattern = {
       { name: 'rootCause', type: 'string', description: 'The root cause, with evidence' },
       { name: 'files', type: 'string[]', description: 'Files to change' },
       { name: 'plan', type: 'string', description: 'Step-by-step fix plan' },
+      {
+        name: 'nondeterministic',
+        type: 'boolean',
+        description: 'The diagnosis: the failure is intermittent',
+      },
+      {
+        name: 'flakyTarget',
+        type: 'string',
+        description: 'The intermittent test, as the test runner prints it',
+      },
+      { name: 'flakyFile', type: 'string', description: "flakyTarget's test file" },
+      {
+        name: 'fixTarget',
+        type: 'string',
+        description: 'Where an intermittent failure is fixed: CODE | TEST | ENVIRONMENT',
+      },
       {
         name: 'hypothesesPerResearch',
         type: 'number',
@@ -181,7 +225,9 @@ export const fix: Pattern = {
       // hypothesesPerResearch (a trial; 99: one call): parallel sub-agents, each on some hypotheses.
       fanOut: { over: 'hypotheses', per: 'hypothesesPerResearch', warm: true },
       directive:
-        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating the findings so far (`findingsBrief`: each with its id and location, quotes left out).' +
+        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame).' +
+        NONDETERMINISM +
+        ' If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating the findings so far (`findingsBrief`: each with its id and location, quotes left out).' +
         MEMORY_NOTE,
       // The brief, not the full findings: they grow every round; diagnose reads them in full.
       reads: ['issue', 'hint', 'hypotheses', 'findingsBrief', 'gaps', 'knownFacts'],
@@ -211,7 +257,9 @@ export const fix: Pattern = {
       directive:
         'From `findings` only, state the root cause of `issue` in `rootCause`, citing the evidence by id. ' +
         CITE_BY_ID +
-        ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way. `baselineOutput` is the test run before any edit: tests failing there that the bug does not explain are not yours to fix.',
+        ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way. `baselineOutput` is the test run before any edit: tests failing there that the bug does not explain are not yours to fix.' +
+        NONDETERMINISM +
+        ` Set \`nondeterministic\` when the failure is intermittent. Then name the test in \`flakyTarget\` exactly as the test runner prints it (vitest: "src/a.test.ts > suite > test"), its file in \`flakyFile\`, and in \`fixTarget\` where the cause is: CODE (the code under test, e.g. a race or a real-clock comparison), TEST (the test waits by time, depends on order or leaks state) or ENVIRONMENT (the machine, not this repository). ${MASKING[0]!.toUpperCase()}${MASKING.slice(1)} hide a flaky test; they do not fix it.`,
       reads: [
         'issue',
         'hint',
@@ -221,7 +269,16 @@ export const fix: Pattern = {
         'testOutput',
         'baselineOutput',
       ],
-      writes: ['rootCause', 'files', 'plan', 'rulings'],
+      writes: [
+        'rootCause',
+        'files',
+        'plan',
+        'rulings',
+        'nondeterministic',
+        'flakyTarget',
+        'flakyFile',
+        'fixTarget',
+      ],
       verifyBelow: 0.6,
       retries: 2,
       complexityShift: 1,
@@ -235,6 +292,15 @@ export const fix: Pattern = {
           expr: 'len(rulings) == len(hypotheses)',
           message:
             'Give exactly one ruling per hypothesis: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence".',
+        },
+        {
+          expr: '!nondeterministic || (!empty(flakyTarget) && includes(["CODE", "TEST", "ENVIRONMENT"], fixTarget))',
+          message:
+            'An intermittent failure needs flakyTarget (the test, as the runner prints it) and fixTarget: CODE, TEST or ENVIRONMENT.',
+        },
+        {
+          expr: 'empty(flakyTarget) || (!empty(flakyFile) && includes(flakyTarget, flakyFile))',
+          message: "Give flakyTarget's test file in flakyFile, as it appears in flakyTarget.",
         },
       ],
     },
@@ -378,6 +444,10 @@ export const fix: Pattern = {
               ? `${h.split(':')[0]}: CONFIRMED — src/paginate.ts:7`
               : `${h.split(':')[0]}: REFUTED — ${i === 1 ? 'src/list.ts:12' : 'src/data.ts:3'}`,
           ),
+          nondeterministic: false,
+          flakyTarget: '',
+          flakyFile: '',
+          fixTarget: '',
         },
         verdict: v('root cause found'),
       }),
