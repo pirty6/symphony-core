@@ -235,7 +235,7 @@ function triageStep(deep: boolean): ScoreNode {
       },
       {
         // As the deep read: a note for every file it says it read in depth, none left out.
-        expr: 'heads(readNotes, "^[^ ]+") == readFully',
+        expr: `heads(readNotes, "${NOTE_ITEM}") == readFully`,
         message:
           'Give exactly one readNotes entry per file of readFully, in the same order, each starting with the file exactly as listed, then " — " and what it holds.',
       },

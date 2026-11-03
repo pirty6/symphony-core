@@ -1222,29 +1222,35 @@ describe('investigate holds "read completely" to what the engine gave', () => {
   });
 
   it("each read note is matched to its item by what comes before ' — ', so paths may hold spaces", () => {
-    const check = (
-      investigate.nodes.find((n) => n.id === 'deepRead') as unknown as {
-        checks: { expr: string }[];
-      }
-    ).checks.find((c) => c.expr.includes('readNotes'))!.expr;
-    const deepBatch = ['Loop Experiences/plan.md', 'src/a.ts#chunk=401-800', 'src/b.ts'];
-    const ok = (readNotes: string[]) => evaluateGuard(check, { deepBatch, readNotes });
-    expect(
-      ok([
-        'Loop Experiences/plan.md — the rollout plan',
-        'src/a.ts#chunk=401-800 — nothing relevant',
-        'src/b.ts – the retry loop',
-      ]),
-    ).toBe(true);
-    // No dash: the first word, as before.
-    expect(ok(['Loop Experiences/plan.md — x', 'src/a.ts#chunk=401-800 x', 'src/b.ts x'])).toBe(
-      true,
+    // Both note checks: the deep read's (deepBatch) and the single-pass reader's (readFully).
+    const checks = investigate.nodes.flatMap((n) =>
+      ((n as unknown as { checks?: { expr: string }[] }).checks ?? []).flatMap((c) => {
+        const m = /heads\(readNotes, .*\) == (\w+)$/.exec(c.expr);
+        return m ? [{ expr: c.expr, field: m[1]! }] : [];
+      }),
     );
-    expect(ok(['Loop Experiences/plan.md — x', 'src/b.ts — x'])).toBe(false);
-    expect(ok(['src/b.ts — x', 'src/a.ts#chunk=401-800 — x', 'Loop Experiences/plan.md — x'])).toBe(
-      false,
-    );
-    expect(ok(['Loop — x', 'src/a.ts#chunk=401-800 — x', 'src/b.ts — x'])).toBe(false);
+    expect(checks.map((c) => c.field).toSorted()).toEqual(['deepBatch', 'readFully']);
+    const items = ['Loop Experiences/plan.md', 'src/a.ts#chunk=401-800', 'src/b.ts'];
+    for (const { expr, field } of checks) {
+      const ok = (readNotes: string[]) => evaluateGuard(expr, { [field]: items, readNotes });
+      expect(
+        ok([
+          'Loop Experiences/plan.md — the rollout plan',
+          'src/a.ts#chunk=401-800 — nothing relevant',
+          'src/b.ts – the retry loop',
+        ]),
+        field,
+      ).toBe(true);
+      // No dash: the first word, as before.
+      expect(ok(['Loop Experiences/plan.md — x', 'src/a.ts#chunk=401-800 x', 'src/b.ts x'])).toBe(
+        true,
+      );
+      expect(ok(['Loop Experiences/plan.md — x', 'src/b.ts — x'])).toBe(false);
+      expect(
+        ok(['src/b.ts — x', 'src/a.ts#chunk=401-800 — x', 'Loop Experiences/plan.md — x']),
+      ).toBe(false);
+      expect(ok(['Loop — x', 'src/a.ts#chunk=401-800 — x', 'src/b.ts — x'])).toBe(false);
+    }
   });
 
   it('a reader that leaves out the note for an item is sent back', () => {
