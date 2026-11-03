@@ -38,6 +38,7 @@ import { libraryPatterns, PATTERNS } from '../../../src/patterns/index.js'
 import { enabledExtras } from '../../../src/patterns/extras/index.js'
 import { draftPattern } from '../../../src/runtime/drafting.js'
 import { Run, type RunOptions } from '../../../src/runtime/driver.js'
+import { liveRoot, LiveRuns, type RunLike } from '../../../src/runtime/live.js'
 import {
   effectiveTiers,
   envConfig,
@@ -144,6 +145,10 @@ export function createApi(opts: ApiOptions) {
     return p
   }
   const env = opts.env ?? process.env
+  // Runs other processes play (a VS Code chat, through the MCP server): shown and steered here.
+  const sharedRoot = liveRoot(env)
+  const shared = sharedRoot ? new LiveRuns(sharedRoot) : undefined
+  const findRun = async (id: string): Promise<RunLike | undefined> => runs.get(id) ?? (await shared?.get(id))
   const workspace = opts.workspace ?? opts.repoRoot
   const runsDir = runsDirFor(opts.repoRoot, env)
   const draftsDir = join(opts.repoRoot, DRAFTS_DIR)
@@ -334,7 +339,7 @@ export function createApi(opts: ApiOptions) {
     })
   }
 
-  function streamRun(req: IncomingMessage, res: ServerResponse, run: Run): void {
+  function streamRun(req: IncomingMessage, res: ServerResponse, run: RunLike): void {
     sseHeaders(res)
     const lastId = Number(req.headers['last-event-id'] ?? -1)
     let closed = false
@@ -445,7 +450,13 @@ export function createApi(opts: ApiOptions) {
       }
       if (method === 'GET' && path === '/api/runs') {
         // Newest first; every run this server started, so the studio can switch between them.
-        send(res, 200, [...runs.values()].toReversed().map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, status: r.status })))
+        const mine = [...runs.values()].toReversed().map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, status: r.status }))
+        // And the runs a chat plays in another process, marked so.
+        const theirs = (await shared?.list())?.filter((r) => !runs.has(r.id)) ?? []
+        send(res, 200, [
+          ...mine,
+          ...theirs.map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, status: r.status, source: r.source, workspace: r.workspace })),
+        ])
         return true
       }
       if (method === 'GET' && path === '/api/copilot/status') {
@@ -467,14 +478,14 @@ export function createApi(opts: ApiOptions) {
       }
       const one = /^\/api\/runs\/([^/]+)$/.exec(path)
       if (one && method === 'GET') {
-        const run = runs.get(one[1]!)
+        const run = await findRun(one[1]!)
         if (!run) send(res, 404, { error: 'run not found' })
         else send(res, 200, { id: run.id, status: run.status, score: run.score, graph: patternToGraph(run.score) })
         return true
       }
       const m = /^\/api\/runs\/([^/]+)\/(events|control|approval|recovery)$/.exec(path)
       if (m) {
-        const run = runs.get(m[1]!)
+        const run = await findRun(m[1]!)
         if (!run) {
           send(res, 404, { error: 'run not found' })
           return true

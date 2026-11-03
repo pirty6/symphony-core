@@ -7,14 +7,20 @@ import { pathToFileURL } from 'node:url'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { fix, hangman } from '../../../src/patterns/index.js'
+import { compileScore } from '../../../src/core/compile.js'
+import { Run } from '../../../src/runtime/driver.js'
+import { publishLive } from '../../../src/runtime/live.js'
+import { ScriptedProvider } from '../../../src/runtime/scripted-provider.js'
 import { createApi } from './api.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'symphony-api-'))
+// Runs a chat plays in another process are published here (src/runtime/live.ts).
+const live = mkdtempSync(join(tmpdir(), 'symphony-api-live-'))
 let server: Server
 let base = ''
 
 beforeAll(async () => {
-  const api = createApi({ repoRoot: root, importer: (f) => import(pathToFileURL(f).href), env: {} })
+  const api = createApi({ repoRoot: root, importer: (f) => import(pathToFileURL(f).href), env: { SYMPHONY_LIVE_DIR: live } })
   server = createServer((req, res) => {
     void api.handle(req, res).then((handled) => {
       if (!handled) {
@@ -30,6 +36,7 @@ beforeAll(async () => {
 afterAll(() => {
   server.close()
   rmSync(root, { recursive: true, force: true })
+  rmSync(live, { recursive: true, force: true })
 })
 
 const post = (path: string, body: unknown) =>
@@ -257,4 +264,37 @@ describe('studio api', () => {
     })
     expect(cross.status).toBe(403)
   })
+})
+
+describe('runs a chat plays (the MCP server, another process)', () => {
+  it('are listed, streamed live and answered from the studio', async () => {
+    // Played by "another process": a run published to the shared folder, never started here.
+    const run = new Run({
+      score: compileScore(fix, { context: fix.demo!.context!, generatedAt: 't' }),
+      provider: ScriptedProvider.forPattern(fix),
+      demo: fix.demo,
+      autoApprove: false,
+      clock: () => 't',
+    })
+    const stop = await publishLive(run, { source: 'chat', workspace: '/elsewhere' }, live)
+    const done = run.start()
+    const listed = async () => ((await (await fetch(`${base}/api/runs`)).json()) as { id: string; source?: string; status: string }[]).find((r) => r.id === run.id)
+    expect(await listed()).toMatchObject({ source: 'chat' })
+    const one = (await (await fetch(`${base}/api/runs/${run.id}`)).json()) as { score: { pattern: string } }
+    expect(one.score.pattern).toBe('fix')
+    // The stream answers the approval from the studio, then follows the run to its end.
+    let answered = false
+    const msgs = await readSse(await fetch(`${base}/api/runs/${run.id}/events`), (m) => {
+      if (!answered && m.type === 'status' && m.status === 'awaiting-approval') {
+        answered = true
+        void post(`/api/runs/${run.id}/approval`, { approved: true })
+      }
+    })
+    await done
+    expect(answered).toBe(true)
+    expect(msgs.at(-1)).toMatchObject({ type: 'status', status: 'done' })
+    expect(run.status).toBe('done')
+    stop()
+    // About 1 s here (the shared files are polled every 400 ms); slower CI runners need more.
+  }, 15_000)
 })

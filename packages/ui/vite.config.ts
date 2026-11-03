@@ -12,6 +12,8 @@ export default defineConfig({
   server: { fs: { allow: ['../..'] } },
   test: {
     globals: true,
+    // Tests never read or publish the runs of other processes (src/runtime/live.ts).
+    env: { SYMPHONY_LIVE: 'off' },
     environment: 'jsdom',
     setupFiles: './src/test-setup.ts',
     include: ['src/**/*.{test,spec}.?(c|m)[jt]s?(x)', 'server/**/*.test.ts'],

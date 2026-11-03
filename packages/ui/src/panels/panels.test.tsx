@@ -306,6 +306,15 @@ describe('Library saved runs', () => {
     expect(opened).toEqual(['b'])
   })
 
+  it("marks a run a chat plays, and opens it like the studio's own", () => {
+    const opened: string[] = []
+    const live = [{ id: 'v', pattern: 'investigate', goal: 'from chat', status: 'running', source: 'chat', workspace: '/repo' }]
+    render(<Library {...props} saved={[]} live={live} onOpenLive={(id) => opened.push(id)} />)
+    expect(screen.getByTestId('from-chat')).toHaveTextContent('chat')
+    fireEvent.click(screen.getByTitle(/Played by a chat session in \/repo/))
+    expect(opened).toEqual(['v'])
+  })
+
   it('opens and closes its sections from their titles, and remembers it', () => {
     localStorage.clear()
     const { unmount } = render(<Library {...props} saved={[]} />)
