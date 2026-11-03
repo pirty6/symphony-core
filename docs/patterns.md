@@ -161,13 +161,39 @@ flowchart TD
 Fix a bug: the diagnosis comes from evidence, you approve it, and the engine (not the AI)
 decides whether the tests pass.
 
-1. **Recall, hypotheses, evidence.** Like investigate, focused on the symptom.
-2. **Diagnose** a root cause from the cited evidence; the challenge phase attacks it.
-3. **👤 Approve the plan** (root cause, files, the change, the test).
-4. **Edit and verify.** A failure triaged as a wrong diagnosis goes back to research for a
-   new diagnosis (bounded); an environment problem (not the code) gives up with that
-   reason instead of editing further.
-5. **PR review**, then remember the outcome (fixed, or why it failed).
+fix shares investigate's debate and evidence phases (hypotheses, checked citations, the
+skeptic), but not its read pipeline: one research step reads the code (optionally split by
+hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
+
+1. **Run the tests first.** What fails before any edit, the bug or tests already broken, is
+   known to the diagnosis and the triage. The command that ran is kept: every later test run
+   uses it, so an edit to the test script cannot change what verifies the fix.
+2. **Recall, hypotheses, evidence.** Research and the debate read the findings brief; the
+   diagnosis reads the findings in full.
+3. **Diagnose** a root cause from the cited evidence; the challenge phase attacks it.
+4. **👤 Approve the plan** (root cause, files, the change, the test).
+5. **Reproduce first** (`reproduceFirst`, opt-in): a test that reproduces the bug is written,
+   proved to fail for the right reason and locked; the fix must leave it unchanged.
+6. **Edit and verify.**
+   - **Progress.** An edit that changes nothing, returns to the starting workspace, or
+     repeats any earlier attempt is not progress.
+   - **Lint.** Lint runs only once the tests pass.
+   - **Wrong diagnosis.** A failure triaged as a wrong diagnosis goes back to research for a
+     new diagnosis (bounded).
+   - **Environment problem.** The same patch is tested once more; if it still fails, the run
+     gives up with that reason.
+   - **Budget.** `maxEdits` (8) bounds the tested edits across diagnoses and review rounds.
+7. **PR review.**
+   - **Agreement.** The decision must agree with the comments: APPROVE has no BLOCKING
+     comment, REQUEST_CHANGES has one. Earlier comments now addressed are RESOLVED.
+   - **Weakened checks.** Changed files that configure the checks (`checkFiles`) are flagged,
+     so weakening the checks is blocking.
+   - **Nothing changed.** If no review edit changes the patch the reviewer saw, which passed
+     the checks, a person decides on that exact patch.
+   - **Remember.** The outcome is remembered: fixed, or why it failed.
+
+Only the tests the command runs are checked. In this repository the root `npm test` does not
+run `packages/ui`, so set `testCommand` for a fix there.
 
 <!-- flow:fix -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
@@ -175,9 +201,12 @@ decides whether the tests pass.
 ```mermaid
 flowchart TD
   n_start(["Start"])
+  n_baseline[/"🔧 Run tests first"/]
   n_snapshot[/"🔧 Snapshot workspace"/]
   n_recall[/"🔧 Recall earlier runs"/]
   n_approve{{"👤 Approve plan"}}
+  n_reproduceFirstOn{"Reproduce first?"}
+  n_reproduced{"Tests locked?"}
   n_reviewStopped(["Stopped at review · partial"])
   n_learnFixed[/"🔧 Remember the outcome"/]
   n_learnFailed[/"🔧 Remember the failure"/]
@@ -187,9 +216,11 @@ flowchart TD
   n_hypothesesPhase[["Competing hypotheses · 2 steps"]]
   n_diagnosePhase[["Diagnose · 4 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
-  n_editPhase[["Edit and verify · 15 steps"]]
+  n_testFirstPhase[["Tests first · 19 steps"]]
+  n_editPhase[["Edit and verify · 20 steps"]]
   n_prReviewPhase[["PR review · 5 steps"]]
-  n_start --> n_snapshot
+  n_start --> n_baseline
+  n_baseline --> n_snapshot
   n_snapshot --> n_recall
   n_recall --> n_hypothesesPhase
   n_learnFixed --> n_fixed
@@ -198,10 +229,18 @@ flowchart TD
   n_diagnosePhase --> n_challengePhase
   n_challengePhase --> n_approve
   n_challengePhase -.-> n_diagnosePhase
-  n_approve -->|"approved"| n_editPhase
+  n_approve -->|"approved"| n_reproduceFirstOn
+  n_reproduceFirstOn -->|"tests first"| n_testFirstPhase
+  n_reproduceFirstOn -->|"no"| n_editPhase
+  n_reproduced -.->|"yes"| n_testFirstPhase
+  n_reproduced -->|"no"| n_prReviewPhase
+  n_testFirstPhase --> n_reviewStopped
+  n_testFirstPhase --> n_editPhase
+  n_testFirstPhase --> n_prReviewPhase
   n_approve -->|"rejected"| n_rejected
-  n_editPhase --> n_prReviewPhase
+  n_editPhase --> n_reproduced
   n_editPhase --> n_learnFailed
+  n_editPhase --> n_prReviewPhase
   n_editPhase -.-> n_diagnosePhase
   n_prReviewPhase --> n_learnFixed
   n_prReviewPhase -.-> n_editPhase
@@ -213,7 +252,8 @@ flowchart TD
 | Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
 | Diagnose | Evidence for and against every hypothesis, then the root cause | Gather evidence → Check citations → Record evidence → Diagnose |
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
-| Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
+| Tests first | Tests written before the code must fail for the right reason, then stay locked | Plan the reproducing test → Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
+| Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
 | PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 
 <!-- /flow:fix -->
@@ -243,7 +283,7 @@ flowchart TD
   n_rejected(["Plan rejected · partial"])
   n_baselinePhase[["Green baseline · 3 steps"]]
   n_planPhase[["Plan · 2 steps"]]
-  n_editPhase[["Edit and verify · 12 steps"]]
+  n_editPhase[["Edit and verify · 17 steps"]]
   n_prReviewPhase[["PR review · 5 steps"]]
   n_start --> n_baselinePhase
   n_baselinePhase --> n_notGreen
@@ -261,7 +301,7 @@ flowchart TD
 | --- | --- | --- |
 | Green baseline | Tests must pass before anything changes | Run tests first → Green? → Snapshot workspace |
 | Plan | Files, steps and the behaviour that must not change | Plan refactoring → Approve plan |
-| Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? |
+| Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch |
 | PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 
 <!-- /flow:refactor -->
@@ -302,7 +342,7 @@ flowchart TD
   n_designPhase[["Design · 4 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
   n_testFirstPhase[["Tests first · 18 steps"]]
-  n_editPhase[["Edit and verify · 15 steps"]]
+  n_editPhase[["Edit and verify · 20 steps"]]
   n_prReviewPhase[["PR review · 5 steps"]]
   n_acceptancePhase[["Acceptance review · 4 steps"]]
   n_start --> n_baselinePhase
@@ -322,9 +362,10 @@ flowchart TD
   n_testFirstPhase --> n_acceptancePhase
   n_editPhase -.-> n_testFirstPhase
   n_editPhase --> n_learnFailed
+  n_editPhase --> n_prReviewPhase
   n_editPhase -.-> n_designPhase
   n_prReviewPhase --> n_learnImplemented
-  n_prReviewPhase --> n_editPhase
+  n_prReviewPhase -.-> n_editPhase
   n_prReviewPhase --> n_reviewStopped
   n_acceptancePhase --> n_prReviewPhase
   n_acceptancePhase --> n_incomplete
@@ -338,7 +379,7 @@ flowchart TD
 | Design | Evidence for and against each approach, then a design with acceptance criteria | Explore the code → Check citations → Record evidence → Design |
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
 | Tests first | Tests written before the code must fail for the right reason, then stay locked | Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
-| Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
+| Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
 | PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 | Acceptance review | Every criterion met, with evidence; unmet ones go back to editing | Acceptance review → All met? → Review again? → Back to editing |
 

@@ -25,11 +25,19 @@ export const PR_REVIEW_STATE: readonly StateField[] = [
   {
     name: 'reviewComments',
     type: 'string[]',
-    description: 'One per issue: "BLOCKING | NIT path:line — what to change and why"',
+    description:
+      'One per issue: "BLOCKING | NIT path:line — what to change and why", or "RESOLVED path:line — …" for an earlier one now addressed',
   },
   { name: 'reviewSummary', type: 'string', description: 'The review in a few sentences' },
   { name: 'reviewRounds', type: 'number', description: 'Reviews sent back to editing' },
   { name: 'maxReviewRounds', type: 'number', initial: 2 },
+  {
+    name: 'reviewedHash',
+    type: 'string',
+    description: 'The patch the review last sent back: it passed the checks',
+  },
+  { name: 'reviewedTestOutput', type: 'string', description: "The reviewed patch's test run" },
+  { name: 'reviewedLintOutput', type: 'string', description: "The reviewed patch's lint run" },
 ];
 
 export function prReviewPhase(cfg: PrReviewConfig): Fragment {
@@ -43,8 +51,16 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       otherModel: true,
       maxVisits: 8,
       visitsFrom: '(maxReviewRounds + 1) * 3',
-      directive: `Review this change as you would a pull request, against \`${cfg.subject}\` and ${cfg.against.map((a) => `\`${a}\``).join(', ')}. Read \`diff\` and the code around it in the workspace (read-only). Look for: wrong behaviour or missed cases, a fix of the symptom instead of the cause, missing or weak tests (a test that would pass without the change), broken conventions of the codebase, needless complexity, and leftover debug code. Write each issue in \`reviewComments\` as "BLOCKING path:line — what to change and why" or "NIT path:line — …". Only real problems are BLOCKING; style preferences are NITs. Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE, and summarize in \`reviewSummary\`. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed.`,
-      reads: [cfg.subject, ...cfg.against, 'diff', 'changes', 'testOutput', 'reviewComments'],
+      directive: `Review this change as you would a pull request, against \`${cfg.subject}\` and ${cfg.against.map((a) => `\`${a}\``).join(', ')}. Read \`diff\` and the code around it in the workspace (read-only). Look for: wrong behaviour or missed cases, a fix of the symptom instead of the cause, missing or weak tests (a test that would pass without the change), tests removed, skipped or loosened, a change to \`checkFiles\` (how the tests or lint run) that weakens or narrows the checks, broken conventions of the codebase, needless complexity, and leftover debug code. Write each issue in \`reviewComments\` as "BLOCKING path:line — what to change and why" or "NIT path:line — …". Only real problems are BLOCKING; style preferences are NITs. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed, and list each one that was as "RESOLVED path:line — how" (keep it BLOCKING if it was not). Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE (the engine checks that they agree), and summarize in \`reviewSummary\`.`,
+      reads: [
+        cfg.subject,
+        ...cfg.against,
+        'diff',
+        'changes',
+        'checkFiles',
+        'testOutput',
+        'reviewComments',
+      ],
       writes: ['reviewDecision', 'reviewComments', 'reviewSummary'],
       retries: 2,
       checks: [
@@ -53,7 +69,19 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
           message: 'reviewDecision must be APPROVE or REQUEST_CHANGES.',
         },
         {
-          expr: 'reviewDecision == "APPROVE" || len(reviewComments) > 0',
+          expr: 'len(unmatched(reviewComments, "^(BLOCKING|NIT|RESOLVED) ")) == 0',
+          message:
+            'Start each reviewComments entry with BLOCKING, NIT or RESOLVED (an earlier comment now addressed).',
+        },
+        // The decision follows the comments, both ways: an APPROVE that still blocks would be
+        // accepted unseen, and a REQUEST_CHANGES with nothing blocking sends the edit back for nothing.
+        {
+          expr: 'reviewDecision != "APPROVE" || count(reviewComments, "^BLOCKING ") == 0',
+          message:
+            'APPROVE with a BLOCKING comment: request changes, or mark the comment NIT or RESOLVED if it does not block.',
+        },
+        {
+          expr: 'reviewDecision == "APPROVE" || count(reviewComments, "^BLOCKING ") > 0',
           message: 'Requesting changes needs at least one BLOCKING comment saying what to change.',
         },
         { expr: 'len(reviewSummary) > 0', message: 'Summarize the review in reviewSummary.' },
@@ -69,7 +97,8 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       id: 'reviewRoundsLeft',
       kind: 'condition',
       label: 'Review again?',
-      expression: 'reviewRounds < maxReviewRounds',
+      // Out of review rounds, or out of the run's edit budget: a person decides.
+      expression: 'reviewRounds < maxReviewRounds && edits < maxEdits',
     },
     {
       id: 'addressReview',
@@ -77,6 +106,10 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       label: 'Back to editing',
       assign: [
         { field: 'reviewRounds', expr: 'reviewRounds + 1' },
+        // What the reviewer saw, verified: the only patch a person may accept if no edit helps.
+        { field: 'reviewedHash', expr: 'diffHash' },
+        { field: 'reviewedTestOutput', expr: 'testOutput' },
+        { field: 'reviewedLintOutput', expr: 'lintOutput' },
         { field: 'failureKind', expr: '"REVIEW"' },
         {
           field: 'failureReason',
@@ -93,9 +126,9 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       unattended: 'reject',
       label: 'Accept despite review?',
       message:
-        'The reviewer still requests changes after the last review round. Approve to accept the change as it is (the comments stay in the result), or reject to stop.',
+        'The reviewer still requests changes, and no review round is left (or no edit changed the reviewed patch). The change shown is the one that passed the tests and was reviewed. Approve to accept it as it is (the comments stay in the result), or reject to stop.',
       writes: [],
-      shows: ['reviewDecision', 'reviewComments', 'reviewSummary', 'diff'],
+      shows: ['reviewDecision', 'reviewComments', 'reviewSummary', 'checkFiles', 'diff'],
     },
   ];
   const edges: ScoreEdge[] = [

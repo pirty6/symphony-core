@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { handoffContext, resultText } from './chain.js';
+import { HANDOFF_CHARS, handoffContext, resultText } from './chain.js';
 import { compileScore } from './compile.js';
 import { toPerformance } from './engine.js';
 import { runScripted } from './scripted.js';
@@ -27,6 +27,23 @@ describe('handoffContext', () => {
     );
     expect(String(ctx.issue)).toMatch(/^Fix it\n\n## What the investigate run found/);
     expect(ctx.testCommand).toBe('npm test');
+  });
+
+  it('hands on a bounded result: long texts and lists are cut, saying how much is left out', () => {
+    const big = {
+      ...performance,
+      finalState: {
+        ...performance.finalState,
+        answer: 'a'.repeat(20_000),
+        citedFindings: Array.from({ length: 300 }, (_, i) => `F${i + 1} src/x.ts:${i + 1} — fact`),
+      },
+    };
+    const issue = String(handoffContext(fix, { score, performance: big }).issue);
+    expect(issue.length).toBeLessThan(score.goal.length + HANDOFF_CHARS + 200);
+    expect(issue).toMatch(/a… \(12000 more characters in the saved run\)/);
+    expect(issue).toContain('- F40 src/x.ts:40 — fact\n- … 260 more in the saved run');
+    // What a run shows as its result is not cut.
+    expect(resultText(score, big.finalState)).toContain('F300 src/x.ts:300');
   });
 
   it('renders only result keys, and nothing when there is no result', () => {

@@ -194,7 +194,7 @@ export function testFirstPhase(cfg: TestFirstConfig): Fragment {
       label: 'Tests are the base',
       // The implementation must change more than the tests; it starts with no failure to fix.
       assign: [
-        { field: 'prevDiffHash', expr: 'diffHash' },
+        { field: 'baseDiffHash', expr: 'diffHash' },
         { field: 'failureKind', expr: '""' },
         { field: 'failureReason', expr: '""' },
       ],

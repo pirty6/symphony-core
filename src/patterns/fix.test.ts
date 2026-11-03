@@ -100,7 +100,7 @@ describe('fix', () => {
     // Attempt 1 runs the tests; every repeat (even after re-diagnosis) is caught before them.
     expect(ran('runTests')).toBe(1);
     expect(state.failureKind).toBe('NO_PROGRESS');
-    expect(state.failureReason).toBe('the edit is identical to the last attempt');
+    expect(state.failureReason).toBe('the edit is identical to an earlier attempt');
     expect(r.state.outcome).toBe('failed');
     expect(end).toBe('gaveUp');
     expect(ran('diagnose')).toBe(2);
@@ -109,19 +109,176 @@ describe('fix', () => {
     expect(empty.state.failureReason).toBe('the edit changed no files');
   });
 
-  it('stops at once when the failure is environmental: another edit cannot fix it', () => {
-    const { r, ran, state, end } = play({
+  it('an edit back to the starting workspace, or to an earlier attempt (A→B→A), is no progress', () => {
+    // A dirty workspace: the snapshot already has changes; the edit undoes its own work.
+    const back = play({
+      tools: {
+        snapshot: () => ({ diff: 'dirty', hash: 'start', files: ['src/paginate.ts'] }),
+        captureDiff: () => ({ diff: 'dirty', hash: 'start', files: ['src/paginate.ts'] }),
+        runTests: () => tests(true),
+      },
+    });
+    expect(back.ran('runTests')).toBe(0);
+    expect(back.state.failureReason).toBe('the edit left the workspace as it was before any edit');
+    expect(back.r.state.outcome).not.toBe('success');
+    // A, B, then A again: the third attempt is caught before the tests run.
+    const seq = ['A', 'B', 'A'];
+    let n = 0;
+    const cycle = play({
+      tools: {
+        captureDiff: () => {
+          const h = seq[Math.min(n++, seq.length - 1)]!;
+          return { diff: h, hash: h, files: ['src/paginate.ts'] };
+        },
+        runTests: () => tests(false),
+      },
+    });
+    expect(cycle.ran('runTests')).toBe(2);
+    expect(cycle.state.triedHashes).toEqual(['A', 'B']);
+    expect(cycle.state.failureReason).toBe('the edit is identical to an earlier attempt');
+  });
+
+  it('runs the tests before any edit, and every later run uses the command that one ran', () => {
+    const { r, state } = play({
+      tools: {
+        baseline: () => ({ passed: false, output: 'FAIL page 2', command: 'npx vitest run' }),
+        captureDiff: freshDiff(),
+      },
+    });
+    expect(state.baselineOutput).toBe('FAIL page 2');
+    // An edit to package.json's test script cannot change what verifies the fix.
+    expect(state.testCommand).toBe('npx vitest run');
+    const runs = r.state.steps.filter((x) => x.nodeId === 'runTests');
+    expect(runs.length).toBeGreaterThan(0);
+    const node = compileScore(fix, { context: demo.context! }).nodes.find(
+      (n) => n.id === 'runTests',
+    );
+    expect(node).toMatchObject({ inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' } });
+  });
+
+  it('research and the debate read the findings brief; only the diagnosis reads them in full', () => {
+    const score = compileScore(fix, { context: demo.context! });
+    const reads = (id: string) => {
+      const n = score.nodes.find((x) => x.id === id);
+      return n?.kind === 'agent' ? n.reads : [];
+    };
+    expect(reads('research')).toContain('findingsBrief');
+    expect(reads('research')).not.toContain('findings');
+    expect(reads('challenge')).toContain('findingsBrief');
+    expect(reads('challenge')).not.toContain('findings');
+    expect(reads('diagnose')).toContain('findings');
+  });
+
+  it('reproduceFirst (opt-in): the bug is reproduced by a locked, red test before the fix', () => {
+    const reproducing = {
       agents: {
-        triage: () => ({
-          updates: { failureKind: 'ENVIRONMENT', failureReason: 'npm ERR! network ETIMEDOUT' },
+        planReproduce: () => ({
+          updates: {
+            acceptanceCriteria: ['C1: page 2 starts after the last item of page 1'],
+            testsToAdd: ['src/paginate.test.ts: page 2 of [1..20] by 10 starts at 11'],
+          },
+          verdict: v,
+        }),
+        writeTests: () => ({ updates: { testFiles: ['src/paginate.test.ts'] }, verdict: v }),
+        checkRed: () => ({
+          updates: { redReport: ['C1: RED — page 2 starts at 10 — the bug'], wrongRed: [] },
           verdict: v,
         }),
       },
+      tools: {
+        captureTests: () => ({ diff: '+test', hash: 'tests-1', files: ['src/paginate.test.ts'] }),
+        runRed: () => tests(false, 'FAIL page 2 starts at 10'),
+        lockTests: () => ({ diff: '', hash: 'locked', files: ['src/paginate.test.ts'] }),
+        checkTests: () => ({ diff: '', hash: 'locked', files: ['src/paginate.test.ts'] }),
+      },
+    };
+    const on = play(reproducing, { reproduceFirst: true });
+    expect(on.r.state.outcome).toBe('success');
+    const order = on.r.state.steps.map((x) => x.nodeId);
+    for (const [a, b] of [
+      ['approve', 'planReproduce'],
+      ['planReproduce', 'writeTests'],
+      ['lockTests', 'apply'],
+      ['checkTests', 'prReview'],
+    ])
+      expect(order.indexOf(a!), `${a} before ${b}`).toBeLessThan(order.indexOf(b!));
+    // The edit has to change more than the tests.
+    expect(on.state.baseDiffHash).toBe('tests-1');
+    // Off (the default): none of it plays.
+    const off = play(reproducing);
+    expect(off.r.state.steps.map((x) => x.nodeId)).not.toContain('planReproduce');
+    expect(off.r.state.outcome).toBe('success');
+  });
+
+  it('research may split its hypotheses across sub-agents (a trial; one call by default)', () => {
+    const parts = (context: Record<string, unknown>) => {
+      const r = play({}, context).r;
+      return r.state.events.flatMap((e) =>
+        e.type === 'paused' && e.pause.kind === 'agent' && e.pause.nodeId === 'research'
+          ? [e.pause.parts?.map((p) => p.hypotheses) ?? []]
+          : [],
+      )[0]!;
+    };
+    expect(parts({})).toEqual([]);
+    const split = parts({ hypothesesPerResearch: 1 });
+    expect(split.length).toBeGreaterThan(1);
+    expect(split.every((h) => (h as string[]).length === 1)).toBe(true);
+  });
+
+  it('lists changed files that configure the checks, for the reviewer', () => {
+    let n = 0;
+    const { state } = play({
+      tools: {
+        captureDiff: () => ({
+          diff: `p${++n}`,
+          hash: `h${n}`,
+          files: [
+            'package.json',
+            'src/paginate.ts',
+            'vitest.config.ts',
+            '.github/workflows/ci.yml',
+          ],
+        }),
+      },
     });
+    expect(state.checkFiles).toEqual([
+      'package.json',
+      'vitest.config.ts',
+      '.github/workflows/ci.yml',
+    ]);
+  });
+
+  it('an environmental failure runs the same patch once more, then stops: another edit cannot fix it', () => {
+    const environmental = {
+      triage: () => ({
+        updates: { failureKind: 'ENVIRONMENT', failureReason: 'npm ERR! network ETIMEDOUT' },
+        verdict: v,
+      }),
+    };
+    const lasting = play({ agents: environmental, tools: { runTests: () => tests(false) } });
+    expect(lasting.r.state.outcome).toBe('failed');
+    expect(lasting.end).toBe('gaveUp');
+    expect(lasting.ran('apply')).toBe(1);
+    expect(lasting.ran('runTests')).toBe(2);
+    expect(lasting.state.failureKind).toBe('ENVIRONMENT');
+    // A flaky failure: the second run of the same patch passes.
+    let n = 0;
+    const flaky = play({ agents: environmental, tools: { runTests: () => tests(n++ > 0) } });
+    expect(flaky.r.state.outcome).toBe('success');
+    expect(flaky.ran('apply')).toBe(1);
+  });
+
+  it('lint runs only once the tests pass; one edit budget holds across diagnoses and review rounds', () => {
+    const { r, ran, state } = play(
+      { tools: { captureDiff: freshDiff(), runTests: () => tests(false) } },
+      { lintCommand: 'npm run lint', maxEdits: 2, maxAttempts: 5 },
+    );
+    expect(ran('runLint')).toBe(0);
+    expect(state.lintOutput).toBe('not run: the tests failed first');
+    // Five attempts allowed per round, two edits in the run.
+    expect(ran('runTests')).toBe(2);
+    expect(state.edits).toBe(2);
     expect(r.state.outcome).toBe('failed');
-    expect(end).toBe('gaveUp');
-    expect(ran('apply')).toBe(1);
-    expect(state.failureKind).toBe('ENVIRONMENT');
   });
 
   it('runs the lint command too when given, and both must pass', () => {

@@ -201,18 +201,21 @@ function remember(key: string, result: Readonly<Record<string, unknown>>): void 
 async function workspaceKey(ctx: ToolContext, command: string): Promise<string | undefined> {
   try {
     // No commits yet: no HEAD, and the working changes are everything.
-    const head = await git('git', ['rev-parse', '--verify', '-q', 'HEAD'], {
-      cwd: ctx.workspace,
-    }).then(
-      (r) => r.stdout.trim(),
-      () => '',
-    );
-    const { hash } = await workspaceDiff(ctx);
+    const [head, { hash }] = await Promise.all([
+      git('git', ['rev-parse', '--verify', '-q', 'HEAD'], { cwd: ctx.workspace }).then(
+        (r) => r.stdout.trim(),
+        () => '',
+      ),
+      workspaceDiff(ctx),
+    ]);
     return `${ctx.workspace}\0${command}\0${head}\0${hash}`;
   } catch {
     return undefined;
   }
 }
+
+/** Untracked files read at once while hashing the workspace. */
+const READ_AT_ONCE = 16;
 
 /** git's id for the empty tree. */
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -257,32 +260,27 @@ export async function workspaceDiff(
     () => 'HEAD',
     () => EMPTY_TREE,
   );
-  const diff = await run([
-    '--no-pager',
-    'diff',
-    base,
-    '--no-color',
-    '--no-ext-diff',
-    '--',
-    ...where,
-    NOT_THE_EDIT,
+  // Independent of each other: run together (this runs after every edit and for every reuse key).
+  const [diff, names, others] = await Promise.all([
+    run(['--no-pager', 'diff', base, '--no-color', '--no-ext-diff', '--', ...where, NOT_THE_EDIT]),
+    run(['diff', base, '--name-only', '--', ...where, NOT_THE_EDIT]),
+    run(['ls-files', '--others', '--exclude-standard', '--', ...where, NOT_THE_EDIT]),
   ]);
-  const changed = (await run(['diff', base, '--name-only', '--', ...where, NOT_THE_EDIT]))
-    .split('\n')
-    .filter(Boolean);
-  const untracked = (
-    await run(['ls-files', '--others', '--exclude-standard', '--', ...where, NOT_THE_EDIT])
-  )
-    .split('\n')
-    .filter(Boolean);
+  const changed = names.split('\n').filter(Boolean);
+  const untracked = others.split('\n').filter(Boolean);
   const h = createHash('sha256').update(diff);
-  for (const f of untracked.toSorted()) {
-    h.update(`\0${f}\0`);
-    try {
-      h.update(await readFile(join(ctx.workspace, f)));
-    } catch {
-      // vanished or unreadable: its name still counts
-    }
+  const sorted = untracked.toSorted();
+  // Read a few at a time, hash in order: the same hash as reading them one by one.
+  for (let i = 0; i < sorted.length; i += READ_AT_ONCE) {
+    const batch = sorted.slice(i, i + READ_AT_ONCE);
+    const texts = await Promise.all(
+      batch.map((f) => readFile(join(ctx.workspace, f)).catch(() => undefined)),
+    );
+    batch.forEach((f, j) => {
+      h.update(`\0${f}\0`);
+      // Vanished or unreadable: its name still counts.
+      if (texts[j]) h.update(texts[j]);
+    });
   }
   const files = [...new Set([...changed, ...untracked])].toSorted();
   const shown = diff.length > MAX_DIFF ? truncateDiff(diff, MAX_DIFF) : diff;

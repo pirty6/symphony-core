@@ -239,8 +239,8 @@ export function createApi(opts: ApiOptions) {
         ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
         : {}),
       ...(isolation ? { isolation } : {}),
-      onSave: async (r) => {
-        const file = await saveRun(runsDir, r)
+      onSave: async (r, how) => {
+        const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true })
         savedFiles.set(id, file)
         return file
       },

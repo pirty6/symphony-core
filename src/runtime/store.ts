@@ -103,12 +103,17 @@ export function runsDirFor(root: string, env: NodeJS.ProcessEnv = process.env): 
 
 const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, '-');
 
-export async function saveRun(dir: string, run: SavedRun): Promise<string> {
+export async function saveRun(
+  dir: string,
+  run: SavedRun,
+  opts: { readonly compact?: boolean } = {},
+): Promise<string> {
   const folder = join(dir, safe(run.score.pattern));
   await mkdir(folder, { recursive: true });
   const stamp = safe(run.performance.startedAt || new Date().toISOString());
   const file = join(folder, `${stamp}-${run.score.id.slice(0, 12)}.json`);
-  await writeFile(file, `${JSON.stringify(run, null, 2)}\n`);
+  // A checkpoint is rewritten after every step until the final save: unindented, faster.
+  await writeFile(file, `${opts.compact ? JSON.stringify(run) : JSON.stringify(run, null, 2)}\n`);
   await writeFile(summaryFile(file), JSON.stringify(summaryOf(run)));
   return file;
 }

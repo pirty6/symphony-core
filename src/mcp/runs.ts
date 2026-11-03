@@ -363,8 +363,8 @@ export class RunManager {
         : {}),
       ...(isolation ? { isolation } : {}),
       checkpoint: true,
-      onSave: async (r) => {
-        const file = await saveRun(runsDir, r);
+      onSave: async (r, how) => {
+        const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true });
         if (managed) managed.savedTo = file;
         return file;
       },

@@ -118,6 +118,22 @@ export const FEATURES: readonly Feature[] = [
     ],
   },
   {
+    field: 'reproduceFirst',
+    label: 'Reproduce the bug first',
+    description:
+      'Before the fix, a test that reproduces the bug is written, proved to fail for the right reason, and locked; the fix must leave it unchanged.',
+  },
+  {
+    field: 'hypothesesPerResearch',
+    label: 'Fix research',
+    description:
+      'One call researches every hypothesis, or each gets its own sub-agent (sooner, more tokens; a trial).',
+    choices: [
+      { value: '99', label: 'one call' },
+      { value: '1', label: 'one sub-agent per hypothesis' },
+    ],
+  },
+  {
     field: 'narrowRead',
     label: 'Narrowed read (opt-in)',
     description:

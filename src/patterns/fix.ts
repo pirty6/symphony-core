@@ -2,6 +2,7 @@ import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
 import { prReviewPhase } from './phases/prReview.js';
+import { TESTS_KEPT_CHECK, testFirstPhase } from './phases/testFirst.js';
 import {
   checkFindings,
   CITE_BY_ID,
@@ -27,7 +28,8 @@ const hypotheses = hypothesesPhase({
 });
 const challenge = challengePhase({
   subject: 'issue',
-  evidence: 'findings',
+  // The debaters read findings without their (already checked) quotes, as in investigate.
+  evidence: 'findingsBrief',
   draft: 'rootCause',
   gaps: 'gaps',
   reopen: 'research',
@@ -39,9 +41,19 @@ const edit = editVerifyPhase({
     'Implement `plan` by editing `files` (others only if the plan truly needs them). Fix the root cause in `rootCause`, not the symptom, and add or update a test that fails without the fix when that is feasible.',
   applyReads: ['issue', 'rootCause', 'files', 'plan', 'reviewComments'],
   triageReads: ['issue', 'rootCause', 'plan'],
-  success: 'prReview',
+  // With reproduceFirst, the locked reproducing test is checked before the review.
+  success: 'reproduced',
   giveUp: 'learnFailed',
+  reviewedExit: 'acceptAnyway',
   rediagnose: { node: 'research', gaps: 'gaps' },
+});
+/** reproduceFirst (opt-in): a test that reproduces the bug, proved red and locked before the edit. */
+const reproduce = testFirstPhase({
+  subject: 'issue',
+  from: ['rootCause', 'plan'],
+  implement: 'apply',
+  kept: 'prReview',
+  stopped: 'reviewStopped',
 });
 const prReview = prReviewPhase({
   subject: 'issue',
@@ -90,12 +102,37 @@ export const fix: Pattern = {
       { name: 'rootCause', type: 'string', description: 'The root cause, with evidence' },
       { name: 'files', type: 'string[]', description: 'Files to change' },
       { name: 'plan', type: 'string', description: 'Step-by-step fix plan' },
+      {
+        name: 'hypothesesPerResearch',
+        type: 'number',
+        initial: 99,
+        min: 1,
+        description:
+          'Hypotheses per research sub-agent (99: one call for all; 1: one sub-agent each, sooner, more tokens)',
+      },
+      {
+        name: 'reproduceFirst',
+        type: 'boolean',
+        description:
+          'Opt-in: before the fix, a test that reproduces the bug is written, proved to fail for the right reason, and locked',
+      },
+      {
+        name: 'acceptanceCriteria',
+        type: 'string[]',
+        description: 'With reproduceFirst: what the fix makes true, one per entry ("C1: …")',
+      },
+      {
+        name: 'testsToAdd',
+        type: 'string[]',
+        description: 'With reproduceFirst: the tests that reproduce the bug',
+      },
       ...EVIDENCE_STATE,
       ...MEMORY_STATE,
     ],
     hypotheses,
     challenge,
     edit,
+    reproduce,
     prReview,
   ),
   start: 'start',
@@ -108,18 +145,30 @@ export const fix: Pattern = {
       nodes: ['research', 'checkResearch', 'mergeResearch', 'diagnose'],
     },
     challenge.group,
+    { ...reproduce.group, nodes: ['planReproduce', ...reproduce.group.nodes] },
     edit.group,
     prReview.group,
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
     {
+      id: 'baseline',
+      kind: 'tool',
+      label: 'Run tests first',
+      tool: 'tests.run',
+      // What fails before any edit: the bug's symptom, or tests already broken (not the fix's).
+      args: { reuse: true },
+      inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' },
+      // The command it ran is kept: an edit to the test script cannot change what verifies it.
+      output: { passed: 'baselinePassed', output: 'baselineOutput', command: 'testCommand' },
+    },
+    {
       id: 'snapshot',
       kind: 'tool',
       label: 'Snapshot workspace',
       tool: 'git.diff',
       // Edits must change the workspace from here; changes already there are not a fix.
-      output: { hash: 'prevDiffHash' },
+      output: { hash: 'baseDiffHash' },
     },
     recallMemory('recall', 'issue'),
     ...hypotheses.nodes,
@@ -129,10 +178,13 @@ export const fix: Pattern = {
       role: 'assessor',
       capabilities: ['web'],
       label: 'Gather evidence',
+      // hypothesesPerResearch (a trial; 99: one call): parallel sub-agents, each on some hypotheses.
+      fanOut: { over: 'hypotheses', per: 'hypothesesPerResearch', warm: true },
       directive:
-        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating `findings`.' +
+        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating the findings so far (`findingsBrief`: each with its id and location, quotes left out).' +
         MEMORY_NOTE,
-      reads: ['issue', 'hint', 'hypotheses', 'findings', 'gaps', 'knownFacts'],
+      // The brief, not the full findings: they grow every round; diagnose reads them in full.
+      reads: ['issue', 'hint', 'hypotheses', 'findingsBrief', 'gaps', 'knownFacts'],
       writes: ['newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -159,8 +211,16 @@ export const fix: Pattern = {
       directive:
         'From `findings` only, state the root cause of `issue` in `rootCause`, citing the evidence by id. ' +
         CITE_BY_ID +
-        ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way.',
-      reads: ['issue', 'hint', 'hypotheses', 'findings', 'failureReason', 'testOutput'],
+        ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way. `baselineOutput` is the test run before any edit: tests failing there that the bug does not explain are not yours to fix.',
+      reads: [
+        'issue',
+        'hint',
+        'hypotheses',
+        'findings',
+        'failureReason',
+        'testOutput',
+        'baselineOutput',
+      ],
       writes: ['rootCause', 'files', 'plan', 'rulings'],
       verifyBelow: 0.6,
       retries: 2,
@@ -188,6 +248,40 @@ export const fix: Pattern = {
       writes: [],
       shows: ['rootCause', 'rulings', 'files', 'plan'],
     },
+    {
+      id: 'reproduceFirstOn',
+      kind: 'condition',
+      label: 'Reproduce first?',
+      expression: 'reproduceFirst',
+    },
+    {
+      id: 'planReproduce',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Plan the reproducing test',
+      directive:
+        'Before the fix, a test must reproduce the bug. From `issue`, `rootCause` and `plan`, write `acceptanceCriteria`: what the fix makes true, observable from outside ("C1: …", one per entry), and `testsToAdd`: the tests that reproduce the bug (file, input, expected), following the project\'s test conventions. They are written next and must fail now, for this bug.',
+      reads: ['issue', 'rootCause', 'plan', 'files', 'baselineOutput'],
+      writes: ['acceptanceCriteria', 'testsToAdd'],
+      retries: 2,
+      maxVisits: 4,
+      // Planned again after each re-diagnosis.
+      visitsFrom: 'maxDiagnoses + 2',
+      checks: [
+        {
+          expr: 'len(acceptanceCriteria) > 0 && len(unmatched(acceptanceCriteria, "^C[0-9]+: ")) == 0',
+          message: 'Write each acceptanceCriteria entry as "C<n>: what the fix makes true".',
+        },
+        { expr: 'len(testsToAdd) > 0', message: 'List the tests that reproduce the bug.' },
+      ],
+    },
+    {
+      id: 'reproduced',
+      kind: 'condition',
+      label: 'Tests locked?',
+      expression: '!empty(testsHash)',
+    },
+    ...reproduce.nodes,
     ...edit.nodes,
     ...prReview.nodes,
     { id: 'reviewStopped', kind: 'end', label: 'Stopped at review', outcome: 'partial' },
@@ -206,7 +300,8 @@ export const fix: Pattern = {
     { id: 'rejected', kind: 'end', label: 'Plan rejected', outcome: 'partial' },
   ],
   edges: [
-    { id: 'start-snapshot', from: 'start', to: 'snapshot' },
+    { id: 'start-baseline', from: 'start', to: 'baseline' },
+    { id: 'baseline-snapshot', from: 'baseline', to: 'snapshot' },
     { id: 'snapshot-recall', from: 'snapshot', to: 'recall' },
     { id: 'recall-hypothesize', from: 'recall', to: hypotheses.entry },
     { id: 'learnFixed-fixed', from: 'learnFixed', to: 'fixed' },
@@ -218,7 +313,19 @@ export const fix: Pattern = {
     { id: 'merge-diagnose', from: 'mergeResearch', to: 'diagnose' },
     { id: 'diagnose-challenge', from: 'diagnose', to: challenge.entry },
     ...challenge.edges,
-    { id: 'approve-apply', from: 'approve', to: edit.entry, branch: 'approved' },
+    { id: 'approve-reproduce', from: 'approve', to: 'reproduceFirstOn', branch: 'approved' },
+    {
+      id: 'reproduce-tests',
+      from: 'reproduceFirstOn',
+      to: 'planReproduce',
+      branch: 'then',
+      label: 'tests first',
+    },
+    { id: 'planReproduce-tests', from: 'planReproduce', to: reproduce.entry },
+    { id: 'reproduce-apply', from: 'reproduceFirstOn', to: edit.entry, branch: 'else' },
+    { id: 'reproduced-check', from: 'reproduced', to: TESTS_KEPT_CHECK, branch: 'then' },
+    { id: 'reproduced-review', from: 'reproduced', to: 'prReview', branch: 'else' },
+    ...reproduce.edges,
     { id: 'approve-rejected', from: 'approve', to: 'rejected', branch: 'rejected' },
     ...edit.edges,
     ...prReview.edges,
@@ -297,6 +404,11 @@ export const fix: Pattern = {
       }),
     },
     tools: {
+      baseline: () => ({
+        passed: false,
+        output: 'FAIL src/paginate.test.ts > page 2 starts after page 1',
+        command: 'npm test',
+      }),
       snapshot: () => ({ diff: '', hash: 'base', files: [] }),
       recall: () => ({ facts: [], lessons: [] }),
       learnFixed: () => ({ saved: true }),

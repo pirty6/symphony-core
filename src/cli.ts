@@ -267,7 +267,12 @@ async function play(
       ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(cwd) }
       : {}),
     ...(isolation ? { isolation } : {}),
-    ...(o.save ? { onSave: (r) => saveRun(runsDir, r), checkpoint: true } : {}),
+    ...(o.save
+      ? {
+          onSave: (r, how) => saveRun(runsDir, r, { compact: how?.checkpoint === true }),
+          checkpoint: true,
+        }
+      : {}),
     ...(o.restore ? { restore: o.restore } : {}),
     ...(o.next ? { next: o.next } : {}),
   });
