@@ -786,6 +786,24 @@ export function routedAs(
  * purpose: they catch a wrong shape or a wildly wrong tier, not a one-tier judgement call.
  */
 export const ROUTES: readonly Route[] = [
+  // Flaky tests: named, symptom only (no "flaky", no trigger word), and explain-only.
+  {
+    request: 'Fix the flaky login test: it fails about once in ten CI runs.',
+    pattern: ['fix'],
+    complexity: [2, 3],
+  },
+  {
+    request:
+      'test/signup.test.js passes locally but fails now and then on CI, and passes when re-run. Make it reliable.',
+    pattern: ['fix'],
+    complexity: [2, 3],
+  },
+  {
+    request:
+      'Why does the checkout test fail only when the whole suite runs in parallel? Do not change anything.',
+    pattern: ['investigate'],
+    complexity: [2, 3],
+  },
   {
     request: 'Fix the off-by-one in sumTo in src/sum.js: sumTo(4) returns 6, not 10.',
     pattern: ['fix'],
