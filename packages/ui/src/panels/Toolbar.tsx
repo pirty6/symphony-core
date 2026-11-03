@@ -72,7 +72,8 @@ export function Toolbar(p: Props) {
         {p.settings.provider === 'copilot' && (
           <input
             className="tb-model"
-            placeholder="model (overrides tiers)"
+            placeholder="model (optional)"
+            title="A model for every step, instead of the tiers"
             value={p.settings.model}
             disabled={active}
             onChange={(e) => set({ model: e.target.value })}
@@ -86,6 +87,7 @@ export function Toolbar(p: Props) {
             disabled={active}
             onChange={(e) => set({ complexity: Number(e.target.value) as RunSettings['complexity'] })}
             aria-label="complexity"
+            className="tb-complexity"
           >
             <option value={0}>auto</option>
             {([1, 2, 3, 4] as const).map((c) => (

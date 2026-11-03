@@ -493,3 +493,22 @@ test('every feature switch fits inside its card, even with larger text', async (
     expect(apart, await title.innerText()).toBe(true)
   }
 })
+
+test('the top bar never pushes the run controls off screen, down to the narrowest studio', async ({ page }) => {
+  for (const width of [1100, 1280]) {
+    await page.setViewportSize({ width, height: 760 })
+    await open(page, 'investigate')
+    // GitHub Copilot adds the model field: the widest the settings get.
+    await page.getByLabel('provider').selectOption('copilot')
+    const bar = (await page.locator('.toolbar').boundingBox())!
+    const run = (await page.getByRole('button', { name: '▶ Run' }).boundingBox())!
+    expect(run.x + run.width, `Run at ${width}px`).toBeLessThanOrEqual(bar.x + bar.width)
+    expect(await page.locator('.toolbar').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0)
+    // Every setting is still on screen, not scrolled away.
+    for (const label of ['provider', 'model', 'complexity', 'improvisation', 'step mode']) {
+      const box = (await page.locator('.toolbar').getByLabel(label, { exact: true }).boundingBox())!
+      expect(box.x + box.width, `${label} at ${width}px`).toBeLessThanOrEqual(run.x)
+    }
+    await page.getByLabel('provider').selectOption('scripted')
+  }
+})
