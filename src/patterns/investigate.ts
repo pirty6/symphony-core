@@ -886,7 +886,9 @@ export const investigate: Pattern = {
         },
         {
           // The overall answer is the synthesis: a part for it answers the same thing twice.
-          expr: 'count(parts, "^[^A-Za-z]*([Ss]ynthes|[Ss]ummar|[Oo]verall|[Oo]verview|[Cc]onclusion|[Rr]ecommendations?[^A-Za-z]*$)") == 0',
+          // The whole entry is the label (e.g. "synthesis", "Overall recommendations"); a subject
+          // that only starts with such a word (summarize.py, the Summarizer) is not.
+          expr: 'count(parts, "^[^A-Za-z]*([Oo]verall |[Ff]inal )?([Ss]ynthesis|[Ss]ummary|[Oo]verview|[Cc]onclusions?|[Rr]ecommendations?)[^A-Za-z]*$") == 0',
           message:
             'parts are subjects of the question: leave out a synthesis, summary, overview or conclusion part (the overall answer writes it).',
         },
