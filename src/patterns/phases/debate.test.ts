@@ -8,10 +8,14 @@ import { assessFor } from '../investigate.js';
 import { challengePhase, hypothesesPhase, withState } from './debate.js';
 
 const demo = investigate.demo!;
+
+/** investigate with each setting as set on its own (lean off): these tests check one mechanism each. */
+const compileInvestigate = (opts: Parameters<typeof compileScore>[1] = {}) =>
+  compileScore(investigate, { ...opts, context: { lean: false, ...opts.context } });
 const agents = demo.agents!;
 
 function play(complexity: Complexity, script: DemoScript = demo) {
-  const score = compileScore(investigate, { context: demo.context!, complexity, generatedAt: 't' });
+  const score = compileInvestigate({ context: demo.context!, complexity, generatedAt: 't' });
   const r = runScripted(score, script, { at: 't' });
   const ran = (id: string) => r.state.steps.filter((s) => s.nodeId === id).length;
   return { r, ran, state: r.state.state };
@@ -36,7 +40,7 @@ describe('debate phases in investigate', () => {
   });
 
   it('pragmatistFrom 2 (a trial switch) brings the pragmatist in at complexity 2', () => {
-    const score = compileScore(investigate, {
+    const score = compileInvestigate({
       context: { ...demo.context!, pragmatistFrom: 2 },
       complexity: 2,
       generatedAt: 't',
@@ -464,7 +468,7 @@ describe('keepUnchallenged (an A/B option)', () => {
     },
   };
   const playWith = (keepUnchallenged: boolean) => {
-    const score = compileScore(investigate, {
+    const score = compileInvestigate({
       context: { ...demo.context!, keepUnchallenged },
       complexity: 2,
       generatedAt: 't',
@@ -488,7 +492,7 @@ describe('keepUnchallenged (an A/B option)', () => {
   });
 
   it('on: rewriting only the challenged sub-answer is accepted', () => {
-    const score = compileScore(investigate, {
+    const score = compileInvestigate({
       context: { ...demo.context!, keepUnchallenged: true },
       complexity: 2,
       generatedAt: 't',
@@ -614,7 +618,7 @@ describe('complexity: rated from the problem, scaled per step', () => {
   });
   const auto = (script: DemoScript, complexity?: Complexity) =>
     runScripted(
-      compileScore(investigate, {
+      compileInvestigate({
         context: demo.context!,
         ...(complexity ? { complexity } : {}),
         generatedAt: 't',

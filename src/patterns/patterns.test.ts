@@ -33,7 +33,7 @@ describe('pattern library', () => {
     // Small batches, one sub-agent: a round triages three files, so the loop takes several rounds.
     const score = compileScore(p, {
       goal: 'g',
-      context: { ...p.demo!.context!, batchSize: 1, agents: 1 },
+      context: { ...p.demo!.context!, lean: false, batchSize: 1, agents: 1 },
     });
     const r = runScripted(score, p.demo);
     expect(r.state.outcome).toBe('success');
@@ -45,7 +45,7 @@ describe('pattern library', () => {
     expect(steps.filter((s) => s.nodeId === 'triage')).toHaveLength(2);
     // By default a round plays several batches at once (fanOut) and covers the same files.
     const wide = runScripted(
-      compileScore(p, { goal: 'g', context: { ...p.demo!.context!, batchSize: 2 } }),
+      compileScore(p, { goal: 'g', context: { ...p.demo!.context!, lean: false, batchSize: 2 } }),
       p.demo,
     );
     const wideTriage = wide.state.steps.filter((s) => s.nodeId === 'triage');
@@ -83,7 +83,8 @@ describe('pattern library', () => {
 
   it('investigate rejects a plan that ignores a source and a triage that skips a file', () => {
     const p = findPattern('investigate')!;
-    const score = compileScore(p, { goal: 'g', context: p.demo!.context! });
+    // Lean off: the triage checked here is the plain one (lean triages in a single pass).
+    const score = compileScore(p, { goal: 'g', context: { ...p.demo!.context!, lean: false } });
     const calls = { plan: 0, triage: 0 };
     const lazy = {
       ...p.demo!,

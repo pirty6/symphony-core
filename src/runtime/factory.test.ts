@@ -3,7 +3,7 @@ import { envConfig, parseNodeModels } from './factory.js';
 
 describe('envConfig', () => {
   it('takes the most specific token variable and says which one it was', () => {
-    expect(envConfig({ TOKEN: 'a', GITHUB_TOKEN: 'b' })).toEqual({
+    expect(envConfig({ TOKEN: 'a', GITHUB_TOKEN: 'b' })).toMatchObject({
       gitHubToken: 'b',
       gitHubTokenSource: 'GITHUB_TOKEN',
     });
@@ -13,12 +13,13 @@ describe('envConfig', () => {
   });
 
   it('no token, or the template placeholder: use the signed-in account', () => {
-    expect(envConfig({})).toEqual({});
-    expect(envConfig({ TOKEN: 'token' })).toEqual({});
-    expect(envConfig({ TOKEN: '' })).toEqual({});
+    const defaults = { deltaRepair: true, headerInSystem: true };
+    expect(envConfig({})).toEqual(defaults);
+    expect(envConfig({ TOKEN: 'token' })).toEqual(defaults);
+    expect(envConfig({ TOKEN: '' })).toEqual(defaults);
   });
 
-  it('reads the trial switches: a model per step, delta repair, the header in the system message', () => {
+  it('reads the switches: a model per step; delta repair and the header in the system message (on unless turned off)', () => {
     expect(
       envConfig({
         SYMPHONY_NODE_MODELS: 'deepRead=claude-opus-5.5, triage = gpt-6-luna,bad',
@@ -30,7 +31,10 @@ describe('envConfig', () => {
       deltaRepair: true,
       headerInSystem: true,
     });
-    expect(envConfig({ SYMPHONY_DELTA_REPAIR: '0', SYMPHONY_HEADER_IN_SYSTEM: 'off' })).toEqual({});
+    expect(envConfig({ SYMPHONY_DELTA_REPAIR: '0', SYMPHONY_HEADER_IN_SYSTEM: 'off' })).toEqual({
+      deltaRepair: false,
+      headerInSystem: false,
+    });
     expect(parseNodeModels('=x,y=')).toBeUndefined();
   });
 });

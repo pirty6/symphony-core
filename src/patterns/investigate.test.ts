@@ -18,6 +18,10 @@ import { assessFor } from './investigate.js';
 
 const demo = investigate.demo!;
 
+/** investigate with each setting as set on its own (lean off): these tests check one mechanism each. */
+const compileInvestigate = (opts: Parameters<typeof compileScore>[1] = {}) =>
+  compileScore(investigate, { ...opts, context: { lean: false, ...opts.context } });
+
 /** A deep-read responder that leaves `readNotes` out gets one note per batch item. */
 const withNotes =
   (f: DemoResponder): DemoResponder =>
@@ -70,7 +74,7 @@ function runWith(
       },
     },
   };
-  const score = compileScore(investigate, {
+  const score = compileInvestigate({
     goal: 'g',
     context: { question: 'q', ...over.context },
   });
@@ -200,8 +204,7 @@ describe('items that cannot be read', () => {
     shouldTerminate: false,
     reason: 'r',
   };
-  const play = (s: DemoScript) =>
-    runScripted(compileScore(investigate, { context: demo.context! }), s);
+  const play = (s: DemoScript) => runScripted(compileInvestigate({ context: demo.context! }), s);
 
   it('are reported with a reason and land in the coverage, instead of failing the run', () => {
     const r = play(
@@ -309,7 +312,7 @@ const assessRejections = (r: { state: { events: readonly EngineEvent[] } }) =>
 describe('the gap check: one structured entry per sub-question', () => {
   const v = { outcome: 'applied' as const, confidence: 0.9, shouldTerminate: false, reason: 'r' };
   const assessing = (assess: DemoResponder) =>
-    runScripted(compileScore(investigate, { context: demo.context! }), {
+    runScripted(compileInvestigate({ context: demo.context! }), {
       ...demo,
       agents: { ...demo.agents, assess },
     });
@@ -344,7 +347,7 @@ describe('the gap check: one structured entry per sub-question', () => {
   it('moving on is decided by the gaps, never by the confidence', () => {
     const asked = (gap: boolean, confidence: number) => {
       let n = 0;
-      const r = runScripted(compileScore(investigate, { context: demo.context! }), {
+      const r = runScripted(compileInvestigate({ context: demo.context! }), {
         ...demo,
         agents: {
           ...demo.agents,
@@ -395,33 +398,30 @@ describe('gap expansion: the gaps send matching unread files to the deep read', 
   const expanding = (context: Record<string, unknown>, matched?: (pool: string[]) => string[]) => {
     const pools: string[][] = [];
     const words: string[][] = [];
-    const r = runScripted(
-      compileScore(investigate, { context: { ...demo.context!, ...context } }),
-      {
-        ...demo,
-        tools: {
-          ...demo.tools,
-          ...(matched
-            ? {
-                rankGaps: (s) => {
-                  const pool = s.expandPool as string[];
-                  pools.push(pool);
-                  words.push(s.gapNotes as string[]);
-                  return { ranked: pool, matched: matched(pool) };
-                },
-              }
-            : {}),
-        },
-        // A gap that never closes: expansion and the chase run to their caps.
-        agents: {
-          ...demo.agents,
-          assess: (s) => ({
-            updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 1 },
-            verdict: v,
-          }),
-        },
+    const r = runScripted(compileInvestigate({ context: { ...demo.context!, ...context } }), {
+      ...demo,
+      tools: {
+        ...demo.tools,
+        ...(matched
+          ? {
+              rankGaps: (s) => {
+                const pool = s.expandPool as string[];
+                pools.push(pool);
+                words.push(s.gapNotes as string[]);
+                return { ranked: pool, matched: matched(pool) };
+              },
+            }
+          : {}),
       },
-    );
+      // A gap that never closes: expansion and the chase run to their caps.
+      agents: {
+        ...demo.agents,
+        assess: (s) => ({
+          updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 1 },
+          verdict: v,
+        }),
+      },
+    });
     const deep = (from: number) =>
       r.state.steps
         .filter((x) => x.nodeId === 'deepRead' && x.step > from)
@@ -442,7 +442,7 @@ describe('gap expansion: the gaps send matching unread files to the deep read', 
     expect(deep(ranked.step)).toContain('src/cli.ts');
     // Its words are the gap notes, not the question.
     expect(words[0]).toEqual([expect.stringMatching(/^S1: GAP/)]);
-    const node = compileScore(investigate, { context: demo.context! }).nodes.find(
+    const node = compileInvestigate({ context: demo.context! }).nodes.find(
       (n) => n.id === 'rankGaps',
     );
     expect(node).toMatchObject({
@@ -523,7 +523,7 @@ describe('narrowed read (opt-in)', () => {
 
   it('a gap that brings a narrowed-out file in reads it, and it is no longer listed as unread', () => {
     const r = runScripted(
-      compileScore(investigate, {
+      compileInvestigate({
         context: { ...demo.context!, narrowRead: true, narrowBudget: 1 },
       }),
       demo,
@@ -535,7 +535,7 @@ describe('narrowed read (opt-in)', () => {
 
 describe('what the skeptic and the gap research see', () => {
   it('the skeptic reads every sub-answer; gap research reads the sub-questions too', () => {
-    const score = compileScore(investigate, { context: demo.context! });
+    const score = compileInvestigate({ context: demo.context! });
     const reads = (id: string) => {
       const n = score.nodes.find((x) => x.id === id);
       return n?.kind === 'agent' ? n.reads : [];
@@ -548,13 +548,13 @@ describe('what the skeptic and the gap research see', () => {
 
   it('the support judge reads each quote with the lines around it', () => {
     const r = runScripted(
-      compileScore(investigate, { context: { ...demo.context!, supportJudge: 'shadow' } }),
+      compileInvestigate({ context: { ...demo.context!, supportJudge: 'shadow' } }),
       demo,
     );
     const order = r.state.steps.map((x) => x.nodeId);
     expect(order.indexOf('judgeContext')).toBeGreaterThan(order.indexOf('takeJudgeItems'));
     expect(order.indexOf('judgeContext')).toBeLessThan(order.indexOf('judgeSupport'));
-    const node = compileScore(investigate, { context: demo.context! }).nodes.find(
+    const node = compileInvestigate({ context: demo.context! }).nodes.find(
       (n) => n.id === 'judgeContext',
     );
     expect(node).toMatchObject({
@@ -568,7 +568,7 @@ describe('what the skeptic and the gap research see', () => {
 describe('gap-aimed research (a pilot, off by default)', () => {
   const chased = (context: Record<string, unknown>) => {
     const r = runScripted(
-      compileScore(investigate, {
+      compileInvestigate({
         context: { ...demo.context!, maxExpandRounds: 0, ...context },
       }),
       demo,
@@ -611,10 +611,7 @@ describe('open questions', () => {
         },
       },
     };
-    const r = runScripted(
-      compileScore(investigate, { context: demo.context!, complexity: 1 }),
-      script,
-    );
+    const r = runScripted(compileInvestigate({ context: demo.context!, complexity: 1 }), script);
     // An open sub-question is an open doubt: the outcome says so, not only the text.
     expect(r.state.outcome).toBe('partial');
     expect(r.state.state.doubts).toEqual([
@@ -637,7 +634,7 @@ describe('investigate only records evidence that holds', () => {
       agents: { ...demo.agents, ...over.agents },
       tools: { ...demo.tools, ...over.tools },
     };
-    const score = compileScore(investigate, { goal: 'g', context: demo.context! });
+    const score = compileInvestigate({ goal: 'g', context: demo.context! });
     return runScripted(score, script);
   };
 
@@ -710,7 +707,7 @@ describe('investigate always ends: research rounds are bounded', () => {
         clarify: () => ({ approved: true, updates: { hint: 'look harder' } }),
       },
     };
-    const score = compileScore(investigate, {
+    const score = compileInvestigate({
       goal: 'g',
       context: { ...demo.context!, complexity: 2 },
     });
@@ -726,16 +723,13 @@ describe('investigate always ends: research rounds are bounded', () => {
     expect(s.unresolvedObjections).toEqual([
       `S1: src/x.ts was never read (F1, round ${s.maxDebateRounds})`,
     ]);
-    const normal = runScripted(
-      compileScore(investigate, { goal: 'g', context: demo.context! }),
-      demo,
-    );
+    const normal = runScripted(compileInvestigate({ goal: 'g', context: demo.context! }), demo);
     expect(normal.state.state.unresolvedObjections).toEqual([]);
     // One budget for the whole run, whatever resets the per-round one.
     expect(chases).toBe(s.chaseRounds);
     expect(chases).toBeLessThanOrEqual(s.maxChaseRounds as number);
     const capped = runScripted(
-      compileScore(investigate, {
+      compileInvestigate({
         goal: 'g',
         context: { ...demo.context!, complexity: 2, maxChaseRounds: 3 },
       }),
@@ -765,7 +759,7 @@ describe('investigate always ends: research rounds are bounded', () => {
       },
     };
     const r = runScripted(
-      compileScore(investigate, {
+      compileInvestigate({
         goal: 'g',
         // No gap expansion: the chase gets the gaps.
         context: { ...demo.context!, gapsPerChase: 1, maxExpandRounds: 0 },
@@ -786,7 +780,7 @@ describe('investigate always ends: research rounds are bounded', () => {
   it('with one sub-agent per gap, a gap researched by nobody is sent back, even beside full ones', () => {
     const v = { outcome: 'applied' as const, confidence: 0.6, shouldTerminate: false, reason: 'r' };
     const r = runScripted(
-      compileScore(investigate, {
+      compileInvestigate({
         goal: 'g',
         context: { ...demo.context!, gapsPerChase: 1, maxExpandRounds: 0 },
       }),
@@ -934,7 +928,7 @@ describe('investigate asks for a hint once', () => {
       },
     };
     const r = runScripted(
-      compileScore(investigate, { goal: 'g', context: { ...demo.context!, complexity: 1 } }),
+      compileInvestigate({ goal: 'g', context: { ...demo.context!, complexity: 1 } }),
       script,
     );
     expect(asked).toBe(1);
@@ -981,7 +975,7 @@ describe('investigate searches sources side by side', () => {
 
 describe('investigate remembers what its answer used', () => {
   it('checks do not remember as they go; a settled answer remembers its cited findings', () => {
-    const score = compileScore(investigate, { goal: 'g', context: demo.context! });
+    const score = compileInvestigate({ goal: 'g', context: demo.context! });
     const checks = score.nodes.filter((n) => n.kind === 'tool' && n.tool === 'evidence.check');
     expect(checks.length).toBeGreaterThan(5);
     for (const c of checks) expect(c).toMatchObject({ args: { remember: false } });
@@ -1029,7 +1023,7 @@ describe('investigate keeps a tally per hypothesis', () => {
       },
     };
     const r = runScripted(
-      compileScore(investigate, {
+      compileInvestigate({
         goal: 'g',
         context: { ...demo.context!, readerHypotheses: false },
       }),
@@ -1120,7 +1114,7 @@ describe('investigate recalls for the sub-questions too', () => {
       },
     });
     const s = r.state.state;
-    const node = compileScore(investigate, { goal: 'g', context: demo.context! }).nodes.find(
+    const node = compileInvestigate({ goal: 'g', context: demo.context! }).nodes.find(
       (n) => n.id === 'recallPlan',
     );
     expect(node).toMatchObject({ tool: 'memory.recall', inputs: { query: 'subQuestions' } });
@@ -1157,7 +1151,7 @@ describe('investigate reads the likeliest files first, and still every file', ()
 describe('investigate holds "read completely" to what the engine gave', () => {
   /** The demo, with the runtime's preload record on each deep read: what it could not give whole. */
   function withManifest(manifest: (batch: readonly string[], visit: number) => PreloadRecord[]) {
-    const score = compileScore(investigate, {
+    const score = compileInvestigate({
       goal: 'g',
       context: demo.context!,
       generatedAt: 't',
@@ -1285,13 +1279,13 @@ describe('investigate holds "read completely" to what the engine gave', () => {
         },
       },
     };
-    const r = runScripted(compileScore(investigate, { context: demo.context! }), script);
+    const r = runScripted(compileInvestigate({ context: demo.context! }), script);
     expect(r.state.outcome).toBe('partial');
     expect(r.state.reason).toMatch(/exactly one readNotes entry per item of deepBatch/);
   });
 
   it('a file triage saw only part of goes to the deep read whatever triage said', () => {
-    const score = compileScore(investigate, {
+    const score = compileInvestigate({
       goal: 'g',
       context: demo.context!,
       generatedAt: 't',
@@ -1348,7 +1342,7 @@ describe('the support judge (off by default)', () => {
       },
     };
     const r = runScripted(
-      compileScore(investigate, { goal: 'g', context: { ...demo.context!, ...context } }),
+      compileInvestigate({ goal: 'g', context: { ...demo.context!, ...context } }),
       script,
     );
     const ran = (id: string) => r.state.steps.filter((x) => x.nodeId === id).length;
@@ -1465,7 +1459,7 @@ describe('the support judge (off by default)', () => {
 describe('single-pass triage pilot (off by default)', () => {
   /** The demo with singlePass on; triage's transcript carries this preload record (null: none at all). */
   const pilot = (manifest?: ((batch: readonly string[]) => PreloadRecord[]) | null) => {
-    const score = compileScore(investigate, {
+    const score = compileInvestigate({
       goal: 'g',
       context: { ...demo.context!, singlePass: true, batchSize: 10 },
       generatedAt: 't',
@@ -1497,29 +1491,26 @@ describe('single-pass triage pilot (off by default)', () => {
   const RELEVANT_FILES = ['src/core/engine.ts', 'src/core/schema.ts', 'src/core/validate.ts'];
 
   it('the single-pass reader writes a note per file it read in depth, as the deep read does', () => {
-    const r = runScripted(
-      compileScore(investigate, { context: { ...demo.context!, singlePass: true } }),
-      {
-        ...demo,
-        agents: {
-          ...demo.agents,
-          triageDeep: (s, visit) => {
-            const good = demo.agents!.triageDeep!(s, visit);
-            return {
-              ...good,
-              updates: {
-                ...good.updates,
-                readNotes: (good.updates.readNotes as string[]).slice(1),
-              },
-            };
-          },
+    const r = runScripted(compileInvestigate({ context: { ...demo.context!, singlePass: true } }), {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        triageDeep: (s, visit) => {
+          const good = demo.agents!.triageDeep!(s, visit);
+          return {
+            ...good,
+            updates: {
+              ...good.updates,
+              readNotes: (good.updates.readNotes as string[]).slice(1),
+            },
+          };
         },
       },
-    );
+    });
     expect(r.state.outcome).toBe('partial');
     expect(r.state.reason).toMatch(/one readNotes entry per file of readFully/);
     const ok = runScripted(
-      compileScore(investigate, { context: { ...demo.context!, singlePass: true } }),
+      compileInvestigate({ context: { ...demo.context!, singlePass: true } }),
       demo,
     );
     expect(ok.state.state.readLog).toEqual(
@@ -1624,7 +1615,7 @@ describe('the step limit is a backstop, never the bound', () => {
         }),
       },
     };
-    const score = compileScore(investigate, {
+    const score = compileInvestigate({
       goal: 'g',
       context: { ...demo.context!, question: 'q', complexity: 4, ...context },
     });
@@ -1651,4 +1642,63 @@ describe('the step limit is a backstop, never the bound', () => {
     expect(r.state.visits.checkTriage).toBe(200);
     expect(r.state.steps.length).toBeLessThan(max);
   }, 30_000);
+});
+
+describe('lean (on by default): the settings measured to cut time and tokens, behind one switch', () => {
+  const play = (context: Record<string, unknown> = {}, rated = 2, complexity?: 1 | 2 | 3 | 4) => {
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        hypothesize: (s, visit) => {
+          const r = demo.agents!.hypothesize!(s, visit);
+          return { ...r, updates: { ...r.updates, ratedComplexity: rated } };
+        },
+      },
+    };
+    const score = compileScore(investigate, {
+      goal: 'g',
+      context: { ...demo.context!, ...context },
+      ...(complexity ? { complexity } : {}),
+    });
+    return runScripted(score, script);
+  };
+
+  it('on: one debate round, single-pass triage, gap-aimed research, sub-answers kept, a sub-agent per gap', () => {
+    const r = play();
+    expect(r.state.outcome).toBe('success');
+    expect(r.state.state).toMatchObject({
+      lean: true,
+      maxDebateRounds: 1,
+      singlePass: true,
+      gapAimed: true,
+      keepUnchallenged: true,
+      gapsPerChase: 1,
+    });
+    expect(r.state.steps.some((x) => x.nodeId === 'triageDeep')).toBe(true);
+  });
+
+  it('off: each setting as set on its own', () => {
+    const r = play({ lean: false });
+    expect(r.state.outcome).toBe('success');
+    expect(r.state.state).toMatchObject({
+      maxDebateRounds: 2,
+      singlePass: false,
+      gapAimed: false,
+      keepUnchallenged: false,
+      gapsPerChase: 99,
+    });
+    expect(r.state.steps.some((x) => x.nodeId === 'triageDeep')).toBe(false);
+    // Lean never raises a cap set lower.
+    expect(play({ maxDebateRounds: 0 }).state.state.maxDebateRounds).toBe(0);
+  });
+
+  it('caps an AI-rated 4 at 3; a complexity chosen for the run stays', () => {
+    expect(play({}, 4).state.state.complexity).toBe(3);
+    expect(play({ lean: false }, 4).state.state.complexity).toBe(4);
+    expect(play({}, 4, 4).state.state.complexity).toBe(4);
+    // Given but only rated (the maestro's classifier): capped like the investigation's own rating.
+    expect(play({ complexityRated: true }, 4, 4).state.state.complexity).toBe(3);
+    expect(play({}, 2).state.state.complexity).toBe(2);
+  });
 });

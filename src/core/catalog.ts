@@ -58,6 +58,12 @@ export interface Feature {
 
 export const FEATURES: readonly Feature[] = [
   {
+    field: 'lean',
+    label: 'Lean run',
+    description:
+      'On by default: one debate round, single-pass triage, gap-aimed research, unchallenged sub-answers kept, a sub-agent per gap, and an AI-rated complexity (by the investigation or the maestro) capped at 3; one you set stays. About a third less time and a quarter fewer tokens (estimated). Turn it off if answers get worse; the switches below then apply one by one.',
+  },
+  {
     field: 'supportJudge',
     label: 'Support judge',
     description:
