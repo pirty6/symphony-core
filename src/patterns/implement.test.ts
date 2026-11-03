@@ -146,7 +146,7 @@ describe('implement: tests first', () => {
     // The implementation must change more than the tests to count as progress.
     expect(steps.filter((id) => id === 'redBase')).toHaveLength(1);
     expect(r.state.steps.find((s) => s.nodeId === 'redBase')?.changes).toContainEqual(
-      expect.objectContaining({ key: 'prevDiffHash', after: 'tests-1' }),
+      expect.objectContaining({ key: 'baseDiffHash', after: 'tests-1' }),
     );
   });
 

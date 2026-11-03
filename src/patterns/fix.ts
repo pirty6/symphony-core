@@ -119,7 +119,7 @@ export const fix: Pattern = {
       label: 'Snapshot workspace',
       tool: 'git.diff',
       // Edits must change the workspace from here; changes already there are not a fix.
-      output: { hash: 'prevDiffHash' },
+      output: { hash: 'baseDiffHash' },
     },
     recallMemory('recall', 'issue'),
     ...hypotheses.nodes,

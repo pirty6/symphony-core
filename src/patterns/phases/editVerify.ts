@@ -10,8 +10,9 @@
  * - ENVIRONMENT: not caused by the edit (flaky, missing dependency, failing
  *   before the change) -> stop; another edit cannot fix it.
  *
- * An empty edit, or one identical to the last attempt, is no progress: it goes
- * back to diagnosis or stops, instead of spending attempts on the same patch.
+ * An empty edit, one that leaves the workspace as it started, or one identical to any
+ * earlier attempt is no progress: it goes back to diagnosis or stops, instead of
+ * spending attempts on a patch already tried (or on no patch at all).
  */
 import type { ScoreEdge, ScoreNode, StateField } from '../../core/types.js';
 import type { Fragment } from './debate.js';
@@ -54,7 +55,12 @@ export const EDIT_STATE: readonly StateField[] = [
   { name: 'changes', type: 'string[]', description: 'Summary of each edit' },
   { name: 'diff', type: 'string', description: 'The workspace changes, captured by the engine' },
   { name: 'diffHash', type: 'string' },
-  { name: 'prevDiffHash', type: 'string' },
+  {
+    name: 'baseDiffHash',
+    type: 'string',
+    description: 'The workspace before any edit (set once): returning to it is not progress',
+  },
+  { name: 'triedHashes', type: 'string[]', description: 'Every edit already tested' },
   { name: 'changedFiles', type: 'string[]', description: 'Files the edit changed' },
   { name: 'testsPassed', type: 'boolean' },
   { name: 'testOutput', type: 'string', description: 'Test output, run by the engine' },
@@ -106,7 +112,9 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       id: 'progressed',
       kind: 'condition',
       label: 'Anything new?',
-      expression: 'len(changedFiles) > 0 && diffHash != prevDiffHash',
+      // Against the start and every attempt, not only the last: A→B→A is no progress either.
+      expression:
+        'len(changedFiles) > 0 && diffHash != baseDiffHash && !includes(triedHashes, diffHash)',
     },
     {
       id: 'noProgress',
@@ -116,7 +124,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
         { field: 'failureKind', expr: '"NO_PROGRESS"' },
         {
           field: 'failureReason',
-          expr: 'if(len(changedFiles) == 0, "the edit changed no files", "the edit is identical to the last attempt")',
+          expr: 'if(len(changedFiles) == 0, "the edit changed no files", if(diffHash == baseDiffHash, "the edit left the workspace as it was before any edit", "the edit is identical to an earlier attempt"))',
         },
         { field: 'testsPassed', expr: 'false' },
       ],
@@ -153,7 +161,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       label: 'Count attempt',
       assign: [
         { field: 'attempts', expr: 'attempts + 1' },
-        { field: 'prevDiffHash', expr: 'diffHash' },
+        { field: 'triedHashes', expr: 'triedHashes + [diffHash]' },
       ],
     },
     {

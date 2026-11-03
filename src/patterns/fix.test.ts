@@ -100,13 +100,42 @@ describe('fix', () => {
     // Attempt 1 runs the tests; every repeat (even after re-diagnosis) is caught before them.
     expect(ran('runTests')).toBe(1);
     expect(state.failureKind).toBe('NO_PROGRESS');
-    expect(state.failureReason).toBe('the edit is identical to the last attempt');
+    expect(state.failureReason).toBe('the edit is identical to an earlier attempt');
     expect(r.state.outcome).toBe('failed');
     expect(end).toBe('gaveUp');
     expect(ran('diagnose')).toBe(2);
     const empty = play({ tools: { captureDiff: () => ({ diff: '', hash: 'e', files: [] }) } });
     expect(empty.ran('runTests')).toBe(0);
     expect(empty.state.failureReason).toBe('the edit changed no files');
+  });
+
+  it('an edit back to the starting workspace, or to an earlier attempt (A→B→A), is no progress', () => {
+    // A dirty workspace: the snapshot already has changes; the edit undoes its own work.
+    const back = play({
+      tools: {
+        snapshot: () => ({ diff: 'dirty', hash: 'start', files: ['src/paginate.ts'] }),
+        captureDiff: () => ({ diff: 'dirty', hash: 'start', files: ['src/paginate.ts'] }),
+        runTests: () => tests(true),
+      },
+    });
+    expect(back.ran('runTests')).toBe(0);
+    expect(back.state.failureReason).toBe('the edit left the workspace as it was before any edit');
+    expect(back.r.state.outcome).not.toBe('success');
+    // A, B, then A again: the third attempt is caught before the tests run.
+    const seq = ['A', 'B', 'A'];
+    let n = 0;
+    const cycle = play({
+      tools: {
+        captureDiff: () => {
+          const h = seq[Math.min(n++, seq.length - 1)]!;
+          return { diff: h, hash: h, files: ['src/paginate.ts'] };
+        },
+        runTests: () => tests(false),
+      },
+    });
+    expect(cycle.ran('runTests')).toBe(2);
+    expect(cycle.state.triedHashes).toEqual(['A', 'B']);
+    expect(cycle.state.failureReason).toBe('the edit is identical to an earlier attempt');
   });
 
   it('stops at once when the failure is environmental: another edit cannot fix it', () => {

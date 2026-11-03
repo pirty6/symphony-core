@@ -113,7 +113,7 @@ export const refactor: Pattern = {
       label: 'Snapshot workspace',
       tool: 'git.diff',
       // Edits must change the workspace from here; pre-existing changes are not progress.
-      output: { hash: 'prevDiffHash' },
+      output: { hash: 'baseDiffHash' },
     },
     {
       id: 'plan',
