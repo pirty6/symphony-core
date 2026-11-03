@@ -514,6 +514,20 @@ describe('narrowed read (opt-in)', () => {
   });
 });
 
+describe('what the skeptic and the gap research see', () => {
+  it('the skeptic reads every sub-answer; gap research reads the sub-questions too', () => {
+    const score = compileScore(investigate, { context: demo.context! });
+    const reads = (id: string) => {
+      const n = score.nodes.find((x) => x.id === id);
+      return n?.kind === 'agent' ? n.reads : [];
+    };
+    // A sub-answer new evidence contradicts can be named, so keepUnchallenged cannot freeze it.
+    expect(reads('challenge')).toContain('subAnswers');
+    // With gapAimed the gaps are notes; the questions they belong to stay in view.
+    expect(reads('chase')).toEqual(expect.arrayContaining(['subQuestions', 'chaseGaps']));
+  });
+});
+
 describe('gap-aimed research (a pilot, off by default)', () => {
   const chased = (context: Record<string, unknown>) => {
     const r = runScripted(

@@ -31,6 +31,9 @@ const challenge = challengePhase({
   alongside: [
     'partAnswers',
     'subQuestions',
+    // Every sub-answer, so one the new evidence contradicts can be named (with keepUnchallenged
+    // on, a sub-answer no objection names is kept word for word).
+    'subAnswers',
     'notRead',
     'unverified',
     'hypothesisStatus',
@@ -1518,12 +1521,13 @@ export const investigate: Pattern = {
       // gapsPerChase 1: one sub-agent per gap, each with the whole brief (for an A/B).
       fanOut: { over: 'chaseGaps', per: 'gapsPerChase', agents: 'agents', warm: true },
       directive:
-        'Close every gap in `chaseGaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
+        'Close every gap in `chaseGaps` (the sub-questions not yet answered, or what the gap check says each one is missing: `subQuestions` are the questions they belong to) with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
       reads: [
         'leadHypotheses',
         'leadStatus',
         'question',
+        'subQuestions',
         'chaseGaps',
         'hint',
         'findingsBrief',
