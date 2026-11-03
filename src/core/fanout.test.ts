@@ -84,12 +84,18 @@ describe('fanOut: one AI call per chunk, merged in chunk order', () => {
     expect(replayPerformance(score, toPerformance(done.state)).divergence.reproduced).toBe(true);
   });
 
-  it('names the part that was wrong, and checks run on the merged answer', () => {
+  it('names the part that was wrong; the checks hold for each part on its own slice', () => {
     let r = createEngine(score, { startedAt: 't' });
     r = submit(r, { parts: [answer(['a', 'b']), { updates: { read: 'c' } }, answer(['e'])] });
     expect(r.state.pause?.feedback?.join('\n')).toMatch(/^part 2 of 3: /);
+    // Part 2 skipped a file of its own slice (d): named, even though the others are complete.
     r = submit(r, { parts: [answer(['a', 'b']), answer(['c']), answer(['e'])] });
-    expect(r.state.pause?.feedback?.[0]).toMatch(/^Read every file\./);
+    expect(r.state.pause?.feedback?.[0]).toMatch(/^part 2 of 3: Read every file\./);
+    // A well-formed empty part beside full ones is caught too.
+    const empty = submit(createEngine(score, { startedAt: 't' }), {
+      parts: [answer(['a', 'b', 'c', 'd', 'e']), answer([]), answer(['e'])],
+    });
+    expect(empty.state.pause?.feedback?.[0]).toMatch(/^part 2 of 3: Read every file\./);
     const short = submit(createEngine(score, { startedAt: 't' }), { parts: [answer(['a', 'b'])] });
     expect(short.state.pause?.feedback).toEqual(['expected 3 part results, got 1']);
   });

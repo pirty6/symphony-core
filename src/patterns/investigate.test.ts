@@ -731,6 +731,40 @@ describe('investigate always ends: research rounds are bounded', () => {
     expect(gaps.length).toBeGreaterThan(1);
     expect(pause.parts?.map((p) => p.chaseGaps)).toEqual(gaps.map((g) => [g]));
   });
+
+  it('with one sub-agent per gap, a gap researched by nobody is sent back, even beside full ones', () => {
+    const v = { outcome: 'applied' as const, confidence: 0.6, shouldTerminate: false, reason: 'r' };
+    const r = runScripted(
+      compileScore(investigate, {
+        goal: 'g',
+        context: { ...demo.context!, gapsPerChase: 1, maxExpandRounds: 0 },
+      }),
+      {
+        ...demo,
+        agents: {
+          ...demo.agents,
+          assess: (s, visit) => ({
+            updates: {
+              ...assessFor(s, visit === 0 ? ((s.subQuestions as string[]) ?? []) : []),
+              confidence: 0.9,
+            },
+            verdict: v,
+          }),
+          // The first gap's sub-agent finds nothing and says so with a well-formed, empty answer.
+          chase: (s, visit) => {
+            const first = (s.chaseGaps as string[])[0] === (s.subQuestions as string[])[0];
+            return first
+              ? { updates: { queries: ['grep x'], newFindings: [] }, verdict: v }
+              : demo.agents!.chase!(s, visit);
+          },
+        },
+      },
+    );
+    const rejected = r.state.events.flatMap((e) =>
+      e.type === 'response-rejected' && e.nodeId === 'chase' ? e.errors : [],
+    );
+    expect(rejected[0]).toMatch(/^part 1 of \d+: Report a finding for every gap/);
+  });
 });
 
 describe('investigate answers several subjects side by side', () => {
