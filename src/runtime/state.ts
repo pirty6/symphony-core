@@ -12,7 +12,15 @@
  * folder is used as it is.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmdirSync,
+  statSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -26,13 +34,16 @@ export function symphonyHome(env: Env = process.env): string {
   return setting(env, 'SYMPHONY_HOME') || join(homedir(), '.symphony');
 }
 
+/** The path as the file system spells it (case included), so every entry point hashes it alike. */
 const real = (p: string): string => {
   try {
-    return realpathSync(p);
+    return realpathSync.native(p);
   } catch {
     return resolve(p);
   }
 };
+/** Paths differ only in case on these (a lowercase drive letter from VS Code, a typed path). */
+const CASELESS = process.platform === 'win32' || process.platform === 'darwin';
 
 /** A run still playing (an older Symphony process) may be writing here: do not move it now. */
 const ACTIVE_MS = 15 * 60_000;
@@ -57,6 +68,46 @@ function recentlyWritten(dir: string, now: number, depth = 2): boolean {
   });
 }
 
+/** Move into `to` what `from` has and `to` lacks; a file in both stays where it is. */
+function mergeInto(from: string, to: string): void {
+  for (const n of readdirSync(from)) {
+    const a = join(from, n);
+    const b = join(to, n);
+    try {
+      if (!existsSync(b)) renameSync(a, b);
+      else if (statSync(a).isDirectory() && statSync(b).isDirectory()) mergeInto(a, b);
+    } catch {
+      // Left where it is.
+    }
+  }
+  try {
+    rmdirSync(from);
+  } catch {
+    // Not empty: what clashed stays.
+  }
+}
+
+/** Where the files go, moving the old folder in when it is idle. */
+function place(dir: string, legacy: string, opts: { move?: boolean; now?: number }): string {
+  if (!existsSync(legacy)) return dir;
+  const here = existsSync(dir);
+  if (opts.move === false || recentlyWritten(legacy, opts.now ?? Date.now()))
+    return here ? dir : legacy;
+  try {
+    mkdirSync(dirname(dir), { recursive: true });
+    // Moved before, and an older process wrote there since: bring that in too.
+    if (here) mergeInto(legacy, dir);
+    else renameSync(legacy, dir);
+  } catch {
+    // Another process moved it first, or another disk: wherever the files are.
+    return existsSync(dir) ? dir : legacy;
+  }
+  return dir;
+}
+
+/** One answer per workspace for the life of this process: a run never splits its files. */
+const chosen = new Map<string, string>();
+
 /**
  * The folder a workspace's Symphony files live in (see the top of this file). `move: false`
  * only looks: it says where the files are now, moving nothing.
@@ -70,17 +121,16 @@ export function stateDir(
   if (setting(env, 'SYMPHONY_STATE')?.toLowerCase() === 'workspace') return legacy;
   const path = real(workspace);
   const name = basename(path).replace(/[^\w.-]/g, '-') || 'root';
-  const hash = createHash('sha256').update(path).digest('hex').slice(0, 10);
+  const hash = createHash('sha256')
+    .update(CASELESS ? path.toLowerCase() : path)
+    .digest('hex')
+    .slice(0, 10);
   const dir = join(symphonyHome(env), 'workspaces', `${name}-${hash}`);
-  if (!existsSync(dir) && existsSync(legacy)) {
-    if (opts.move === false || recentlyWritten(legacy, opts.now ?? Date.now())) return legacy;
-    try {
-      mkdirSync(dirname(dir), { recursive: true });
-      renameSync(legacy, dir);
-    } catch {
-      // Another disk, or in use: keep reading and writing where the files are.
-      return legacy;
-    }
-  }
-  return dir;
+  const looking = opts.move === false || opts.now !== undefined;
+  const key = `${dir}\0${legacy}`;
+  const known = looking ? undefined : chosen.get(key);
+  if (known) return known;
+  const at = place(dir, legacy, opts);
+  if (!looking) chosen.set(key, at);
+  return at;
 }

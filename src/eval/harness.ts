@@ -29,6 +29,7 @@ import { checkCitations } from '../runtime/evidence.js';
 import { runtimeExtras } from '../runtime/factory.js';
 import type { Provider } from '../runtime/provider.js';
 import { buildFixture, finalFiles, writeFiles, type EvalTask } from './tasks.js';
+import { stateDir } from '../runtime/state.js';
 
 export interface EvalResult {
   readonly task: string;
@@ -199,7 +200,12 @@ async function runTask(
       citations: { checked: cited.checked, invalid: cited.invalid.length },
     };
   } finally {
-    if (!o.keep) await rm(workspace, { recursive: true, force: true });
+    if (!o.keep) {
+      // The task's Symphony folder (memory, scratch; outside the workspace) goes with it.
+      const state = stateDir(workspace, o.env, { move: false });
+      await rm(workspace, { recursive: true, force: true });
+      await rm(state, { recursive: true, force: true });
+    }
   }
 }
 
