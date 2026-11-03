@@ -2,6 +2,7 @@ import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
 import { prReviewPhase } from './phases/prReview.js';
+import { stabilityPhases, targetFailed } from './phases/stability.js';
 import { TESTS_KEPT_CHECK, testFirstPhase } from './phases/testFirst.js';
 import {
   checkFindings,
@@ -22,6 +23,13 @@ const v = (reason: string, confidence = 0.9) => ({
   reason,
 });
 
+/** Where intermittent failures come from (Luo et al. 2014, Fowler, Parry et al. 2021). */
+const NONDETERMINISM =
+  ' If the failure is intermittent (it passes on a re-run, only under load, only in CI or in some test orders), look for the usual causes of nondeterminism: waiting for async work by time instead of on the event, a race between concurrent code, state shared between tests or left behind by one (test order), leaked resources (ports, files, timers, handles), the real clock or time zone, randomness, unordered collections, the network or another service, and limits such as timeouts and parallel workers under load.';
+/** Edits that make a flaky test pass without fixing it. */
+const MASKING =
+  'retries, skip, todo or expected-fail markers, removed or loosened assertions, longer sleeps or timeouts, wider tolerances or slack, fewer workers, or quarantining the test';
+
 const hypotheses = hypothesesPhase({
   subject: 'issue',
   context: ['hint', 'knownFacts', 'pastLessons'],
@@ -38,13 +46,28 @@ const challenge = challengePhase({
 });
 const edit = editVerifyPhase({
   applyDirective:
-    'Implement `plan` by editing `files` (others only if the plan truly needs them). Fix the root cause in `rootCause`, not the symptom, and add or update a test that fails without the fix when that is feasible.',
+    'Implement `plan` by editing `files` (others only if the plan truly needs them). Fix the root cause in `rootCause`, not the symptom, and add or update a test that fails without the fix when that is feasible. ' +
+    `Do not hide a failure instead of fixing it (${MASKING}), unless the plan shows the old limit was wrong for work measured to take that long: then say so in \`changes\`.`,
   applyReads: ['issue', 'rootCause', 'files', 'plan', 'reviewComments'],
-  triageReads: ['issue', 'rootCause', 'plan'],
-  // With reproduceFirst, the locked reproducing test is checked before the review.
-  success: 'reproduced',
+  triageReads: ['issue', 'rootCause', 'plan', 'flakyTarget'],
+  triageNote:
+    ' A failure of the intermittent test this fix is about (`flakyTarget`) is never ENVIRONMENT: the patch did not make it stable.',
+  triageChecks: [
+    {
+      expr: `failureKind != "ENVIRONMENT" || !(${targetFailed('testOutput')})`,
+      message:
+        'The test this fix is about (flakyTarget) failed: the patch did not make it stable. Classify it PATCH or DIAGNOSIS.',
+    },
+    {
+      expr: 'failureKind != "ENVIRONMENT" || unstableHash != diffHash',
+      message:
+        'The stability gate ran this patch again and the flaky test failed: classify it PATCH or DIAGNOSIS.',
+    },
+  ],
+  // The stability gate (off by default), then with reproduceFirst the locked test, then review.
+  success: 'stableGate',
   giveUp: 'learnFailed',
-  reviewedExit: 'acceptAnyway',
+  reviewedExit: 'reviewedCertified',
   rediagnose: { node: 'research', gaps: 'gaps' },
 });
 /** reproduceFirst (opt-in): a test that reproduces the bug, proved red and locked before the edit. */
@@ -61,6 +84,16 @@ const prReview = prReviewPhase({
   edit: 'apply',
   approved: 'learnFixed',
   stopped: 'reviewStopped',
+  reviewNote: ` When \`stabilityReport\` is set, the engine ran the flaky test again and again: read it and \`maskingFlags\`. ${MASKING[0]!.toUpperCase()}${MASKING.slice(1)}, or removed assertions, make a flaky test pass without fixing it: BLOCKING, unless the change shows the old limit was wrong for work measured to take that long (not merely slower under load).`,
+  reviewReads: ['stabilityReport', 'maskingFlags'],
+});
+/** The stability gate for a flaky test (opt-in): control before the edit, fresh runs after. */
+const stability = stabilityPhases({
+  next: 'reproduceFirstOn',
+  passed: 'reproduced',
+  unstable: 'attemptsLeft',
+  uncertified: 'learnUncertified',
+  reviewed: 'acceptAnyway',
 });
 
 /**
@@ -86,8 +119,11 @@ export const fix: Pattern = {
     'failureReason',
     'rulings',
     'unresolvedObjections',
+    'stabilityReport',
+    'maskingFlags',
   ],
-  maxSteps: 400,
+  // The stability gate takes about three steps per run (49 runs per patch by default).
+  maxSteps: 1000,
   state: withState(
     [
       {
@@ -102,6 +138,22 @@ export const fix: Pattern = {
       { name: 'rootCause', type: 'string', description: 'The root cause, with evidence' },
       { name: 'files', type: 'string[]', description: 'Files to change' },
       { name: 'plan', type: 'string', description: 'Step-by-step fix plan' },
+      {
+        name: 'nondeterministic',
+        type: 'boolean',
+        description: 'The diagnosis: the failure is intermittent',
+      },
+      {
+        name: 'flakyTarget',
+        type: 'string',
+        description: 'The intermittent test, as it appears on the line with its result',
+      },
+      { name: 'flakyFile', type: 'string', description: "flakyTarget's test file" },
+      {
+        name: 'fixTarget',
+        type: 'string',
+        description: 'Where an intermittent failure is fixed: CODE | TEST | ENVIRONMENT',
+      },
       {
         name: 'hypothesesPerResearch',
         type: 'number',
@@ -134,6 +186,8 @@ export const fix: Pattern = {
     edit,
     reproduce,
     prReview,
+    stability.control,
+    stability.gate,
   ),
   start: 'start',
   groups: [
@@ -145,8 +199,10 @@ export const fix: Pattern = {
       nodes: ['research', 'checkResearch', 'mergeResearch', 'diagnose'],
     },
     challenge.group,
+    stability.control.group,
     { ...reproduce.group, nodes: ['planReproduce', ...reproduce.group.nodes] },
     edit.group,
+    stability.gate.group,
     prReview.group,
   ],
   nodes: [
@@ -159,7 +215,8 @@ export const fix: Pattern = {
       // What fails before any edit: the bug's symptom, or tests already broken (not the fix's).
       args: { reuse: true },
       inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' },
-      // The command it ran is kept: an edit to the test script cannot change what verifies it.
+      // The command it ran is kept for every later run. A detected `npm test` still reads the test
+      // script each time: an edit to package.json is flagged (checkFiles) for the reviewer.
       output: { passed: 'baselinePassed', output: 'baselineOutput', command: 'testCommand' },
     },
     {
@@ -181,7 +238,9 @@ export const fix: Pattern = {
       // hypothesesPerResearch (a trial; 99: one call): parallel sub-agents, each on some hypotheses.
       fanOut: { over: 'hypotheses', per: 'hypothesesPerResearch', warm: true },
       directive:
-        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating the findings so far (`findingsBrief`: each with its id and location, quotes left out).' +
+        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame).' +
+        NONDETERMINISM +
+        ' If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating the findings so far (`findingsBrief`: each with its id and location, quotes left out).' +
         MEMORY_NOTE,
       // The brief, not the full findings: they grow every round; diagnose reads them in full.
       reads: ['issue', 'hint', 'hypotheses', 'findingsBrief', 'gaps', 'knownFacts'],
@@ -211,7 +270,9 @@ export const fix: Pattern = {
       directive:
         'From `findings` only, state the root cause of `issue` in `rootCause`, citing the evidence by id. ' +
         CITE_BY_ID +
-        ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way. `baselineOutput` is the test run before any edit: tests failing there that the bug does not explain are not yours to fix.',
+        ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way. `baselineOutput` is the test run before any edit: tests failing there that the bug does not explain are not yours to fix.' +
+        NONDETERMINISM +
+        ` Set \`nondeterministic\` when the failure is intermittent. Then name the test in \`flakyTarget\` exactly as it appears on the line where the runner reports its result (vitest --reporter=verbose: "src/a.test.ts > suite > test"; node --test and jest: the test's name), its file in \`flakyFile\`, and in \`fixTarget\` where the cause is: CODE (the code under test, e.g. a race or a real-clock comparison), TEST (the test waits by time, depends on order or leaks state) or ENVIRONMENT (the machine, not this repository). ${MASKING[0]!.toUpperCase()}${MASKING.slice(1)} hide a flaky test; they do not fix it.`,
       reads: [
         'issue',
         'hint',
@@ -221,7 +282,16 @@ export const fix: Pattern = {
         'testOutput',
         'baselineOutput',
       ],
-      writes: ['rootCause', 'files', 'plan', 'rulings'],
+      writes: [
+        'rootCause',
+        'files',
+        'plan',
+        'rulings',
+        'nondeterministic',
+        'flakyTarget',
+        'flakyFile',
+        'fixTarget',
+      ],
       verifyBelow: 0.6,
       retries: 2,
       complexityShift: 1,
@@ -235,6 +305,15 @@ export const fix: Pattern = {
           expr: 'len(rulings) == len(hypotheses)',
           message:
             'Give exactly one ruling per hypothesis: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence".',
+        },
+        {
+          expr: '!nondeterministic || (!empty(flakyTarget) && includes(["CODE", "TEST", "ENVIRONMENT"], fixTarget))',
+          message:
+            'An intermittent failure needs flakyTarget (the test, as the runner prints it) and fixTarget: CODE, TEST or ENVIRONMENT.',
+        },
+        {
+          expr: 'empty(flakyTarget) || !empty(flakyFile)',
+          message: "Give flakyTarget's test file in flakyFile.",
         },
       ],
     },
@@ -283,6 +362,8 @@ export const fix: Pattern = {
     },
     ...reproduce.nodes,
     ...edit.nodes,
+    ...stability.control.nodes,
+    ...stability.gate.nodes,
     ...prReview.nodes,
     { id: 'reviewStopped', kind: 'end', label: 'Stopped at review', outcome: 'partial' },
     rememberLessonNode('learnFixed', 'fixed', {
@@ -295,7 +376,14 @@ export const fix: Pattern = {
       failure: 'failureReason',
       files: 'changedFiles',
     }),
+    rememberLessonNode(
+      'learnUncertified',
+      'fixed',
+      { problem: 'issue', cause: 'rootCause', files: 'changedFiles' },
+      { outcome: 'partial' },
+    ),
     { id: 'fixed', kind: 'end', label: 'Fixed', outcome: 'success' },
+    { id: 'uncertified', kind: 'end', label: 'Not certified', outcome: 'partial' },
     { id: 'gaveUp', kind: 'end', label: 'Gave up', outcome: 'failed' },
     { id: 'rejected', kind: 'end', label: 'Plan rejected', outcome: 'partial' },
   ],
@@ -306,6 +394,7 @@ export const fix: Pattern = {
     { id: 'recall-hypothesize', from: 'recall', to: hypotheses.entry },
     { id: 'learnFixed-fixed', from: 'learnFixed', to: 'fixed' },
     { id: 'learnFailed-gaveUp', from: 'learnFailed', to: 'gaveUp' },
+    { id: 'learnUncertified-end', from: 'learnUncertified', to: 'uncertified' },
     ...hypotheses.edges,
     { id: 'rating-research', from: hypotheses.exit!, to: 'research' },
     { id: 'research-check', from: 'research', to: 'checkResearch' },
@@ -313,7 +402,8 @@ export const fix: Pattern = {
     { id: 'merge-diagnose', from: 'mergeResearch', to: 'diagnose' },
     { id: 'diagnose-challenge', from: 'diagnose', to: challenge.entry },
     ...challenge.edges,
-    { id: 'approve-reproduce', from: 'approve', to: 'reproduceFirstOn', branch: 'approved' },
+    { id: 'approve-stability', from: 'approve', to: stability.control.entry, branch: 'approved' },
+    ...stability.control.edges,
     {
       id: 'reproduce-tests',
       from: 'reproduceFirstOn',
@@ -328,6 +418,7 @@ export const fix: Pattern = {
     ...reproduce.edges,
     { id: 'approve-rejected', from: 'approve', to: 'rejected', branch: 'rejected' },
     ...edit.edges,
+    ...stability.gate.edges,
     ...prReview.edges,
   ],
   demo: {
@@ -378,6 +469,10 @@ export const fix: Pattern = {
               ? `${h.split(':')[0]}: CONFIRMED — src/paginate.ts:7`
               : `${h.split(':')[0]}: REFUTED — ${i === 1 ? 'src/list.ts:12' : 'src/data.ts:3'}`,
           ),
+          nondeterministic: false,
+          flakyTarget: '',
+          flakyFile: '',
+          fixTarget: '',
         },
         verdict: v('root cause found'),
       }),
@@ -413,6 +508,20 @@ export const fix: Pattern = {
       recall: () => ({ facts: [], lessons: [] }),
       learnFixed: () => ({ saved: true }),
       learnFailed: () => ({ saved: true }),
+      learnUncertified: () => ({ saved: true }),
+      // The workspace as it is: unpatched before the first edit.
+      controlSnapshot: (s) => ({ diff: '', hash: String(s.diffHash || 'base'), files: [] }),
+      // With the gate (off in this demo): the flaky test fails once before the edit, never after.
+      runControl: (s) => ({
+        passed: false,
+        output: `FAIL  ${String(s.flakyTarget)}`,
+        command: String(s.controlCommand),
+      }),
+      runStable: (s) => ({
+        passed: true,
+        output: `✓ ${String(s.flakyTarget)} 2ms`,
+        command: String(s.gateCommand),
+      }),
       checkResearch: (s) => ({ valid: s.newFindings, invalid: [] }),
       captureDiff: (s) => {
         const n = (s.attempts as number) ?? 0;

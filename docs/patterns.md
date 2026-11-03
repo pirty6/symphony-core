@@ -167,23 +167,32 @@ hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
 
 1. **Run the tests first.** What fails before any edit, the bug or tests already broken, is
    known to the diagnosis and the triage. The command that ran is kept: every later test run
-   uses it, so an edit to the test script cannot change what verifies the fix.
+   uses it. A detected `npm test` still reads the test script on each run, so an edit to
+   package.json is flagged (`checkFiles`) for the reviewer.
 2. **Recall, hypotheses, evidence.** Research and the debate read the findings brief; the
    diagnosis reads the findings in full.
-3. **Diagnose** a root cause from the cited evidence; the challenge phase attacks it.
+3. **Diagnose** a root cause from the cited evidence; the challenge phase attacks it. Research
+   and the diagnosis are given the usual causes of intermittent failures. An intermittent
+   failure must name its test as its result line shows it (`flakyTarget`), the test's file, and
+   where the fix goes (`fixTarget`: CODE, TEST or ENVIRONMENT).
 4. **👤 Approve the plan** (root cause, files, the change, the test).
-5. **Reproduce first** (`reproduceFirst`, opt-in): a test that reproduces the bug is written,
+5. **Show the flake** (with the stability gate, below): before any edit, the gate command must
+   make the flaky test fail.
+6. **Reproduce first** (`reproduceFirst`, opt-in): a test that reproduces the bug is written,
    proved to fail for the right reason and locked; the fix must leave it unchanged.
-6. **Edit and verify.**
+7. **Edit and verify.**
    - **Progress.** An edit that changes nothing, returns to the starting workspace, or
      repeats any earlier attempt is not progress.
    - **Lint.** Lint runs only once the tests pass.
    - **Wrong diagnosis.** A failure triaged as a wrong diagnosis goes back to research for a
      new diagnosis (bounded).
    - **Environment problem.** The same patch is tested once more; if it still fails, the run
-     gives up with that reason.
+     gives up with that reason. A failure of the flaky test itself is never an environment
+     problem: the patch did not make it stable.
+   - **No hiding.** The edit may not hide a failure (retries, skips, longer timeouts, wider
+     slack, fewer workers) unless the plan shows the old limit was wrong for measured work.
    - **Budget.** `maxEdits` (8) bounds the tested edits across diagnoses and review rounds.
-7. **PR review.**
+8. **Stability gate** (opt-in, below), then **PR review**.
    - **Agreement.** The decision must agree with the comments: APPROVE has no BLOCKING
      comment, REQUEST_CHANGES has one. Earlier comments now addressed are RESOLVED.
    - **Weakened checks.** Changed files that configure the checks (`checkFiles`) are flagged,
@@ -194,6 +203,52 @@ hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
 
 Only the tests the command runs are checked. In this repository the root `npm test` does not
 run `packages/ui`, so set `testCommand` for a fix there.
+
+### Flaky tests: the stability gate
+
+One green run, or a red run then a green re-run, cannot tell a repaired flaky test from a lucky
+one. The gate is off by default (`maxStabilityRuns` and `autoStabilityRuns` are 0), and a run
+without it gains only three steps with no I/O. Arm it with `maxStabilityRuns` (always), or with
+`autoStabilityRuns` (only when the diagnosis finds the failure intermittent, or when a failure
+passes on a re-run).
+
+- **The command.** `stabilityCommand` must make the flaky test fail (under load, shuffled with
+  a logged seed, or the whole suite) and print each test's result. For vitest add
+  `--reporter=verbose`: under CI its default reporter prints no passing test. Empty: the test
+  command.
+- **Control.** Before any edit, the command runs fresh until the flaky test's own failure line
+  shows (`maxControlRuns`, 20). If it never fails, a person decides; unattended, the run stops
+  at "Flake not shown". Editing anyway, or a gate armed after an edit (a re-diagnosis, or a
+  re-run that passed), has no control, so the patch is never certified.
+- **Runs.** After verify, the command runs fresh until the flaky test has passed `maxStableRuns`
+  times. That is at least `runsNeeded(stabilityTolerance, maxEdits)`: 49 runs for a tolerance of
+  0.1 across 8 patches, 29 for one. A failure, or a pass only on a retry, sends the patch back
+  through the edit loop's budgets. Runs that show neither (another test failed, a timeout,
+  output cut) do not count. If more than a quarter of the runs are like that, the patch is not
+  certified.
+- **Masking flags.** These go to a person; unattended, the patch is not certified:
+  - the flaky test's own file changed;
+  - added lines touch retries, skips, timeouts, slack, workers or sleeps;
+  - assertions were removed;
+  - files that configure the tests changed;
+  - the diff has new or cut files it does not show;
+  - more tests are skipped, todo or expected-fail than in the control.
+
+  These checks are heuristics. A loosened limit and a real fix of that limit look alike (raising
+  `TIME_SLACK` and adding a time floor both touch the same line), so the person decides. A
+  certified patch still goes through the review, which reads the report and the flags.
+- **Certified** means: under that command, the flaky test's failure rate is below
+  `stabilityTolerance` at 95% across `maxEdits` patches. It does not mean "never flaky". The
+  report (`stabilityReport`) says so. Anything less ends at "Not certified" (partial): the patch
+  is kept as a file, never applied, and the lesson is remembered with open doubts.
+- **Cost.** About three steps per run (about 150 per patch by default); `maxSteps` (1000) fits
+  the control and five or so measured patches. A run that reaches the limit ends partial, never
+  Fixed.
+- **One way.** Once armed, a re-diagnosis that no longer calls the failure intermittent does not
+  disarm the gate.
+- **The test's name.** `flakyTarget` is the text on the line where the runner reports the test's
+  result: `src/a.test.ts > suite > test` for vitest, the test's name for node and jest. If it is
+  wrong, the control never sees it fail, and the run stops at "Flake not shown".
 
 <!-- flow:fix -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
@@ -210,14 +265,18 @@ flowchart TD
   n_reviewStopped(["Stopped at review · partial"])
   n_learnFixed[/"🔧 Remember the outcome"/]
   n_learnFailed[/"🔧 Remember the failure"/]
+  n_learnUncertified[/"🔧 Remember the outcome"/]
   n_fixed(["Fixed · success"])
+  n_uncertified(["Not certified · partial"])
   n_gaveUp(["Gave up · failed"])
   n_rejected(["Plan rejected · partial"])
   n_hypothesesPhase[["Competing hypotheses · 2 steps"]]
   n_diagnosePhase[["Diagnose · 4 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
+  n_controlPhase[["Show the flake · 12 steps"]]
   n_testFirstPhase[["Tests first · 19 steps"]]
   n_editPhase[["Edit and verify · 20 steps"]]
+  n_stabilityPhase[["Stability gate · 14 steps"]]
   n_prReviewPhase[["PR review · 5 steps"]]
   n_start --> n_baseline
   n_baseline --> n_snapshot
@@ -225,11 +284,13 @@ flowchart TD
   n_recall --> n_hypothesesPhase
   n_learnFixed --> n_fixed
   n_learnFailed --> n_gaveUp
+  n_learnUncertified --> n_uncertified
   n_hypothesesPhase --> n_diagnosePhase
   n_diagnosePhase --> n_challengePhase
   n_challengePhase --> n_approve
   n_challengePhase -.-> n_diagnosePhase
-  n_approve -->|"approved"| n_reproduceFirstOn
+  n_approve -->|"approved"| n_controlPhase
+  n_controlPhase --> n_reproduceFirstOn
   n_reproduceFirstOn -->|"tests first"| n_testFirstPhase
   n_reproduceFirstOn -->|"no"| n_editPhase
   n_reproduced -.->|"yes"| n_testFirstPhase
@@ -238,10 +299,13 @@ flowchart TD
   n_testFirstPhase --> n_editPhase
   n_testFirstPhase --> n_prReviewPhase
   n_approve -->|"rejected"| n_rejected
-  n_editPhase --> n_reproduced
+  n_editPhase --> n_stabilityPhase
   n_editPhase --> n_learnFailed
-  n_editPhase --> n_prReviewPhase
   n_editPhase -.-> n_diagnosePhase
+  n_stabilityPhase --> n_reproduced
+  n_stabilityPhase -.-> n_editPhase
+  n_stabilityPhase --> n_prReviewPhase
+  n_stabilityPhase --> n_learnUncertified
   n_prReviewPhase --> n_learnFixed
   n_prReviewPhase -.-> n_editPhase
   n_prReviewPhase --> n_reviewStopped
@@ -252,8 +316,10 @@ flowchart TD
 | Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
 | Diagnose | Evidence for and against every hypothesis, then the root cause | Gather evidence → Check citations → Record evidence → Diagnose |
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
+| Show the flake | With the stability gate: before the edit, the flaky test must fail under the gate command | Arm the stability gate? → Show the flake first? → Workspace unpatched? → No edit yet? → No control possible → Start the control → Run before the edit → Count control run → Run the control again? → Flake shown? → Edit without the flake shown? → Flake not shown |
 | Tests first | Tests written before the code must fail for the right reason, then stay locked | Plan the reproducing test → Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
+| Stability gate | With the gate: the patch passes the flaky test in fresh runs, with no masking edits, or is not certified | Stability gate? → Start the gate → Run again (gate) → Count gate run → Run the gate again? → Flaky test failed? → Not stable → Masking flags → Certified? → Masking flags? → Fixed, or hidden? → Certify → Reviewed patch certified? → Not certified |
 | PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 
 <!-- /flow:fix -->
