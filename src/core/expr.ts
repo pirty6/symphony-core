@@ -14,7 +14,9 @@
  *   take(list, n), drop(list, n), first(list), unique(list), without(listA, listB),
  *   numbered(list, start) ("F<n> " ids), unnumbered(list), ids(list), refs(textOrList),
  *   pick(list, positions) (1-based, e.g. ["1", "3"]),
- *   get(objectOrList, keyOrIndex) (null when missing), keys(object).
+ *   get(objectOrList, keyOrIndex) (null when missing), keys(object),
+ *   lines(text), linesWith(text, needle) (the lines containing a literal string),
+ *   runsNeeded(tolerance, candidates) (clean runs that bound a failure rate, see below).
  */
 
 export type Expr =
@@ -57,7 +59,10 @@ type FnName =
   | 'stances'
   | 'heads'
   | 'outside'
-  | 'seq';
+  | 'seq'
+  | 'lines'
+  | 'linesWith'
+  | 'runsNeeded';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -91,7 +96,19 @@ const FNS: Record<FnName, number> = {
   heads: 2,
   outside: 2,
   seq: 2,
+  lines: 1,
+  linesWith: 2,
+  runsNeeded: 2,
 };
+
+/**
+ * Runs with no failure that bound a failure rate below `tolerance` at 95% confidence, shared
+ * (Bonferroni) by `candidates` patches each tested that way: n >= ln(0.05 / k) / ln(1 - p).
+ * 0.1 and 1 candidate: 29; 0.1 and 8: 49; 0.25 and 8: 18.
+ */
+export function runsNeeded(tolerance: number, candidates: number): number {
+  return Math.ceil(Math.log(0.05 / candidates) / Math.log(1 - tolerance));
+}
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
 const LEADING_ID = /^(F\d+)\s+/;
@@ -507,6 +524,25 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           if (!Array.isArray(x) || !Array.isArray(y))
             throw new ExprError('outside() needs two lists');
           return x.flatMap((v, i) => (y.some((w) => deepEqual(v, w)) ? [] : [i + 1]));
+        }
+        case 'lines':
+          if (typeof x !== 'string') throw new ExprError('lines() needs a string');
+          return x === '' ? [] : x.split(/\r?\n/);
+        case 'linesWith': {
+          // linesWith(testOutput, flakyTarget): the lines that name a literal string, so a test's
+          // own result can be read without building a pattern from data.
+          if (typeof x !== 'string' || typeof args[1] !== 'string')
+            throw new ExprError('linesWith() needs a text and a string to find');
+          const needle = args[1];
+          return x === '' ? [] : x.split(/\r?\n/).filter((l) => l.includes(needle));
+        }
+        case 'runsNeeded': {
+          const [p, k] = args;
+          if (typeof p !== 'number' || !(p > 0 && p < 1))
+            throw new ExprError('runsNeeded() needs a tolerance between 0 and 1');
+          if (typeof k !== 'number' || !Number.isInteger(k) || k < 1)
+            throw new ExprError('runsNeeded() needs a whole number of candidates, at least 1');
+          return runsNeeded(p, k);
         }
         case 'without': {
           const y = args[1];
