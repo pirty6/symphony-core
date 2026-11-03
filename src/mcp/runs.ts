@@ -5,7 +5,8 @@
  * stuck step), and its result. Humans answer through the chat.
  */
 import { summarizeComposed } from '../core/draft.js';
-import { join } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { type ChainStep, resultText } from '../core/chain.js';
 import { compileScore } from '../core/compile.js';
@@ -113,6 +114,8 @@ export interface StartRequest {
   readonly complexity?: Complexity;
   readonly improvisation?: Improvisation;
   readonly autoApprove?: boolean;
+  /** A folder to work in instead of the client's workspace root (e.g. a separate worktree). */
+  readonly workspace?: string;
 }
 
 interface Managed {
@@ -287,6 +290,7 @@ export class RunManager {
 
   /** Compile and start a pattern; returns the run id. Throws with a readable message. */
   async start(req: StartRequest): Promise<string> {
+    if (req.workspace !== undefined) await this.checkWorkspace(req.workspace);
     const lib = await this.library();
     const pattern = lib.find((p) => p.name === req.pattern);
     if (!pattern) throw new Error(`unknown pattern '${req.pattern}'`);
@@ -307,13 +311,24 @@ export class RunManager {
     return this.launch(score, pattern, req, req.chain ?? []);
   }
 
+  /** A chosen folder: local callers only, and it must be an existing folder. */
+  private async checkWorkspace(dir: string): Promise<void> {
+    if (!this.opts.editsAllowed)
+      throw new Error(
+        'workspace can only be chosen from a local chat (VS Code), not by remote callers.',
+      );
+    if (!isAbsolute(dir)) throw new Error(`workspace must be an absolute path, got '${dir}'`);
+    const st = await stat(dir).catch(() => undefined);
+    if (!st?.isDirectory()) throw new Error(`workspace '${dir}' is not a folder on this machine`);
+  }
+
   private async launch(
     score: ExecutableScore,
     pattern: Pattern,
     req: StartRequest,
     chain: readonly ChainStep[],
   ): Promise<string> {
-    const workspace = await this.opts.workspace();
+    const workspace = req.workspace ?? (await this.opts.workspace());
     const runsDir = runsDirFor(workspace, this.opts.env);
     void autoPrune(workspace, runsDir, this.opts.env);
     const extras = await runtimeExtras(workspace, this.opts.repoRoot, this.opts.env);
