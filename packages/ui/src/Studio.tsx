@@ -30,6 +30,7 @@ import { Home } from './panels/Home'
 import { api, errorText, isNetworkError, isRunGone, RUN_GONE, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
 import { subAgentItems, subAgentNodes,
   chooseFeature,
+  resetFeatures,
   featureRows,
   IDLE_VIEW,
   applyMessage,
@@ -787,6 +788,7 @@ export default function Studio() {
         onAsk={(r) => void ask(r)}
         features={featureRows(meta, library, features)}
         onFeature={(row, value) => setFeatures((was) => chooseFeature(was, row, value))}
+        onResetFeatures={() => setFeatures((was) => resetFeatures(was, featureRows(meta, library, was)))}
       />
       {home && (
         <Home

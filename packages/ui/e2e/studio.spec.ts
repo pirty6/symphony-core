@@ -441,11 +441,21 @@ test('library sections fold away, and a feature switch reaches the run it starts
   await expect(page.getByTestId('state-supportJudge')).toContainText('shadow')
   // The judge played (the demo's rulings): every cited workspace finding was ruled on.
   await expect(page.getByTestId('state-supportRulings')).toContainText('SUPPORTED')
-  // Kept for the next visit; set back to its default, it is no longer marked.
+  // Kept for the next visit, and the section says how many switches are changed.
   await page.reload()
   await expect(page.getByTestId('feature-supportJudge').getByLabel('Support judge')).toHaveValue('shadow')
+  await expect(page.getByTestId('features-changed')).toHaveText('1 changed')
+  // Set back to its default, it is no longer marked.
   await page.getByTestId('feature-supportJudge').getByLabel('Support judge').selectOption('off')
   await expect(page.getByTestId('feature-supportJudge')).not.toContainText('changed')
+  await expect(page.getByTestId('features-changed')).toHaveCount(0)
+  // Reset puts every switch back at once.
+  await page.getByTestId('feature-supportJudge').getByLabel('Support judge').selectOption('shadow')
+  await page.getByTestId('feature-singlePass').getByRole('checkbox').check()
+  await expect(page.getByTestId('features-changed')).toHaveText('2 changed')
+  await page.getByTestId('section-features').getByRole('button', { name: 'Reset' }).click()
+  await expect(page.getByTestId('features-changed')).toHaveCount(0)
+  await expect(page.getByTestId('feature-supportJudge').getByLabel('Support judge')).toHaveValue('off')
 })
 
 test('the opening screen asks the maestro; inside a pattern or a run the sidebar does', async ({ page }) => {

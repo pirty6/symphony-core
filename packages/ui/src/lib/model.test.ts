@@ -25,7 +25,7 @@ import {
   musicianLines,
   parseStoredSettings,
   featureRows,
-  chooseFeature,
+  chooseFeature, resetFeatures,
   originSummary,
   originsByNode,
   resultMarkdown,
@@ -339,5 +339,10 @@ describe('feature switches', () => {
     expect(parseStoredSettings(JSON.stringify({ features: { supportJudge: 'shadow', bad: 1 } }))).toEqual({
       features: { supportJudge: 'shadow' },
     })
+  })
+
+  it("reset puts the open pattern's switches back to their defaults and keeps the others", () => {
+    const chosen = { singlePass: 'true', gapsPerChase: '1', reproduceFirst: 'true' }
+    expect(resetFeatures(chosen, featureRows(investigate, PATTERNS, chosen))).toEqual({ reproduceFirst: 'true' })
   })
 })
