@@ -30,6 +30,8 @@ export interface Isolation {
   readonly finish: (outcome: PerformanceOutcome) => Promise<EditsResult>;
 }
 
+/** Untracked files copied into a worktree at once. */
+const COPY_AT_ONCE = 16;
 /** Installed dependencies are linked, not copied, so the tests run as they do in the workspace. */
 const DEPENDENCY_DIRS = ['node_modules', '.venv', 'venv'];
 const AUTHOR = [
@@ -118,9 +120,14 @@ export async function isolateRun(
     const untracked = (await must(top, ['ls-files', '--others', '--exclude-standard', '-z']))
       .split('\0')
       .filter(Boolean);
-    for (const f of untracked) {
-      await mkdir(dirname(join(wt, f)), { recursive: true });
-      await copyFile(join(top, f), join(wt, f)).catch(() => undefined);
+    // A few at a time: a workspace with many untracked files starts sooner.
+    for (let i = 0; i < untracked.length; i += COPY_AT_ONCE) {
+      await Promise.all(
+        untracked.slice(i, i + COPY_AT_ONCE).map(async (f) => {
+          await mkdir(dirname(join(wt, f)), { recursive: true });
+          await copyFile(join(top, f), join(wt, f)).catch(() => undefined);
+        }),
+      );
     }
     const packages = (await must(top, ['ls-files', '-z', '--', 'package.json', '*/package.json']))
       .split('\0')
