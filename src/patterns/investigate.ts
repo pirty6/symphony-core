@@ -411,6 +411,13 @@ export const investigate: Pattern = {
         description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
       },
       {
+        name: 'warmFirst',
+        type: 'boolean',
+        initial: true,
+        description:
+          'Gap research and part answers start one sub-agent first, so the rest reuse its cached prompt (off: up to ~30 s sooner per step, more tokens; a trial)',
+      },
+      {
         name: 'agentsCap',
         type: 'number',
         initial: MAX_AGENTS,
@@ -1540,7 +1547,7 @@ export const investigate: Pattern = {
       label: 'Close gaps',
       capabilities: ['web', 'mcp'],
       // gapsPerChase 1: one sub-agent per gap, each with the whole brief (for an A/B).
-      fanOut: { over: 'chaseGaps', per: 'gapsPerChase', agents: 'agents', warm: true },
+      fanOut: { over: 'chaseGaps', per: 'gapsPerChase', agents: 'agents', warm: 'warmFirst' },
       directive:
         'Close every gap in `chaseGaps` (the sub-questions not yet answered, or what the gap check says each one is missing: `subQuestions` are the questions they belong to) with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
@@ -1640,7 +1647,7 @@ export const investigate: Pattern = {
       // One call per part, side by side: each stays on its own subject over the shared
       // evidence, instead of one call answering everything and drifting or running out.
       // The parts share everything but their subject: the first one warms the prompt cache.
-      fanOut: { over: 'parts', per: 1, agents: 'agents', warm: true },
+      fanOut: { over: 'parts', per: 1, agents: 'agents', warm: 'warmFirst' },
       directive:
         'Answer `question` for the ONE subject in `parts` only, using only `findingsBrief` (the findings, quotes left out). ' +
         CITE_BY_ID +

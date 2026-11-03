@@ -302,7 +302,9 @@ function partsOf(
   return Object.assign(
     { parts },
     parallel ? { parallel } : {},
-    node.fanOut.warm ? { warmFirst: true } : {},
+    (typeof node.fanOut.warm === 'string' ? state[node.fanOut.warm] === true : node.fanOut.warm)
+      ? { warmFirst: true }
+      : {},
   );
 }
 

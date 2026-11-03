@@ -158,6 +158,43 @@ describe('fanOut: one AI call per chunk, merged in chunk order', () => {
     expect(replayPerformance(reporting, toPerformance(r.state)).divergence.reproduced).toBe(true);
   });
 
+  it('the warm start may be a setting: a boolean field turns it on or off', () => {
+    const warmed = (warmFirst: boolean) => {
+      const p = {
+        ...reader,
+        state: [
+          ...reader.state,
+          { name: 'warmFirst', type: 'boolean' as const, initial: warmFirst },
+        ],
+        nodes: reader.nodes.map((n) =>
+          n.id === 'readAll' && n.kind === 'agent'
+            ? { ...n, fanOut: { ...n.fanOut!, warm: 'warmFirst' } }
+            : n,
+        ),
+      } as Pattern;
+      expect(validatePattern(p).errors).toEqual([]);
+      const sc = compileScore(p, {
+        goal: 'g',
+        context: { files: ['a', 'b', 'c'] },
+        generatedAt: 't',
+      });
+      return (createEngine(sc, { startedAt: 't' }).state.pause as AgentPause).warmFirst;
+    };
+    expect(warmed(true)).toBe(true);
+    expect(warmed(false)).toBeUndefined();
+    const bad = {
+      ...reader,
+      nodes: reader.nodes.map((n) =>
+        n.id === 'readAll' && n.kind === 'agent'
+          ? { ...n, fanOut: { ...n.fanOut!, warm: 'per' } }
+          : n,
+      ),
+    } as Pattern;
+    expect(validatePattern(bad).errors.map((e) => e.message)).toContain(
+      "fanOut.warm 'per' must be a boolean field",
+    );
+  });
+
   it('keeps nothing when every part passed but the merged answer was rejected', () => {
     const doubting = compileScore(
       {

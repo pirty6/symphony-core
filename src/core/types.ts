@@ -141,9 +141,9 @@ export interface AgentNode extends NodeBase {
     /**
      * Play the first part alone until the model starts answering, then the rest: their
      * prompts share its prefix, which the provider's cache then holds. Costs one part's
-     * head start in time.
+     * head start in time. A boolean field's name makes it a setting (a time-for-tokens trial).
      */
-    readonly warm?: boolean;
+    readonly warm?: boolean | string;
   };
   /**
    * When the AI reports confidence below this (0-1), ask it once more, one tier

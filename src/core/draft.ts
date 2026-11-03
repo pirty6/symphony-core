@@ -153,7 +153,7 @@ function parseEdge(raw: unknown, i: number, errors: string[]): ScoreEdge | undef
 }
 
 function fanOutOf(raw: unknown): {
-  fanOut?: { over: string; per: number | string; agents?: string; warm?: boolean };
+  fanOut?: { over: string; per: number | string; agents?: string; warm?: boolean | string };
 } {
   const f = raw as { over?: unknown; per?: unknown; agents?: unknown; warm?: unknown } | null;
   return typeof f?.over === 'string' && (typeof f.per === 'number' || typeof f.per === 'string')
@@ -164,7 +164,7 @@ function fanOutOf(raw: unknown): {
           // How many play at once, and the cache warm-up: lost here, a composed score ran
           // narrower and colder than the tested pattern.
           ...(typeof f.agents === 'string' && f.agents ? { agents: f.agents } : {}),
-          ...(f.warm === true ? { warm: true } : {}),
+          ...(f.warm === true || (typeof f.warm === 'string' && f.warm) ? { warm: f.warm } : {}),
         },
       }
     : {};
