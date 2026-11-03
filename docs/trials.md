@@ -80,21 +80,22 @@ SYMPHONY_NODE_MODELS=triageDeep=claude-sonnet-5 npm run cli -- eval --task inves
 
 First, read `rejection reasons` in the baseline report: each step and reason, with how often it
 happened. Automatic fixes should target the most frequent reasons. Then measure delta repair:
-after a rejected `submit_result`, the AI resends only the fields it changes.
+after a rejected `submit_result`, the AI resends only the fields it changes. It is on by default;
+the trial is the run with it off.
 
 ```sh
-SYMPHONY_DELTA_REPAIR=1 npm run cli -- eval --task investigate-many-files -n 3 --compare $BASE
+SYMPHONY_DELTA_REPAIR=0 npm run cli -- eval --task investigate-many-files -n 3 --compare $BASE
 ```
 
 Compare: `rejected N attempts`, its premium requests, output tokens and solved.
 
 ## 5. Caching with the header in the system message, and how Copilot bills cached tokens
 
-`SYMPHONY_HEADER_IN_SYSTEM=1` sends each step's fixed instructions as the system message and
-only its input as the prompt.
+`SYMPHONY_HEADER_IN_SYSTEM` (on by default) sends each step's fixed instructions as the system
+message and only its input as the prompt. The trial is the run with it off.
 
 ```sh
-SYMPHONY_HEADER_IN_SYSTEM=1 npm run cli -- eval --task investigate-many-files -n 3 --compare $BASE
+SYMPHONY_HEADER_IN_SYSTEM=0 npm run cli -- eval --task investigate-many-files -n 3 --compare $BASE
 ```
 
 Compare: `first-call cache` (the cached share of each step's first calls) and the cache-share
@@ -228,7 +229,9 @@ npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,in
 
 - Hypotheses block: trim it only after an A/B. `--with readerHypotheses=false` is the ablation.
 - singlePass: enable by default only after trial 3.
-- Delta repair: enable by default only after trial 4.
+- Delta repair and the header in the system message are on by default; trials 4 and 5 now
+  measure them off (`=0`), to turn them off if they make things worse.
+- `lean` (investigate, on by default): run the lean A/B below; turn it off if it loses answers.
 - The narrowed read (`narrowRead`) is opt-in for good. Files that are neither matched by the
   search nor among the next `narrowBudget` (20) are never read, and the coverage names each
   one. In one recorded run, files ranked 90–150 were still 57% relevant.
@@ -282,4 +285,31 @@ and their fingerprints are compared in the PR. Check fix's ordinary tasks with `
 Routing: the routing tasks include a named flaky request, a symptom-only one (no trigger word)
 and an explain-only one (investigate). Every routing eval so far ran scripted; run
 `eval --task routing` on a live model.
+
+## Lean investigate: on vs off
+
+`lean` bundles the settings estimated to cut time and tokens together. It is on by default, so
+the trial is whether turning it off answers better. Pin the complexity: most tasks are rated by
+the AI, and a run rated lower than 3 would not exercise the debate or the answer's tier. The
+gate compares task by task, so losing one safeguard task while gaining another counts as worse.
+
+```sh
+TASKS=investigate-many-files,investigate-multi-hop,investigate-history,investigate-planted-flaw,investigate-false-premise
+npm run cli -- eval --task $TASKS -n 3 --complexity 3 --with lean=false
+BASE=.symphony/evals/<that-stamp>.json
+npm run cli -- eval --task $TASKS -n 3 --complexity 3 --compare $BASE
+```
+
+Read:
+- **Correctness.** Each task, solved as often as with lean off. Invalid citations, as a count
+  and as a share.
+- **Time.** `investigate-many-files` time per run, against the 15-minute target. The gate only
+  checks for 1.5× slower.
+- **Where the time went.** `slowest steps`, `first-call cache`, and rejected attempts on
+  `answer`.
+- **Models.** The effective model and effort per step in the saved runs: a missing model falls
+  back silently.
+
+Also open: the answer's first call has stopped at 32,000 output tokens without submitting, and
+been resubmitted twice (32–36% of each answer visit). The cap is not set in this repository.
 

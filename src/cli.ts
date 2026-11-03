@@ -20,7 +20,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
-import { formatReport, runEval, summarize, worseThan, type EvalReport } from './eval/harness.js';
+import { formatReport, reportRegressions, runEval, type EvalReport } from './eval/harness.js';
 import { EVAL_TASKS, ROUTING_TASKS } from './eval/tasks.js';
 import {
   type ChainStep,
@@ -571,6 +571,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
       keep: { type: 'boolean', default: false },
       with: { type: 'string', multiple: true },
       improvisation: { type: 'string' },
+      complexity: { type: 'string' },
     },
   });
   const providerName = args.values.provider;
@@ -617,6 +618,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     .map(([k, v]) => `${k}=${v}`)
     .toSorted();
   const improvisation = levelOf(args.values.improvisation);
+  const complexity = complexityOf(args.values.complexity);
   console.log(c.dim(`eval: ${tasks.length} task(s) × ${args.values.repeat} on ${providerName}`));
   const report = await runEval({
     tasks,
@@ -628,9 +630,11 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     keep: args.values.keep,
     inputs: (p) => parseContext(ownPairs(p), p),
     ...(improvisation !== undefined ? { improvisation } : {}),
+    ...(complexity !== undefined ? { complexity } : {}),
     settings: [
       ...pairs,
       ...(improvisation !== undefined ? [`improvisation=${improvisation}`] : []),
+      ...(complexity !== undefined ? [`complexity=${complexity}`] : []),
       ...switches,
     ],
     runsDir: join(
@@ -655,7 +659,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
   const file = join(dir, `${report.startedAt.replace(/[:.]/g, '-')}.json`);
   await writeFile(file, `${JSON.stringify(report, null, 2)}\n`);
   console.log(`\n${formatReport(report, baseline)}\n${c.dim(`saved ${file}`)}`);
-  return baseline && worseThan(summarize(report.results), summarize(baseline.results)) ? 2 : 0;
+  return baseline && reportRegressions(report, baseline).length > 0 ? 2 : 0;
 }
 
 async function cmdRehearse(argv: string[], cwd: string): Promise<number> {

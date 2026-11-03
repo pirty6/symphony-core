@@ -9,8 +9,10 @@ import type { Provider } from '../runtime/provider.js';
 import {
   formatReport,
   regressions,
+  reportRegressions,
   runEval,
   summarize,
+  taskRegressions,
   worseThan,
   type EvalReport,
 } from './harness.js';
@@ -153,6 +155,21 @@ describe('eval harness', () => {
     // Two runs against a baseline of one: compared per run, not in total.
     const twice = await evaluate(true, 2);
     expect(formatReport(twice, baseline)).toMatch(/tokens 2\.0k in \(\+0%\) per run/);
+    // Task by task: losing one safeguard while gaining another is not "no worse".
+    const one = baseline.results[0]!;
+    const as = (id: string, pass: boolean) => ({ ...one, task: id, pass });
+    const before = { ...baseline, results: [as('history', true), as('false-premise', false)] };
+    const after = { ...baseline, results: [as('history', false), as('false-premise', true)] };
+    expect(regressions(summarize(after.results), summarize(before.results))).toEqual([]);
+    expect(reportRegressions(after, before)).toEqual(['history solved 0/1 (baseline 1/1)']);
+    expect(taskRegressions(before.results, before.results)).toEqual([]);
+    // More citations checked must not hide more invalid ones per run.
+    const cited = (checked: number, invalid: number) => ({
+      ...base,
+      citationsChecked: checked,
+      citationsInvalid: invalid,
+    });
+    expect(regressions(cited(40, 2), cited(10, 1))).toEqual(['more invalid citations']);
   });
 
   it("gates time, a step's cache share and its context growth; shows the slowest steps and the spread", async () => {

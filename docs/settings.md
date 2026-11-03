@@ -44,22 +44,25 @@ end.
 
 | Setting (default) | Trades | Change it when | Tier |
 |---|---|---|---|
+| `lean` (on) | One switch for the settings below that cut time and tokens together: `maxDebateRounds` capped at 1, `singlePass`, `gapAimed`, `keepUnchallenged`, `gapsPerChase` 1, and an AI-rated complexity 4 capped at 3 (a chosen one stays). While it is on, those switches cannot be turned back individually | Off if answers get worse, or for a high-stakes run that wants two debate rounds or the second investigator. Off, each setting applies as set | R: estimated ≈36–38 min and ≈19.6M input against 55.7 min and 26.0M on one 197-file run (with the two switches below), not yet A/B'd |
+| `SYMPHONY_DELTA_REPAIR`, `SYMPHONY_HEADER_IN_SYSTEM` (on; `=0` turns each off) | A rejected answer resends only what changes (≈55–125 s per answer visit); fixed instructions go in the system message (first-call cache reuse was 0–18%) | `=0` if a trial shows more rejections or a lower cache share | R (trials 4 and 5) |
 | `exhaustive` (off) | Coverage vs time, tokens and run size | Every file must be triaged in a mid-size repo. On a very large repo it still stops `partial` at the 200-visit triage check cap | M: a 38,895-file run queued ~9 h of triage and a 316 MB record before Locate existed |
 | `maxTriageFiles` (300) | Above it, Locate picks the files: its scope plus the top 50 candidates. The rest are listed in `unlocatedFiles`, not read | Raise it for completeness on mid-size repos; lower it to narrow a big repo further | M (Locate), D (300) |
 | `narrowRead` (off), `narrowBudget` (20) | Tokens vs coverage: unmatched files beyond the budget are never read, and each is listed | A cost-bound run where every file would otherwise be triaged (at most `maxTriageFiles` files, or `exhaustive`). It does nothing above that, where Locate already narrows. Keep gap expansion on, so a gap can pull a file back | M: one run, no baseline; files ranked 90–150 were still 57% relevant |
 | `maxExpandRounds` (2), `expandWave` (8) | Coverage vs reads | 0 for a narrow, cost-bound question. Never 0 together with `narrowRead` | D |
 | `maxGapRounds` (2), `maxChaseRounds` (8, run-wide) | Coverage vs tokens and time (`chase` is the second-largest step) | Lower them only to bound cost; fewer gaps get closed and more are reported as doubts | M for cost, R for coverage |
-| `gapsPerChase` (99: one call for all gaps) | Tokens vs time | 1 only when latency matters more than tokens | R: the "at most ~4% of time" estimate subtracted the largest possible warm-up overhead, so it is not a measured ceiling (trial 11) |
+| `gapsPerChase` (99: one call for all gaps; 1 with `lean`) | Tokens vs time | 1 only when latency matters more than tokens | R: the "at most ~4% of time" estimate subtracted the largest possible warm-up overhead, so it is not a measured ceiling (trial 11) |
 | `batchSize` (10, at least 1) | Part starts (a fixed first call of ~19k tokens each) vs context per call | none | M: triage was 20% of cost when it paged 25 files per part; now it preloads 10. Not an A/B |
 | `deepBatchSize` (4, at least 1) | The same, for the deep read | After trial 7 | R |
 | `batchWave`, `deepWave` | Not settings: derived after planning as size × agents × 3 | none | D |
 | `agents` (the plan picks 1–6), `agentsCap` (6, 1 to 6) | Wall time vs concurrent calls (not tokens) | `agentsCap` 4 if reports show rate limits or unread items | R: 6 at once was never measured (trial 1). Rate limits are now waited out and counted |
-| `singlePass` (off, pilot) | Fewer steps vs a pricier tier for the triage read | After trial 3 | R |
+| `singlePass` (off, pilot; on with `lean`) | Fewer steps vs a pricier tier for the triage read | After trial 3 | R |
 | `maxExperiments` (12, at least 1) | Time | Lower it (never 0) for speed. Untimed experiments run in parallel | M: 15 serial experiments took 20% of one run; a tailored 0 left a run stuck |
-| `maxDebateRounds` (2), `pragmatistFrom` (3) | Correctness (a hypothesis) vs time and tokens | 1 for speed-bound runs | M for cost: round 2 was ~16% of input and ~21% of time in one run. R for correctness: one run had two verified corrections (trial 9) |
-| `keepUnchallenged` (off), `readerHypotheses` (on), `gapAimed` (off) | Unmeasured | After their A/Bs | R |
+| `maxDebateRounds` (2; at most 1 with `lean`), `pragmatistFrom` (3) | Correctness (a hypothesis) vs time and tokens | 1 for speed-bound runs | M for cost: round 2 was ~16% of input and ~21% of time in one run. R for correctness: one run had two verified corrections (trial 9) |
+| `keepUnchallenged` (off), `readerHypotheses` (on), `gapAimed` (off); the first and last are on with `lean` | Unmeasured | After their A/Bs | R |
 | `supportJudge` (off; `judgeBatch` 40) | Catches a real quote attached to a wrong claim vs tokens and a second model family. Does nothing for web findings | `shadow` for high-stakes workspace questions; `enforce` only after calibration (trial 10) | D/R |
-| complexity (auto) | 1: no debate, cheapest. 4: the heaviest model at xhigh effort, plus a second investigator | Force 1 for routine lookups, 4 for high stakes. Ratings vary | D |
+| complexity (auto; `lean` caps a rated 4 at 3) | 1: no debate, cheapest. 4: the heaviest model at xhigh effort, plus a second investigator | Force 1 for routine lookups, 4 for high stakes (a chosen 4 is kept). Ratings vary | D |
+| `SYMPHONY_TIERS` (e.g. `4=claude-opus-5.5:high`) | A lower effort on the answer saves up to ≈2.5 min per answer visit (estimated). It also lowers hypothesize at complexity 3 and the skeptic, which plays a tier up on another model family that takes the tier's effort | Only after an A/B that checks objections found as well as answers | R: unmeasured |
 | improvisation (0) | 0 replays recorded answers at zero tokens; only the saved runs of the same score are read | none | M: loading only the same score's runs takes 0.3 s and 369 MB; loading all 1.2 GB took 5.4 s and 2.3 GB |
 | Citation gate (always on) | No model tokens | none | M: failing citations fell from 14.2% to 2.4% |
 | `maxSteps` (5000) | A backstop, not a cost bound | none | D |
@@ -79,9 +82,10 @@ end.
 
 ## Profiles
 
-- **Default:** the code defaults.
+- **Default:** the code defaults, `lean` on.
 - **Routine question:** complexity 1.
-- **High-stakes workspace question:** complexity 4, with `supportJudge` set to `shadow`.
+- **High-stakes workspace question:** complexity 4 and `lean` off (two debate rounds, the second
+  investigator), with `supportJudge` set to `shadow`.
 - **Huge, budget-bound repository:** a lower `maxTriageFiles`. Locate decides what is read there,
   not `narrowRead`. Gap expansion stays on.
 - **Cost-bound run:** lower `maxChaseRounds` and `maxDebateRounds`, and accept more reported
