@@ -157,9 +157,12 @@ describe('eval harness', () => {
   it("gates time, a step's cache share and its context growth; shows the slowest steps and the spread", async () => {
     const report = await evaluate(true, 2);
     const base = summarize(report.results);
-    expect(
-      regressions({ ...base, ms: base.ms * 2 + 1000 }, { ...base, ms: base.ms + 500 }),
-    ).toEqual([expect.stringMatching(/^time per run up \d+%$/)]);
+    // Two runs each: 90 s per run against 40 s.
+    expect(regressions({ ...base, ms: 180_000 }, { ...base, ms: 80_000 })).toEqual([
+      expect.stringMatching(/^time per run up 125%$/),
+    ]);
+    // 3x slower, but by under TIME_FLOOR_MS per run: load noise on a short run, not a regression.
+    expect(regressions({ ...base, ms: 1_800 }, { ...base, ms: 600 })).toEqual([]);
     const big = {
       calls: 1,
       inputTokens: 200_000,

@@ -4,7 +4,7 @@ Each trial is an A/B run with the eval harness on the same fixture. It changes o
 `--with key=value` (a pattern input) or a `SYMPHONY_*` trial switch (an env var), and compares
 the result with a baseline report. The report's first line names what each side was played
 with. `--compare` exits 2 when the trial is worse than its baseline: fewer solved, more invalid
-citations, 25% more input tokens per run, 50% more time per run, a step's cached share down 15
+citations, 25% more input tokens per run, 50% more time per run (and at least 10 s more), a step's cached share down 15
 points, or a step whose input grows more over its visits.
 
 Live trials call Copilot and spend premium requests. `investigate-many-files` (240 files,
