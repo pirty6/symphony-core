@@ -235,6 +235,20 @@ export function truncateDiff(diff: string, max: number): string {
   ];
   return `${diff.slice(0, max)}\n… diff truncated at ${max} characters${said.length ? `; ${said.join('; ')}` : ''} …`;
 }
+/** An untracked text file as a new-file diff; undefined for binary or very large files. */
+function newFileDiff(file: string, bytes: Buffer): string | undefined {
+  if (bytes.length > MAX_DIFF || bytes.includes(0)) return undefined;
+  const lines = bytes.toString('utf8').replace(/\n$/, '').split('\n');
+  return [
+    `diff --git a/${file} b/${file}`,
+    'new file (untracked)',
+    '--- /dev/null',
+    `+++ b/${file}`,
+    `@@ -0,0 +1,${lines.length} @@`,
+    ...lines.map((l) => `+${l}`),
+  ].join('\n');
+}
+
 /** Symphony's own files (saved runs, checkpoints) are never the edit. */
 const NOT_THE_EDIT = ':(exclude).symphony';
 
@@ -270,6 +284,8 @@ export async function workspaceDiff(
   const untracked = others.split('\n').filter(Boolean);
   const h = createHash('sha256').update(diff);
   const sorted = untracked.toSorted();
+  const shownNew: string[] = [];
+  const unshown: string[] = [];
   // Read a few at a time, hash in order: the same hash as reading them one by one.
   for (let i = 0; i < sorted.length; i += READ_AT_ONCE) {
     const batch = sorted.slice(i, i + READ_AT_ONCE);
@@ -280,12 +296,17 @@ export async function workspaceDiff(
       h.update(`\0${f}\0`);
       // Vanished or unreadable: its name still counts.
       if (texts[j]) h.update(texts[j]);
+      const added = texts[j] && newFileDiff(f, texts[j]);
+      if (added) shownNew.push(added);
+      else unshown.push(f);
     });
   }
   const files = [...new Set([...changed, ...untracked])].toSorted();
-  const shown = diff.length > MAX_DIFF ? truncateDiff(diff, MAX_DIFF) : diff;
-  const extra = untracked.length
-    ? `\nuntracked files:\n${untracked.map((f) => `  ${f}`).join('\n')}`
+  // New files are shown as additions, so the reviewer (and a check) reads them like any edit.
+  const whole = [diff.trimEnd(), ...shownNew].filter(Boolean).join('\n');
+  const shown = whole.length > MAX_DIFF ? truncateDiff(whole, MAX_DIFF) : whole;
+  const extra = unshown.length
+    ? `\nuntracked files:\n${unshown.map((f) => `  ${f}`).join('\n')}`
     : '';
   return { diff: `${shown}${extra}`.trim(), hash: h.digest('hex').slice(0, 16), files };
 }

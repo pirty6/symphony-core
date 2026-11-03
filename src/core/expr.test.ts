@@ -98,6 +98,10 @@ describe('evalExpr values', () => {
     ['lines("")', []],
     ['linesWith(" ✓ a > t 1ms\n × a > u\n FAIL  a > u", "a > u")', [' × a > u', ' FAIL  a > u']],
     ['count(lines("+++ b/x\n+  it.skip(1)\n- old"), "^[+][^+].*[.]skip[(]")', 1],
+    [
+      'diffLines("diff --git a/src/a.ts b/src/a.ts\n+code\ndiff --git a/test/a.test.ts b/test/a.test.ts\n-old\n+new", "[.]test[.]")',
+      ['-old', '+new'],
+    ],
     ['runsNeeded(0.1, 1)', 29],
     ['runsNeeded(0.1, 8)', 49],
     ['runsNeeded(0.25, 8)', 18],

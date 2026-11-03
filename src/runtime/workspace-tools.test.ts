@@ -183,6 +183,12 @@ describe('git.diff', () => {
     writeFileSync(join(d, 'new.txt'), 'x');
     const added = await workspaceDiff(ctx(d));
     expect(added.files).toEqual(['a.txt', 'new.txt']);
+    // A new file is shown as an addition; a binary one only by name.
+    expect(added.diff).toMatch(/\+\+\+ b\/new\.txt\n@@ -0,0 \+1,1 @@\n\+x/);
+    expect(added.diff).not.toMatch(/untracked files:/);
+    writeFileSync(join(d, 'blob.bin'), Buffer.from([1, 0, 2]));
+    expect((await workspaceDiff(ctx(d))).diff).toMatch(/untracked files:\n {2}blob\.bin/);
+    rmSync(join(d, 'blob.bin'));
     expect(added.hash).not.toBe(edited.hash);
     writeFileSync(join(d, 'new.txt'), 'y');
     expect((await workspaceDiff(ctx(d))).hash).not.toBe(added.hash);

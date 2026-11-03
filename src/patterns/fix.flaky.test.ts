@@ -148,6 +148,8 @@ const gateRuns =
       fails(s, ++run) ? tests(false, out.targetFails) : tests(true, passOutput);
   };
 /** maxStabilityRuns 1 is raised to runsNeeded(0.25, maxEdits 2) = 13. */
+/** A file's header in git.diff's output. */
+const head = (f: string) => `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1 @@`;
 /** A diff tool whose patch is new every attempt. */
 const masked = (files: string[], diff: string) => () => {
   let k = 0;
@@ -304,16 +306,28 @@ describe('fix: the stability gate (opt-in)', () => {
     const cases: [string[], string, RegExp][] = [
       [
         ['src/eval/harness.ts'],
-        '+++ b/src/eval/harness.ts\n+export const TIME_SLACK = 3;',
+        `${head('src/eval/harness.ts')}\n+export const TIME_SLACK = 3;`,
         /slack/,
       ],
-      [['src/a.test.ts'], `+++ b/src/a.test.ts\n+  it.skip('loads in time')`, /own file/],
+      [['src/a.ts'], `${head('src/a.ts')}\n+  await sleep(50);`, /code touches/],
+      [
+        ['src/a.test.ts'],
+        `${head('src/a.test.ts')}\n+  it.skip('another', () => {});`,
+        /skip, invert/,
+      ],
+      [['src/a.test.ts'], `${head('src/a.test.ts')}\n+  it('x', { retry: 3 }, () => {});`, /retry/],
+      [
+        ['src/a.test.ts'],
+        `${head('src/a.test.ts')}\n-  it('loads in time', async () => {\n+  it('loads in time', async () => { // ok`,
+        /existing test lines/,
+      ],
       [
         ['src/a.ts'],
-        '--- a/src/a.ts\n-  expect(ms).toBeLessThan(10);\n+  run();',
+        `${head('src/a.ts')}\n-  expect(ms).toBeLessThan(10);\n+  run();`,
         /assertions removed/,
       ],
-      [['package.json'], '+++ b/package.json\n+  "test": "vitest run"', /configure the tests/],
+      [['package.json'], `${head('package.json')}\n+  "test": "vitest run"`, /configure the tests/],
+      [['img.png'], 'untracked files:\n  img.png', /cannot show/],
     ];
     for (const [files, diff, flag] of cases) {
       const r = play(
@@ -336,7 +350,24 @@ describe('fix: the stability gate (opt-in)', () => {
       armed,
     );
     expect(accepted.end).toBe('fixed');
-    expect(accepted.state.stabilityReport).toMatch(/^certified: .*a person accepted: added lines/);
+    expect(accepted.state.stabilityReport).toMatch(/^certified: .*a person accepted: added code/);
+    // Seen live: a root-cause fix plus a new regression test (with a sleep to order the answers)
+    // next to the flaky one. Nothing to flag: certified, unattended.
+    const regression = play(
+      {
+        agents: flaky,
+        tools: {
+          captureDiff: masked(
+            ['src/search.js', 'test/search.test.js'],
+            `${head('src/search.js')}\n-  let shown = '';\n+  const results = await Promise.all(queries.map((q) => fetch(q)));\n${head('test/search.test.js')}\n+test('ignores stale answers', async () => {\n+    await sleep(delays[q]);\n+  assert.equal(await typeAhead(['a', 'ab', 'abc'], ordered), 'ABC');\n+});`,
+          )(),
+          runStable: gateRuns()(),
+        },
+      },
+      armed,
+    );
+    expect(regression.state.maskingFlags).toEqual([]);
+    expect(regression.end).toBe('fixed');
   });
 
   it('a certificate holds only for the patch it measured', () => {

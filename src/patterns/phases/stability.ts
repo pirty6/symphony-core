@@ -10,9 +10,10 @@
  *    maxEdits)). A failure of that test sends the patch back to the edit loop (its budgets hold;
  *    the triage may not call it ENVIRONMENT). Runs where it neither passed nor failed visibly
  *    (another test failed, a timeout, output cut, its line missing) do not count.
- * 3. Masking flags: edits that make a flaky test pass without fixing it are flagged (its own
- *    file changed, retries, skips, timeouts, slack, workers, sleeps, removed assertions, test
- *    config, untracked or cut diff, more skipped tests than the control): a person decides.
+ * 3. Masking flags: edits that make a flaky test pass without fixing it are flagged (existing
+ *    test lines changed; tests skipped, inverted, retried or lengthened; code touching retries,
+ *    timeouts, slack, workers or sleeps; removed assertions; test config; a diff that cannot show
+ *    everything; more skipped tests than the control): a person decides. A new test is fine.
  *
  * Certified means: under the gate command, the flaky test's failure rate is below
  * stabilityTolerance at 95% across maxEdits patches. Anything less ends partial (not certified)
@@ -38,7 +39,15 @@ const targetRetried = (output: string) =>
 const targetPassed = (output: string) =>
   `count(linesWith(${output}, flakyTarget), "${PASSED_LINE}") > 0`;
 
-/** Added lines that can make a flaky test pass without fixing it (a heuristic: a person decides). */
+/** Test files (vitest/jest/node/pytest/go conventions); everything else is code or config. */
+export const TEST_PATH =
+  '(^|/)(test|tests|__tests__|spec)/|[.](test|spec)[.][a-z]+$|(^|/)test_[^/]*[.]py$|_test[.](py|go)$';
+const CODE_PATH =
+  '^(?!(.*/)?(test|tests|__tests__|spec)/)(?!.*[.](test|spec)[.][a-z]+$)(?!(.*/)?test_[^/]*[.]py$)(?!.*_test[.](py|go)$)';
+/** Added test lines that skip, invert, retry or lengthen a test (a new test is fine). */
+const TEST_MASKING_LINE =
+  '^[+][^+].*([.](skip|todo|fails|only)[(]|(skip|todo|retry|repeats|timeout|testTimeout): |skipIf|runIf|setTimeout[(][0-9]|setConfig[(])';
+/** Added code that can make a flaky test pass without fixing it (a heuristic: a person decides). */
 const MASKING_LINE =
   '^[+][^+].*([.](skip|todo|fails|only)[(]|(skip|todo): |skipIf|runIf|retry|repeats|[Tt]imeout|TIMEOUT|[Ss]lack|SLACK|[Tt]olerance|TOLERANCE|[Tt]hreshold|THRESHOLD|[Ww]orkers|[Pp]arallel|sleep)';
 const ASSERTION = '(expect|assert)';
@@ -376,13 +385,18 @@ export function stabilityPhases(cfg: StabilityConfig): {
         {
           field: 'maskingFlags',
           expr: [
+            // Existing tests changed (the flaky one included); new tests next to them are fine.
             flag(
-              '!empty(flakyFile) && includes(changedFiles, flakyFile)',
-              "the flaky test's own file changed",
+              `count(diffLines(diff, "${TEST_PATH}"), "^-[^-]") > 0`,
+              'existing test lines were changed or removed',
             ),
             flag(
-              `count(lines(diff), "${MASKING_LINE}") > 0`,
-              'added lines touch retries, skips, timeouts, slack, workers or sleeps',
+              `count(diffLines(diff, "${TEST_PATH}"), "${TEST_MASKING_LINE}") > 0`,
+              'added test lines skip, invert, retry or lengthen a test',
+            ),
+            flag(
+              `count(diffLines(diff, "${CODE_PATH}"), "${MASKING_LINE}") > 0`,
+              'added code touches retries, skips, timeouts, slack, workers or sleeps',
             ),
             flag(
               `count(lines(diff), "^-[^-].*${ASSERTION}") > count(lines(diff), "^[+][^+].*${ASSERTION}")`,
@@ -391,7 +405,7 @@ export function stabilityPhases(cfg: StabilityConfig): {
             flag('len(checkFiles) > 0', 'files that configure the tests changed'),
             flag(
               'includes(diff, "untracked files:") || includes(diff, "diff truncated at")',
-              'new or cut files the diff does not show',
+              'files the diff cannot show (binary or cut)',
             ),
             flag(
               '!empty(controlOutput) && ((includes(stableOutput, " skipped") && !includes(controlOutput, " skipped")) || (includes(stableOutput, " todo") && !includes(controlOutput, " todo")) || (includes(stableOutput, "expected fail") && !includes(controlOutput, "expected fail")))',
