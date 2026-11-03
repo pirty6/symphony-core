@@ -58,22 +58,51 @@ export function playsAfter(step: ChainStep, outcome: PerformanceOutcome): boolea
   return typeof step !== 'string' && outcome !== 'cancelled' && outcome !== 'in-progress';
 }
 
-function render(value: unknown): string {
-  if (typeof value === 'string') return value.trim() || '_empty_';
-  if (Array.isArray(value) && value.every((x) => typeof x === 'string')) {
-    return value.length > 0 ? value.map((x) => `- ${x}`).join('\n') : '_none_';
-  }
-  return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
+/** How much of a result a chain hands on (the whole result stays in the saved run). */
+export interface ResultLimits {
+  /** Entries of a list, then a count of the rest. */
+  readonly items: number;
+  /** Characters of one text. */
+  readonly chars: number;
 }
 
-/** A run's declared result (score.result) as Markdown sections. */
+/** What the next run of a chain gets: it reads it in every prompt, as its goal. */
+export const HANDOFF_LIMITS: ResultLimits = { items: 40, chars: 8000 };
+/** The whole handoff, at most. */
+export const HANDOFF_CHARS = 30_000;
+
+const cut = (text: string, chars: number) =>
+  text.length > chars
+    ? `${text.slice(0, chars)}… (${text.length - chars} more characters in the saved run)`
+    : text;
+
+function render(value: unknown, limits?: ResultLimits): string {
+  if (typeof value === 'string') {
+    const text = value.trim() || '_empty_';
+    return limits ? cut(text, limits.chars) : text;
+  }
+  if (Array.isArray(value) && value.every((x) => typeof x === 'string')) {
+    if (value.length === 0) return '_none_';
+    const shown = limits ? value.slice(0, limits.items) : value;
+    const rest = value.length - shown.length;
+    return [
+      ...shown.map((x) => `- ${limits ? cut(x, limits.chars) : x}`),
+      ...(rest > 0 ? [`- … ${rest} more in the saved run`] : []),
+    ].join('\n');
+  }
+  const json = `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
+  return limits ? cut(json, limits.chars) : json;
+}
+
+/** A run's declared result (score.result) as Markdown sections; `limits` for a chain's handoff. */
 export function resultText(
   score: ExecutableScore,
   finalState: Readonly<Record<string, unknown>>,
+  limits?: ResultLimits,
 ): string {
   return (score.result ?? [])
     .filter((k) => k in finalState)
-    .map((k) => `### ${k}\n\n${render(finalState[k])}`)
+    .map((k) => `### ${k}\n\n${render(finalState[k], limits)}`)
     .join('\n\n');
 }
 
@@ -107,7 +136,7 @@ export function handoffContext(
   if (next.goalFrom) {
     const own = ctx[next.goalFrom];
     const goal = typeof own === 'string' && own.trim() ? own.trim() : prev.score.goal;
-    const found = resultText(prev.score, state);
+    const found = cut(resultText(prev.score, state, HANDOFF_LIMITS), HANDOFF_CHARS);
     ctx[next.goalFrom] = found
       ? `${goal}\n\n## What the ${prev.score.pattern} run found\n\n${found}`
       : goal;
