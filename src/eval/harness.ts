@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compileScore } from '../core/compile.js';
 import { RUN_SCHEMA_VERSION } from '../core/migrate.js';
-import type { Improvisation, Pattern, SavedRun, TokenUsage } from '../core/types.js';
+import type { Complexity, Improvisation, Pattern, SavedRun, TokenUsage } from '../core/types.js';
 import {
   addUsage,
   costliest,
@@ -101,6 +101,8 @@ export interface EvalOptions {
   readonly inputs?: (pattern: Pattern) => Readonly<Record<string, unknown>>;
   /** Play every task at this improvisation (0 classical … 4 free); a trial's setting. */
   readonly improvisation?: Improvisation;
+  /** Every task at this complexity (eval --complexity), over the task's own. */
+  readonly complexity?: Complexity;
   /** Saved in the report: what the runs were played with. */
   readonly settings?: readonly string[];
 }
@@ -123,7 +125,7 @@ async function runTask(
     const score = compileScore(pattern, {
       context: { ...task.inputs, ...o.inputs?.(pattern) },
       ...(pattern.goalFrom ? {} : { goal: task.goal ?? task.id }),
-      ...(task.complexity ? { complexity: task.complexity } : {}),
+      ...((o.complexity ?? task.complexity) ? { complexity: o.complexity ?? task.complexity } : {}),
       ...(o.improvisation !== undefined ? { improvisation: o.improvisation } : {}),
     });
     const started = Date.now();
@@ -384,7 +386,11 @@ const cacheShare = (u: TokenUsage) => (u.inputTokens > 0 ? u.cacheReadTokens / u
 export function regressions(s: EvalSummary, b: EvalSummary): string[] {
   const out: string[] = [];
   if (rate(s.solved, s.runs) < rate(b.solved, b.runs)) out.push('fewer tasks solved');
-  if (rate(s.citationsInvalid, s.citationsChecked) > rate(b.citationsInvalid, b.citationsChecked))
+  // As a share and per run: more citations checked must not hide more invalid ones.
+  if (
+    rate(s.citationsInvalid, s.citationsChecked) > rate(b.citationsInvalid, b.citationsChecked) ||
+    rate(s.citationsInvalid, s.runs) > rate(b.citationsInvalid, b.runs)
+  )
     out.push('more invalid citations');
   if (s.citationsChecked === 0 && b.citationsChecked > 0) out.push('no citations checked');
   const perRun = (x: EvalSummary) => rate(x.inputTokens, x.runs);
@@ -416,6 +422,41 @@ export function regressions(s: EvalSummary, b: EvalSummary): string[] {
 
 export function worseThan(s: EvalSummary, b: EvalSummary): boolean {
   return regressions(s, b).length > 0;
+}
+
+/** Solved and runs per task. */
+function tally(rs: readonly EvalResult[]): Map<string, { solved: number; runs: number }> {
+  const m = new Map<string, { solved: number; runs: number }>();
+  for (const r of rs) {
+    const t = m.get(r.task) ?? { solved: 0, runs: 0 };
+    m.set(r.task, { solved: t.solved + (r.pass ? 1 : 0), runs: t.runs + 1 });
+  }
+  return m;
+}
+
+/**
+ * Task by task: one solved less often than in the baseline is a regression even when another
+ * gains and the totals stay the same (a lost safeguard must not hide behind a won task).
+ */
+export function taskRegressions(
+  results: readonly EvalResult[],
+  baseline: readonly EvalResult[],
+): string[] {
+  const was = tally(baseline);
+  return [...tally(results)].flatMap(([task, t]) => {
+    const b = was.get(task);
+    return b && rate(t.solved, t.runs) < rate(b.solved, b.runs)
+      ? [`${task} solved ${t.solved}/${t.runs} (baseline ${b.solved}/${b.runs})`]
+      : [];
+  });
+}
+
+/** Everything that makes a report worse than its baseline: the totals, then task by task. */
+export function reportRegressions(report: EvalReport, baseline: EvalReport): string[] {
+  return [
+    ...regressions(summarize(report.results), summarize(baseline.results)),
+    ...taskRegressions(report.results, baseline.results),
+  ];
 }
 
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n));
@@ -508,7 +549,7 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
     .flatMap((r) => (r.growing ?? []).map((g) => `${r.task} ${g}`))
     .slice(0, 5);
   if (growing.length > 0) lines.push(`growing context: ${growing.join('; ')}`);
-  const worse = b ? regressions(s, b) : [];
+  const worse = baseline ? reportRegressions(report, baseline) : [];
   if (worse.length > 0) lines.push(`⚠ worse than the baseline: ${worse.join(', ')}`);
   return lines.join('\n');
 }

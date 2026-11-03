@@ -133,6 +133,15 @@ describe('main', () => {
       readFileSync(/run (\S+\.json)/.exec(at2.results[0].notes.join(' '))![1]!, 'utf8'),
     );
     expect(run2.score.improvisation).toBe(2);
+    // A complexity pinned for every task (the tasks' own ratings are skipped), named too.
+    out = '';
+    expect(await main([...args, '--complexity', '3'], cwd)).toBe(0);
+    const at3 = JSON.parse(readFileSync(/saved (\S+\.json)/.exec(plain())![1]!, 'utf8'));
+    expect(at3.settings).toEqual(['complexity=3']);
+    const run3 = JSON.parse(
+      readFileSync(/run (\S+\.json)/.exec(at3.results[0].notes.join(' '))![1]!, 'utf8'),
+    );
+    expect(run3.score.complexity).toBe(3);
     out = '';
     expect(await main([...args, '--with', 'noSuchField=1'], cwd)).toBe(1);
     expect(plain()).toMatch(/--with: no task's pattern has 'noSuchField=1'/);

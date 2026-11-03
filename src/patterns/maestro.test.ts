@@ -4,7 +4,7 @@ import { runScripted } from '../core/scripted.js';
 import type { DemoScript, Pattern } from '../core/types.js';
 import { TIER_NAMES } from '../core/catalog.js';
 import { resultText } from '../core/chain.js';
-import { analyze, composedScore, fix, maestro, maestroThen } from './index.js';
+import { analyze, composedScore, fix, investigate, maestro, maestroThen } from './index.js';
 
 const demo = maestro.demo!;
 const nodesRun = (r: ReturnType<typeof runScripted>) => r.state.steps.map((s) => s.nodeId);
@@ -280,6 +280,28 @@ describe('composedScore', () => {
       improvisation: 0,
       context: { question: 'q', data: 'sales.csv' },
     });
+  });
+
+  it("tells investigate when its complexity is the classifier's rating, not one you set", () => {
+    const m = compileScore(maestro, { goal: 'g', context: { request: 'x' } });
+    const inv = (({ demo: _d, ...rest }) => rest)(investigate) as Pattern;
+    const state = {
+      finalPattern: inv,
+      complexity: 4,
+      request: 'r',
+      childContext: { question: 'q' },
+    };
+    expect(composedScore(m, state)!.score.context).toMatchObject({ complexityRated: true });
+    const preset = composedScore(m, { ...state, presetComplexity: 4 })!;
+    expect(preset.score.context).not.toHaveProperty('complexityRated');
+    // A pattern without the field is not given it.
+    const fixPattern = (({ demo: _d, ...rest }) => rest)(fix) as Pattern;
+    const forFix = composedScore(m, {
+      ...state,
+      finalPattern: fixPattern,
+      childContext: { issue: 'i' },
+    });
+    expect(forFix!.score.context).not.toHaveProperty('complexityRated');
   });
 
   it("hands the debate's open doubts and uncovered requirements to the performer in hint", () => {

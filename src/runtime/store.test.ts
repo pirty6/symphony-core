@@ -68,7 +68,7 @@ describe('run store', () => {
     const score = compileScore(investigate, {
       goal: 'g',
       // One item per sub-agent, so the demo's deep read splits into parts.
-      context: { ...investigate.demo!.context!, deepBatchSize: 1 },
+      context: { ...investigate.demo!.context!, lean: false, deepBatchSize: 1 },
       generatedAt: 't',
     });
     const played = runScripted(score, investigate.demo, { at: '2026-01-01T00:00:00Z' }).state;
@@ -102,7 +102,7 @@ describe('run store', () => {
   it('agentsCap caps what the plan chose (the 6 vs 4 trial)', () => {
     const score = compileScore(investigate, {
       goal: 'g',
-      context: { ...investigate.demo!.context!, deepBatchSize: 1, agentsCap: 4 },
+      context: { ...investigate.demo!.context!, lean: false, deepBatchSize: 1, agentsCap: 4 },
       generatedAt: 't',
     });
     const played = runScripted(score, investigate.demo, { at: '2026-01-01T00:00:00Z' }).state;
