@@ -119,6 +119,8 @@ export interface NextPerformance {
 type Unsequenced<T> = T extends { seq: number } ? Omit<T, 'seq'> : never;
 
 const DEFAULT_PARALLEL = 4;
+/** Tool steps write a checkpoint at most this often (AI answers and decisions always do). */
+export const CHECKPOINT_EVERY_MS = 30_000;
 /** fanOut.warm: the longest the other parts wait for the first one to start answering. */
 const WARM_MS = 30_000;
 
@@ -134,7 +136,11 @@ export interface RunOptions {
   /** Workspace fingerprint after each agent node (e.g. gitFingerprint). */
   readonly envHash?: () => Promise<string>;
   readonly clock?: () => string;
-  readonly onSave?: (run: SavedRun) => Promise<string | undefined>;
+  /** `checkpoint`: saved mid-run (a smaller, unindented file will do; the final save follows). */
+  readonly onSave?: (
+    run: SavedRun,
+    how?: { readonly checkpoint: boolean },
+  ) => Promise<string | undefined>;
   /**
    * The run's scratch folder: executors put temporary files there, and `remove`
    * deletes it when the run ends (see store.ts runScratch).
@@ -837,14 +843,17 @@ export class Run {
   }
 
   /** Write the run as it stands; a failed write never stops the run. */
-  private save(): Promise<string | undefined> {
+  private save(checkpoint = false): Promise<string | undefined> {
     const run: SavedRun = {
       schemaVersion: RUN_SCHEMA_VERSION,
       score: this.score,
       performance: this.performance(),
     };
-    return this.opts.onSave!(run).catch(() => undefined);
+    this.lastCheckpoint = Date.now();
+    return this.opts.onSave!(run, { checkpoint }).catch(() => undefined);
   }
+
+  private lastCheckpoint = 0;
 
   start(): Promise<Performance> {
     this.finished ??= this.loop();
@@ -877,7 +886,18 @@ export class Run {
         break;
       }
       this.apply(advance(this.score, this.engine, res));
-      if (this.opts.checkpoint && this.engine.kind === 'running') await this.save();
+      // Every AI answer and decision is saved at once; a tool result at most every
+      // CHECKPOINT_EVERY_MS (the whole run is rewritten each time), since it runs again on
+      // resume. Except before an executor: once it edits, the tool would see another workspace
+      // (a test lock taken again on bent tests).
+      const next = this.engine.pause;
+      const edits = next?.kind === 'agent' && next.role === 'executor';
+      if (
+        this.opts.checkpoint &&
+        this.engine.kind === 'running' &&
+        (res.kind !== 'tool' || edits || Date.now() - this.lastCheckpoint >= CHECKPOINT_EVERY_MS)
+      )
+        await this.save(true);
     }
     if (this.opts.isolation) {
       const outcome = this.performance().outcome;

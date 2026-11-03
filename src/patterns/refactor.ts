@@ -17,6 +17,7 @@ const edit = editVerifyPhase({
   applyWrites: ['noticedBugs'],
   triageReads: ['target', 'plan', 'invariants'],
   success: 'prReview',
+  reviewedExit: 'acceptAnyway',
   giveUp: 'gaveUp',
 });
 const prReview = prReviewPhase({
@@ -59,8 +60,6 @@ export const refactor: Pattern = {
         description: 'What to restructure and why (e.g. "split cli.ts into one file per command")',
       },
       { name: 'hint', type: 'string', description: 'Optional constraints or preferences' },
-      { name: 'baselinePassed', type: 'boolean' },
-      { name: 'baselineOutput', type: 'string', description: 'Tests before any edit' },
       { name: 'files', type: 'string[]', description: 'Files to restructure' },
       { name: 'plan', type: 'string', description: 'Step-by-step refactoring plan' },
       {
@@ -103,8 +102,10 @@ export const refactor: Pattern = {
       tool: 'tests.run',
       // An unchanged workspace (e.g. the next backlog item) reuses the last baseline.
       args: { reuse: true },
-      inputs: { command: 'testCommand' },
-      output: { passed: 'baselinePassed', output: 'baselineOutput' },
+      inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' },
+      // The command it ran is kept: every later run uses the same one, so an edit to the test
+      // script cannot change what verifies it.
+      output: { passed: 'baselinePassed', output: 'baselineOutput', command: 'testCommand' },
     },
     { id: 'green', kind: 'condition', label: 'Green?', expression: 'baselinePassed' },
     {
@@ -113,7 +114,7 @@ export const refactor: Pattern = {
       label: 'Snapshot workspace',
       tool: 'git.diff',
       // Edits must change the workspace from here; pre-existing changes are not progress.
-      output: { hash: 'prevDiffHash' },
+      output: { hash: 'baseDiffHash' },
     },
     {
       id: 'plan',

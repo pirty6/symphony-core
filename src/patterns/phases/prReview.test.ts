@@ -42,7 +42,44 @@ function play(p: Pattern, over: Partial<DemoScript>) {
   return { r, ran, state: r.state.state, end: r.state.cursor };
 }
 
+/** Why the engine sent a review back. */
+const rejections = (r: ReturnType<typeof play>['r']) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'prReview' ? e.errors : [],
+  );
+
 describe('PR review after the tests pass', () => {
+  it('the decision must agree with the comments: an APPROVE that still blocks, or a REQUEST_CHANGES with nothing blocking, is sent back', () => {
+    const review = (decision: string, comments: string[]) => (_s: unknown, visit: number) =>
+      visit === 0
+        ? {
+            updates: { reviewDecision: decision, reviewComments: comments, reviewSummary: 's' },
+            verdict: v,
+          }
+        : approve();
+    const blocking = play(fix, {
+      agents: { prReview: review('APPROVE', ['BLOCKING src/a.ts:3 — off by one']) },
+    });
+    expect(rejections(blocking.r).join()).toMatch(/APPROVE with a BLOCKING comment/);
+    const nits = play(fix, {
+      agents: { prReview: review('REQUEST_CHANGES', ['NIT src/a.ts:3 — rename x']) },
+    });
+    expect(rejections(nits.r).join()).toMatch(/needs at least one BLOCKING comment/);
+    const untagged = play(fix, { agents: { prReview: review('APPROVE', ['looks fine']) } });
+    expect(rejections(untagged.r).join()).toMatch(/Start each reviewComments entry/);
+    // An approval that lists the earlier comment as RESOLVED, with a NIT, is accepted.
+    const honest = play(fix, {
+      agents: {
+        prReview: review('APPROVE', [
+          'RESOLVED src/a.ts:3 — the boundary is now exclusive',
+          'NIT src/a.ts:9 — a clearer name',
+        ]),
+      },
+    });
+    expect(rejections(honest.r)).toEqual([]);
+    expect(honest.r.state.outcome).toBe('success');
+  });
+
   it('an approving review ends the fix', () => {
     const { r, ran, end } = play(fix, { agents: { prReview: approve } });
     expect(r.state.outcome).toBe('success');
@@ -92,6 +129,83 @@ describe('PR review after the tests pass', () => {
     // With nobody to ask (auto-approve, the demo), a blocked change is never accepted.
     const unattended = play(fix, { agents: never });
     expect(unattended.end).toBe('reviewStopped');
+  });
+
+  it('a review round whose edit changes nothing lets a person decide, only on the reviewed, verified patch', () => {
+    const once = {
+      prReview: (_s: unknown, visit: number) =>
+        visit === 0 ? changes('BLOCKING src/a.ts:1 — rename the flag') : approve(),
+    };
+    // The green patch h1 is reviewed; the review edit changes nothing (still h1).
+    const stuck = play(fix, {
+      agents: once,
+      tools: { captureDiff: () => ({ diff: 'p1', hash: 'h1', files: ['src/a.ts'] }) },
+      approvals: { acceptAnyway: () => ({ approved: true }) },
+    });
+    expect(stuck.state.reviewedHash).toBe('h1');
+    expect(stuck.ran('acceptAnyway')).toBe(1);
+    expect(stuck.end).toBe('fixed');
+    expect(stuck.ran('runTests')).toBe(1);
+    // The result is the reviewed patch's, not the no-progress step's.
+    expect(stuck.state).toMatchObject({ testsPassed: true, failureKind: '', testOutput: 'ok' });
+    // Reviewed h1 (green), then a failing h2, then back to h1: h1's own results again.
+    const back = ['h1', 'h2', 'h1'];
+    let k = 0;
+    let runs = 0;
+    const revert = play(fix, {
+      agents: {
+        ...once,
+        triage: () => ({ updates: { failureKind: 'PATCH', failureReason: 'FAIL h2' }, verdict: v }),
+      },
+      tools: {
+        captureDiff: () => {
+          const h = back[Math.min(k++, back.length - 1)]!;
+          return { diff: h, hash: h, files: ['src/a.ts'] };
+        },
+        runTests: () => {
+          runs += 1;
+          return runs === 1
+            ? { passed: true, output: 'ok h1', command: 'npm test' }
+            : { passed: false, output: 'FAIL h2', command: 'npm test' };
+        },
+      },
+      approvals: { acceptAnyway: () => ({ approved: true }) },
+    });
+    expect(revert.end).toBe('fixed');
+    expect(revert.state).toMatchObject({
+      testsPassed: true,
+      testOutput: 'ok h1',
+      failureReason: '',
+    });
+    // Nobody to ask: a blocked change is not accepted.
+    const unattended = play(fix, {
+      agents: once,
+      tools: { captureDiff: () => ({ diff: 'p1', hash: 'h1', files: ['src/a.ts'] }) },
+    });
+    expect(unattended.end).toBe('reviewStopped');
+    // The review edit fails the tests (h2), and the next edit repeats it: h2 is not the
+    // reviewed patch, so no person is asked to accept a failing change.
+    const seq = ['h1', 'h2', 'h2'];
+    let n = 0;
+    let t = 0;
+    const failing = play(fix, {
+      agents: once,
+      tools: {
+        captureDiff: () => {
+          const h = seq[Math.min(n++, seq.length - 1)]!;
+          return { diff: h, hash: h, files: ['src/a.ts'] };
+        },
+        runTests: () => ({
+          passed: t++ === 0,
+          output: t === 1 ? 'ok' : 'FAIL',
+          command: 'npm test',
+        }),
+      },
+      approvals: { acceptAnyway: () => ({ approved: true }) },
+    });
+    expect(failing.ran('noProgress')).toBeGreaterThan(0);
+    expect(failing.ran('acceptAnyway')).toBe(0);
+    expect(failing.r.state.outcome).not.toBe('success');
   });
 
   it('refactor and implement are reviewed too (implement after its acceptance review)', () => {

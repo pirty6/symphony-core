@@ -343,6 +343,8 @@ describe('maestro adapts library patterns instead of rewriting them', () => {
     const hypothesize = final.nodes.find((n) => n.id === 'hypothesize') as { directive: string };
     expect(hypothesize.directive).toMatch(/For this request: It fails about once in ten CI runs/);
     expect(final.state.find((f) => f.name === 'maxAttempts')!.initial).toBe(2);
+    // The skeptic's REAL concern (one green run does not prove a flaky fix) is a setting now.
+    expect(final.state.find((f) => f.name === 'autoStabilityRuns')!.initial).toBe(20);
   });
 
   it('the proposer reads an outline, a fraction of the template', () => {

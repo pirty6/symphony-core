@@ -271,7 +271,7 @@ export const maestro: Pattern = {
       complexity: 2,
       label: 'Route and classify',
       directive:
-        "Decide which pattern from `summaries` fits `request`, or 'new' if none has the right shape. `suggested` is the verb-trigger match: keep it unless the request clearly signals another shape (e.g. 'fix' but architectural -> not fix; 'investigate' but the cause is already known -> fix). Then classify complexity, picking the LOWEST tier that covers the risk: 1 routine and well understood; 2 some judgement or several steps; 3 cross-cutting, risky or ambiguous; 4 novel, where the pattern fit itself is in question. Explain both choices in one or two sentences in `classifyReason`. If the request asks for two shapes in sequence (e.g. 'find out why X, then fix it' -> chosen investigate, then fix; 'understand this module and clean it up' -> investigate, then refactor), set `thenPattern` to the second pattern from `names`: it plays after the first with what the first found. Otherwise set `thenPattern` to ''. Do not chain when one pattern already covers both (fix diagnoses before it edits). `pastCompositions` are approved compositions of similar earlier requests in this workspace: follow their choice of pattern, complexity and thenPattern when this request is the same kind, unless it signals otherwise. List in `requirements` every explicit requirement of the request, one per entry, in the user's words where possible (what must be done, produced, included, avoided or kept), starting with its main goal; never invent requirements.",
+        "Decide which pattern from `summaries` fits `request`, or 'new' if none has the right shape. `suggested` is the verb-trigger match: keep it unless the request clearly signals another shape (e.g. 'fix' but architectural -> not fix; 'investigate' but the cause is already known -> fix; a test that fails now and then, to be made reliable -> fix, even with no trigger word; only to explain why it flakes -> investigate). Then classify complexity, picking the LOWEST tier that covers the risk: 1 routine and well understood; 2 some judgement or several steps; 3 cross-cutting, risky or ambiguous; 4 novel, where the pattern fit itself is in question. Explain both choices in one or two sentences in `classifyReason`. If the request asks for two shapes in sequence (e.g. 'find out why X, then fix it' -> chosen investigate, then fix; 'understand this module and clean it up' -> investigate, then refactor), set `thenPattern` to the second pattern from `names`: it plays after the first with what the first found. Otherwise set `thenPattern` to ''. Do not chain when one pattern already covers both (fix diagnoses before it edits). `pastCompositions` are approved compositions of similar earlier requests in this workspace: follow their choice of pattern, complexity and thenPattern when this request is the same kind, unless it signals otherwise. List in `requirements` every explicit requirement of the request, one per entry, in the user's words where possible (what must be done, produced, included, avoided or kept), starting with its main goal; never invent requirements.",
       reads: ['request', 'summaries', 'suggested', 'pastCompositions'],
       writes: ['chosen', 'complexity', 'classifyReason', 'thenPattern', 'requirements'],
       retries: 2,
@@ -334,7 +334,7 @@ export const maestro: Pattern = {
       isolated: true,
       label: 'Proposer',
       directive: `You are the PROPOSER: compose the score (an executable workflow pattern) for \`request\`. Every debate responds to your proposal.
-- If \`chosen\` is a library pattern (its steps are in \`outline\`, its settings in \`settings\`), it is tested: do NOT rewrite it. Tailor it in \`adaptation\` = { "directives": { "<agent step id>": "guidance for this request" }, "initial": { "<setting>": value } }: guidance is appended to that step's directive (what to look at first, which files, PRs, tests or errors the request names, what to ignore); initial values change settings (loop bounds, batch sizes, flags such as exhaustive); a setting marked "(at least N)" cannot go below N. Steps run with real tools: assessors read and run read-only commands, executors edit and run commands, and experiments run commands in the workspace after the user approves them. Never turn a capability off (a bound set to 0) because you assume it cannot run. Only steps that need something specific; {} is fine. Leave \`draft\` as {}. Only if the request truly needs a different shape (steps added, removed or reordered) write the whole pattern in \`draft\` instead, and say why in \`assumptions\`.
+- If \`chosen\` is a library pattern (its steps are in \`outline\`, its settings in \`settings\`), it is tested: do NOT rewrite it. Tailor it in \`adaptation\` = { "directives": { "<agent step id>": "guidance for this request" }, "initial": { "<setting>": value } }: guidance is appended to that step's directive (what to look at first, which files, PRs, tests or errors the request names, what to ignore); initial values change settings (loop bounds, batch sizes, flags such as exhaustive); a setting marked "(at least N)", "(at most N)" or "(N to M)" must stay in that range. Steps run with real tools: assessors read and run read-only commands, executors edit and run commands, and experiments run commands in the workspace after the user approves them. Never turn a capability off (a bound set to 0) because you assume it cannot run. Only steps that need something specific; {} is fine. Leave \`draft\` as {}. Only if the request truly needs a different shape (steps added, removed or reordered) write the whole pattern in \`draft\` instead, and say why in \`assumptions\`.
 - If \`chosen\` is 'new', draft a fresh pattern in \`draft\` and leave \`adaptation\` as {}.
 - \`pastCompositions\` are approved compositions of similar earlier requests: when one used the same pattern, start from its adaptation and change only what this request needs.
 - Every entry of \`requirements\` (the request's requirements, then each piece of go-gate feedback, which outranks earlier rounds) must be met by some step. \`draftErrors\` may name requirements a check found not covered.
@@ -879,7 +879,9 @@ ${SCORE_FORMAT}`,
             'Diagnose assumes a deterministic bug; a timing race would pass verify once and still flake',
           ],
           contested: ['Reproducible by repetition: CI-only timing may not reproduce locally'],
-          edits: ['Reword verify: run the test 20 times, not once'],
+          edits: [
+            'Arm the stability gate (autoStabilityRuns): a fix must pass the flaky test in fresh runs, not once',
+          ],
         },
         verdict: v('one concrete failure mode'),
       }),
@@ -904,7 +906,17 @@ ${SCORE_FORMAT}`,
       revise: (s) => ({
         updates: {
           draft: s.draft as Record<string, unknown>,
-          adaptation: s.adaptation as Record<string, unknown>,
+          // The REAL concern is applied: fix's stability gate, armed when the diagnosis finds a flake.
+          adaptation:
+            s.chosen === 'fix'
+              ? {
+                  ...(s.adaptation as Record<string, unknown>),
+                  initial: {
+                    ...(s.adaptation as { initial?: Record<string, unknown> }).initial,
+                    autoStabilityRuns: 20,
+                  },
+                }
+              : (s.adaptation as Record<string, unknown>),
           debateNotes: [
             'Approach: started from the fix pattern.',
             'Debated: whether one passing run proves a flaky fix (it does not).',

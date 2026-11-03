@@ -36,7 +36,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "start": "npm run dev --prefix packages/ui --",
+    "start": "npm run dev --prefix packages/ui -- --open /",
     "studio": "npm run dev --prefix packages/ui --",
     "cli": "tsx src/cli.ts",
     "mcp": "tsx src/mcp-server.ts",

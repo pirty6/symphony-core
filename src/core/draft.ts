@@ -207,6 +207,7 @@ export function parseDraft(raw: unknown): Checked<Pattern> {
       ...(str(f.description) ? { description: str(f.description)! } : {}),
       ...(f.initial !== undefined ? { initial: f.initial } : {}),
       ...(typeof f.min === 'number' ? { min: f.min } : {}),
+      ...(typeof f.max === 'number' ? { max: f.max } : {}),
     });
   });
   const nodes = (Array.isArray(raw.nodes) ? raw.nodes : [])
@@ -378,6 +379,16 @@ export function adaptPattern(
  * (AI steps with the start of their directive), and the settings an adaptation
  * may change. A fraction of the size of the pattern itself.
  */
+/** " (1 to 6)", " (at least 1)", " (at most 6)" or "": the values a setting accepts. */
+const range = (f: StateField): string =>
+  f.min !== undefined && f.max !== undefined
+    ? ` (${f.min} to ${f.max})`
+    : f.min !== undefined
+      ? ` (at least ${f.min})`
+      : f.max !== undefined
+        ? ` (at most ${f.max})`
+        : '';
+
 export function outlinePattern(pattern: Pattern): { steps: string[]; settings: string[] } {
   const steps = pattern.nodes.map((n) =>
     n.kind === 'agent'
@@ -393,7 +404,7 @@ export function outlinePattern(pattern: Pattern): { steps: string[]; settings: s
     )
     .map(
       (f) =>
-        `${f.name} = ${JSON.stringify(f.initial ?? false)}${f.min !== undefined ? ` (at least ${f.min})` : ''}${f.description ? ` — ${f.description}` : ''}`,
+        `${f.name} = ${JSON.stringify(f.initial ?? false)}${range(f)}${f.description ? ` — ${f.description}` : ''}`,
     );
   return { steps, settings };
 }
@@ -426,6 +437,7 @@ Optional "groups": [{id,label,description?,nodes:[node ids]}] name the phases of
 Expressions (guards, conditions, compute): state keys by name, literals, == != < <= > >= && || ! + - *,
 functions len(x) empty(x) includes(list,v) lower(s) append(list,v) if(c,a,b) chars(s) subset(a,b),
 join(list,sep) withIds(list,ids) brief(list,n) unmatched(list,regex) count(list,regex) positions(list,regex) heads(list,regex) outside(list,other) seq(prefix,n) stances(findings,hypotheses) text(x) numbered(list,start) unnumbered(list) ids(list) refs(text) (evidence ids "F<n>"),
+lines(text) linesWith(text,needle) runsNeeded(tolerance,candidates),
 and verdict.outcome / verdict.confidence of the last agent. Must be boolean for guards/conditions.
 
 Rules: every node reachable from start; an end reachable from every node; edges are tried in order and

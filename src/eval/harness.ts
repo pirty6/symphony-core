@@ -364,6 +364,11 @@ const rate = (a: number, b: number) => (b === 0 ? 0 : a / b);
 export const COST_SLACK = 1.25;
 /** Wall time per run: looser, live latency is noisy. */
 export const TIME_SLACK = 1.5;
+/**
+ * ...and only when it is also this much slower per run: a few hundred ms of engine time (a
+ * scripted run) vary by more than 1.5x with the machine's load, which says nothing.
+ */
+export const TIME_FLOOR_MS = 10_000;
 /** A step's cached share of input may drop this many points before it counts as worse. */
 export const CACHE_DROP = 0.15;
 /** Only steps with this much input in both reports are judged on their cache share. */
@@ -386,7 +391,11 @@ export function regressions(s: EvalSummary, b: EvalSummary): string[] {
   if (perRun(b) > 0 && perRun(s) > perRun(b) * COST_SLACK)
     out.push(`input tokens per run up ${Math.round((perRun(s) / perRun(b) - 1) * 100)}%`);
   const timePerRun = (x: EvalSummary) => rate(x.ms, x.runs);
-  if (timePerRun(b) > 0 && timePerRun(s) > timePerRun(b) * TIME_SLACK)
+  if (
+    timePerRun(b) > 0 &&
+    timePerRun(s) > timePerRun(b) * TIME_SLACK &&
+    timePerRun(s) - timePerRun(b) > TIME_FLOOR_MS
+  )
     out.push(`time per run up ${Math.round((timePerRun(s) / timePerRun(b) - 1) * 100)}%`);
   // Reports from before these were recorded have none: nothing to compare.
   for (const [node, u] of Object.entries(s.byNode)) {

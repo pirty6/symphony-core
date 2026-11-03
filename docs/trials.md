@@ -4,7 +4,7 @@ Each trial is an A/B run with the eval harness on the same fixture. It changes o
 `--with key=value` (a pattern input) or a `SYMPHONY_*` trial switch (an env var), and compares
 the result with a baseline report. The report's first line names what each side was played
 with. `--compare` exits 2 when the trial is worse than its baseline: fewer solved, more invalid
-citations, 25% more input tokens per run, 50% more time per run, a step's cached share down 15
+citations, 25% more input tokens per run, 50% more time per run (and at least 10 s more), a step's cached share down 15
 points, or a step whose input grows more over its visits.
 
 Live trials call Copilot and spend premium requests. `investigate-many-files` (240 files,
@@ -149,6 +149,58 @@ step (`preloaded`). The report's `read record` line gives their share of the sav
 characters. Their cost in output tokens is about the notes' characters divided by 4. Compare
 that with the deep read's output tokens in `costliest steps`.
 
+## 9. One debate round vs two, on known answers
+
+The debate is the only thing that catches the planted flaw: compare the cap at the same
+complexity.
+
+```sh
+npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3
+npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3 --with maxDebateRounds=1 --compare .symphony/evals/<two-rounds>.json
+```
+
+Compare: solved, `citations valid`, tokens and time. Round 2 cost ~16% of input and ~21% of
+time in one recorded run; this says whether it pays.
+
+## 10. Calibrating the support judge (shadow)
+
+`investigate-misread-quote` has a real quote attached to a wrong claim, and its `-judged` twin
+plays the judge in `enforce`. Run the pair, then the other investigate tasks with the judge in
+`shadow`, so that false rejections on correct findings show up.
+
+```sh
+npm run cli -- eval --task investigate-misread-quote,investigate-misread-quote-judged -n 3
+npm run cli -- eval --task investigate-default-port,investigate-multi-hop,investigate-false-hint -n 3 --with supportJudge=shadow --compare $BASE
+```
+
+Compare: whether the judged twin is solved and the plain one is not (recall), what shadow marks
+unsupported on tasks whose findings are right (false rejections), and the judge's tokens
+(`judgeSupport` in `costliest steps`).
+
+## 11. One sub-agent per gap vs one call for all gaps
+
+```sh
+npm run cli -- eval --task investigate-many-files,investigate-multi-hop -n 3 --with gapsPerChase=1 --compare $BASE
+```
+
+Compare: the `chase` time and tokens (`symphony cost` on the saved runs). The earlier "at most
+~4% of time" was an estimate that subtracted the largest possible warm-up, not a measurement.
+
+## 12. Lower research caps vs the defaults
+
+A tailoring once lowered `maxChaseRounds` to 4 and `maxDebateRounds` to 1. Did the answers get
+worse?
+
+```sh
+npm run cli -- eval --task investigate-many-files,investigate-multi-hop,investigate-planted-flaw -n 3 --with maxChaseRounds=4 --with maxDebateRounds=1 --compare $BASE
+```
+
+## Per-step shares of a saved run
+
+`npm run cli -- cost <run.json> [more.json]` prints each step's share of input tokens and AI
+time, with fan-out parts and rejected answers counted. Use it on the runs each trial saves
+(`<stamp>-runs/`), not on shares taken from an investigation's own analysis.
+
 ## Warm start off: time for tokens
 
 Gap research and part answers start one sub-agent first, so the others reuse its cached prompt
@@ -180,3 +232,39 @@ npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,in
 - The narrowed read (`narrowRead`) is opt-in for good. Files that are neither matched by the
   search nor among the next `narrowBudget` (20) are never read, and the coverage names each
   one. In one recorded run, files ranked 90–150 were still 57% relevant.
+- The stability gate (fix): `autoStabilityRuns` stays 0 until the flaky trial below.
+
+## Flaky tests: does fix stop a false "Fixed"?
+
+`fix-flaky` is a test that fails about 1 run in 4. Its hidden check replays every answer order,
+so a lucky green, a retry or a skipped test does not pass it, and a success that is not a real
+fix is noted `FALSE FIXED`. `fix-flaky-gated` is the same task with the stability gate armed.
+
+```sh
+npm run cli -- eval --task fix-flaky -n 5
+npm run cli -- eval --task fix-flaky-gated -n 5
+```
+
+Count three things across the runs: false Fixed, real fixes certified, and real fixes stopped as
+not certified (a false alarm). Also record:
+- **Cost.** The gate's runs and time: control plus `maxStableRuns` per patch.
+- **The diagnosis.** Did it set `nondeterministic`, `flakyTarget` (exactly as the runner prints
+  it) and `fixTarget`? Nothing else arms `autoStabilityRuns` before the edit.
+- **Sizing.** `stabilityTolerance` 0.1 against 0.25 (49 against 18 runs at 8 patches). Pick it
+  from how many runs CI makes per push.
+- **The command.** On this repository's own flakes, the condition that shows them (load, shuffle,
+  the whole suite) and whether the control fails within `maxControlRuns`. Never fewer workers:
+  that hides the flake. vitest's results cache, shared across worktrees, reorders files by the
+  last run, so consecutive runs are not independent.
+- **Masking fixtures.** Plant retries, timeouts, skips, a raised slack constant and fewer
+  workers. Measure how often each reaches certified without a person; the unit tests cover the
+  flags, but not a live model's edits.
+
+Defaults change behaviour only through fix's prompts: implement and refactor are byte-identical,
+and their fingerprints are compared in the PR. Check fix's ordinary tasks with `-n 3`
+(`fix-off-by-one`, `fix-wrong-index`, `fix-cause-elsewhere`) before and after, with `--compare`.
+
+Routing: the routing tasks include a named flaky request, a symptom-only one (no trigger word)
+and an explain-only one (investigate). Every routing eval so far ran scripted; run
+`eval --task routing` on a live model.
+

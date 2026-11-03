@@ -158,9 +158,12 @@ describe('eval harness', () => {
   it("gates time, a step's cache share and its context growth; shows the slowest steps and the spread", async () => {
     const report = await evaluate(true, 2);
     const base = summarize(report.results);
-    expect(
-      regressions({ ...base, ms: base.ms * 2 + 1000 }, { ...base, ms: base.ms + 500 }),
-    ).toEqual([expect.stringMatching(/^time per run up \d+%$/)]);
+    // Two runs each: 90 s per run against 40 s.
+    expect(regressions({ ...base, ms: 180_000 }, { ...base, ms: 80_000 })).toEqual([
+      expect.stringMatching(/^time per run up 125%$/),
+    ]);
+    // 3x slower, but by under TIME_FLOOR_MS per run: load noise on a short run, not a regression.
+    expect(regressions({ ...base, ms: 1_800 }, { ...base, ms: 600 })).toEqual([]);
     const big = {
       calls: 1,
       inputTokens: 200_000,
@@ -266,6 +269,21 @@ describe('eval harness', () => {
   });
 });
 
+/** The flaky fixture's root cause: only the latest query's answer may be shown. */
+function fixSearch(dir: string) {
+  const f = join(dir, 'src/search.js');
+  writeFileSync(
+    f,
+    readFileSync(f, 'utf8')
+      .replace("let shown = '';", "let shown = '';\n  const latest = queries.at(-1);")
+      .replace(
+        'shown = await fetch(q);',
+        'const answer = await fetch(q);\n      if (q === latest) shown = answer;',
+      ),
+  );
+  return { state: {} };
+}
+
 /** What a right answer looks like for each task, to prove its check can tell. */
 const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown> }> = {
   'fix-off-by-one': (dir) => {
@@ -301,6 +319,8 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
     writeFileSync(f, readFileSync(f, 'utf8').replace('(line.qty ? 1 : 0)', 'line.qty'));
     return { state: {} };
   },
+  'fix-flaky': (dir) => fixSearch(dir),
+  'fix-flaky-gated': (dir) => fixSearch(dir),
   'investigate-multi-hop': () => ({
     state: {
       answer:
@@ -561,5 +581,33 @@ describe('memory fixtures', () => {
 
   it('heavy tasks are only played when named', () => {
     expect(EVAL_TASKS.filter((x) => x.heavy).map((x) => x.id)).toEqual(['investigate-many-files']);
+  });
+});
+
+describe('the flaky eval task', () => {
+  it('a skipped visible test, or a lucky green without the fix, is not a pass (and success then is a false Fixed)', async () => {
+    const t = EVAL_TASKS.find((x) => x.id === 'fix-flaky')!;
+    const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
+    try {
+      await buildFixture(dir, t.files);
+      const visible = join(dir, 'test/search.test.js');
+      const original = readFileSync(visible, 'utf8');
+      writeFileSync(visible, original.replace("test('shows", "test.skip('shows"));
+      fixSearch(dir);
+      const skipped = await t.check({ workspace: dir, outcome: 'success', state: {} });
+      expect(skipped.pass).toBe(false);
+      expect(skipped.notes).toContain('FALSE FIXED: success without a real fix');
+      writeFileSync(visible, original);
+      const f = join(dir, 'src/search.js');
+      // The bug back: the visible test may pass by luck, the hidden one replays every order.
+      writeFileSync(
+        f,
+        readFileSync(f, 'utf8').replace('if (q === latest) shown = answer;', 'shown = answer;'),
+      );
+      const unfixed = await t.check({ workspace: dir, outcome: 'success', state: {} });
+      expect(unfixed.pass).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

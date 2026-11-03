@@ -18,7 +18,7 @@
 import { chunkItem, isUrl, itemOf } from './items.js';
 import { ENGINE_VERSION, RUN_SCHEMA_VERSION } from './migrate.js';
 import { evalExpr, evaluateGuard, parseExpr } from './expr.js';
-import { hashOf } from './hash.js';
+import { freezeJson, hashOf } from './hash.js';
 import { solosActive, takesFor } from './jazz.js';
 import { checkAgentResult, checkValue, validateUpdates, type Checked } from './schema.js';
 import { MAX_AGENTS } from './types.js';
@@ -95,11 +95,22 @@ export interface AdvanceResult {
 // ── helpers ────────────────────────────────────────────────────────
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
-type Ctx = Mutable<EngineState> & { emitted: EngineEvent[] };
+/**
+ * One advance's working copy. Its lists are copied once when it starts and grown in place:
+ * copying them at every event made a long run quadratic. The state given in stays as it was.
+ */
+type Ctx = Omit<Mutable<EngineState>, 'events' | 'steps' | 'seenMoves'> & {
+  events: EngineEvent[];
+  steps: PerformedStep[];
+  seenMoves: string[];
+  /** seenMoves as a set, to refuse a repeat without scanning the list. */
+  seen: Set<string>;
+  emitted: EngineEvent[];
+};
 
 function emit(ctx: Ctx, e: EngineEvent): void {
   ctx.emitted.push(e);
-  ctx.events = [...ctx.events, e];
+  ctx.events.push(e);
 }
 
 function nodeOf(score: ExecutableScore, id: string): ScoreNode {
@@ -176,7 +187,7 @@ function recordStep(
     changes: [],
     ...extra,
   };
-  ctx.steps = [...ctx.steps, performed];
+  ctx.steps.push(performed);
 }
 
 /** Pick the outgoing edge; returns undefined (after failing ctx) when none applies. */
@@ -540,7 +551,7 @@ function drive(score: ExecutableScore, ctx: Ctx): void {
     }
     const hashBefore = stateHashOf(ctx.state, ctx.env);
     const moveKey = moveKeyOf(node, hashBefore);
-    if (ctx.seenMoves.includes(moveKey)) {
+    if (ctx.seen.has(moveKey)) {
       fail(
         ctx,
         `repeat move refused: '${node.id}' (${node.kind}) with an identical state would loop forever`,
@@ -548,7 +559,8 @@ function drive(score: ExecutableScore, ctx: Ctx): void {
       );
       return;
     }
-    ctx.seenMoves = [...ctx.seenMoves, moveKey];
+    ctx.seenMoves.push(moveKey);
+    ctx.seen.add(moveKey);
     ctx.visits = { ...ctx.visits, [node.id]: visits };
     ctx.step += 1;
     emit(ctx, {
@@ -584,7 +596,7 @@ function drive(score: ExecutableScore, ctx: Ctx): void {
             fail(ctx, `compute '${node.id}' ${a.field}: ${err}`, node.id);
             return;
           }
-          next[a.field] = value;
+          next[a.field] = freezeJson(value);
         }
         ctx.state = next;
         const changes = diff(before, next);
@@ -618,11 +630,18 @@ function drive(score: ExecutableScore, ctx: Ctx): void {
 }
 
 function toCtx(st: EngineState): Ctx {
-  return { ...st, emitted: [] };
+  return {
+    ...st,
+    events: [...st.events],
+    steps: [...st.steps],
+    seenMoves: [...st.seenMoves],
+    seen: new Set(st.seenMoves),
+    emitted: [],
+  };
 }
 
 function fromCtx(ctx: Ctx, rejected?: string): AdvanceResult {
-  const { emitted, ...state } = ctx;
+  const { emitted, seen: _seen, ...state } = ctx;
   return rejected ? { state, events: emitted, rejected } : { state, events: emitted };
 }
 
@@ -637,7 +656,7 @@ export function createEngine(
     scoreId: score.id,
     cursor: score.start,
     step: 0,
-    state: structuredClone(score.initialState) as Record<string, unknown>,
+    state: freezeJson(structuredClone(score.initialState)) as Record<string, unknown>,
     env: '',
     visits: {},
     seenMoves: [],
@@ -648,6 +667,7 @@ export function createEngine(
     events: [],
     startedAt: opts.startedAt ?? '',
     outcome: 'in-progress',
+    seen: new Set(),
     emitted: [],
   };
   emit(ctx, {
@@ -716,7 +736,7 @@ function resolveTool(
     return;
   }
   const before = ctx.state;
-  ctx.state = { ...before, ...structuredClone(updates) };
+  ctx.state = { ...before, ...freezeJson(structuredClone(updates)) };
   const changes = diff(before, ctx.state);
   ctx.lastWrites = Object.keys(updates);
   ctx.pause = undefined;
@@ -976,7 +996,7 @@ function resolveAgent(
   const { updates, verdict } = checked.value;
   const next = pause.choices ? checked.value.next : undefined;
   const before = ctx.state;
-  ctx.state = { ...before, ...structuredClone(updates) };
+  ctx.state = { ...before, ...freezeJson(structuredClone(updates)) };
   if (res.envHash !== undefined) ctx.env = res.envHash;
   const changes = diff(before, ctx.state);
   ctx.lastVerdict = verdict;
@@ -1049,7 +1069,7 @@ function resolveApproval(
   }
   const hashBefore = stateHashOf(ctx.state, ctx.env);
   const before = ctx.state;
-  ctx.state = { ...before, ...structuredClone(updates) };
+  ctx.state = { ...before, ...freezeJson(structuredClone(updates)) };
   const changes = diff(before, ctx.state);
   ctx.lastWrites = Object.keys(updates);
   ctx.lastVerdict = {

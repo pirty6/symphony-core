@@ -145,8 +145,13 @@ export function validateGraph(g: PatternGraph): ValidationReport {
       const err = checkFieldValue(f, f.initial);
       if (err) errors.push({ message: `state field '${f.name}' initial value: ${err}` });
     }
-    if (f.min !== undefined && (f.type !== 'number' || !Number.isFinite(f.min)))
-      errors.push({ message: `state field '${f.name}': min is for number fields, as a number` });
+    for (const bound of ['min', 'max'] as const)
+      if (f[bound] !== undefined && (f.type !== 'number' || !Number.isFinite(f[bound])))
+        errors.push({
+          message: `state field '${f.name}': ${bound} is for number fields, as a number`,
+        });
+    if (f.min !== undefined && f.max !== undefined && f.min > f.max)
+      errors.push({ message: `state field '${f.name}': min is above max` });
   }
   const guardFields = new Set([...fieldNames, 'verdict']);
 

@@ -1,0 +1,88 @@
+# investigate's settings: what each one trades, and what backs it
+
+Defaults are the `initial` values of investigate's state fields (`src/patterns/investigate.ts`,
+`src/patterns/phases/debate.ts`). You change them:
+- in the studio, under **Features**, for the nine studio switches;
+- per run, with `-c key=value` or `eval --with key=value`;
+- per request, through the maestro's tailoring.
+
+A setting with a declared range ("(at least 1)", "(1 to 6)" in the maestro's outline) refuses
+values outside it, wherever they come from.
+
+**Evidence tiers:**
+- **M:** measured on this repo's recorded runs.
+- **D:** a documented design choice, with no numbers behind it.
+- **R:** reasoning only.
+
+None of the defaults was set by a controlled A/B. Those trials are planned, with commands, in
+[trials.md](trials.md). Measure a run's cost and time per step with `npm run cli -- cost
+<run.json>` (fan-out parts and rejected answers included).
+
+## Where a run's cost and time go (M)
+
+These figures come from `symphony cost` on the largest recorded run (4f853, 72.6M input tokens):
+- **Input tokens:**
+  - the deep read takes 48% of them;
+  - gap research (`chase`) takes 20%;
+  - the per-part answers take 9%;
+  - triage takes 6%.
+- **AI time:**
+  - the answer takes 21%;
+  - the deep read takes 20%;
+  - `chase` takes 16%;
+  - the per-part answers take 12%.
+
+Shares differ between runs and questions, so treat any single percentage as approximate.
+
+Reading (triage, deep read and gap research) is most of the cost. The answer is a large share of
+time but a small share of tokens. Earlier analyses that put the answer at 30–38% of time
+undercounted the steps with sub-agents: fan-out steps recorded before they kept their own clock
+had counted zero time. Wall time now falls back to the first part's start and the last part's
+end.
+
+## Settings
+
+| Setting (default) | Trades | Change it when | Tier |
+|---|---|---|---|
+| `exhaustive` (off) | Coverage vs time, tokens and run size | Every file must be triaged in a mid-size repo. On a very large repo it still stops `partial` at the 200-visit triage check cap | M: a 38,895-file run queued ~9 h of triage and a 316 MB record before Locate existed |
+| `maxTriageFiles` (300) | Above it, Locate picks the files: its scope plus the top 50 candidates. The rest are listed in `unlocatedFiles`, not read | Raise it for completeness on mid-size repos; lower it to narrow a big repo further | M (Locate), D (300) |
+| `narrowRead` (off), `narrowBudget` (20) | Tokens vs coverage: unmatched files beyond the budget are never read, and each is listed | A cost-bound run where every file would otherwise be triaged (at most `maxTriageFiles` files, or `exhaustive`). It does nothing above that, where Locate already narrows. Keep gap expansion on, so a gap can pull a file back | M: one run, no baseline; files ranked 90–150 were still 57% relevant |
+| `maxExpandRounds` (2), `expandWave` (8) | Coverage vs reads | 0 for a narrow, cost-bound question. Never 0 together with `narrowRead` | D |
+| `maxGapRounds` (2), `maxChaseRounds` (8, run-wide) | Coverage vs tokens and time (`chase` is the second-largest step) | Lower them only to bound cost; fewer gaps get closed and more are reported as doubts | M for cost, R for coverage |
+| `gapsPerChase` (99: one call for all gaps) | Tokens vs time | 1 only when latency matters more than tokens | R: the "at most ~4% of time" estimate subtracted the largest possible warm-up overhead, so it is not a measured ceiling (trial 11) |
+| `batchSize` (10, at least 1) | Part starts (a fixed first call of ~19k tokens each) vs context per call | none | M: triage was 20% of cost when it paged 25 files per part; now it preloads 10. Not an A/B |
+| `deepBatchSize` (4, at least 1) | The same, for the deep read | After trial 7 | R |
+| `batchWave`, `deepWave` | Not settings: derived after planning as size × agents × 3 | none | D |
+| `agents` (the plan picks 1–6), `agentsCap` (6, 1 to 6) | Wall time vs concurrent calls (not tokens) | `agentsCap` 4 if reports show rate limits or unread items | R: 6 at once was never measured (trial 1). Rate limits are now waited out and counted |
+| `singlePass` (off, pilot) | Fewer steps vs a pricier tier for the triage read | After trial 3 | R |
+| `maxExperiments` (12, at least 1) | Time | Lower it (never 0) for speed. Untimed experiments run in parallel | M: 15 serial experiments took 20% of one run; a tailored 0 left a run stuck |
+| `maxDebateRounds` (2), `pragmatistFrom` (3) | Correctness (a hypothesis) vs time and tokens | 1 for speed-bound runs | M for cost: round 2 was ~16% of input and ~21% of time in one run. R for correctness: one run had two verified corrections (trial 9) |
+| `keepUnchallenged` (off), `readerHypotheses` (on), `gapAimed` (off) | Unmeasured | After their A/Bs | R |
+| `supportJudge` (off; `judgeBatch` 40) | Catches a real quote attached to a wrong claim vs tokens and a second model family. Does nothing for web findings | `shadow` for high-stakes workspace questions; `enforce` only after calibration (trial 10) | D/R |
+| complexity (auto) | 1: no debate, cheapest. 4: the heaviest model at xhigh effort, plus a second investigator | Force 1 for routine lookups, 4 for high stakes. Ratings vary | D |
+| improvisation (0) | 0 replays recorded answers at zero tokens; only the saved runs of the same score are read | none | M: loading only the same score's runs takes 0.3 s and 369 MB; loading all 1.2 GB took 5.4 s and 2.3 GB |
+| Citation gate (always on) | No model tokens | none | M: failing citations fell from 14.2% to 2.4% |
+| `maxSteps` (5000) | A backstop, not a cost bound | none | D |
+
+## What else bounds memory and disk
+
+- **The runs folder** is bounded:
+  - compacted after 30 days;
+  - above 500 MB, the oldest real runs older than 3 days are compacted early.
+
+  Compacted runs still replay, and real runs are never deleted.
+- **`memory.json` is count-capped:**
+  - 2,000 facts and 300 lessons;
+  - at most 200 facts per run, or per call when there is no run id.
+- **The engine** grows its lists in place on each call to `advance`. It serializes a frozen state
+  value once, not at every step.
+
+## Profiles
+
+- **Default:** the code defaults.
+- **Routine question:** complexity 1.
+- **High-stakes workspace question:** complexity 4, with `supportJudge` set to `shadow`.
+- **Huge, budget-bound repository:** a lower `maxTriageFiles`. Locate decides what is read there,
+  not `narrowRead`. Gap expansion stays on.
+- **Cost-bound run:** lower `maxChaseRounds` and `maxDebateRounds`, and accept more reported
+  doubts.

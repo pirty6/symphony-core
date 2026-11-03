@@ -1,12 +1,30 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { main, parseContext, unattendedApproval } from './cli.js';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { main as runCli, parseContext, unattendedApproval } from './cli.js';
 import { fix, hangman } from './patterns/index.js';
 
 const cwd = mkdtempSync(join(tmpdir(), 'symphony-cli-'));
 afterAll(() => rmSync(cwd, { recursive: true, force: true }));
+
+/**
+ * main(), tracked: a test that times out does not stop its main(), which would go on writing
+ * into the next test's output. Each test waits here for whatever it started.
+ */
+const running = new Set<Promise<unknown>>();
+const main: typeof runCli = (...args) => {
+  const p = runCli(...args);
+  running.add(p);
+  void p.then(
+    () => running.delete(p),
+    () => running.delete(p),
+  );
+  return p;
+};
+afterEach(async () => {
+  await Promise.allSettled(running);
+}, 300_000);
 
 let out = '';
 // oxlint-disable-next-line no-control-regex
@@ -83,6 +101,11 @@ describe('main', () => {
       /missing: 8081/,
     );
     out = '';
+    // The baseline without its times: the time gate compares the machine's load on runs this
+    // short, not the code (a loaded machine made this exit 2). The gate has its own tests.
+    const saved = JSON.parse(readFileSync(report, 'utf8')) as { results: { ms: number }[] };
+    for (const r of saved.results) r.ms = 0;
+    writeFileSync(report, JSON.stringify(saved));
     expect(await main([...args, '--compare', report], cwd)).toBe(0);
     expect(plain()).toMatch(/solved 0\/1 \(baseline 0\/1\)/);
     expect(await main(['eval', '--task', 'nope'], cwd)).toBe(1);

@@ -103,12 +103,17 @@ export function runsDirFor(root: string, env: NodeJS.ProcessEnv = process.env): 
 
 const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, '-');
 
-export async function saveRun(dir: string, run: SavedRun): Promise<string> {
+export async function saveRun(
+  dir: string,
+  run: SavedRun,
+  opts: { readonly compact?: boolean } = {},
+): Promise<string> {
   const folder = join(dir, safe(run.score.pattern));
   await mkdir(folder, { recursive: true });
   const stamp = safe(run.performance.startedAt || new Date().toISOString());
   const file = join(folder, `${stamp}-${run.score.id.slice(0, 12)}.json`);
-  await writeFile(file, `${JSON.stringify(run, null, 2)}\n`);
+  // A checkpoint is rewritten after every step until the final save: unindented, faster.
+  await writeFile(file, `${opts.compact ? JSON.stringify(run) : JSON.stringify(run, null, 2)}\n`);
   await writeFile(summaryFile(file), JSON.stringify(summaryOf(run)));
   return file;
 }
@@ -261,12 +266,21 @@ export interface RetentionPolicy {
   readonly compactDays: number;
   /** Scratch folders left by crashed runs older than this are deleted. */
   readonly scratchHours: number;
+  /**
+   * The runs folder's bound: above this many MB, the oldest real runs are compacted early
+   * (still replayable; never deleted), down to it if possible.
+   */
+  readonly storeMB: number;
+  /** Real runs younger than this are kept whole even above storeMB (their AI text to read). */
+  readonly keepWholeDays: number;
 }
 
 export const DEFAULT_RETENTION: RetentionPolicy = {
   demoDays: 7,
   compactDays: 30,
   scratchHours: 24,
+  storeMB: 500,
+  keepWholeDays: 3,
 };
 
 export interface PruneReport {
@@ -298,7 +312,8 @@ async function entries(dir: string): Promise<{ path: string; size: number; age: 
 /**
  * Keep saved runs from piling up: delete old demo runs, compact old real runs (only
  * when they still replay exactly) and remove scratch folders that crashed runs left.
- * Age is the time since the file was last written.
+ * Above storeMB, the oldest real runs are compacted early. Age is the time since the
+ * file was last written.
  */
 export async function pruneRuns(
   dir: string,
@@ -315,11 +330,24 @@ export async function pruneRuns(
   const compacted: string[] = [];
   const scratch: string[] = [];
   let freed = 0;
+  let total = 0;
+  /** Real runs that may be compacted early if the folder is over its bound. */
+  const early: { path: string; name: string; size: number; days: number }[] = [];
+  const compact = async (path: string, name: string, size: number, run: SavedRun) => {
+    const migrated = migrateRun(run).run;
+    const small = migrated && compactPerformance(migrated.score, migrated.performance);
+    if (!small || !migrated) return;
+    const text = `${JSON.stringify({ ...migrated, performance: small }, null, 2)}\n`;
+    compacted.push(name);
+    freed += Math.max(0, size - text.length);
+    if (!opts.dryRun) await writeFile(path, text);
+  };
   for (const folder of await entries(dir)) {
     for (const f of await entries(folder.path)) {
       if (!f.path.endsWith('.json')) continue;
+      total += f.size;
       const days = age(f.path, f.age) / DAY;
-      if (days < Math.min(policy.demoDays, policy.compactDays)) continue;
+      if (days < Math.min(policy.demoDays, policy.compactDays, policy.keepWholeDays)) continue;
       let run: SavedRun;
       try {
         run = JSON.parse(await readFile(f.path, 'utf8')) as SavedRun;
@@ -335,16 +363,20 @@ export async function pruneRuns(
           await rm(f.path, { force: true });
           await rm(summaryFile(f.path), { force: true });
         }
-      } else if (days >= policy.compactDays && !run.performance.compacted) {
-        const migrated = migrateRun(run).run;
-        const small = migrated && compactPerformance(migrated.score, migrated.performance);
-        if (!small || !migrated) continue;
-        const text = `${JSON.stringify({ ...migrated, performance: small }, null, 2)}\n`;
-        compacted.push(name);
-        freed += Math.max(0, f.size - text.length);
-        if (!opts.dryRun) await writeFile(f.path, text);
+      } else if (!run.performance.compacted) {
+        if (days >= policy.compactDays) await compact(f.path, name, f.size, run);
+        // Only where it is: read again if it is compacted (a big store would not fit in memory).
+        else if (days >= policy.keepWholeDays) early.push({ ...f, name, days });
       }
     }
+  }
+  // Over the bound: the oldest first, until it fits (or nothing old enough is left).
+  for (const e of early.toSorted((a, b) => b.days - a.days)) {
+    if (total - freed <= policy.storeMB * 1_000_000) break;
+    const run = await readFile(e.path, 'utf8')
+      .then((t) => JSON.parse(t) as SavedRun)
+      .catch(() => undefined);
+    if (run) await compact(e.path, e.name, e.size, run);
   }
   if (opts.scratchDir) {
     for (const d of await entries(opts.scratchDir)) {
@@ -451,8 +483,15 @@ export async function loadPatternFiles(
 }
 
 /** Load every saved run, oldest first, so the first performance of a song is the one replayed. */
-export async function loadRepertoire(runsDir: string): Promise<Repertoire> {
-  const summaries = (await listRuns(runsDir)).toReversed();
+/**
+ * The recorded answers a run of this score can replay. Answers are found by score id, so with
+ * `scoreId` only that score's runs are read: not every saved run (a store of 1.1 GB was parsed
+ * whole at the default improvisation before).
+ */
+export async function loadRepertoire(runsDir: string, scoreId?: string): Promise<Repertoire> {
+  const summaries = (await listRuns(runsDir))
+    .filter((s) => scoreId === undefined || s.scoreId === scoreId)
+    .toReversed();
   const runs: { run: SavedRun; file: string }[] = [];
   for (const s of summaries) {
     try {

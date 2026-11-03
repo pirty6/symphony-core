@@ -36,7 +36,9 @@ test('step mode halts before and after the AI; the proposed result is visible be
   await page.getByLabel('step mode').check()
   await page.getByRole('button', { name: '▶ Run' }).click()
   const gate = page.getByTestId('gate-card')
-  // First the tool steps (snapshot the workspace, recall earlier runs), then the first AI step.
+  // First the tool steps (the tests before any edit, snapshot, recall), then the first AI step.
+  await expect(gate).toContainText('Paused before “baseline”')
+  await gate.getByRole('button', { name: '⏭ Step' }).click()
   await expect(gate).toContainText('Paused before “snapshot”')
   await gate.getByRole('button', { name: '⏭ Step' }).click()
   await expect(gate).toContainText('Paused before “recall”')
@@ -214,7 +216,7 @@ test('several runs play at once on one server; the studio switches between them'
   await page.getByText('auto-approve').click()
   await page.getByLabel('step mode').check()
   await page.getByRole('button', { name: '▶ Run' }).click()
-  await expect(page.getByTestId('gate-card')).toContainText('Paused before “snapshot”')
+  await expect(page.getByTestId('gate-card')).toContainText('Paused before “baseline”')
   const live = page.getByTestId('live-runs')
   await expect(live.getByRole('button', { name: /fix/ }).first()).toContainText('on screen')
   // Newest first: the first hangman is the one started above, still waiting for a guess.
@@ -225,7 +227,7 @@ test('several runs play at once on one server; the studio switches between them'
   // And back to fix, still paused where it was.
   await live.getByRole('button', { name: /fix/ }).first().click()
   await expect(page.locator('.tb-title')).toContainText('fix')
-  await expect(page.getByTestId('gate-card')).toContainText('Paused before “snapshot”')
+  await expect(page.getByTestId('gate-card')).toContainText('Paused before “baseline”')
 })
 
 test('inputs start empty with the demo as a hint, the large editor writes into them, and offline runs still work', async ({ page }) => {
@@ -501,5 +503,24 @@ test('every feature switch fits inside its card, even with larger text', async (
     const apart =
       t.x + t.width <= control.x + 0.5 || control.x + control.width <= t.x + 0.5 || t.y + t.height <= control.y + 0.5 || control.y + control.height <= t.y + 0.5
     expect(apart, await title.innerText()).toBe(true)
+  }
+})
+
+test('the top bar never pushes the run controls off screen, down to the narrowest studio', async ({ page }) => {
+  for (const width of [1100, 1280]) {
+    await page.setViewportSize({ width, height: 760 })
+    await open(page, 'investigate')
+    // GitHub Copilot adds the model field: the widest the settings get.
+    await page.getByLabel('provider').selectOption('copilot')
+    const bar = (await page.locator('.toolbar').boundingBox())!
+    const run = (await page.getByRole('button', { name: '▶ Run' }).boundingBox())!
+    expect(run.x + run.width, `Run at ${width}px`).toBeLessThanOrEqual(bar.x + bar.width)
+    expect(await page.locator('.toolbar').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0)
+    // Every setting is still on screen, not scrolled away.
+    for (const label of ['provider', 'model', 'complexity', 'improvisation', 'step mode']) {
+      const box = (await page.locator('.toolbar').getByLabel(label, { exact: true }).boundingBox())!
+      expect(box.x + box.width, `${label} at ${width}px`).toBeLessThanOrEqual(run.x)
+    }
+    await page.getByLabel('provider').selectOption('scripted')
   }
 })

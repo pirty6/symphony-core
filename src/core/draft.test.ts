@@ -154,6 +154,20 @@ describe('adaptPattern', () => {
     expect(field({ type: 'string', min: 1 })).toContainEqual(
       expect.stringMatching(/min is for number fields/),
     );
+    // A cap too: more than 6 parallel sub-agents does nothing, so it is refused.
+    expect(adaptPattern(investigate, { initial: { agentsCap: 8 } }).errors).toEqual([
+      'adaptation.initial.agentsCap: must be at most 6, got 8',
+    ]);
+    expect(outlinePattern(investigate).settings).toContainEqual(
+      expect.stringMatching(/^agentsCap = 6 \(1 to 6\) — /),
+    );
+    // Values the engine derives after planning are not offered as settings.
+    const names = outlinePattern(investigate).settings.map((x) => x.split(' ')[0]);
+    expect(names).not.toContain('batchWave');
+    expect(names).not.toContain('deepWave');
+    expect(field({ type: 'number', min: 3, max: 2 })).toContainEqual(
+      "state field 'x': min is above max",
+    );
     // Kept by a draft round-trip.
     const parsed = parseDraft(JSON.parse(JSON.stringify(investigate)));
     expect(parsed.ok && parsed.value.state.find((f) => f.name === 'maxExperiments')?.min).toBe(1);

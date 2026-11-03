@@ -147,7 +147,12 @@ pre {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 220px;
+  /* Shrinks before anything else: a long pattern name is cut, never the run controls. */
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tb-logo {
   color: var(--accent);
@@ -157,6 +162,10 @@ pre {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* The settings give way (and scroll, as a last resort); the run controls do not. */
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 .tb-group label {
   display: flex;
@@ -167,12 +176,30 @@ pre {
 }
 .tb-group select {
   width: auto;
+  max-width: 140px;
 }
 .tb-model {
-  width: 160px;
+  width: 130px;
 }
 .tb-controls {
   margin-left: auto;
+  flex-shrink: 0;
+  overflow: visible;
+}
+/* Narrow screens: the improvisation knob keeps its icon and tooltip, not its name. */
+@media (max-width: 1360px) {
+  .toolbar {
+    gap: 12px;
+  }
+  .toolbar .knob-name {
+    display: none;
+  }
+  .toolbar .knob input[type='range'] {
+    width: 70px;
+  }
+  .toolbar .tb-complexity {
+    max-width: 110px;
+  }
 }
 
 .status-pill {

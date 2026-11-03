@@ -53,6 +53,7 @@ const edit = editVerifyPhase({
   ],
   triageReads: ['request', 'design', 'plan'],
   success: TESTS_KEPT_CHECK,
+  reviewedExit: 'acceptAnyway',
   giveUp: 'learnFailed',
   rediagnose: { node: 'explore', gaps: 'gaps' },
 });
@@ -113,8 +114,6 @@ export const implement: Pattern = {
         type: 'string',
         description: 'Optional: constraints, where it belongs, prior art',
       },
-      { name: 'baselinePassed', type: 'boolean' },
-      { name: 'baselineOutput', type: 'string', description: 'Tests before any edit' },
       { name: 'newFindings', type: 'string[]', description: 'Evidence found in this step' },
       {
         name: 'findings',
@@ -183,8 +182,10 @@ export const implement: Pattern = {
       tool: 'tests.run',
       // An unchanged workspace (e.g. the next backlog item) reuses the last baseline.
       args: { reuse: true },
-      inputs: { command: 'testCommand' },
-      output: { passed: 'baselinePassed', output: 'baselineOutput' },
+      inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' },
+      // The command it ran is kept: every later run uses the same one, so an edit to the test
+      // script cannot change what verifies it.
+      output: { passed: 'baselinePassed', output: 'baselineOutput', command: 'testCommand' },
     },
     { id: 'green', kind: 'condition', label: 'Green?', expression: 'baselinePassed' },
     {
@@ -193,7 +194,7 @@ export const implement: Pattern = {
       label: 'Snapshot workspace',
       tool: 'git.diff',
       // Edits must change the workspace from here; pre-existing changes are not progress.
-      output: { hash: 'prevDiffHash' },
+      output: { hash: 'baseDiffHash' },
     },
     recallMemory('recall', 'request'),
     ...approaches.nodes,
@@ -304,7 +305,8 @@ export const implement: Pattern = {
       id: 'reviewsLeft',
       kind: 'condition',
       label: 'Review again?',
-      expression: 'reviews < maxReviews',
+      // The run-wide edit budget holds here too.
+      expression: 'reviews < maxReviews && edits < maxEdits',
     },
     {
       id: 'backToEdit',
