@@ -42,7 +42,44 @@ function play(p: Pattern, over: Partial<DemoScript>) {
   return { r, ran, state: r.state.state, end: r.state.cursor };
 }
 
+/** Why the engine sent a review back. */
+const rejections = (r: ReturnType<typeof play>['r']) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'prReview' ? e.errors : [],
+  );
+
 describe('PR review after the tests pass', () => {
+  it('the decision must agree with the comments: an APPROVE that still blocks, or a REQUEST_CHANGES with nothing blocking, is sent back', () => {
+    const review = (decision: string, comments: string[]) => (_s: unknown, visit: number) =>
+      visit === 0
+        ? {
+            updates: { reviewDecision: decision, reviewComments: comments, reviewSummary: 's' },
+            verdict: v,
+          }
+        : approve();
+    const blocking = play(fix, {
+      agents: { prReview: review('APPROVE', ['BLOCKING src/a.ts:3 — off by one']) },
+    });
+    expect(rejections(blocking.r).join()).toMatch(/APPROVE with a BLOCKING comment/);
+    const nits = play(fix, {
+      agents: { prReview: review('REQUEST_CHANGES', ['NIT src/a.ts:3 — rename x']) },
+    });
+    expect(rejections(nits.r).join()).toMatch(/needs at least one BLOCKING comment/);
+    const untagged = play(fix, { agents: { prReview: review('APPROVE', ['looks fine']) } });
+    expect(rejections(untagged.r).join()).toMatch(/Start each reviewComments entry/);
+    // An approval that lists the earlier comment as RESOLVED, with a NIT, is accepted.
+    const honest = play(fix, {
+      agents: {
+        prReview: review('APPROVE', [
+          'RESOLVED src/a.ts:3 — the boundary is now exclusive',
+          'NIT src/a.ts:9 — a clearer name',
+        ]),
+      },
+    });
+    expect(rejections(honest.r)).toEqual([]);
+    expect(honest.r.state.outcome).toBe('success');
+  });
+
   it('an approving review ends the fix', () => {
     const { r, ran, end } = play(fix, { agents: { prReview: approve } });
     expect(r.state.outcome).toBe('success');

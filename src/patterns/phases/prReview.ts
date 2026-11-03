@@ -25,7 +25,8 @@ export const PR_REVIEW_STATE: readonly StateField[] = [
   {
     name: 'reviewComments',
     type: 'string[]',
-    description: 'One per issue: "BLOCKING | NIT path:line — what to change and why"',
+    description:
+      'One per issue: "BLOCKING | NIT path:line — what to change and why", or "RESOLVED path:line — …" for an earlier one now addressed',
   },
   { name: 'reviewSummary', type: 'string', description: 'The review in a few sentences' },
   { name: 'reviewRounds', type: 'number', description: 'Reviews sent back to editing' },
@@ -43,7 +44,7 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       otherModel: true,
       maxVisits: 8,
       visitsFrom: '(maxReviewRounds + 1) * 3',
-      directive: `Review this change as you would a pull request, against \`${cfg.subject}\` and ${cfg.against.map((a) => `\`${a}\``).join(', ')}. Read \`diff\` and the code around it in the workspace (read-only). Look for: wrong behaviour or missed cases, a fix of the symptom instead of the cause, missing or weak tests (a test that would pass without the change), broken conventions of the codebase, needless complexity, and leftover debug code. Write each issue in \`reviewComments\` as "BLOCKING path:line — what to change and why" or "NIT path:line — …". Only real problems are BLOCKING; style preferences are NITs. Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE, and summarize in \`reviewSummary\`. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed.`,
+      directive: `Review this change as you would a pull request, against \`${cfg.subject}\` and ${cfg.against.map((a) => `\`${a}\``).join(', ')}. Read \`diff\` and the code around it in the workspace (read-only). Look for: wrong behaviour or missed cases, a fix of the symptom instead of the cause, missing or weak tests (a test that would pass without the change), broken conventions of the codebase, needless complexity, and leftover debug code. Write each issue in \`reviewComments\` as "BLOCKING path:line — what to change and why" or "NIT path:line — …". Only real problems are BLOCKING; style preferences are NITs. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed, and list each one that was as "RESOLVED path:line — how" (keep it BLOCKING if it was not). Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE (the engine checks that they agree), and summarize in \`reviewSummary\`.`,
       reads: [cfg.subject, ...cfg.against, 'diff', 'changes', 'testOutput', 'reviewComments'],
       writes: ['reviewDecision', 'reviewComments', 'reviewSummary'],
       retries: 2,
@@ -53,7 +54,19 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
           message: 'reviewDecision must be APPROVE or REQUEST_CHANGES.',
         },
         {
-          expr: 'reviewDecision == "APPROVE" || len(reviewComments) > 0',
+          expr: 'len(unmatched(reviewComments, "^(BLOCKING|NIT|RESOLVED) ")) == 0',
+          message:
+            'Start each reviewComments entry with BLOCKING, NIT or RESOLVED (an earlier comment now addressed).',
+        },
+        // The decision follows the comments, both ways: an APPROVE that still blocks would be
+        // accepted unseen, and a REQUEST_CHANGES with nothing blocking sends the edit back for nothing.
+        {
+          expr: 'reviewDecision != "APPROVE" || count(reviewComments, "^BLOCKING ") == 0',
+          message:
+            'APPROVE with a BLOCKING comment: request changes, or mark the comment NIT or RESOLVED if it does not block.',
+        },
+        {
+          expr: 'reviewDecision == "APPROVE" || count(reviewComments, "^BLOCKING ") > 0',
           message: 'Requesting changes needs at least one BLOCKING comment saying what to change.',
         },
         { expr: 'len(reviewSummary) > 0', message: 'Summarize the review in reviewSummary.' },
