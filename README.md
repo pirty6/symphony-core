@@ -607,7 +607,7 @@ solved rate or citation validity.
   it extracts (each real one once, the done one skipped). It records solved, citations valid, tokens, time and
   models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline: fewer
   solved, more invalid citations, none checked, 25% more input tokens per run, 50% more time per
-  run, a step whose cached share of input drops 15 points, or a step whose input grows more over
+  run (and at least 10 s more: shorter runs vary with the machine's load), a step whose cached share of input drops 15 points, or a step whose input grows more over
   its visits. The report shows each costly step's share of cost and model time, the slowest
   steps, and with `-n` the spread over repeats (runs vary: there is no seed). It also counts
   why answers were rejected, the rate limits hit, and the read record's share of the saved run;
