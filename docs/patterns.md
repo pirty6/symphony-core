@@ -163,7 +163,8 @@ flowchart TD
 
 **Lean** (`lean`, on by default) bundles the settings estimated to cut time and tokens together:
 at most one debate round, single-pass triage, gap-aimed research, unchallenged sub-answers kept,
-a sub-agent per gap, and an AI-rated complexity 4 capped at 3 (a chosen 4 stays). Turn it off
+a sub-agent per gap, and an AI-rated complexity 4 (the investigation's or the maestro's) capped
+at 3; a complexity you set stays. Turn it off
 (studio Features, or `--with lean=false`) if answers get worse; the settings then apply as set.
 See [settings.md](settings.md) and the lean trial in [trials.md](trials.md).
 

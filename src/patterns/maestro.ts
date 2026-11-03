@@ -1025,11 +1025,17 @@ export function composedScore(
   const c = finalState.complexity;
   const complexity = c === 1 || c === 2 || c === 3 || c === 4 ? c : maestroScore.complexity;
   const pattern = parsed.value;
+  // The classifier's rating is not your choice: a pattern that can tell (investigate's lean
+  // caps a rated 4) is told so, unless you set the complexity.
+  const rated =
+    !(Number(finalState.presetComplexity) > 0) &&
+    pattern.state.some((f) => f.name === 'complexityRated');
   const score = compileScore(pattern, {
     goal: String(finalState.request ?? maestroScore.goal),
     context: {
       ...withBrief(pattern, typedContext(pattern, finalState.childContext), finalState),
       ...featureInputs(pattern, opts.features),
+      ...(rated ? { complexityRated: true } : {}),
     },
     complexity,
     improvisation: opts.improvisation ?? maestroScore.improvisation,

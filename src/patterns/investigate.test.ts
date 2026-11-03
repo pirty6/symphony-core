@@ -1697,6 +1697,8 @@ describe('lean (on by default): the settings measured to cut time and tokens, be
     expect(play({}, 4).state.state.complexity).toBe(3);
     expect(play({ lean: false }, 4).state.state.complexity).toBe(4);
     expect(play({}, 4, 4).state.state.complexity).toBe(4);
+    // Given but only rated (the maestro's classifier): capped like the investigation's own rating.
+    expect(play({ complexityRated: true }, 4, 4).state.state.complexity).toBe(3);
     expect(play({}, 2).state.state.complexity).toBe(2);
   });
 });

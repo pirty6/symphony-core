@@ -432,6 +432,12 @@ export const investigate: Pattern = {
         description: 'A complexity was chosen for the run (lean never lowers it)',
       },
       {
+        name: 'complexityRated',
+        type: 'boolean',
+        description:
+          'The complexity given was rated by an AI (the maestro), not chosen: lean may cap it',
+      },
+      {
         name: 'warmFirst',
         type: 'boolean',
         initial: true,
@@ -841,7 +847,7 @@ export const investigate: Pattern = {
       label: 'Lean run?',
       // One switch for the settings measured to cut time and tokens together; off restores each.
       assign: [
-        { field: 'complexityChosen', expr: 'complexity > 0' },
+        { field: 'complexityChosen', expr: 'complexity > 0 && !complexityRated' },
         { field: 'maxDebateRounds', expr: 'if(lean && maxDebateRounds > 1, 1, maxDebateRounds)' },
         { field: 'singlePass', expr: 'singlePass || lean' },
         { field: 'gapAimed', expr: 'gapAimed || lean' },
