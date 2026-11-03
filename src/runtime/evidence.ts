@@ -86,6 +86,58 @@ function quotesOf(text: string): string[] {
   );
 }
 
+/** Lines shown around a cited quote, each side, and the most characters of them. */
+const CONTEXT_LINES = 8;
+const CONTEXT_CHARS = 1500;
+
+/**
+ * Each finding with the lines around the place it cites, numbered, so a judge reading only the
+ * finding can see whether the claim holds (a claim drawn from the quote's neighbours, or one they
+ * contradict). Findings without a readable workspace citation are returned as they are.
+ */
+export async function withContext(
+  workspace: string,
+  findings: readonly string[],
+): Promise<string[]> {
+  const cache = new Map<string, string[] | undefined>();
+  const read = async (path: string) => {
+    if (!cache.has(path)) {
+      const full = resolve(workspace, path);
+      const inside = !isAbsolute(path) && !relative(workspace, full).startsWith('..');
+      cache.set(
+        path,
+        inside
+          ? await readFile(full, 'utf8').then(
+              (t) => t.split('\n'),
+              () => undefined,
+            )
+          : undefined,
+      );
+    }
+    return cache.get(path);
+  };
+  const out: string[] = [];
+  for (const finding of findings) {
+    const [cite] = fileCitations(finding);
+    const lines = cite ? await read(cite[1]!) : undefined;
+    if (!cite || !lines) {
+      out.push(finding);
+      continue;
+    }
+    const at = Number(cite[2]);
+    const end = Number(cite[3] ?? cite[2]);
+    const from = Math.max(1, at - CONTEXT_LINES);
+    const to = Math.min(lines.length, end + CONTEXT_LINES);
+    let shown = lines
+      .slice(from - 1, to)
+      .map((l, i) => `    ${from + i}| ${l}`)
+      .join('\n');
+    if (shown.length > CONTEXT_CHARS) shown = `${shown.slice(0, CONTEXT_CHARS)}…`;
+    out.push(`${finding}\n  context (${cite[1]}:${from}-${to}):\n${shown}`);
+  }
+  return out;
+}
+
 export async function checkCitations(
   workspace: string,
   findings: readonly string[],

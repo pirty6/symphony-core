@@ -4,7 +4,7 @@
  * facts, not an AI's report. Commands come from the run inputs or the
  * project's own test script, never from the AI.
  */
-import { checkCitations } from './evidence.js';
+import { checkCitations, withContext } from './evidence.js';
 import { recall, rememberFacts, rememberLesson, sameRequest } from './memory.js';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -367,6 +367,20 @@ export function workspaceTools(): ToolSpec[] {
           checked: r.checked,
         };
       },
+    },
+    {
+      name: 'evidence.context',
+      description:
+        'Each finding with the numbered lines around the place it cites (8 each side): { items }. Findings without a readable workspace citation are unchanged.',
+      outputs: ['items'],
+      run: async (args, ctx) => ({
+        items: await withContext(
+          ctx.workspace,
+          Array.isArray(args.findings)
+            ? args.findings.filter((f): f is string => typeof f === 'string')
+            : [],
+        ),
+      }),
     },
     {
       name: 'memory.facts',

@@ -793,7 +793,14 @@ export const investigate: Pattern = {
       id: 'judgePhase',
       label: 'Support judge',
       description: "Off by default: does each cited finding's quote back its claim?",
-      nodes: ['useJudge', 'takeJudgeItems', 'hasJudgeItems', 'judgeSupport', 'splitRulings'],
+      nodes: [
+        'useJudge',
+        'takeJudgeItems',
+        'judgeContext',
+        'hasJudgeItems',
+        'judgeSupport',
+        'splitRulings',
+      ],
     },
   ],
   nodes: [
@@ -1803,6 +1810,17 @@ export const investigate: Pattern = {
       ],
     },
     {
+      // The lines around each quote: a claim is judged on what the code there shows, so an
+      // honest reading of it is not flagged for using other words, and a misreading is caught
+      // by the line that contradicts it.
+      id: 'judgeContext',
+      kind: 'tool',
+      label: 'Lines around each quote',
+      tool: 'evidence.context',
+      inputs: { findings: 'judgeItems' },
+      output: { items: 'judgeItems' },
+    },
+    {
       id: 'hasJudgeItems',
       kind: 'condition',
       label: 'Any to judge?',
@@ -1818,7 +1836,7 @@ export const investigate: Pattern = {
       isolated: true,
       otherModel: true,
       directive:
-        'For EVERY entry of `judgeItems`, in order, write one `supportRulings` entry: "F<n>: SUPPORTED — <why>" if the quoted text (in backticks), read as it stands, states what the claim says, or "F<n>: UNSUPPORTED — <why>" if it does not: it only mentions the subject, says something else, needs a step it does not show, or the claim adds a number, name or condition the quote lacks. Judge each one on its own quote and claim only; be strict, a quote that is merely near the claim is UNSUPPORTED. Start each entry with the id of its finding and nothing before it.',
+        'For EVERY entry of `judgeItems`, in order, write one `supportRulings` entry. Each entry is a claim, its quote (in backticks) and the numbered lines around the quote in that file (`context`). Write "F<n>: SUPPORTED — <why>" if the quote, read with those lines, shows what the claim says: a claim may describe the code in its own words or draw a conclusion, as long as the lines shown bear it out. Write "F<n>: UNSUPPORTED — <why>" if the lines contradict the claim (e.g. a limit the loop never reaches), are about something else, or the claim adds a number, name or condition they do not show. Do not rule UNSUPPORTED only because the claim uses other words than the quote. Judge each one on its own lines and claim only. Start each entry with the id of its finding and nothing before it.',
       reads: ['judgeItems'],
       writes: ['supportRulings'],
       fanOut: { over: 'judgeItems', per: 'judgeBatch', agents: 'agents' },
@@ -2016,7 +2034,8 @@ export const investigate: Pattern = {
     { id: 'attachParts-useJudge', from: 'attachParts', to: 'useJudge' },
     { id: 'useJudge-take', from: 'useJudge', to: 'takeJudgeItems', branch: 'then' },
     { id: 'useJudge-settled', from: 'useJudge', to: 'settled', branch: 'else' },
-    { id: 'take-hasItems', from: 'takeJudgeItems', to: 'hasJudgeItems' },
+    { id: 'take-context', from: 'takeJudgeItems', to: 'judgeContext' },
+    { id: 'context-hasItems', from: 'judgeContext', to: 'hasJudgeItems' },
     { id: 'hasItems-judge', from: 'hasJudgeItems', to: 'judgeSupport', branch: 'then' },
     { id: 'hasItems-split', from: 'hasJudgeItems', to: 'splitRulings', branch: 'else' },
     { id: 'judge-split', from: 'judgeSupport', to: 'splitRulings' },
@@ -2072,6 +2091,8 @@ export const investigate: Pattern = {
         const hit = files.filter((f) => RELEVANT.test(f));
         return { ranked: [...hit, ...files.filter((f) => !hit.includes(f))], matched: hit };
       },
+      // The demo's files are not on disk: the items go to the judge as they are.
+      judgeContext: (s) => ({ items: s.judgeItems }),
       // The gap names the command line: the CLI shares its words.
       rankGaps: (s) => {
         const pool = (s.expandPool as string[]) ?? [];

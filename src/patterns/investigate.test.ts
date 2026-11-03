@@ -526,6 +526,24 @@ describe('what the skeptic and the gap research see', () => {
     // With gapAimed the gaps are notes; the questions they belong to stay in view.
     expect(reads('chase')).toEqual(expect.arrayContaining(['subQuestions', 'chaseGaps']));
   });
+
+  it('the support judge reads each quote with the lines around it', () => {
+    const r = runScripted(
+      compileScore(investigate, { context: { ...demo.context!, supportJudge: 'shadow' } }),
+      demo,
+    );
+    const order = r.state.steps.map((x) => x.nodeId);
+    expect(order.indexOf('judgeContext')).toBeGreaterThan(order.indexOf('takeJudgeItems'));
+    expect(order.indexOf('judgeContext')).toBeLessThan(order.indexOf('judgeSupport'));
+    const node = compileScore(investigate, { context: demo.context! }).nodes.find(
+      (n) => n.id === 'judgeContext',
+    );
+    expect(node).toMatchObject({
+      tool: 'evidence.context',
+      inputs: { findings: 'judgeItems' },
+      output: { items: 'judgeItems' },
+    });
+  });
 });
 
 describe('gap-aimed research (a pilot, off by default)', () => {

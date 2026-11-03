@@ -17,6 +17,7 @@ export const TOOL_OUTPUTS: Readonly<Record<string, readonly string[]>> = {
   'git.diff': ['diff', 'hash', 'files'],
   'files.read': ['files'],
   'evidence.check': ['valid', 'invalid', 'checked'],
+  'evidence.context': ['items'],
   'memory.facts': ['saved'],
   'memory.recall': ['facts', 'lessons'],
   'memory.lesson': ['saved'],
