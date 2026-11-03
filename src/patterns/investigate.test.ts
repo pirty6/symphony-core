@@ -841,6 +841,19 @@ describe('investigate answers several subjects side by side', () => {
     expect(String(r.state.state.answer)).not.toContain('---');
   });
 
+  it('rejects a synthesis or summary part: the overall answer is the synthesis', () => {
+    for (const extra of ['synthesis', 'Summary of the three', 'Overall recommendations']) {
+      const { r } = runWith(['workspace'], demo.approvals, { parts: [...ALGOS, extra] });
+      const plan = r.state.steps.find((st) => st.nodeId === 'plan');
+      expect(JSON.stringify(plan?.attempts ?? r.state.pause), extra).toMatch(
+        /leave out a synthesis, summary, overview or conclusion part/,
+      );
+    }
+    // A subject that merely contains such a word is fine.
+    const ok = runWith(['workspace'], demo.approvals, { parts: ['token summary cache', 'speed'] });
+    expect(ok.r.state.outcome).toBe('success');
+  });
+
   it('rejects a plan with exactly one part', () => {
     const { r } = runWith(['workspace'], demo.approvals, { parts: ['fix'] });
     const plan = r.state.steps.find((st) => st.nodeId === 'plan');
