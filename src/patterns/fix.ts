@@ -27,7 +27,8 @@ const hypotheses = hypothesesPhase({
 });
 const challenge = challengePhase({
   subject: 'issue',
-  evidence: 'findings',
+  // The debaters read findings without their (already checked) quotes, as in investigate.
+  evidence: 'findingsBrief',
   draft: 'rootCause',
   gaps: 'gaps',
   reopen: 'research',
@@ -142,9 +143,10 @@ export const fix: Pattern = {
       capabilities: ['web'],
       label: 'Gather evidence',
       directive:
-        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating `findings`.' +
+        'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame). If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating the findings so far (`findingsBrief`: each with its id and location, quotes left out).' +
         MEMORY_NOTE,
-      reads: ['issue', 'hint', 'hypotheses', 'findings', 'gaps', 'knownFacts'],
+      // The brief, not the full findings: they grow every round; diagnose reads them in full.
+      reads: ['issue', 'hint', 'hypotheses', 'findingsBrief', 'gaps', 'knownFacts'],
       writes: ['newFindings'],
       cites: 'newFindings',
       retries: 2,

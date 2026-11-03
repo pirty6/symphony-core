@@ -156,6 +156,19 @@ describe('fix', () => {
     expect(node).toMatchObject({ inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' } });
   });
 
+  it('research and the debate read the findings brief; only the diagnosis reads them in full', () => {
+    const score = compileScore(fix, { context: demo.context! });
+    const reads = (id: string) => {
+      const n = score.nodes.find((x) => x.id === id);
+      return n?.kind === 'agent' ? n.reads : [];
+    };
+    expect(reads('research')).toContain('findingsBrief');
+    expect(reads('research')).not.toContain('findings');
+    expect(reads('challenge')).toContain('findingsBrief');
+    expect(reads('challenge')).not.toContain('findings');
+    expect(reads('diagnose')).toContain('findings');
+  });
+
   it('lists changed files that configure the checks, for the reviewer', () => {
     let n = 0;
     const { state } = play({
