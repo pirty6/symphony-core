@@ -161,13 +161,39 @@ flowchart TD
 Fix a bug: the diagnosis comes from evidence, you approve it, and the engine (not the AI)
 decides whether the tests pass.
 
-1. **Recall, hypotheses, evidence.** Like investigate, focused on the symptom.
-2. **Diagnose** a root cause from the cited evidence; the challenge phase attacks it.
-3. **👤 Approve the plan** (root cause, files, the change, the test).
-4. **Edit and verify.** A failure triaged as a wrong diagnosis goes back to research for a
-   new diagnosis (bounded); an environment problem (not the code) gives up with that
-   reason instead of editing further.
-5. **PR review**, then remember the outcome (fixed, or why it failed).
+fix shares investigate's debate and evidence phases (hypotheses, checked citations, the
+skeptic), but not its read pipeline: one research step reads the code (optionally split by
+hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
+
+1. **Run the tests first.** What fails before any edit, the bug or tests already broken, is
+   known to the diagnosis and the triage. The command that ran is kept: every later test run
+   uses it, so an edit to the test script cannot change what verifies the fix.
+2. **Recall, hypotheses, evidence.** Research and the debate read the findings brief; the
+   diagnosis reads the findings in full.
+3. **Diagnose** a root cause from the cited evidence; the challenge phase attacks it.
+4. **👤 Approve the plan** (root cause, files, the change, the test).
+5. **Reproduce first** (`reproduceFirst`, opt-in): a test that reproduces the bug is written,
+   proved to fail for the right reason and locked; the fix must leave it unchanged.
+6. **Edit and verify.**
+   - **Progress.** An edit that changes nothing, returns to the starting workspace, or
+     repeats any earlier attempt is not progress.
+   - **Lint.** Lint runs only once the tests pass.
+   - **Wrong diagnosis.** A failure triaged as a wrong diagnosis goes back to research for a
+     new diagnosis (bounded).
+   - **Environment problem.** The same patch is tested once more; if it still fails, the run
+     gives up with that reason.
+   - **Budget.** `maxEdits` (8) bounds the tested edits across diagnoses and review rounds.
+7. **PR review.**
+   - **Agreement.** The decision must agree with the comments: APPROVE has no BLOCKING
+     comment, REQUEST_CHANGES has one. Earlier comments now addressed are RESOLVED.
+   - **Weakened checks.** Changed files that configure the checks (`checkFiles`) are flagged,
+     so weakening the checks is blocking.
+   - **Nothing changed.** If no review edit changes the patch the reviewer saw, which passed
+     the checks, a person decides on that exact patch.
+   - **Remember.** The outcome is remembered: fixed, or why it failed.
+
+Only the tests the command runs are checked. In this repository the root `npm test` does not
+run `packages/ui`, so set `testCommand` for a fix there.
 
 <!-- flow:fix -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
