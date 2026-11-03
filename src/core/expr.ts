@@ -16,6 +16,7 @@
  *   pick(list, positions) (1-based, e.g. ["1", "3"]),
  *   get(objectOrList, keyOrIndex) (null when missing), keys(object),
  *   lines(text), linesWith(text, needle) (the lines containing a literal string),
+ *   diffLines(diff, pathPattern) (a unified diff's lines for the files whose path matches),
  *   runsNeeded(tolerance, candidates) (clean runs that bound a failure rate, see below).
  */
 
@@ -62,6 +63,7 @@ type FnName =
   | 'seq'
   | 'lines'
   | 'linesWith'
+  | 'diffLines'
   | 'runsNeeded';
 
 const FNS: Record<FnName, number> = {
@@ -98,6 +100,7 @@ const FNS: Record<FnName, number> = {
   seq: 2,
   lines: 1,
   linesWith: 2,
+  diffLines: 2,
   runsNeeded: 2,
 };
 
@@ -109,6 +112,13 @@ const FNS: Record<FnName, number> = {
 export function runsNeeded(tolerance: number, candidates: number): number {
   return Math.ceil(Math.log(0.05 / candidates) / Math.log(1 - tolerance));
 }
+
+/** The path on a diff's "--- a/…" or "+++ b/…" line (git quotes some: "b/…"; a tab may end it). */
+const diffPath = (l: string) =>
+  l
+    .slice(4)
+    .replace(/^"?[ab]\//, '')
+    .replace(/"?\t?$/, '');
 
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
 const LEADING_ID = /^(F\d+)\s+/;
@@ -535,6 +545,37 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
             throw new ExprError('linesWith() needs a text and a string to find');
           const needle = args[1];
           return x === '' ? [] : x.split(/\r?\n/).filter((l) => l.includes(needle));
+        }
+        case 'diffLines': {
+          // diffLines(diff, "[.]test[.]"): the lines of the files whose path matches, so test
+          // files and code can be judged apart. A file starts at its "diff --git a/… b/…" line.
+          if (typeof x !== 'string' || typeof args[1] !== 'string' || args[1].length > 200)
+            throw new ExprError(
+              'diffLines() needs a diff and a path pattern (at most 200 characters)',
+            );
+          let re: RegExp;
+          try {
+            re = new RegExp(args[1]);
+          } catch {
+            throw new ExprError(`diffLines(): invalid pattern ${JSON.stringify(args[1])}`);
+          }
+          // Every "diff --git" line starts a file; its path is read from "+++ b/…" (or "--- a/…"
+          // for a deletion), which holds it whole, spaces included (git quotes some as "b/…").
+          let keep = false;
+          let inHeader = false;
+          return x.split(/\r?\n/).filter((l) => {
+            if (l.startsWith('diff --git ')) {
+              keep = re.test(/ "?b\/(.*?)"?$/.exec(l)?.[1] ?? '');
+              inHeader = true;
+              return false;
+            }
+            if (inHeader && l.startsWith('+++ ') && l !== '+++ /dev/null')
+              keep = re.test(diffPath(l));
+            else if (inHeader && l.startsWith('--- ') && l !== '--- /dev/null')
+              keep = re.test(diffPath(l));
+            if (l.startsWith('@@')) inHeader = false;
+            return keep;
+          });
         }
         case 'runsNeeded': {
           const [p, k] = args;

@@ -98,6 +98,21 @@ describe('evalExpr values', () => {
     ['lines("")', []],
     ['linesWith(" ✓ a > t 1ms\n × a > u\n FAIL  a > u", "a > u")', [' × a > u', ' FAIL  a > u']],
     ['count(lines("+++ b/x\n+  it.skip(1)\n- old"), "^[+][^+].*[.]skip[(]")', 1],
+    [
+      'diffLines("diff --git a/src/a.ts b/src/a.ts\n+code\ndiff --git a/test/a.test.ts b/test/a.test.ts\n-old\n+new", "[.]test[.]")',
+      ['-old', '+new'],
+    ],
+    // Paths with spaces: read from the +++ line; an unparsed header never inherits the last file.
+    [
+      'diffLines("diff --git a/src/a.ts b/src/a.ts\n+code\ndiff --git a/src/my thing.test.ts b/src/my thing.test.ts\n--- a/src/my thing.test.ts\n+++ b/src/my thing.test.ts\n@@ -1 +1 @@\n-it(\'a\')\n+it.skip(\'a\')", "[.]test[.]")',
+      [
+        '--- a/src/my thing.test.ts',
+        '+++ b/src/my thing.test.ts',
+        '@@ -1 +1 @@',
+        "-it('a')",
+        "+it.skip('a')",
+      ],
+    ],
     ['runsNeeded(0.1, 1)', 29],
     ['runsNeeded(0.1, 8)', 49],
     ['runsNeeded(0.25, 8)', 18],

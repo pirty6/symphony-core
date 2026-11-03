@@ -231,12 +231,17 @@ passes on a re-run).
   output cut) do not count. If more than a quarter of the runs are like that, the patch is not
   certified.
 - **Masking flags.** These go to a person; unattended, the patch is not certified:
-  - the flaky test's own file changed;
-  - added lines touch retries, skips, timeouts, slack, workers or sleeps;
+  - the flaky test's own file changed (a retry or a sleep added there looks like a new test);
+  - other tests' lines were changed or removed, or added ones skip, invert, retry or lengthen a
+    test;
+  - added code touches retries, timeouts, slack, workers or sleeps;
   - assertions were removed;
   - files that configure the tests changed;
-  - the diff has new or cut files it does not show;
+  - the diff cannot show a file (binary, or cut);
   - more tests are skipped, todo or expected-fail than in the control.
+
+  For an intermittent failure the edit is asked to put its regression test in a new test file,
+  which is not flagged. New files are shown in the diff as additions.
 
   These checks are heuristics. A loosened limit and a real fix of that limit look alike (raising
   `TIME_SLACK` and adding a time floor both touch the same line), so the person decides. A

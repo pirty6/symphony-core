@@ -246,7 +246,22 @@ npm run cli -- eval --task fix-flaky-gated -n 5
 ```
 
 Count three things across the runs: false Fixed, real fixes certified, and real fixes stopped as
-not certified (a false alarm). Also record:
+not certified (a false alarm).
+
+First live results (Copilot, 2026-11-03, 3 runs each):
+- **`fix-flaky`:** 3/3 real fixes, about 2 minutes each, and no false Fixed.
+- **`fix-flaky-gated`, first try:** 0/3. All three were real fixes that passed the control and
+  49 gate runs, but they were stopped by masking flags on the regression test the edit had added
+  next to the flaky one (in its file, with a sleep to order the answers).
+- **Why it was not simply allowed:** a retry or a sleep added in the flaky test's own file looks
+  the same, so that file is still flagged. The edit is now told to put the regression test in a
+  new file, and new files are shown in the diff.
+- **`fix-flaky-gated`, again:** 3/3 certified. Each put its test in a new file
+  (`test/search-order.test.js`). The control saw the test fail by run 2, 5 or 8, then 49 clean
+  runs, with no flags; about 2 to 3 minutes each.
+
+This fixture's model fixes it either way. The gate's worth shows only on a model or fixture that
+produces a lucky green; the masking fixtures below are that test. Also record:
 - **Cost.** The gate's runs and time: control plus `maxStableRuns` per patch.
 - **The diagnosis.** Did it set `nondeterministic`, `flakyTarget` (exactly as the runner prints
   it) and `fixTarget`? Nothing else arms `autoStabilityRuns` before the edit.

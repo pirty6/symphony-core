@@ -148,6 +148,8 @@ const gateRuns =
       fails(s, ++run) ? tests(false, out.targetFails) : tests(true, passOutput);
   };
 /** maxStabilityRuns 1 is raised to runsNeeded(0.25, maxEdits 2) = 13. */
+/** A file's header in git.diff's output. */
+const head = (f: string) => `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1 @@`;
 /** A diff tool whose patch is new every attempt. */
 const masked = (files: string[], diff: string) => () => {
   let k = 0;
@@ -304,16 +306,40 @@ describe('fix: the stability gate (opt-in)', () => {
     const cases: [string[], string, RegExp][] = [
       [
         ['src/eval/harness.ts'],
-        '+++ b/src/eval/harness.ts\n+export const TIME_SLACK = 3;',
+        `${head('src/eval/harness.ts')}\n+export const TIME_SLACK = 3;`,
         /slack/,
       ],
-      [['src/a.test.ts'], `+++ b/src/a.test.ts\n+  it.skip('loads in time')`, /own file/],
+      [['src/a.ts'], `${head('src/a.ts')}\n+  await sleep(50);`, /code touches/],
+      [
+        ['src/a.test.ts'],
+        `${head('src/a.test.ts')}\n+  it.skip('another', () => {});`,
+        /skip, invert/,
+      ],
+      [
+        ['src/a.test.ts'],
+        `${head('src/a.test.ts')}\n+  it('x', { retry: 3 }, () => {});`,
+        /own file/,
+      ],
+      [['src/b.test.ts'], `${head('src/b.test.ts')}\n+jest.retryTimes(3);`, /retry/],
+      [['test/b.js'], `${head('test/b.js')}\n+  this.retries(3);`, /retry/],
+      [['tests/test_b.py'], `${head('tests/test_b.py')}\n+@pytest.mark.flaky(reruns=3)`, /retry/],
+      [
+        ['src/my thing.test.ts'],
+        `${head('src/a.ts')}\n+ok()\ndiff --git a/src/my thing.test.ts b/src/my thing.test.ts\n--- a/src/my thing.test.ts\n+++ b/src/my thing.test.ts\n@@ -1 +1 @@\n+it.skip('x')`,
+        /skip, invert/,
+      ],
+      [
+        ['src/a.test.ts'],
+        `${head('src/a.test.ts')}\n-  it('loads in time', async () => {\n+  it('loads in time', async () => { // ok`,
+        /existing test lines/,
+      ],
       [
         ['src/a.ts'],
-        '--- a/src/a.ts\n-  expect(ms).toBeLessThan(10);\n+  run();',
+        `${head('src/a.ts')}\n-  expect(ms).toBeLessThan(10);\n+  run();`,
         /assertions removed/,
       ],
-      [['package.json'], '+++ b/package.json\n+  "test": "vitest run"', /configure the tests/],
+      [['package.json'], `${head('package.json')}\n+  "test": "vitest run"`, /configure the tests/],
+      [['img.png'], 'untracked files:\n  img.png', /cannot show/],
     ];
     for (const [files, diff, flag] of cases) {
       const r = play(
@@ -336,7 +362,30 @@ describe('fix: the stability gate (opt-in)', () => {
       armed,
     );
     expect(accepted.end).toBe('fixed');
-    expect(accepted.state.stabilityReport).toMatch(/^certified: .*a person accepted: added lines/);
+    expect(accepted.state.stabilityReport).toMatch(/^certified: .*a person accepted: added code/);
+    // A root-cause fix plus a new regression test (with a sleep to order the answers). In a new
+    // file: nothing to flag, certified unattended. Next to the flaky test: a person looks, since
+    // a retry or a sleep added there would look the same.
+    const regression = (testFile: string) =>
+      play(
+        {
+          agents: flaky,
+          tools: {
+            captureDiff: masked(
+              ['src/search.js', testFile],
+              `${head('src/search.js')}\n-  let shown = '';\n+  const results = await Promise.all(queries.map((q) => fetch(q)));\n${head(testFile)}\n+test('ignores stale answers', async () => {\n+    await sleep(delays[q]);\n+  assert.equal(await typeAhead(['a', 'ab', 'abc'], ordered), 'ABC');\n+});`,
+            )(),
+            runStable: gateRuns()(),
+          },
+        },
+        armed,
+      );
+    const newFile = regression('src/a.regression.test.ts');
+    expect(newFile.state.maskingFlags).toEqual([]);
+    expect(newFile.end).toBe('fixed');
+    expect(regression('src/a.test.ts').state.maskingFlags).toEqual([
+      "the flaky test's own file changed",
+    ]);
   });
 
   it('a certificate holds only for the patch it measured', () => {
