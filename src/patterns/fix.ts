@@ -2,6 +2,7 @@ import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
 import { prReviewPhase } from './phases/prReview.js';
+import { stabilityPhases, targetFailed } from './phases/stability.js';
 import { TESTS_KEPT_CHECK, testFirstPhase } from './phases/testFirst.js';
 import {
   checkFindings,
@@ -21,17 +22,6 @@ const v = (reason: string, confidence = 0.9) => ({
   shouldTerminate: false,
   reason,
 });
-
-/**
- * A test's own lines in a run's output (vitest --reporter=verbose, jest --verbose, node --test,
- * pytest -v): failed, passed, passed only on a retry. Read with linesWith(output, flakyTarget).
- */
-export const FAILED_LINE = '^ *(FAIL|×|✕|✖|✗) |FAILED|ERROR';
-export const PASSED_LINE = '^ *(✓|✔|PASS) |PASSED';
-export const RETRIED_LINE = 'retry x|RERUN';
-/** The flaky test's failure is in this run's output (not another test's, not a timeout). */
-const targetFailed = (output: string) =>
-  `!empty(flakyTarget) && count(linesWith(${output}, flakyTarget), "${FAILED_LINE}") > 0`;
 
 /** Where intermittent failures come from (Luo et al. 2014, Fowler, Parry et al. 2021). */
 const NONDETERMINISM =
@@ -68,11 +58,16 @@ const edit = editVerifyPhase({
       message:
         'The test this fix is about (flakyTarget) failed: the patch did not make it stable. Classify it PATCH or DIAGNOSIS.',
     },
+    {
+      expr: 'failureKind != "ENVIRONMENT" || unstableHash != diffHash',
+      message:
+        'The stability gate ran this patch again and the flaky test failed: classify it PATCH or DIAGNOSIS.',
+    },
   ],
-  // With reproduceFirst, the locked reproducing test is checked before the review.
-  success: 'reproduced',
+  // The stability gate (off by default), then with reproduceFirst the locked test, then review.
+  success: 'stableGate',
   giveUp: 'learnFailed',
-  reviewedExit: 'acceptAnyway',
+  reviewedExit: 'reviewedCertified',
   rediagnose: { node: 'research', gaps: 'gaps' },
 });
 /** reproduceFirst (opt-in): a test that reproduces the bug, proved red and locked before the edit. */
@@ -89,6 +84,16 @@ const prReview = prReviewPhase({
   edit: 'apply',
   approved: 'learnFixed',
   stopped: 'reviewStopped',
+  reviewNote: ` When \`stabilityReport\` is set, the engine ran the flaky test again and again: read it and \`maskingFlags\`. ${MASKING[0]!.toUpperCase()}${MASKING.slice(1)}, or removed assertions, make a flaky test pass without fixing it: BLOCKING, unless the change shows the old limit was wrong for work measured to take that long (not merely slower under load).`,
+  reviewReads: ['stabilityReport', 'maskingFlags'],
+});
+/** The stability gate for a flaky test (opt-in): control before the edit, fresh runs after. */
+const stability = stabilityPhases({
+  next: 'reproduceFirstOn',
+  passed: 'reproduced',
+  unstable: 'attemptsLeft',
+  uncertified: 'learnUncertified',
+  reviewed: 'acceptAnyway',
 });
 
 /**
@@ -114,6 +119,8 @@ export const fix: Pattern = {
     'failureReason',
     'rulings',
     'unresolvedObjections',
+    'stabilityReport',
+    'maskingFlags',
   ],
   maxSteps: 400,
   state: withState(
@@ -178,6 +185,8 @@ export const fix: Pattern = {
     edit,
     reproduce,
     prReview,
+    stability.control,
+    stability.gate,
   ),
   start: 'start',
   groups: [
@@ -189,8 +198,10 @@ export const fix: Pattern = {
       nodes: ['research', 'checkResearch', 'mergeResearch', 'diagnose'],
     },
     challenge.group,
+    stability.control.group,
     { ...reproduce.group, nodes: ['planReproduce', ...reproduce.group.nodes] },
     edit.group,
+    stability.gate.group,
     prReview.group,
   ],
   nodes: [
@@ -349,6 +360,8 @@ export const fix: Pattern = {
     },
     ...reproduce.nodes,
     ...edit.nodes,
+    ...stability.control.nodes,
+    ...stability.gate.nodes,
     ...prReview.nodes,
     { id: 'reviewStopped', kind: 'end', label: 'Stopped at review', outcome: 'partial' },
     rememberLessonNode('learnFixed', 'fixed', {
@@ -361,7 +374,14 @@ export const fix: Pattern = {
       failure: 'failureReason',
       files: 'changedFiles',
     }),
+    rememberLessonNode(
+      'learnUncertified',
+      'fixed',
+      { problem: 'issue', cause: 'rootCause', files: 'changedFiles' },
+      { outcome: 'partial' },
+    ),
     { id: 'fixed', kind: 'end', label: 'Fixed', outcome: 'success' },
+    { id: 'uncertified', kind: 'end', label: 'Not certified', outcome: 'partial' },
     { id: 'gaveUp', kind: 'end', label: 'Gave up', outcome: 'failed' },
     { id: 'rejected', kind: 'end', label: 'Plan rejected', outcome: 'partial' },
   ],
@@ -372,6 +392,7 @@ export const fix: Pattern = {
     { id: 'recall-hypothesize', from: 'recall', to: hypotheses.entry },
     { id: 'learnFixed-fixed', from: 'learnFixed', to: 'fixed' },
     { id: 'learnFailed-gaveUp', from: 'learnFailed', to: 'gaveUp' },
+    { id: 'learnUncertified-end', from: 'learnUncertified', to: 'uncertified' },
     ...hypotheses.edges,
     { id: 'rating-research', from: hypotheses.exit!, to: 'research' },
     { id: 'research-check', from: 'research', to: 'checkResearch' },
@@ -379,7 +400,8 @@ export const fix: Pattern = {
     { id: 'merge-diagnose', from: 'mergeResearch', to: 'diagnose' },
     { id: 'diagnose-challenge', from: 'diagnose', to: challenge.entry },
     ...challenge.edges,
-    { id: 'approve-reproduce', from: 'approve', to: 'reproduceFirstOn', branch: 'approved' },
+    { id: 'approve-stability', from: 'approve', to: stability.control.entry, branch: 'approved' },
+    ...stability.control.edges,
     {
       id: 'reproduce-tests',
       from: 'reproduceFirstOn',
@@ -394,6 +416,7 @@ export const fix: Pattern = {
     ...reproduce.edges,
     { id: 'approve-rejected', from: 'approve', to: 'rejected', branch: 'rejected' },
     ...edit.edges,
+    ...stability.gate.edges,
     ...prReview.edges,
   ],
   demo: {
@@ -483,6 +506,20 @@ export const fix: Pattern = {
       recall: () => ({ facts: [], lessons: [] }),
       learnFixed: () => ({ saved: true }),
       learnFailed: () => ({ saved: true }),
+      learnUncertified: () => ({ saved: true }),
+      // The workspace as it is: unpatched before the first edit.
+      controlSnapshot: (s) => ({ diff: '', hash: String(s.diffHash || 'base'), files: [] }),
+      // With the gate (off in this demo): the flaky test fails once before the edit, never after.
+      runControl: (s) => ({
+        passed: false,
+        output: `FAIL  ${String(s.flakyTarget)}`,
+        command: String(s.controlCommand),
+      }),
+      runStable: (s) => ({
+        passed: true,
+        output: `✓ ${String(s.flakyTarget)} 2ms`,
+        command: String(s.gateCommand),
+      }),
       checkResearch: (s) => ({ valid: s.newFindings, invalid: [] }),
       captureDiff: (s) => {
         const n = (s.attempts as number) ?? 0;
