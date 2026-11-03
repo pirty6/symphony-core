@@ -122,7 +122,8 @@ export const fix: Pattern = {
     'stabilityReport',
     'maskingFlags',
   ],
-  maxSteps: 400,
+  // The stability gate takes about three steps per run (49 runs per patch by default).
+  maxSteps: 1000,
   state: withState(
     [
       {
@@ -145,7 +146,7 @@ export const fix: Pattern = {
       {
         name: 'flakyTarget',
         type: 'string',
-        description: 'The intermittent test, as the test runner prints it',
+        description: 'The intermittent test, as it appears on the line with its result',
       },
       { name: 'flakyFile', type: 'string', description: "flakyTarget's test file" },
       {
@@ -271,7 +272,7 @@ export const fix: Pattern = {
         CITE_BY_ID +
         ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way. `baselineOutput` is the test run before any edit: tests failing there that the bug does not explain are not yours to fix.' +
         NONDETERMINISM +
-        ` Set \`nondeterministic\` when the failure is intermittent. Then name the test in \`flakyTarget\` exactly as the test runner prints it (vitest: "src/a.test.ts > suite > test"), its file in \`flakyFile\`, and in \`fixTarget\` where the cause is: CODE (the code under test, e.g. a race or a real-clock comparison), TEST (the test waits by time, depends on order or leaks state) or ENVIRONMENT (the machine, not this repository). ${MASKING[0]!.toUpperCase()}${MASKING.slice(1)} hide a flaky test; they do not fix it.`,
+        ` Set \`nondeterministic\` when the failure is intermittent. Then name the test in \`flakyTarget\` exactly as it appears on the line where the runner reports its result (vitest --reporter=verbose: "src/a.test.ts > suite > test"; node --test and jest: the test's name), its file in \`flakyFile\`, and in \`fixTarget\` where the cause is: CODE (the code under test, e.g. a race or a real-clock comparison), TEST (the test waits by time, depends on order or leaks state) or ENVIRONMENT (the machine, not this repository). ${MASKING[0]!.toUpperCase()}${MASKING.slice(1)} hide a flaky test; they do not fix it.`,
       reads: [
         'issue',
         'hint',
@@ -311,8 +312,8 @@ export const fix: Pattern = {
             'An intermittent failure needs flakyTarget (the test, as the runner prints it) and fixTarget: CODE, TEST or ENVIRONMENT.',
         },
         {
-          expr: 'empty(flakyTarget) || (!empty(flakyFile) && includes(flakyTarget, flakyFile))',
-          message: "Give flakyTarget's test file in flakyFile, as it appears in flakyTarget.",
+          expr: 'empty(flakyTarget) || !empty(flakyFile)',
+          message: "Give flakyTarget's test file in flakyFile.",
         },
       ],
     },

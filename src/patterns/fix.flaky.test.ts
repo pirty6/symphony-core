@@ -72,8 +72,8 @@ describe('fix on a flaky test', () => {
     const unnamed = play({ agents: { diagnose: flakyDiagnose({ flakyTarget: '' }) } });
     expect(unnamed.r.state.outcome).not.toBe('success');
     expect(JSON.stringify(unnamed.r.state.steps.at(-1))).toMatch(/needs flakyTarget/);
-    const elsewhere = play({ agents: { diagnose: flakyDiagnose({ flakyFile: 'src/b.ts' }) } });
-    expect(elsewhere.r.state.outcome).not.toBe('success');
+    const noFile = play({ agents: { diagnose: flakyDiagnose({ flakyFile: '' }) } });
+    expect(noFile.r.state.outcome).not.toBe('success');
   });
 
   it("the target's own failure is never ENVIRONMENT; another test's may be", () => {
@@ -376,7 +376,45 @@ describe('fix: the stability gate (opt-in)', () => {
     expect(at({ stabilityArmed: false, reviewedHash: 'b' })).toBe(true);
   });
 
-  it('the worst case ends partial at the step limit, never Fixed', () => {
+  it('an ordinary armed run fits the step budget: a late control failure, a gate failure and a review round', () => {
+    let k = 0;
+    let control = 0;
+    const r = play(
+      {
+        agents: {
+          ...flaky,
+          prReview: (_s, visit) => ({
+            updates:
+              visit === 0
+                ? {
+                    reviewDecision: 'REQUEST_CHANGES',
+                    reviewComments: ['BLOCKING src/paginate.ts:7 — name the constant'],
+                    reviewSummary: 'one change',
+                  }
+                : {
+                    reviewDecision: 'APPROVE',
+                    reviewComments: ['RESOLVED src/paginate.ts:7 — named'],
+                    reviewSummary: 'ok',
+                  },
+            verdict: v,
+          }),
+        },
+        tools: {
+          captureDiff: () => ({ diff: `patch ${++k}`, hash: `h${k}`, files: ['src/paginate.ts'] }),
+          runControl: () => tests(++control < 8, control < 8 ? `✓ ${TARGET} 2ms` : out.targetFails),
+          runStable: gateRuns((_s, n) => n === 20)(),
+        },
+      },
+      // The defaults: tolerance 0.1 across 8 patches, 49 runs.
+      { autoStabilityRuns: 1 },
+    );
+    expect(r.state.maxStableRuns).toBe(49);
+    expect(r.ran('runControl')).toBe(8);
+    expect(r.ran('prReview')).toBe(2);
+    expect(r.end).toBe('fixed');
+  });
+
+  it('the worst case ends at the step limit or out of edits, never Fixed', () => {
     let k = 0;
     const r = play(
       {
@@ -389,9 +427,59 @@ describe('fix: the stability gate (opt-in)', () => {
           )(),
         },
       },
-      { ...armed, maxEdits: 8, maxAttempts: 8 },
+      { autoStabilityRuns: 1, maxAttempts: 8 },
     );
-    expect(r.r.state.outcome).toBe('partial');
+    expect(r.r.state.outcome).not.toBe('success');
+    expect(r.r.state.steps.length).toBeLessThanOrEqual(fix.maxSteps!);
+  });
+
+  it('once armed, a re-diagnosis that no longer calls it intermittent does not disarm the gate', () => {
+    let k = 0;
+    const r = play(
+      {
+        agents: {
+          diagnose: (s, visit) =>
+            visit === 0 ? flakyDiagnose()(s, visit) : agents.diagnose!(s, visit),
+          triage: () => ({
+            updates: { failureKind: 'DIAGNOSIS', failureReason: 'flaky' },
+            verdict: v,
+          }),
+        },
+        tools: {
+          captureDiff: () => ({ diff: `patch ${++k}`, hash: `h${k}`, files: ['src/paginate.ts'] }),
+          runTests: () => tests(true),
+          runStable: gateRuns((_s, n) => n === 3)(),
+        },
+      },
+      { ...armed, maxStabilityRuns: 0, autoStabilityRuns: 1 },
+    );
+    expect(r.state.stabilityArmed).toBe(true);
+    expect(r.ran('diagnose')).toBe(2);
     expect(r.end).not.toBe('fixed');
+    expect(r.state.certifiedHashes).toEqual([]);
+  });
+
+  it('reads node --test results by the test name alone (spec and TAP)', () => {
+    const name = 'shows the answer to the latest query';
+    for (const [failed, passed] of [
+      [`✖ ${name} (1.0ms)\n✖ failing tests:\ntest at test/search.test.js:5:1`, `✔ ${name} (2.1ms)`],
+      [`not ok 1 - ${name}\n# fail 1`, `ok 1 - ${name}\n# pass 1`],
+    ] as const) {
+      let c = 0;
+      const r = play(
+        {
+          agents: {
+            diagnose: flakyDiagnose({ flakyTarget: name, flakyFile: 'test/search.test.js' }),
+          },
+          tools: {
+            runControl: () => tests(++c > 1, c > 1 ? passed : failed),
+            runStable: () => tests(true, passed),
+          },
+        },
+        armed,
+      );
+      expect(r.ran('runControl'), failed).toBe(1);
+      expect(r.end).toBe('fixed');
+    }
   });
 });

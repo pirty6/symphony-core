@@ -173,7 +173,7 @@ hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
    diagnosis reads the findings in full.
 3. **Diagnose** a root cause from the cited evidence; the challenge phase attacks it. Research
    and the diagnosis are given the usual causes of intermittent failures. An intermittent
-   failure must name its test as the runner prints it (`flakyTarget`), the test's file, and
+   failure must name its test as its result line shows it (`flakyTarget`), the test's file, and
    where the fix goes (`fixTarget`: CODE, TEST or ENVIRONMENT).
 4. **👤 Approve the plan** (root cause, files, the change, the test).
 5. **Show the flake** (with the stability gate, below): before any edit, the gate command must
@@ -241,8 +241,14 @@ passes on a re-run).
   `stabilityTolerance` at 95% across `maxEdits` patches. It does not mean "never flaky". The
   report (`stabilityReport`) says so. Anything less ends at "Not certified" (partial): the patch
   is kept as a file, never applied, and the lesson is remembered with open doubts.
-- **Cost.** About three steps per run, so a gate fits one or two patches in `maxSteps` (400). A
-  run that reaches the limit ends partial, never Fixed.
+- **Cost.** About three steps per run (about 150 per patch by default); `maxSteps` (1000) fits
+  the control and five or so measured patches. A run that reaches the limit ends partial, never
+  Fixed.
+- **One way.** Once armed, a re-diagnosis that no longer calls the failure intermittent does not
+  disarm the gate.
+- **The test's name.** `flakyTarget` is the text on the line where the runner reports the test's
+  result: `src/a.test.ts > suite > test` for vitest, the test's name for node and jest. If it is
+  wrong, the control never sees it fail, and the run stops at "Flake not shown".
 
 <!-- flow:fix -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->

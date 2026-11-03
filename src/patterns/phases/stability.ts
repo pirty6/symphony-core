@@ -143,12 +143,13 @@ export function stabilityPhases(cfg: StabilityConfig): {
       kind: 'compute',
       label: 'Arm the stability gate?',
       // A count chosen for the run wins; otherwise the diagnosis decides (autoStabilityRuns).
+      // One way: a re-diagnosis that no longer calls it intermittent does not disarm it.
       assign: [
         {
           field: 'maxStableRuns',
-          expr: 'if(maxStabilityRuns > 0, maxStabilityRuns, if(nondeterministic, autoStabilityRuns, 0))',
+          expr: 'if(stabilityArmed, maxStableRuns, if(maxStabilityRuns > 0, maxStabilityRuns, if(nondeterministic, autoStabilityRuns, 0)))',
         },
-        { field: 'stabilityArmed', expr: 'maxStableRuns > 0' },
+        { field: 'stabilityArmed', expr: 'stabilityArmed || maxStableRuns > 0' },
         {
           field: 'gateCommand',
           expr: 'if(empty(stabilityCommand), testCommand, stabilityCommand)',
@@ -240,7 +241,7 @@ export function stabilityPhases(cfg: StabilityConfig): {
       kind: 'approval',
       label: 'Edit without the flake shown?',
       message:
-        'The flaky test did not fail in any control run before the edit, so later clean runs cannot show the fix changed anything. Approve to edit anyway: the fix will not be certified (at best it ends "not certified", kept as a file). Reject to stop, and find a command that makes it fail (under load, shuffled, the whole suite).',
+        'The flaky test did not fail in any control run before the edit, so later clean runs cannot show the fix changed anything (check that flakyTarget is the text on its result line in controlOutput). Approve to edit anyway: the fix will not be certified (at best it ends "not certified", kept as a file). Reject to stop, and find a command that makes it fail (under load, shuffled, the whole suite).',
       shows: ['flakyTarget', 'controlCommand', 'controlRuns', 'controlOutput'],
       writes: [],
       // Unattended, an unshown flake is not edited on.
