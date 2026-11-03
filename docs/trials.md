@@ -150,7 +150,18 @@ npm run cli -- eval --task fix-flaky-gated -n 5
 ```
 
 Count three things across the runs: false Fixed, real fixes certified, and real fixes stopped as
-not certified (a false alarm). Also record:
+not certified (a false alarm).
+
+First live results (Copilot, 2026-11-03, 3 runs each):
+- **`fix-flaky`:** 3/3 real fixes, about 2 minutes each, and no false Fixed.
+- **`fix-flaky-gated`, first try:** 0/3. All three were real fixes that passed the control and
+  49 gate runs, but they were stopped by masking flags on the regression test the edit had added
+  next to the flaky one. That was a false alarm, now fixed: test files and code are judged apart.
+- **`fix-flaky-gated`, again:** 3/3 certified. The control saw the test fail by run 4, 5 or 12,
+  then 49 clean runs, with no flags; about 2.5 to 3 minutes each.
+
+This fixture's model fixes it either way. The gate's worth shows only on a model or fixture that
+produces a lucky green; the masking fixtures below are that test. Also record:
 - **Cost.** The gate's runs and time: control plus `maxStableRuns` per patch.
 - **The diagnosis.** Did it set `nondeterministic`, `flakyTarget` (exactly as the runner prints
   it) and `fixTarget`? Nothing else arms `autoStabilityRuns` before the edit.
