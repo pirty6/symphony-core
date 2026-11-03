@@ -58,7 +58,7 @@ experiments, git history, GitHub, dependencies, MCP servers.
    (`readNotes`, checked against the batch). Unreadable items, and one nothing of fit, are
    retried once at the end, one per call, except PDFs and binaries, which would fail the same
    way.
-   `singlePass: true` is an off-by-default pilot: triage also reads the relevant files in
+   `singlePass: true` (on with `lean`, below): triage also reads the relevant files in
    depth (following references and history) and writes a checked note per file, and those it
    read completely skip the deep read only if the engine's preload record shows it gave them
    whole (no record: none skip).
@@ -107,8 +107,8 @@ flowchart TD
   n_rememberCited[/"🔧 Remember cited facts"/]
   n_done(["Answered · success"])
   n_doubts(["Answered, with open doubts · partial"])
-  n_planPhase[["Plan research · 5 steps"]]
-  n_hypothesesPhase[["Competing hypotheses · 2 steps"]]
+  n_planPhase[["Plan research · 6 steps"]]
+  n_hypothesesPhase[["Competing hypotheses · 3 steps"]]
   n_listPhase[["List evidence · 13 steps"]]
   n_triagePhase[["Triage files · 7 steps"]]
   n_deepPhase[["Deep read · 8 steps"]]
@@ -117,8 +117,9 @@ flowchart TD
   n_gapPhase[["Close gaps · 17 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
   n_judgePhase[["Support judge · 6 steps"]]
-  n_start --> n_recall
-  n_recall --> n_planPhase
+  n_start --> n_planPhase
+  n_planPhase --> n_recall
+  n_recall -.-> n_planPhase
   n_planPhase --> n_hypothesesPhase
   n_hypothesesPhase --> n_listPhase
   n_listPhase --> n_triagePhase
@@ -147,8 +148,8 @@ flowchart TD
 
 | Phase | What it does | Steps |
 | --- | --- | --- |
-| Plan research | Available sources, sub-questions, which evidence applies | List sources → Plan research → Recall for the sub-questions → Merge recalled leads → Queue sources |
-| Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
+| Plan research | Available sources, sub-questions, which evidence applies | Lean run? → List sources → Plan research → Recall for the sub-questions → Merge recalled leads → Queue sources |
+| Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity → Cap the rated complexity |
 | List evidence | Only what the plan needs: workspace files, likeliest first (a big repo is searched first), web pages, experiments | Hypotheses for the readers → Workspace? → List every file → Rank files → Count files → Triage every file? → Queue files → Locate files → Queue located files → Web? → List web pages → Experiments? → Design experiments |
 | Triage files | Every listed file, in batches | Files left? → Next batch → Single pass? (pilot) → Triage files → Triage and read in depth → Check citations → Record triage |
 | Deep read | Every relevant file and listed page, completely | Queue deep reads → Deep reads left? → Next deep batch → Deep read → Check citations → Record deep read → Retry unreadable? → Queue unreadable again |
@@ -159,6 +160,12 @@ flowchart TD
 | Support judge | Off by default: does each cited finding's quote back its claim? | Support judge? → What the judge can check → Lines around each quote → Any to judge? → Support judge → Record the rulings |
 
 <!-- /flow:investigate -->
+
+**Lean** (`lean`, on by default) bundles the settings estimated to cut time and tokens together:
+at most one debate round, single-pass triage, gap-aimed research, unchallenged sub-answers kept,
+a sub-agent per gap, and an AI-rated complexity 4 capped at 3 (a chosen 4 stays). Turn it off
+(studio Features, or `--with lean=false`) if answers get worse; the settings then apply as set.
+See [settings.md](settings.md) and the lean trial in [trials.md](trials.md).
 
 ## fix
 

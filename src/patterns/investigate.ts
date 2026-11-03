@@ -420,6 +420,18 @@ export const investigate: Pattern = {
         description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
       },
       {
+        name: 'lean',
+        type: 'boolean',
+        initial: true,
+        description:
+          'At most one debate round, single-pass triage, gap-aimed research, unchallenged sub-answers kept, one sub-agent per gap, and the AI-rated complexity capped at 3 (a chosen one stays). Off: each as set on its own',
+      },
+      {
+        name: 'complexityChosen',
+        type: 'boolean',
+        description: 'A complexity was chosen for the run (lean never lowers it)',
+      },
+      {
         name: 'warmFirst',
         type: 'boolean',
         initial: true,
@@ -704,9 +716,9 @@ export const investigate: Pattern = {
       id: 'planPhase',
       label: 'Plan research',
       description: 'Available sources, sub-questions, which evidence applies',
-      nodes: ['catalog', 'plan', 'recallPlan', 'mergeRecall', 'queue'],
+      nodes: ['applyLean', 'catalog', 'plan', 'recallPlan', 'mergeRecall', 'queue'],
     },
-    hypotheses.group,
+    { ...hypotheses.group, nodes: [...hypotheses.group.nodes, 'leanComplexity'] },
     {
       id: 'listPhase',
       label: 'List evidence',
@@ -823,6 +835,32 @@ export const investigate: Pattern = {
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
+    {
+      id: 'applyLean',
+      kind: 'compute',
+      label: 'Lean run?',
+      // One switch for the settings measured to cut time and tokens together; off restores each.
+      assign: [
+        { field: 'complexityChosen', expr: 'complexity > 0' },
+        { field: 'maxDebateRounds', expr: 'if(lean && maxDebateRounds > 1, 1, maxDebateRounds)' },
+        { field: 'singlePass', expr: 'singlePass || lean' },
+        { field: 'gapAimed', expr: 'gapAimed || lean' },
+        { field: 'keepUnchallenged', expr: 'keepUnchallenged || lean' },
+        { field: 'gapsPerChase', expr: 'if(lean, 1, gapsPerChase)' },
+      ],
+    },
+    {
+      id: 'leanComplexity',
+      kind: 'compute',
+      label: 'Cap the rated complexity',
+      // Lean: a rated 4 (a second investigator, Opus on the evidence) plays at 3; a chosen 4 stays.
+      assign: [
+        {
+          field: 'complexity',
+          expr: 'if(lean && !complexityChosen && complexity > 3, 3, complexity)',
+        },
+      ],
+    },
     recallMemory('recall', 'question'),
     {
       // Again with the sub-questions: the raw question is a poor query for the parts of it.
@@ -1933,7 +1971,8 @@ export const investigate: Pattern = {
     { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
   ],
   edges: [
-    { id: 'start-recall', from: 'start', to: 'recall' },
+    { id: 'start-lean', from: 'start', to: 'applyLean' },
+    { id: 'lean-recall', from: 'applyLean', to: 'recall' },
     { id: 'recall-catalog', from: 'recall', to: 'catalog' },
     { id: 'catalog-plan', from: 'catalog', to: 'plan' },
     { id: 'plan-recall', from: 'plan', to: 'recallPlan' },
@@ -1941,7 +1980,8 @@ export const investigate: Pattern = {
     { id: 'mergeRecall-queue', from: 'mergeRecall', to: 'queue' },
     { id: 'queue-hypothesize', from: 'queue', to: hypotheses.entry },
     ...hypotheses.edges,
-    { id: 'rating-leads', from: hypotheses.exit!, to: 'leads' },
+    { id: 'rating-lean', from: hypotheses.exit!, to: 'leanComplexity' },
+    { id: 'leanComplexity-leads', from: 'leanComplexity', to: 'leads' },
     { id: 'leads-needFiles', from: 'leads', to: 'needFiles' },
     { id: 'needFiles-inventory', from: 'needFiles', to: 'inventory', branch: 'then' },
     { id: 'needFiles-needWeb', from: 'needFiles', to: 'needWeb', branch: 'else' },
