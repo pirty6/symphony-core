@@ -48,6 +48,15 @@ export const EDIT_STATE: readonly StateField[] = [
     description: "Command that runs the tests (empty: the project's test script)",
   },
   {
+    name: 'testTimeoutMs',
+    type: 'number',
+    initial: 600_000,
+    min: 1000,
+    description: 'Longest one test or lint run may take',
+  },
+  { name: 'baselinePassed', type: 'boolean' },
+  { name: 'baselineOutput', type: 'string', description: 'Tests before any edit' },
+  {
     name: 'lintCommand',
     type: 'string',
     description: 'Optional lint or typecheck command that must also pass',
@@ -62,6 +71,12 @@ export const EDIT_STATE: readonly StateField[] = [
   },
   { name: 'triedHashes', type: 'string[]', description: 'Every edit already tested' },
   { name: 'changedFiles', type: 'string[]', description: 'Files the edit changed' },
+  {
+    name: 'checkFiles',
+    type: 'string[]',
+    description:
+      'Changed files that configure how the tests or lint run (package.json, test config, CI): the reviewer checks they do not weaken the checks',
+  },
   { name: 'testsPassed', type: 'boolean' },
   { name: 'testOutput', type: 'string', description: 'Test output, run by the engine' },
   { name: 'lintPassed', type: 'boolean', initial: true },
@@ -134,7 +149,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       kind: 'tool',
       label: 'Run tests',
       tool: 'tests.run',
-      inputs: { command: 'testCommand' },
+      inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' },
       output: { passed: 'testsPassed', output: 'testOutput' },
       maxVisits: LOOP_VISITS,
       visitsFrom: LOOP_FROM,
@@ -150,7 +165,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       kind: 'tool',
       label: 'Run lint',
       tool: 'tests.run',
-      inputs: { command: 'lintCommand' },
+      inputs: { command: 'lintCommand', timeoutMs: 'testTimeoutMs' },
       output: { passed: 'lintPassed', output: 'lintOutput' },
       maxVisits: LOOP_VISITS,
       visitsFrom: LOOP_FROM,
@@ -162,6 +177,10 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       assign: [
         { field: 'attempts', expr: 'attempts + 1' },
         { field: 'triedHashes', expr: 'triedHashes + [diffHash]' },
+        {
+          field: 'checkFiles',
+          expr: 'pick(changedFiles, positions(changedFiles, "(^|/)(package[.]json|tsconfig.*|(vitest|jest|playwright|eslint)[.]config[.].+|[.](eslintrc|mocharc).*|(pytest|tox)[.]ini|setup[.]cfg|pyproject[.]toml|conftest[.]py|Makefile)$|^[.]github/workflows/"))',
+        },
       ],
     },
     {
@@ -182,8 +201,8 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       role: 'assessor',
       label: 'Triage failure',
       directive:
-        'The edit was applied and the engine ran the checks: they failed. Read `testOutput`, `lintOutput`, `diff` and the plan, and classify the failure in `failureKind`: PATCH if the edit is wrong or incomplete but the plan is sound; DIAGNOSIS if the plan or root cause is wrong (the failure points elsewhere, or the edit cannot work); ENVIRONMENT if the failure is not caused by the edit (flaky test, missing dependency or tool, network, a test that also fails without the change). Put the specific evidence (test name, file:line, error) in `failureReason`.',
-      reads: ['testOutput', 'lintOutput', 'diff', 'changes', ...cfg.triageReads],
+        'The edit was applied and the engine ran the checks: they failed. Read `testOutput`, `lintOutput`, `diff` and the plan, and classify the failure in `failureKind`: PATCH if the edit is wrong or incomplete but the plan is sound; DIAGNOSIS if the plan or root cause is wrong (the failure points elsewhere, or the edit cannot work); ENVIRONMENT if the failure is not caused by the edit (flaky test, missing dependency or tool, network, a test that also fails without the change: `baselineOutput` is the run before any edit). Put the specific evidence (test name, file:line, error) in `failureReason`.',
+      reads: ['testOutput', 'lintOutput', 'diff', 'changes', 'baselineOutput', ...cfg.triageReads],
       writes: ['failureKind', 'failureReason'],
       retries: 2,
       maxVisits: LOOP_VISITS,

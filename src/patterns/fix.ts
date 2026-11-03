@@ -114,6 +114,17 @@ export const fix: Pattern = {
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
     {
+      id: 'baseline',
+      kind: 'tool',
+      label: 'Run tests first',
+      tool: 'tests.run',
+      // What fails before any edit: the bug's symptom, or tests already broken (not the fix's).
+      args: { reuse: true },
+      inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' },
+      // The command it ran is kept: an edit to the test script cannot change what verifies it.
+      output: { passed: 'baselinePassed', output: 'baselineOutput', command: 'testCommand' },
+    },
+    {
       id: 'snapshot',
       kind: 'tool',
       label: 'Snapshot workspace',
@@ -159,8 +170,16 @@ export const fix: Pattern = {
       directive:
         'From `findings` only, state the root cause of `issue` in `rootCause`, citing the evidence by id. ' +
         CITE_BY_ID +
-        ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way.',
-      reads: ['issue', 'hint', 'hypotheses', 'findings', 'failureReason', 'testOutput'],
+        ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way. `baselineOutput` is the test run before any edit: tests failing there that the bug does not explain are not yours to fix.',
+      reads: [
+        'issue',
+        'hint',
+        'hypotheses',
+        'findings',
+        'failureReason',
+        'testOutput',
+        'baselineOutput',
+      ],
       writes: ['rootCause', 'files', 'plan', 'rulings'],
       verifyBelow: 0.6,
       retries: 2,
@@ -206,7 +225,8 @@ export const fix: Pattern = {
     { id: 'rejected', kind: 'end', label: 'Plan rejected', outcome: 'partial' },
   ],
   edges: [
-    { id: 'start-snapshot', from: 'start', to: 'snapshot' },
+    { id: 'start-baseline', from: 'start', to: 'baseline' },
+    { id: 'baseline-snapshot', from: 'baseline', to: 'snapshot' },
     { id: 'snapshot-recall', from: 'snapshot', to: 'recall' },
     { id: 'recall-hypothesize', from: 'recall', to: hypotheses.entry },
     { id: 'learnFixed-fixed', from: 'learnFixed', to: 'fixed' },
@@ -297,6 +317,11 @@ export const fix: Pattern = {
       }),
     },
     tools: {
+      baseline: () => ({
+        passed: false,
+        output: 'FAIL src/paginate.test.ts > page 2 starts after page 1',
+        command: 'npm test',
+      }),
       snapshot: () => ({ diff: '', hash: 'base', files: [] }),
       recall: () => ({ facts: [], lessons: [] }),
       learnFixed: () => ({ saved: true }),

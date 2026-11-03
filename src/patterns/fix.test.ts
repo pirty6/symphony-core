@@ -138,6 +138,47 @@ describe('fix', () => {
     expect(cycle.state.failureReason).toBe('the edit is identical to an earlier attempt');
   });
 
+  it('runs the tests before any edit, and every later run uses the command that one ran', () => {
+    const { r, state } = play({
+      tools: {
+        baseline: () => ({ passed: false, output: 'FAIL page 2', command: 'npx vitest run' }),
+        captureDiff: freshDiff(),
+      },
+    });
+    expect(state.baselineOutput).toBe('FAIL page 2');
+    // An edit to package.json's test script cannot change what verifies the fix.
+    expect(state.testCommand).toBe('npx vitest run');
+    const runs = r.state.steps.filter((x) => x.nodeId === 'runTests');
+    expect(runs.length).toBeGreaterThan(0);
+    const node = compileScore(fix, { context: demo.context! }).nodes.find(
+      (n) => n.id === 'runTests',
+    );
+    expect(node).toMatchObject({ inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' } });
+  });
+
+  it('lists changed files that configure the checks, for the reviewer', () => {
+    let n = 0;
+    const { state } = play({
+      tools: {
+        captureDiff: () => ({
+          diff: `p${++n}`,
+          hash: `h${n}`,
+          files: [
+            'package.json',
+            'src/paginate.ts',
+            'vitest.config.ts',
+            '.github/workflows/ci.yml',
+          ],
+        }),
+      },
+    });
+    expect(state.checkFiles).toEqual([
+      'package.json',
+      'vitest.config.ts',
+      '.github/workflows/ci.yml',
+    ]);
+  });
+
   it('stops at once when the failure is environmental: another edit cannot fix it', () => {
     const { r, ran, state, end } = play({
       agents: {

@@ -175,6 +175,7 @@ decides whether the tests pass.
 ```mermaid
 flowchart TD
   n_start(["Start"])
+  n_baseline[/"🔧 Run tests first"/]
   n_snapshot[/"🔧 Snapshot workspace"/]
   n_recall[/"🔧 Recall earlier runs"/]
   n_approve{{"👤 Approve plan"}}
@@ -189,7 +190,8 @@ flowchart TD
   n_challengePhase[["Challenge the answer · 18 steps"]]
   n_editPhase[["Edit and verify · 15 steps"]]
   n_prReviewPhase[["PR review · 5 steps"]]
-  n_start --> n_snapshot
+  n_start --> n_baseline
+  n_baseline --> n_snapshot
   n_snapshot --> n_recall
   n_recall --> n_hypothesesPhase
   n_learnFixed --> n_fixed

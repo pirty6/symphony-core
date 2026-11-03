@@ -44,8 +44,16 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       otherModel: true,
       maxVisits: 8,
       visitsFrom: '(maxReviewRounds + 1) * 3',
-      directive: `Review this change as you would a pull request, against \`${cfg.subject}\` and ${cfg.against.map((a) => `\`${a}\``).join(', ')}. Read \`diff\` and the code around it in the workspace (read-only). Look for: wrong behaviour or missed cases, a fix of the symptom instead of the cause, missing or weak tests (a test that would pass without the change), broken conventions of the codebase, needless complexity, and leftover debug code. Write each issue in \`reviewComments\` as "BLOCKING path:line — what to change and why" or "NIT path:line — …". Only real problems are BLOCKING; style preferences are NITs. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed, and list each one that was as "RESOLVED path:line — how" (keep it BLOCKING if it was not). Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE (the engine checks that they agree), and summarize in \`reviewSummary\`.`,
-      reads: [cfg.subject, ...cfg.against, 'diff', 'changes', 'testOutput', 'reviewComments'],
+      directive: `Review this change as you would a pull request, against \`${cfg.subject}\` and ${cfg.against.map((a) => `\`${a}\``).join(', ')}. Read \`diff\` and the code around it in the workspace (read-only). Look for: wrong behaviour or missed cases, a fix of the symptom instead of the cause, missing or weak tests (a test that would pass without the change), tests removed, skipped or loosened, a change to \`checkFiles\` (how the tests or lint run) that weakens or narrows the checks, broken conventions of the codebase, needless complexity, and leftover debug code. Write each issue in \`reviewComments\` as "BLOCKING path:line — what to change and why" or "NIT path:line — …". Only real problems are BLOCKING; style preferences are NITs. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed, and list each one that was as "RESOLVED path:line — how" (keep it BLOCKING if it was not). Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE (the engine checks that they agree), and summarize in \`reviewSummary\`.`,
+      reads: [
+        cfg.subject,
+        ...cfg.against,
+        'diff',
+        'changes',
+        'checkFiles',
+        'testOutput',
+        'reviewComments',
+      ],
       writes: ['reviewDecision', 'reviewComments', 'reviewSummary'],
       retries: 2,
       checks: [
@@ -108,7 +116,7 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       message:
         'The reviewer still requests changes after the last review round. Approve to accept the change as it is (the comments stay in the result), or reject to stop.',
       writes: [],
-      shows: ['reviewDecision', 'reviewComments', 'reviewSummary', 'diff'],
+      shows: ['reviewDecision', 'reviewComments', 'reviewSummary', 'checkFiles', 'diff'],
     },
   ];
   const edges: ScoreEdge[] = [
