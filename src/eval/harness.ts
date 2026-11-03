@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compileScore } from '../core/compile.js';
 import { RUN_SCHEMA_VERSION } from '../core/migrate.js';
-import type { Pattern, SavedRun, TokenUsage } from '../core/types.js';
+import type { Improvisation, Pattern, SavedRun, TokenUsage } from '../core/types.js';
 import {
   addUsage,
   costliest,
@@ -28,7 +28,7 @@ import { Run } from '../runtime/driver.js';
 import { checkCitations } from '../runtime/evidence.js';
 import { runtimeExtras } from '../runtime/factory.js';
 import type { Provider } from '../runtime/provider.js';
-import { buildFixture, writeFiles, type EvalTask } from './tasks.js';
+import { buildFixture, finalFiles, writeFiles, type EvalTask } from './tasks.js';
 
 export interface EvalResult {
   readonly task: string;
@@ -99,6 +99,8 @@ export interface EvalOptions {
   readonly onResult?: (r: EvalResult) => void;
   /** Inputs over each task's own, for this pattern (eval --with: a trial's setting). */
   readonly inputs?: (pattern: Pattern) => Readonly<Record<string, unknown>>;
+  /** Play every task at this improvisation (0 classical … 4 free); a trial's setting. */
+  readonly improvisation?: Improvisation;
   /** Saved in the report: what the runs were played with. */
   readonly settings?: readonly string[];
 }
@@ -114,7 +116,7 @@ async function runTask(
   if (!pattern) throw new Error(`eval task '${task.id}': no pattern '${task.pattern}'`);
   const workspace = await mkdtemp(join(tmpdir(), `symphony-eval-${task.id}-`));
   try {
-    await buildFixture(workspace, task.files);
+    await buildFixture(workspace, task.files, task.history);
     if (task.changes) await writeFiles(workspace, task.changes);
     // The task's workspace only: no MCP servers, no user configuration.
     const extras = await runtimeExtras(workspace, o.repoRoot, { ...o.env, SYMPHONY_MCP: 'off' });
@@ -122,6 +124,7 @@ async function runTask(
       context: { ...task.inputs, ...o.inputs?.(pattern) },
       ...(pattern.goalFrom ? {} : { goal: task.goal ?? task.id }),
       ...(task.complexity ? { complexity: task.complexity } : {}),
+      ...(o.improvisation !== undefined ? { improvisation: o.improvisation } : {}),
     });
     const started = Date.now();
     const run = new Run({
@@ -148,7 +151,7 @@ async function runTask(
       : [];
     // Findings describe the code before any edit: check them against the fixture as given.
     const pristine = await mkdtemp(join(tmpdir(), `symphony-eval-${task.id}-orig-`));
-    const cited = await writeFiles(pristine, { ...task.files, ...task.changes })
+    const cited = await writeFiles(pristine, finalFiles(task))
       .then(() => checkCitations(pristine, findings))
       .finally(() => rm(pristine, { recursive: true, force: true }));
     const models = [

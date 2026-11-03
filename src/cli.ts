@@ -565,6 +565,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
       compare: { type: 'string' },
       keep: { type: 'boolean', default: false },
       with: { type: 'string', multiple: true },
+      improvisation: { type: 'string' },
     },
   });
   const providerName = args.values.provider;
@@ -610,6 +611,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     .filter(([k, v]) => /^SYMPHONY_(NODE_MODELS|DELTA_REPAIR|HEADER_IN_SYSTEM)$/.test(k) && v)
     .map(([k, v]) => `${k}=${v}`)
     .toSorted();
+  const improvisation = levelOf(args.values.improvisation);
   console.log(c.dim(`eval: ${tasks.length} task(s) × ${args.values.repeat} on ${providerName}`));
   const report = await runEval({
     tasks,
@@ -620,7 +622,12 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     repeat: Number(args.values.repeat),
     keep: args.values.keep,
     inputs: (p) => parseContext(ownPairs(p), p),
-    settings: [...pairs, ...switches],
+    ...(improvisation !== undefined ? { improvisation } : {}),
+    settings: [
+      ...pairs,
+      ...(improvisation !== undefined ? [`improvisation=${improvisation}`] : []),
+      ...switches,
+    ],
     runsDir: join(
       cwd,
       '.symphony',
@@ -1088,6 +1095,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
   eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time
       --with key=value         an input for every task whose pattern has it (a trial: --with deepBatchSize=8)
+      --improvisation 0-4      play every task at this improvisation (a trial)
       --task routing           21 maestro requests: right pattern, complexity band and chain (compose only)
   runs --prune [--dry-run]     delete demo runs >7 days, compact runs >30 days (still replayable)
 

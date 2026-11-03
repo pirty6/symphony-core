@@ -101,6 +101,15 @@ describe('main', () => {
       readFileSync(/run (\S+\.json)/.exec(report.results[0].notes.join(' '))![1]!, 'utf8'),
     );
     expect(run.score.context).toMatchObject({ maxExpandRounds: 0, gapAimed: true });
+    // An improvisation level too, named in the report.
+    out = '';
+    expect(await main([...args, '--improvisation', '2'], cwd)).toBe(0);
+    const at2 = JSON.parse(readFileSync(/saved (\S+\.json)/.exec(plain())![1]!, 'utf8'));
+    expect(at2.settings).toEqual(['improvisation=2']);
+    const run2 = JSON.parse(
+      readFileSync(/run (\S+\.json)/.exec(at2.results[0].notes.join(' '))![1]!, 'utf8'),
+    );
+    expect(run2.score.improvisation).toBe(2);
     out = '';
     expect(await main([...args, '--with', 'noSuchField=1'], cwd)).toBe(1);
     expect(plain()).toMatch(/--with: no task's pattern has 'noSuchField=1'/);
