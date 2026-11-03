@@ -30,6 +30,7 @@ import {
   listRuns,
   pruneRuns,
   loadPatternFiles,
+  loadRepertoire,
   loadRun,
   runPath,
   savePatternFile,
@@ -41,6 +42,27 @@ const root = mkdtempSync(join(tmpdir(), 'symphony-store-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe('run store', () => {
+  it('reads only the runs of the score being played for its repertoire, not the whole store', async () => {
+    const dir = join(root, 'runs-repertoire');
+    const played = async (p: typeof fix) => {
+      const score = compileScore(p, { goal: 'g', context: p.demo!.context!, generatedAt: 't' });
+      const performance = toPerformance(
+        runScripted(score, p.demo, { at: '2026-01-01T00:00:00Z' }).state,
+      );
+      await saveRun(dir, { schemaVersion: 3, score, performance });
+      return score;
+    };
+    const a = await played(fix);
+    const b = await played(review);
+    const all = await loadRepertoire(dir);
+    const onlyA = await loadRepertoire(dir, a.id);
+    const onlyB = await loadRepertoire(dir, b.id);
+    expect(onlyA.size).toBeGreaterThan(0);
+    expect(onlyB.size).toBeGreaterThan(0);
+    expect(onlyA.size + onlyB.size).toBe(all.size);
+    expect((await loadRepertoire(dir, 'no-such-score')).size).toBe(0);
+  });
+
   it('keeps the parallel sub-agents (fanOut.agents, 6) in the saved score, and each wave plays them', async () => {
     const dir = join(root, 'runs-agents');
     const score = compileScore(investigate, {
@@ -326,6 +348,9 @@ describe('run scratch folders', () => {
   });
 });
 
+/** A saved run's path relative to its runs folder, as prune reports it. */
+const name = (f: string, dir: string) => f.slice(dir.length + 1);
+
 describe('retention: saved runs do not pile up', () => {
   const score = compileScore(fix, { context: fix.demo!.context!, generatedAt: 't' });
   const perf = toPerformance(runScripted(score, fix.demo, { at: 't' }).state);
@@ -374,6 +399,26 @@ describe('retention: saved runs do not pile up', () => {
     expect(existsSync(join(scratch, 'running'))).toBe(true);
     expect(statSync(files.oldReal).size).toBeLessThan(before);
     expect(JSON.parse(readFileSync(files.oldReal, 'utf8')).performance.compacted).toBe(true);
+  });
+
+  it('over its size bound, the oldest real runs are compacted early; recent ones stay whole', async () => {
+    const over = await workspace();
+    // A bound nothing fits under: every real run old enough is compacted, oldest first.
+    const r = await pruneRuns(over.dir, { age: over.age, policy: { storeMB: 0 } });
+    expect(r.compacted).toEqual([
+      name(over.files.oldReal, over.dir),
+      name(over.files.newReal, over.dir),
+    ]);
+    expect(r.deleted).toHaveLength(1);
+    expect(JSON.parse(readFileSync(over.files.newReal, 'utf8')).performance.compacted).toBe(true);
+    expect((await loadRun(over.files.newReal)).issues).toEqual([]);
+    // Runs younger than keepWholeDays keep their AI text, whatever the size.
+    const recent = await workspace();
+    const kept = await pruneRuns(recent.dir, {
+      age: recent.age,
+      policy: { storeMB: 0, keepWholeDays: 30 },
+    });
+    expect(kept.compacted).toEqual([name(recent.files.oldReal, recent.dir)]);
   });
 
   it('a compacted run loads with its timeline rebuilt and still verifies', async () => {

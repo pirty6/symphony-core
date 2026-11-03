@@ -48,6 +48,8 @@ export interface StateField {
    * declares it, so such a run is refused at compile instead of stuck at the step.
    */
   readonly min?: number;
+  /** number fields: the most it may be given (agentsCap: more than 6 at once does nothing). */
+  readonly max?: number;
 }
 
 // ── Nodes ──────────────────────────────────────────────────────────
@@ -435,6 +437,8 @@ export interface Musician {
   readonly sampling: string;
   /** Models whose content filter blocked this answer before another model gave it. */
   readonly blockedOn?: readonly string[];
+  /** Times a rate limit (HTTP 429) stopped the session before it began, and it waited to retry. */
+  readonly rateLimitWaits?: number;
 }
 
 // ── Engine: pauses and resolutions ─────────────────────────────────

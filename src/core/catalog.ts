@@ -137,7 +137,7 @@ export const FEATURES: readonly Feature[] = [
     field: 'narrowRead',
     label: 'Narrowed read (opt-in)',
     description:
-      'Triage only the files the search matched plus 20 more in ranked order. Every other file is never read (zero coverage) and is listed in the coverage. Only when you accept that.',
+      'Where every file would be triaged (up to 300 files, or exhaustive): triage only the files the search matched plus 20 more in ranked order. Every other file is never read (zero coverage) and is listed in the coverage. Only when you accept that. A bigger repository is already narrowed by Locate.',
   },
   {
     field: 'gapAimed',

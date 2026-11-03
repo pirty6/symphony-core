@@ -18,6 +18,32 @@ export class HashError extends Error {}
  */
 export function canonicalJson(value: unknown, path = '$'): string {
   if (value === null) return 'null';
+  // A frozen value cannot change, so its text is reused: the engine freezes what it puts in
+  // the state, and hashing the state at every step re-serialized every unchanged list.
+  if (typeof value === 'object' && Object.isFrozen(value)) {
+    const known = FROZEN_TEXT.get(value);
+    if (known !== undefined) return known;
+    const text = canonicalText(value, path);
+    FROZEN_TEXT.set(value, text);
+    return text;
+  }
+  return canonicalText(value, path);
+}
+
+const FROZEN_TEXT = new WeakMap<object, string>();
+
+/**
+ * Deep-freeze a JSON value (already frozen parts are skipped), so its canonical text can
+ * be reused. The engine freezes every value it writes into the state.
+ */
+export function freezeJson<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
+  for (const v of Object.values(value)) freezeJson(v);
+  return Object.freeze(value);
+}
+
+function canonicalText(value: unknown, path: string): string {
+  if (value === null) return 'null';
   switch (typeof value) {
     case 'string':
     case 'boolean':

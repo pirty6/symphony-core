@@ -88,6 +88,7 @@ Recover instead of starting over:
 | The AI provider blocks an answer (content filtering) | The same model blocks the same prompt every time, so retrying it cannot help: the provider asks the nearest tiers' other models (up to two) and records which ones blocked (`musician.blockedOn`). If all of them block, the step's error says so ("the AI provider blocked the response…") instead of a shape error; retry at another tier or with a hint. A run saved mid-step keeps the step's rejected attempts, with what the AI said, in `performance.pending`. |
 | The run was interrupted or stopped | It was saved after every answer: **▶ Resume** (or `cli resume <file>`) continues from there. |
 | You want to redo a step that finished | Open the saved run, move the timeline to the step, **⑂ Fork from step N** (or `cli fork <file> --at N`). Earlier steps are kept, the rest plays again. |
+| The model is rate limited (HTTP 429) | A session stopped by a rate limit before it did anything waits (10 s, 30 s, 60 s, or the Retry-After it was given) and starts again; each wait is recorded (`musician.rateLimitWaits`) and counted in the eval's rate limits. A used-up quota is not retried: the run stops and says so. |
 | A page or file could not be read (HTTP 429, timeout) | Investigate reports it with a reason instead of failing, tries it once more at the end of deep reading, and lists what still could not be read in the answer's coverage. |
 
 Edit flows visually: drag nodes from the palette, connect handles (conditions have `then`/`else`,
@@ -320,7 +321,7 @@ wording is not part of a move's identity, so trimming never breaks Classical rep
 
 | Level | What the musicians may do |
 |---|---|
-| 0 🎻 Classical | Same song (same score, inputs and workspace) ⇒ **exactly the same notes**: answers recorded for an identical move are replayed from the repertoire (`.symphony/runs`) instead of asking the AI again. Routes are scripted. |
+| 0 🎻 Classical | Same song (same score, inputs and workspace) ⇒ **exactly the same notes**: answers recorded for an identical move are replayed from the repertoire (`.symphony/runs`) instead of asking the AI again. Only the saved runs of the same score are read (on a 1.2 GB store: 0.3 s and 369 MB instead of 5.4 s and 2.3 GB for every run). Routes are scripted. |
 | 1 🎷 Cool | A fresh take every performance; routes still scripted. |
 | 2 🎷 Swing | **Solo points**: the AI chooses where the tune goes next among the score's labelled routes. |
 | 3 🎺 Bebop | Read-only agents play **2 independent takes**; a bandleader merges them (call and response). |
@@ -433,6 +434,7 @@ runs edit the workspace directly. A resumed editing run starts again from your w
   |------|------|------|
   | Offline-demo runs | older than 7 days | deleted |
   | Real runs | older than 30 days | **compacted**: events, per-step changes and inputs, and the AI's prompt and output text are dropped; every answer, hash, decision, who answered and token usage are kept. Only if the run still replays exactly; opening it rebuilds its timeline by replay. |
+  | Real runs, when the runs folder is over 500 MB | older than 3 days, oldest first, until it fits | **compacted** the same way: the folder is bounded, and nothing real is ever deleted |
   | Scratch folders left by a crashed run | older than 1 day | deleted |
 
 ## Use it from VS Code chat and Copilot Studio
@@ -613,7 +615,8 @@ solved rate or citation validity.
   why answers were rejected, the rate limits hit, and the read record's share of the saved run;
   `--with key=value` sets an input on every task whose pattern has it, and the report names
   those settings and the trial switches, so two reports compare as an A/B
-  ([docs/trials.md](docs/trials.md)). Investigate
+  ([docs/trials.md](docs/trials.md)). What each investigate setting trades, and what backs it:
+  [docs/settings.md](docs/settings.md). Investigate
   fixtures also cover a real quote that does not support the claim, a stale lesson in memory
   on unchanged files, a false hint, and a planted flaw played with the debate (complexity 3)
   and without (1), so what the debate catches is measured; `investigate-many-files` (240 files,

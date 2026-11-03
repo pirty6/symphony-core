@@ -207,6 +207,7 @@ export function parseDraft(raw: unknown): Checked<Pattern> {
       ...(str(f.description) ? { description: str(f.description)! } : {}),
       ...(f.initial !== undefined ? { initial: f.initial } : {}),
       ...(typeof f.min === 'number' ? { min: f.min } : {}),
+      ...(typeof f.max === 'number' ? { max: f.max } : {}),
     });
   });
   const nodes = (Array.isArray(raw.nodes) ? raw.nodes : [])
@@ -378,6 +379,16 @@ export function adaptPattern(
  * (AI steps with the start of their directive), and the settings an adaptation
  * may change. A fraction of the size of the pattern itself.
  */
+/** " (1 to 6)", " (at least 1)", " (at most 6)" or "": the values a setting accepts. */
+const range = (f: StateField): string =>
+  f.min !== undefined && f.max !== undefined
+    ? ` (${f.min} to ${f.max})`
+    : f.min !== undefined
+      ? ` (at least ${f.min})`
+      : f.max !== undefined
+        ? ` (at most ${f.max})`
+        : '';
+
 export function outlinePattern(pattern: Pattern): { steps: string[]; settings: string[] } {
   const steps = pattern.nodes.map((n) =>
     n.kind === 'agent'
@@ -393,7 +404,7 @@ export function outlinePattern(pattern: Pattern): { steps: string[]; settings: s
     )
     .map(
       (f) =>
-        `${f.name} = ${JSON.stringify(f.initial ?? false)}${f.min !== undefined ? ` (at least ${f.min})` : ''}${f.description ? ` — ${f.description}` : ''}`,
+        `${f.name} = ${JSON.stringify(f.initial ?? false)}${range(f)}${f.description ? ` — ${f.description}` : ''}`,
     );
   return { steps, settings };
 }

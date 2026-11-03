@@ -128,6 +128,58 @@ step (`preloaded`). The report's `read record` line gives their share of the sav
 characters. Their cost in output tokens is about the notes' characters divided by 4. Compare
 that with the deep read's output tokens in `costliest steps`.
 
+## 9. One debate round vs two, on known answers
+
+The debate is the only thing that catches the planted flaw: compare the cap at the same
+complexity.
+
+```sh
+npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3
+npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3 --with maxDebateRounds=1 --compare .symphony/evals/<two-rounds>.json
+```
+
+Compare: solved, `citations valid`, tokens and time. Round 2 cost ~16% of input and ~21% of
+time in one recorded run; this says whether it pays.
+
+## 10. Calibrating the support judge (shadow)
+
+`investigate-misread-quote` has a real quote attached to a wrong claim, and its `-judged` twin
+plays the judge in `enforce`. Run the pair, then the other investigate tasks with the judge in
+`shadow`, so that false rejections on correct findings show up.
+
+```sh
+npm run cli -- eval --task investigate-misread-quote,investigate-misread-quote-judged -n 3
+npm run cli -- eval --task investigate-default-port,investigate-multi-hop,investigate-false-hint -n 3 --with supportJudge=shadow --compare $BASE
+```
+
+Compare: whether the judged twin is solved and the plain one is not (recall), what shadow marks
+unsupported on tasks whose findings are right (false rejections), and the judge's tokens
+(`judgeSupport` in `costliest steps`).
+
+## 11. One sub-agent per gap vs one call for all gaps
+
+```sh
+npm run cli -- eval --task investigate-many-files,investigate-multi-hop -n 3 --with gapsPerChase=1 --compare $BASE
+```
+
+Compare: the `chase` time and tokens (`symphony cost` on the saved runs). The earlier "at most
+~4% of time" was an estimate that subtracted the largest possible warm-up, not a measurement.
+
+## 12. Lower research caps vs the defaults
+
+A tailoring once lowered `maxChaseRounds` to 4 and `maxDebateRounds` to 1. Did the answers get
+worse?
+
+```sh
+npm run cli -- eval --task investigate-many-files,investigate-multi-hop,investigate-planted-flaw -n 3 --with maxChaseRounds=4 --with maxDebateRounds=1 --compare $BASE
+```
+
+## Per-step shares of a saved run
+
+`npm run cli -- cost <run.json> [more.json]` prints each step's share of input tokens and AI
+time, with fan-out parts and rejected answers counted. Use it on the runs each trial saves
+(`<stamp>-runs/`), not on shares taken from an investigation's own analysis.
+
 ## Waiting on these trials
 
 - Hypotheses block: trim it only after an A/B. `--with readerHypotheses=false` is the ablation.

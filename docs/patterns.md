@@ -42,8 +42,10 @@ experiments, git history, GitHub, dependencies, MCP servers.
    every file is still read. A large repository is searched first (locate, given the engine's
    top matches as a lead and unioned with them) instead of triaging every file, unless
    `exhaustive` is set; every file it did not locate is named in the coverage
-   (`unlocatedFiles`). `narrowRead` (opt-in) triages only the files the search matched plus
-   `narrowBudget` (20) more, and names every file it leaves unread (`narrowedOut`).
+   (`unlocatedFiles`). `narrowRead` (opt-in) applies where every file would be triaged (at most
+   `maxTriageFiles`, or `exhaustive`): it triages only the files the search matched plus
+   `narrowBudget` (20) more, and names every file it leaves unread (`narrowedOut`). A larger
+   repository is already narrowed by Locate; to narrow it further, lower `maxTriageFiles`.
 4. **Triage → deep read.** Files are read whole by the engine (`preload`) and given to
    sub-agents in parallel batches; an answer that skips a file of its batch is rejected. A
    file the engine could not read is named in the prompt so the step reads it with tools.

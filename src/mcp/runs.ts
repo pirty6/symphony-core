@@ -355,7 +355,7 @@ export class RunManager {
         : extras.toolContext,
       ...(pattern.demo ? { demo: pattern.demo } : {}),
       ...(playsFromRepertoire(score.improvisation)
-        ? { repertoire: await loadRepertoire(runsDir) }
+        ? { repertoire: await loadRepertoire(runsDir, score.id) }
         : {}),
       autoApprove: req.autoApprove === true,
       ...(providerName === 'copilot'

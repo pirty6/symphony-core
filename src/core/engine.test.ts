@@ -112,6 +112,24 @@ describe('engine: hangman', () => {
   });
 });
 
+describe('engine: advance leaves the state it was given as it was', () => {
+  it('grows its lists in place only on its own copy; state values are frozen', () => {
+    const start = createEngine(score);
+    const events = start.state.events.length;
+    const steps = start.state.steps.length;
+    const moves = start.state.seenMoves.length;
+    const next = answerAgent(score, start, ok({ word: 'cat' }));
+    expect(next.state.events.length).toBeGreaterThan(events);
+    expect(start.state.events).toHaveLength(events);
+    expect(start.state.steps).toHaveLength(steps);
+    expect(start.state.seenMoves).toHaveLength(moves);
+    expect(next.state).not.toHaveProperty('seen');
+    const lists = Object.values(next.state.state).filter((v) => Array.isArray(v));
+    expect(lists.length).toBeGreaterThan(0);
+    for (const list of lists) expect(Object.isFrozen(list)).toBe(true);
+  });
+});
+
 describe('engine: response validation', () => {
   it('rejects bad shapes, re-asks with feedback, then accepts', () => {
     let r = createEngine(score);

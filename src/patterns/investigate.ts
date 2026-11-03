@@ -66,7 +66,8 @@ const COVERAGE = [
   listed('excludedFiles', 'none'),
   '"\n- Not located, so not triaged: "',
   listed('unlocatedFiles', 'none'),
-  'if(narrowRead, "\n- Left unread by the narrowed read (opt-in): " + ' +
+  // Only where it narrowed something: above maxTriageFiles, Locate decides (unlocatedFiles).
+  'if(narrowRead && len(narrowedOut) > 0, "\n- Left unread by the narrowed read (opt-in): " + ' +
     listed('narrowedOut', 'none') +
     ', "")',
   '"\n- Pages read: "',
@@ -319,7 +320,7 @@ export const investigate: Pattern = {
         name: 'narrowRead',
         type: 'boolean',
         description:
-          'Opt-in: triage only the files the search matched plus narrowBudget more; every other file goes unread (zero coverage), each one listed',
+          'Opt-in, where every file would be triaged (at most maxTriageFiles files, or exhaustive): triage only the files the search matched plus narrowBudget more; every other file goes unread (zero coverage), each one listed. A larger repository is already narrowed by Locate (lower maxTriageFiles to narrow it further)',
       },
       {
         name: 'narrowBudget',
@@ -399,34 +400,38 @@ export const investigate: Pattern = {
         name: 'agents',
         type: 'number',
         initial: MAX_AGENTS,
+        min: 1,
+        max: MAX_AGENTS,
         description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
       },
       {
         name: 'agentsCap',
         type: 'number',
         initial: MAX_AGENTS,
+        min: 1,
+        max: MAX_AGENTS,
         description: `At most this many parallel sub-agents, whatever the plan chose (a trial: 4 vs ${MAX_AGENTS})`,
       },
       // Files per sub-agent: read whole in its prompt, so fewer than when it paged through them.
-      { name: 'batchSize', type: 'number', initial: 10 },
+      { name: 'batchSize', type: 'number', initial: 10, min: 1 },
       {
         name: 'batchWave',
         type: 'number',
-        // batchSize × agents (set after planning): no slot sits idle.
-        initial: 180,
-        description: 'Files per triage round, split into parallel calls of batchSize',
+        // Not a setting: set after planning, so no slot sits idle.
+        description:
+          'Derived after planning (batchSize × agents × 3): files per triage round, split into parallel calls of batchSize',
       },
       { name: 'pendingFiles', type: 'string[]' },
       { name: 'batch', type: 'string[]', description: 'Files to triage now' },
       { name: 'triaged', type: 'string[]', description: 'Files of the batch that were opened' },
       { name: 'batchRelevant', type: 'string[]', description: 'Relevant files of the batch' },
       { name: 'relevantFiles', type: 'string[]' },
-      { name: 'deepBatchSize', type: 'number', initial: 4 },
+      { name: 'deepBatchSize', type: 'number', initial: 4, min: 1 },
       {
         name: 'deepWave',
         type: 'number',
-        initial: 72,
-        description: 'Items per deep-read round, split into parallel calls of deepBatchSize',
+        description:
+          'Derived after planning (deepBatchSize × agents × 3): items per deep-read round, split into parallel calls of deepBatchSize',
       },
       { name: 'pendingDeep', type: 'string[]' },
       {

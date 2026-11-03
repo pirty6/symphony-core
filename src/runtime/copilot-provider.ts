@@ -78,6 +78,18 @@ const REFUSED = /Authorization error|you may need to run \/login|\b401\b|Unautho
 const QUOTA =
   /exceeded your (monthly )?quota|quota (has been |was )?exceeded|out of premium requests/i;
 
+/** A rate limit (not the quota): it clears with time, so the session may be tried again. */
+const RATE_LIMITED = /\b429\b|rate.?limit|too many requests/i;
+const DEFAULT_RATE_LIMIT_DELAYS = [10_000, 30_000, 60_000] as const;
+
+/** "retry after 20 seconds" / "Retry-After: 20" in the error: how long the service asks for. */
+export function retryAfterMs(said: string): number | undefined {
+  const m = /retry[- ]after:?\s*(\d+)\s*(ms|milliseconds?|s|sec|seconds?)?/i.exec(said);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return /^m/i.test(m[2] ?? '') ? n : n * 1000;
+}
+
 /** What to do when the Copilot quota is used up. */
 export function quotaHelp(said: string): string {
   return `Your Copilot quota is used up, so no model will answer (Copilot said: ${said.replace(/^\[|\]$/g, '').trim()}). Wait for it to reset, or raise your premium-request budget in your GitHub Copilot settings (https://github.com/settings/copilot). Retrying cannot help. The offline demo (AI: Scripted) still works.`;
@@ -135,6 +147,8 @@ export interface CopilotProviderOptions {
   readonly alternateModel?: string;
   /** Per step id, the model to use instead of the tier's (a trial: one step on another model). */
   readonly nodeModels?: Readonly<Record<string, string>>;
+  /** Waits before retrying a session a rate limit stopped (default 10 s, 30 s, 60 s). */
+  readonly rateLimitDelaysMs?: readonly number[];
   /** After a rejected submit_result, the AI may resend only the fields it changes. */
   readonly deltaRepair?: boolean;
   /** The step's fixed instructions go in the system message, the input in the prompt. */
@@ -158,6 +172,8 @@ interface SessionRun {
   readonly prompt: string;
   /** Appended to the system message (headerInSystem). */
   readonly system?: string;
+  /** Rate-limit waits so far for this session (each one starts it again). */
+  readonly rateLimitWaits?: number;
   readonly role: Role;
   readonly tools: readonly ReturnType<typeof defineTool>[];
   readonly onlyCustomTools: boolean;
@@ -339,6 +355,7 @@ interface SessionOutput {
   readonly usage?: TokenUsage;
   readonly calls?: readonly CallUsage[];
   readonly context?: ContextSplit;
+  readonly rateLimitWaits?: number;
 }
 
 function withoutZeros(u: TokenUsage): TokenUsage {
@@ -701,9 +718,33 @@ export class CopilotProvider implements Provider {
     if (toolCalls.length === 0 && NOT_SIGNED_IN.test(output)) throw new SetupError(SIGN_IN_HELP);
     if (toolCalls.length === 0 && REFUSED.test(output)) return this.refused(run, output);
     if (toolCalls.length === 0 && QUOTA.test(output)) throw new SetupError(quotaHelp(output));
+    // Stopped by a rate limit before it did anything: nothing is lost by starting again later.
+    const waits = run.rateLimitWaits ?? 0;
+    const delays = this.opts.rateLimitDelaysMs ?? DEFAULT_RATE_LIMIT_DELAYS;
+    if (toolCalls.length === 0 && failure && RATE_LIMITED.test(output) && waits < delays.length) {
+      const ms = Math.min(retryAfterMs(output) ?? delays[waits]!, 120_000);
+      run.onEvent({
+        type: 'info',
+        text: `rate limited (${failure}); trying again in ${Math.round(ms / 1000)}s (${waits + 1}/${delays.length})`,
+      });
+      await new Promise<void>((done, fail) => {
+        const stop = () => {
+          clearTimeout(t);
+          fail(abortError());
+        };
+        const t = setTimeout(() => {
+          run.signal.removeEventListener('abort', stop);
+          done();
+        }, ms);
+        if (run.signal.aborted) stop();
+        else run.signal.addEventListener('abort', stop, { once: true });
+      });
+      return this.runSession({ ...run, rateLimitWaits: waits + 1 });
+    }
     return {
       output,
       toolCalls,
+      ...(waits ? { rateLimitWaits: waits } : {}),
       ...(model ? { model } : {}),
       ...(usage.calls ? { usage: withoutZeros(usage), calls } : {}),
       ...(context ? { context } : {}),
@@ -980,6 +1021,7 @@ export class CopilotProvider implements Provider {
           ...(tier.model ? { requestedModel: tier.model } : {}),
           ...(tier.effort ? { effort: tier.effort } : {}),
           ...(blockedOn.length ? { blockedOn } : {}),
+          ...(out.rateLimitWaits ? { rateLimitWaits: out.rateLimitWaits } : {}),
           account: this.usingSignedInUser ? 'signed-in user' : 'token',
           ...(SDK ? { sdk: SDK } : {}),
           sampling: SAMPLING_NOTE,

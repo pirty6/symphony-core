@@ -13,6 +13,7 @@ import {
   SIGN_IN_HELP,
   hasContent,
   normalizeSubmission,
+  retryAfterMs,
   withoutTokenVars,
   parseTiers,
   type ClientLike,
@@ -411,6 +412,44 @@ describe('CopilotProvider', () => {
         /quota is used up.*exceeded your monthly quota.*Retrying cannot help/,
       ),
     });
+  });
+
+  it('a rate limit before the session did anything waits and starts again; it is recorded', async () => {
+    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+    const play = async (limited: number, delays = [1, 1, 1]) => {
+      let tries = 0;
+      const notes: string[] = [];
+      const { client, sessions } = fakeClient(async (cfg, emit) => {
+        tries += 1;
+        if (tries <= limited) emit('session.error', { message: 'HTTP 429 Too Many Requests' });
+        else await callTool(cfg, 'submit_result', { updates: { word: 'cat' }, verdict });
+        emit('session.idle');
+      });
+      const res = await new CopilotProvider({
+        clientFactory: () => client,
+        rateLimitDelaysMs: delays,
+      }).runAgent({
+        pause,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: (e) => e.type === 'info' && notes.push(e.text),
+      });
+      return { res, tries, notes, sessions };
+    };
+    const ok = await play(2);
+    expect(ok.tries).toBe(3);
+    expect(ok.res.result).toMatchObject({ updates: { word: 'cat' } });
+    expect(ok.res.transcript.musician?.rateLimitWaits).toBe(2);
+    expect(ok.notes.filter((n) => n.startsWith('rate limited'))).toHaveLength(2);
+    // Past the last wait, the failure goes to the engine as before.
+    const out = await play(5);
+    expect(out.tries).toBe(4);
+    expect(out.res.result).toBeUndefined();
+    expect(out.res.transcript.output).toMatch(/429/);
+    expect(retryAfterMs('rate limited, retry after 20 seconds')).toBe(20_000);
+    expect(retryAfterMs('Retry-After: 500ms')).toBe(500);
+    expect(retryAfterMs('HTTP 429')).toBeUndefined();
   });
 
   describe('trial switches', () => {

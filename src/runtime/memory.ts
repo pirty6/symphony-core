@@ -178,7 +178,7 @@ function merge(old: readonly Entry[], added: readonly Entry[], max: number): Ent
 /**
  * Remember checked findings that quote the file (only those can be re-checked
  * later), cleaned of run annotations, newest per path:line, at most
- * MAX_FACTS_PER_RUN from one run.
+ * MAX_FACTS_PER_RUN from one run (or one call, without a run id).
  */
 export async function rememberFacts(
   workspace: string,
@@ -193,9 +193,10 @@ export async function rememberFacts(
   if (facts.length === 0) return 0;
   let added = 0;
   await update(workspace, (m) => {
+    // Without a run id, one call still counts as one run: it cannot fill the store alone.
     const room = run
       ? Math.max(0, MAX_FACTS_PER_RUN - m.facts.filter((f) => f.run === run).length)
-      : facts.length;
+      : MAX_FACTS_PER_RUN;
     const kept = facts.slice(0, room);
     added = kept.length;
     return { ...m, facts: tidyFacts(merge(m.facts, kept, MAX_FACTS * 2)).slice(0, MAX_FACTS) };
