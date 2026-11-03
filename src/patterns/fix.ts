@@ -47,8 +47,8 @@ const challenge = challengePhase({
 const edit = editVerifyPhase({
   applyDirective:
     'Implement `plan` by editing `files` (others only if the plan truly needs them). Fix the root cause in `rootCause`, not the symptom, and add or update a test that fails without the fix when that is feasible. ' +
-    `Do not hide a failure instead of fixing it (${MASKING}), unless the plan shows the old limit was wrong for work measured to take that long: then say so in \`changes\`.`,
-  applyReads: ['issue', 'rootCause', 'files', 'plan', 'reviewComments'],
+    `Do not hide a failure instead of fixing it (${MASKING}), unless the plan shows the old limit was wrong for work measured to take that long: then say so in \`changes\`. For an intermittent failure (\`flakyTarget\`), put a new regression test in a new test file and leave the flaky test's own file (\`flakyFile\`) as it is unless the plan must change it: an edit there is reviewed as possible masking.`,
+  applyReads: ['issue', 'rootCause', 'files', 'plan', 'reviewComments', 'flakyTarget', 'flakyFile'],
   triageReads: ['issue', 'rootCause', 'plan', 'flakyTarget'],
   triageNote:
     ' A failure of the intermittent test this fix is about (`flakyTarget`) is never ENVIRONMENT: the patch did not make it stable.',

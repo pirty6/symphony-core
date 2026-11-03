@@ -10,10 +10,11 @@
  *    maxEdits)). A failure of that test sends the patch back to the edit loop (its budgets hold;
  *    the triage may not call it ENVIRONMENT). Runs where it neither passed nor failed visibly
  *    (another test failed, a timeout, output cut, its line missing) do not count.
- * 3. Masking flags: edits that make a flaky test pass without fixing it are flagged (existing
- *    test lines changed; tests skipped, inverted, retried or lengthened; code touching retries,
- *    timeouts, slack, workers or sleeps; removed assertions; test config; a diff that cannot show
- *    everything; more skipped tests than the control): a person decides. A new test is fine.
+ * 3. Masking flags: edits that make a flaky test pass without fixing it are flagged (the flaky
+ *    test's own file changed; other tests' lines changed, or skipped, inverted, retried or
+ *    lengthened; code touching retries, timeouts, slack, workers or sleeps; removed assertions;
+ *    test config; a diff that cannot show everything; more skipped tests than the control): a
+ *    person decides. A regression test in a new file is fine.
  *
  * Certified means: under the gate command, the flaky test's failure rate is below
  * stabilityTolerance at 95% across maxEdits patches. Anything less ends partial (not certified)
@@ -46,7 +47,7 @@ const CODE_PATH =
   '^(?!(.*/)?(test|tests|__tests__|spec)/)(?!.*[.](test|spec)[.][a-z]+$)(?!(.*/)?test_[^/]*[.]py$)(?!.*_test[.](py|go)$)';
 /** Added test lines that skip, invert, retry or lengthen a test (a new test is fine). */
 const TEST_MASKING_LINE =
-  '^[+][^+].*([.](skip|todo|fails|only)[(]|(skip|todo|retry|repeats|timeout|testTimeout): |skipIf|runIf|setTimeout[(][0-9]|setConfig[(])';
+  '^[+][^+].*([.](skip|todo|fails|only)[(]|(skip|todo|repeats|timeout|testTimeout): |[Rr]etr(y|ies)|[Rr]erun|[.]flaky|skipIf|runIf|setTimeout[(][0-9]|setConfig[(])';
 /** Added code that can make a flaky test pass without fixing it (a heuristic: a person decides). */
 const MASKING_LINE =
   '^[+][^+].*([.](skip|todo|fails|only)[(]|(skip|todo): |skipIf|runIf|retry|repeats|[Tt]imeout|TIMEOUT|[Ss]lack|SLACK|[Tt]olerance|TOLERANCE|[Tt]hreshold|THRESHOLD|[Ww]orkers|[Pp]arallel|sleep)';
@@ -385,7 +386,13 @@ export function stabilityPhases(cfg: StabilityConfig): {
         {
           field: 'maskingFlags',
           expr: [
-            // Existing tests changed (the flaky one included); new tests next to them are fine.
+            // Any edit to the flaky test's own file: a retry or a sleep added there looks like a
+            // new test. The edit is told to put a new regression test in a new file.
+            flag(
+              '!empty(flakyFile) && includes(changedFiles, flakyFile)',
+              "the flaky test's own file changed",
+            ),
+            // Other tests: changed lines, or added ones that skip, invert, retry or lengthen.
             flag(
               `count(diffLines(diff, "${TEST_PATH}"), "^-[^-]") > 0`,
               'existing test lines were changed or removed',

@@ -113,6 +113,13 @@ export function runsNeeded(tolerance: number, candidates: number): number {
   return Math.ceil(Math.log(0.05 / candidates) / Math.log(1 - tolerance));
 }
 
+/** The path on a diff's "--- a/…" or "+++ b/…" line (git quotes some: "b/…"; a tab may end it). */
+const diffPath = (l: string) =>
+  l
+    .slice(4)
+    .replace(/^"?[ab]\//, '')
+    .replace(/"?\t?$/, '');
+
 /** Evidence ids the engine assigns ("F12 src/a.ts:3 — fact"). */
 const LEADING_ID = /^(F\d+)\s+/;
 const ANY_ID = /\bF\d+\b/g;
@@ -552,11 +559,22 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           } catch {
             throw new ExprError(`diffLines(): invalid pattern ${JSON.stringify(args[1])}`);
           }
+          // Every "diff --git" line starts a file; its path is read from "+++ b/…" (or "--- a/…"
+          // for a deletion), which holds it whole, spaces included (git quotes some as "b/…").
           let keep = false;
+          let inHeader = false;
           return x.split(/\r?\n/).filter((l) => {
-            const header = /^diff --git a\/\S+ b\/(\S+)/.exec(l);
-            if (header) keep = re.test(header[1]!);
-            return keep && !header;
+            if (l.startsWith('diff --git ')) {
+              keep = re.test(/ "?b\/(.*?)"?$/.exec(l)?.[1] ?? '');
+              inHeader = true;
+              return false;
+            }
+            if (inHeader && l.startsWith('+++ ') && l !== '+++ /dev/null')
+              keep = re.test(diffPath(l));
+            else if (inHeader && l.startsWith('--- ') && l !== '--- /dev/null')
+              keep = re.test(diffPath(l));
+            if (l.startsWith('@@')) inHeader = false;
+            return keep;
           });
         }
         case 'runsNeeded': {
