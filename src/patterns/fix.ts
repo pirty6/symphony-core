@@ -214,7 +214,8 @@ export const fix: Pattern = {
       // What fails before any edit: the bug's symptom, or tests already broken (not the fix's).
       args: { reuse: true },
       inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' },
-      // The command it ran is kept: an edit to the test script cannot change what verifies it.
+      // The command it ran is kept for every later run. A detected `npm test` still reads the test
+      // script each time: an edit to package.json is flagged (checkFiles) for the reviewer.
       output: { passed: 'baselinePassed', output: 'baselineOutput', command: 'testCommand' },
     },
     {

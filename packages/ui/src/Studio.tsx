@@ -59,6 +59,7 @@ import { subAgentItems, subAgentNodes,
   type FlowNode as FlowNodeType,
   type PaletteKind,
   type PatternMeta,
+  type RunResult,
   type RunView,
 } from './lib/model'
 import { AiTakes, ApprovalCard, RecoveryCard, EdgeEditor, GateCard, OvertimeCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
@@ -80,6 +81,13 @@ const statusOf = (n: { data?: unknown }): NodeStatus | undefined => (n.data as {
 
 /** Results longer than this (characters of Markdown) open in the reader when a live run ends. */
 const LONG_RESULT = 600
+const filled = (r: RunResult): RunResult => ({
+  ...r,
+  keys: r.keys.filter((k) => {
+    const v = r.values[k]
+    return !(v === '' || v === undefined || v === null || (Array.isArray(v) && v.length === 0))
+  }),
+})
 type Tab = 'node' | 'ai' | 'state'
 
 function contextStrings(ctx: Record<string, unknown> | undefined): Record<string, string> {
@@ -367,8 +375,9 @@ export default function Studio() {
   const ignoredInputs = editable && settings.provider === 'scripted' ? changedFromDemo(context, demoInputs) : []
   const goalText = view.goal ?? ''
 
-  // Open the reader once when a live run finishes with more than the inspector card can show.
-  const finished = view.mode === 'live' && result && resultMarkdown(result, '').length > LONG_RESULT ? view.runId : undefined
+  // Open the reader once when a live run finishes with more than the inspector card can show
+  // (empty fields, such as an unused gate's report, do not make it long).
+  const finished = view.mode === 'live' && result && resultMarkdown(filled(result), '').length > LONG_RESULT ? view.runId : undefined
   useEffect(() => {
     if (finished) setReading(true)
   }, [finished])

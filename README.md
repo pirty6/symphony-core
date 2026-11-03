@@ -503,7 +503,7 @@ hash identically. A failure is triaged before retrying:
 |--------|------|
 | PATCH: the edit is wrong or incomplete | edit again with the failure (up to `maxAttempts`, 3) |
 | DIAGNOSIS: the plan or root cause is wrong | fix goes back to research with the failure (up to `maxDiagnoses`, 1) and you approve the new plan |
-| ENVIRONMENT: flaky, missing dependency, failing before the change | stop: another edit cannot fix it |
+| ENVIRONMENT: flaky, missing dependency, failing before the change | run the same patch once more (maxEnvRechecks); still failing: stop, another edit cannot fix it |
 | No progress: the edit changed nothing, or repeats the last attempt | caught before the tests run again: re-diagnose, or stop |
 
 - **fix** = investigate's diagnosis + edit and verify: competing hypotheses, evidence for and
