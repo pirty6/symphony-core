@@ -6,6 +6,7 @@ import { replayPerformance } from '../core/replay.js';
 import { runScripted } from '../core/scripted.js';
 import type { DemoScript, ScoreNode } from '../core/types.js';
 import { fix, implement, refactor } from './index.js';
+import { FAILED_LINE, PASSED_LINE, RETRIED_LINE } from './phases/stability.js';
 
 const demo = fix.demo!;
 const agents = demo.agents!;
@@ -91,6 +92,35 @@ describe('fix on a flaky test', () => {
       tools: { runTests: () => tests(false, out.otherFails) },
     });
     expect(other.ran('recheckEnv')).toBe(1);
+  });
+
+  it("reads a test's own result line from vitest, node and pytest output", () => {
+    // Captured from vitest 4.1.10 --reporter=verbose, node --test (spec and TAP) and pytest -v.
+    const lines: [string, 'failed' | 'passed' | 'retried' | 'neither'][] = [
+      [' × a.test.ts > main > flaky one 2ms', 'failed'],
+      [' FAIL  a.test.ts > main > flaky one', 'failed'],
+      [' ✓ a.test.ts > main > stable one 1ms', 'passed'],
+      [' ✓ a.test.ts > main > retried 1ms (retry x1)', 'retried'],
+      [' ↓ a.test.ts > main > skipped one', 'neither'],
+      ['✖ bad one (0.368667ms)', 'failed'],
+      ['✔ a > ok one (0.327916ms)', 'passed'],
+      ['not ok 2 - bad one', 'failed'],
+      ['ok 1 - a > ok one', 'passed'],
+      ['ok 3 - skipped one # SKIP', 'neither'],
+      ['tests/test_a.py::test_b FAILED', 'failed'],
+      ['tests/test_a.py::test_b PASSED', 'passed'],
+      ['tests/test_a.py::test_b RERUN', 'retried'],
+    ];
+    for (const [line, is] of lines) {
+      const got = new RegExp(RETRIED_LINE).test(line)
+        ? 'retried'
+        : new RegExp(FAILED_LINE).test(line)
+          ? 'failed'
+          : new RegExp(PASSED_LINE).test(line)
+            ? 'passed'
+            : 'neither';
+      expect(got, line).toBe(is);
+    }
   });
 
   it('the nondeterminism checklist and the masking rule are fix-only: implement and refactor are unchanged', () => {

@@ -23,11 +23,11 @@ import type { ScoreEdge, ScoreNode, StateField } from '../../core/types.js';
 import type { Fragment } from './debate.js';
 
 /**
- * A test's own lines in a run's output (vitest --reporter=verbose, jest --verbose, node --test,
- * pytest -v): failed, passed, passed only on a retry. Read with linesWith(output, flakyTarget).
+ * A test's own lines in a run's output (vitest --reporter=verbose, jest --verbose, node --test
+ * spec or TAP, pytest -v): failed, passed, passed only on a retry. Read with linesWith(output, flakyTarget).
  */
-export const FAILED_LINE = '^ *(FAIL|×|✕|✖|✗) |FAILED|ERROR';
-export const PASSED_LINE = '^ *(✓|✔|PASS) |PASSED';
+export const FAILED_LINE = '^ *(FAIL|×|✕|✖|✗|not ok [0-9]+ -) |FAILED|ERROR';
+export const PASSED_LINE = '^(?!.*# (SKIP|TODO)) *(✓|✔|PASS|ok [0-9]+ -) |PASSED';
 export const RETRIED_LINE = 'retry x|RERUN';
 
 /** The flaky test failed in this output (its own line, not another test's). */
@@ -40,7 +40,7 @@ const targetPassed = (output: string) =>
 
 /** Added lines that can make a flaky test pass without fixing it (a heuristic: a person decides). */
 const MASKING_LINE =
-  '^[+][^+].*([.](skip|todo|fails|only)[(]|skipIf|runIf|retry|repeats|[Tt]imeout|TIMEOUT|[Ss]lack|SLACK|[Tt]olerance|TOLERANCE|[Tt]hreshold|THRESHOLD|[Ww]orkers|[Pp]arallel|sleep)';
+  '^[+][^+].*([.](skip|todo|fails|only)[(]|(skip|todo): |skipIf|runIf|retry|repeats|[Tt]imeout|TIMEOUT|[Ss]lack|SLACK|[Tt]olerance|TOLERANCE|[Tt]hreshold|THRESHOLD|[Ww]orkers|[Pp]arallel|sleep)';
 const ASSERTION = '(expect|assert)';
 
 export const STABILITY_STATE: readonly StateField[] = [
