@@ -328,13 +328,29 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
   ];
 
   if (cfg.reviewedExit) {
-    nodes.push({
-      id: 'atReviewed',
-      kind: 'condition',
-      label: 'The reviewed patch?',
-      expression: '!empty(reviewedHash) && diffHash == reviewedHash',
-    });
-    group.push('atReviewed');
+    nodes.push(
+      {
+        id: 'atReviewed',
+        kind: 'condition',
+        label: 'The reviewed patch?',
+        expression: '!empty(reviewedHash) && diffHash == reviewedHash',
+      },
+      {
+        id: 'acceptReviewed',
+        kind: 'compute',
+        label: 'Back to the reviewed patch',
+        // The workspace is the patch that passed the checks: its results, not the no-progress.
+        assign: [
+          { field: 'testsPassed', expr: 'true' },
+          { field: 'lintPassed', expr: 'true' },
+          { field: 'testOutput', expr: 'reviewedTestOutput' },
+          { field: 'lintOutput', expr: 'reviewedLintOutput' },
+          { field: 'failureKind', expr: '""' },
+          { field: 'failureReason', expr: '""' },
+        ],
+      },
+    );
+    group.push('atReviewed', 'acceptReviewed');
   }
 
   if (re) {
@@ -379,10 +395,11 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
             {
               id: 'atReviewed-ask',
               from: 'atReviewed',
-              to: cfg.reviewedExit,
+              to: 'acceptReviewed',
               branch: 'then' as const,
               label: 'the reviewed patch',
             },
+            { id: 'acceptReviewed-ask', from: 'acceptReviewed', to: cfg.reviewedExit! },
             {
               id: 'atReviewed-canRediagnose',
               from: 'atReviewed',
@@ -422,10 +439,11 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
             {
               id: 'atReviewed-ask',
               from: 'atReviewed',
-              to: cfg.reviewedExit,
+              to: 'acceptReviewed',
               branch: 'then' as const,
               label: 'the reviewed patch',
             },
+            { id: 'acceptReviewed-ask', from: 'acceptReviewed', to: cfg.reviewedExit! },
             {
               id: 'atReviewed-giveUp',
               from: 'atReviewed',

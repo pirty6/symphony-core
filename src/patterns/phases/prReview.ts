@@ -36,6 +36,8 @@ export const PR_REVIEW_STATE: readonly StateField[] = [
     type: 'string',
     description: 'The patch the review last sent back: it passed the checks',
   },
+  { name: 'reviewedTestOutput', type: 'string', description: "The reviewed patch's test run" },
+  { name: 'reviewedLintOutput', type: 'string', description: "The reviewed patch's lint run" },
 ];
 
 export function prReviewPhase(cfg: PrReviewConfig): Fragment {
@@ -106,6 +108,8 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
         { field: 'reviewRounds', expr: 'reviewRounds + 1' },
         // What the reviewer saw, verified: the only patch a person may accept if no edit helps.
         { field: 'reviewedHash', expr: 'diffHash' },
+        { field: 'reviewedTestOutput', expr: 'testOutput' },
+        { field: 'reviewedLintOutput', expr: 'lintOutput' },
         { field: 'failureKind', expr: '"REVIEW"' },
         {
           field: 'failureReason',

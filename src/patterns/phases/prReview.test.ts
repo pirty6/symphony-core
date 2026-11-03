@@ -146,6 +146,37 @@ describe('PR review after the tests pass', () => {
     expect(stuck.ran('acceptAnyway')).toBe(1);
     expect(stuck.end).toBe('fixed');
     expect(stuck.ran('runTests')).toBe(1);
+    // The result is the reviewed patch's, not the no-progress step's.
+    expect(stuck.state).toMatchObject({ testsPassed: true, failureKind: '', testOutput: 'ok' });
+    // Reviewed h1 (green), then a failing h2, then back to h1: h1's own results again.
+    const back = ['h1', 'h2', 'h1'];
+    let k = 0;
+    let runs = 0;
+    const revert = play(fix, {
+      agents: {
+        ...once,
+        triage: () => ({ updates: { failureKind: 'PATCH', failureReason: 'FAIL h2' }, verdict: v }),
+      },
+      tools: {
+        captureDiff: () => {
+          const h = back[Math.min(k++, back.length - 1)]!;
+          return { diff: h, hash: h, files: ['src/a.ts'] };
+        },
+        runTests: () => {
+          runs += 1;
+          return runs === 1
+            ? { passed: true, output: 'ok h1', command: 'npm test' }
+            : { passed: false, output: 'FAIL h2', command: 'npm test' };
+        },
+      },
+      approvals: { acceptAnyway: () => ({ approved: true }) },
+    });
+    expect(revert.end).toBe('fixed');
+    expect(revert.state).toMatchObject({
+      testsPassed: true,
+      testOutput: 'ok h1',
+      failureReason: '',
+    });
     // Nobody to ask: a blocked change is not accepted.
     const unattended = play(fix, {
       agents: once,

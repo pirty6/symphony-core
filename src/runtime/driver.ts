@@ -886,12 +886,16 @@ export class Run {
         break;
       }
       this.apply(advance(this.score, this.engine, res));
-      // Every AI answer and decision is saved at once; a tool result (it would just run again on
-      // resume) at most every CHECKPOINT_EVERY_MS: the whole run is rewritten each time.
+      // Every AI answer and decision is saved at once; a tool result at most every
+      // CHECKPOINT_EVERY_MS (the whole run is rewritten each time), since it runs again on
+      // resume. Except before an executor: once it edits, the tool would see another workspace
+      // (a test lock taken again on bent tests).
+      const next = this.engine.pause;
+      const edits = next?.kind === 'agent' && next.role === 'executor';
       if (
         this.opts.checkpoint &&
         this.engine.kind === 'running' &&
-        (res.kind !== 'tool' || Date.now() - this.lastCheckpoint >= CHECKPOINT_EVERY_MS)
+        (res.kind !== 'tool' || edits || Date.now() - this.lastCheckpoint >= CHECKPOINT_EVERY_MS)
       )
         await this.save(true);
     }

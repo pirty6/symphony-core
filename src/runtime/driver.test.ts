@@ -3,7 +3,7 @@ import { compileScore } from '../core/compile.js';
 import { hashOf } from '../core/hash.js';
 import { replayPerformance, restoreEngine, RestoreError } from '../core/replay.js';
 import type { AgentPause, Pattern, SavedRun } from '../core/types.js';
-import { fix, hangman } from '../patterns/index.js';
+import { fix, hangman, implement } from '../patterns/index.js';
 import { performScore, readsPages, Run, type RunMessage, type RunStatus } from './driver.js';
 import { KEEP_ANSWER, type AgentRequest, type AgentResponse, type Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
@@ -630,12 +630,45 @@ describe('checkpoints, resume and fork', () => {
     );
     const decided = done.steps.filter((x) => x.kind === 'agent' || x.kind === 'approval');
     for (const d of decided) expect(lastExternal, d.nodeId).toContain(d.step);
+    // So is whatever came just before an edit (a tool result included): resume never runs a
+    // tool again on a workspace the executor may already have changed.
+    const steps = done.steps.filter((x) => external(x.kind));
+    const edits = steps.filter((x) => x.nodeId === 'apply');
+    expect(edits.length).toBeGreaterThan(0);
+    for (const e of edits) {
+      const before = steps[steps.indexOf(e) - 1]!;
+      expect(lastExternal, `${before.nodeId} before ${e.nodeId}`).toContain(before.step);
+    }
     // Tool results coalesce (the test runs in well under 30 s).
     const answered = done.steps.filter((s) => ['agent', 'tool', 'approval'].includes(s.kind));
     expect(saved.length).toBeLessThan(answered.length);
     expect(saved.length).toBeGreaterThanOrEqual(decided.length);
     const sizes = saved.map((r) => r.performance.steps.length);
     expect(sizes).toEqual(sizes.toSorted((a, b) => a - b));
+  });
+
+  it('a tool result just before an edit is always saved (the locked tests, before implementing)', async () => {
+    const score = compileScore(implement, {
+      context: implement.demo!.context!,
+      generatedAt: 't',
+    });
+    const saved: SavedRun[] = [];
+    await new Run({
+      score,
+      provider: ScriptedProvider.forPattern(implement),
+      demo: implement.demo,
+      autoApprove: true,
+      clock,
+      checkpoint: true,
+      onSave: async (r) => {
+        saved.push(structuredClone(r));
+        return 'f.json';
+      },
+    }).start();
+    const lastExternal = saved.map(
+      (r) => r.performance.steps.findLast((x) => external(x.kind))?.nodeId,
+    );
+    expect(lastExternal).toContain('lockTests');
   });
 
   it('a run cut off at any step resumes to exactly the uninterrupted performance', async () => {
