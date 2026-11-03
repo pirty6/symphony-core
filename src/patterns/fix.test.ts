@@ -179,19 +179,37 @@ describe('fix', () => {
     ]);
   });
 
-  it('stops at once when the failure is environmental: another edit cannot fix it', () => {
-    const { r, ran, state, end } = play({
-      agents: {
-        triage: () => ({
-          updates: { failureKind: 'ENVIRONMENT', failureReason: 'npm ERR! network ETIMEDOUT' },
-          verdict: v,
-        }),
-      },
-    });
+  it('an environmental failure runs the same patch once more, then stops: another edit cannot fix it', () => {
+    const environmental = {
+      triage: () => ({
+        updates: { failureKind: 'ENVIRONMENT', failureReason: 'npm ERR! network ETIMEDOUT' },
+        verdict: v,
+      }),
+    };
+    const lasting = play({ agents: environmental, tools: { runTests: () => tests(false) } });
+    expect(lasting.r.state.outcome).toBe('failed');
+    expect(lasting.end).toBe('gaveUp');
+    expect(lasting.ran('apply')).toBe(1);
+    expect(lasting.ran('runTests')).toBe(2);
+    expect(lasting.state.failureKind).toBe('ENVIRONMENT');
+    // A flaky failure: the second run of the same patch passes.
+    let n = 0;
+    const flaky = play({ agents: environmental, tools: { runTests: () => tests(n++ > 0) } });
+    expect(flaky.r.state.outcome).toBe('success');
+    expect(flaky.ran('apply')).toBe(1);
+  });
+
+  it('lint runs only once the tests pass; one edit budget holds across diagnoses and review rounds', () => {
+    const { r, ran, state } = play(
+      { tools: { captureDiff: freshDiff(), runTests: () => tests(false) } },
+      { lintCommand: 'npm run lint', maxEdits: 2, maxAttempts: 5 },
+    );
+    expect(ran('runLint')).toBe(0);
+    expect(state.lintOutput).toBe('not run: the tests failed first');
+    // Five attempts allowed per round, two edits in the run.
+    expect(ran('runTests')).toBe(2);
+    expect(state.edits).toBe(2);
     expect(r.state.outcome).toBe('failed');
-    expect(end).toBe('gaveUp');
-    expect(ran('apply')).toBe(1);
-    expect(state.failureKind).toBe('ENVIRONMENT');
   });
 
   it('runs the lint command too when given, and both must pass', () => {

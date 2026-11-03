@@ -31,6 +31,11 @@ export interface EditVerifyConfig {
   /** Node to continue to when attempts run out or the failure is environmental. */
   readonly giveUp: string;
   /**
+   * The person's decision on the reviewed patch (prReview's acceptAnyway): where an edit that
+   * changes nothing in a review round goes when the workspace is that patch, verified.
+   */
+  readonly reviewedExit?: string;
+  /**
    * Diagnosis to return to when the plan is wrong or nothing changed. Omit when
    * the pattern has none: a DIAGNOSIS failure is then retried as a PATCH.
    */
@@ -88,15 +93,34 @@ export const EDIT_STATE: readonly StateField[] = [
   },
   { name: 'failureReason', type: 'string', description: 'Why the last attempt failed' },
   { name: 'attempts', type: 'number' },
-  { name: 'maxAttempts', type: 'number', initial: 3 },
+  { name: 'maxAttempts', type: 'number', initial: 3, min: 1 },
+  { name: 'edits', type: 'number', description: 'Tested edits in the whole run' },
+  {
+    name: 'maxEdits',
+    type: 'number',
+    initial: 8,
+    min: 1,
+    description:
+      'Tested edits in the whole run, across diagnoses and review rounds (maxAttempts is per round)',
+  },
+  { name: 'envRechecks', type: 'number', description: 'Test runs repeated after ENVIRONMENT' },
+  {
+    name: 'maxEnvRechecks',
+    type: 'number',
+    initial: 1,
+    description: 'Times the tests run again before an ENVIRONMENT failure ends the run',
+  },
   { name: 'diagnoses', type: 'number', description: 'Times the diagnosis was redone' },
   { name: 'maxDiagnoses', type: 'number', initial: 1 },
 ];
 
-/** Upper bound on visits to the loop's nodes: attempts per diagnosis × diagnoses, with room. */
+/** Upper bound on visits to the loop's nodes. */
 const LOOP_VISITS = 20;
-/** Raised to fit the counters you set: every attempt of every diagnosis, with room. */
-const LOOP_FROM = '(maxAttempts + 1) * (maxDiagnoses + 1) + 4';
+/**
+ * Raised to fit the counters you set: every tested edit (maxEdits bounds them across diagnoses
+ * and review rounds), each no-progress edit (one per diagnosis), and the ENVIRONMENT re-runs.
+ */
+const LOOP_FROM = 'maxEdits + maxDiagnoses + maxEnvRechecks + 6';
 
 export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
   const re = cfg.rediagnose;
@@ -158,7 +182,20 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       id: 'hasLint',
       kind: 'condition',
       label: 'Lint?',
-      expression: '!empty(lintCommand)',
+      // Only once the tests pass: success needs both, so lint after a failure decides nothing.
+      expression: '!empty(lintCommand) && testsPassed',
+    },
+    {
+      id: 'noLint',
+      kind: 'compute',
+      label: 'No lint run',
+      assign: [
+        { field: 'lintPassed', expr: 'empty(lintCommand)' },
+        {
+          field: 'lintOutput',
+          expr: 'if(empty(lintCommand), "", "not run: the tests failed first")',
+        },
+      ],
     },
     {
       id: 'runLint',
@@ -176,6 +213,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       label: 'Count attempt',
       assign: [
         { field: 'attempts', expr: 'attempts + 1' },
+        { field: 'edits', expr: 'edits + 1' },
         { field: 'triedHashes', expr: 'triedHashes + [diffHash]' },
         {
           field: 'checkFiles',
@@ -193,7 +231,7 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       id: 'attemptsLeft',
       kind: 'condition',
       label: 'Attempts left?',
-      expression: 'attempts < maxAttempts',
+      expression: 'attempts < maxAttempts && edits < maxEdits',
     },
     {
       id: 'triage',
@@ -205,6 +243,9 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       reads: ['testOutput', 'lintOutput', 'diff', 'changes', 'baselineOutput', ...cfg.triageReads],
       writes: ['failureKind', 'failureReason'],
       retries: 2,
+      // Classifying a failure is mechanical next to the edit: a tier cheaper. ENVIRONMENT is
+      // checked by running the tests again before it ends the run.
+      complexityShift: -1,
       maxVisits: LOOP_VISITS,
       visitsFrom: LOOP_FROM,
       checks: [
@@ -221,6 +262,19 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       label: 'Environment?',
       expression: 'failureKind == "ENVIRONMENT"',
     },
+    {
+      id: 'envRecheckLeft',
+      kind: 'condition',
+      label: 'Run the tests again?',
+      // A flaky test or a passing outage: once more on the same patch before giving up.
+      expression: 'envRechecks < maxEnvRechecks',
+    },
+    {
+      id: 'recheckEnv',
+      kind: 'compute',
+      label: 'Run again',
+      assign: [{ field: 'envRechecks', expr: 'envRechecks + 1' }],
+    },
   ];
   const edges: ScoreEdge[] = [
     { id: 'apply-captureDiff', from: 'apply', to: 'captureDiff' },
@@ -229,7 +283,8 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
     { id: 'progressed-noProgress', from: 'progressed', to: 'noProgress', branch: 'else' },
     { id: 'runTests-hasLint', from: 'runTests', to: 'hasLint' },
     { id: 'hasLint-runLint', from: 'hasLint', to: 'runLint', branch: 'then' },
-    { id: 'hasLint-count', from: 'hasLint', to: 'countAttempt', branch: 'else' },
+    { id: 'hasLint-noLint', from: 'hasLint', to: 'noLint', branch: 'else' },
+    { id: 'noLint-count', from: 'noLint', to: 'countAttempt' },
     { id: 'runLint-count', from: 'runLint', to: 'countAttempt' },
     { id: 'count-verified', from: 'countAttempt', to: 'verified' },
     { id: 'verified-success', from: 'verified', to: cfg.success, branch: 'then' },
@@ -243,11 +298,14 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       label: 'out of attempts',
     },
     { id: 'triage-environmental', from: 'triage', to: 'environmental' },
+    { id: 'environmental-recheck', from: 'environmental', to: 'envRecheckLeft', branch: 'then' },
+    { id: 'envRecheck-again', from: 'envRecheckLeft', to: 'recheckEnv', branch: 'then' },
+    { id: 'recheckEnv-runTests', from: 'recheckEnv', to: 'runTests', label: 'same patch again' },
     {
-      id: 'environmental-giveUp',
-      from: 'environmental',
+      id: 'envRecheck-giveUp',
+      from: 'envRecheckLeft',
       to: cfg.giveUp,
-      branch: 'then',
+      branch: 'else',
       label: 'not fixable by an edit',
     },
   ];
@@ -258,13 +316,26 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
     'noProgress',
     'runTests',
     'hasLint',
+    'noLint',
     'runLint',
     'countAttempt',
     'verified',
     'attemptsLeft',
     'triage',
     'environmental',
+    'envRecheckLeft',
+    'recheckEnv',
   ];
+
+  if (cfg.reviewedExit) {
+    nodes.push({
+      id: 'atReviewed',
+      kind: 'condition',
+      label: 'The reviewed patch?',
+      expression: '!empty(reviewedHash) && diffHash == reviewedHash',
+    });
+    group.push('atReviewed');
+  }
 
   if (re) {
     nodes.push(
@@ -301,7 +372,25 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
         branch: 'else',
         label: 'edit again',
       },
-      { id: 'noProgress-canRediagnose', from: 'noProgress', to: 'canRediagnose' },
+      ...(cfg.reviewedExit
+        ? [
+            // In a review round, back to the reviewed patch (verified): a person decides on it.
+            { id: 'noProgress-reviewed', from: 'noProgress', to: 'atReviewed' },
+            {
+              id: 'atReviewed-ask',
+              from: 'atReviewed',
+              to: cfg.reviewedExit,
+              branch: 'then' as const,
+              label: 'the reviewed patch',
+            },
+            {
+              id: 'atReviewed-canRediagnose',
+              from: 'atReviewed',
+              to: 'canRediagnose',
+              branch: 'else' as const,
+            },
+          ]
+        : [{ id: 'noProgress-canRediagnose', from: 'noProgress', to: 'canRediagnose' }]),
       { id: 'canRediagnose-rediagnose', from: 'canRediagnose', to: 'rediagnose', branch: 'then' },
       {
         id: 'canRediagnose-giveUp',
@@ -327,7 +416,25 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
         branch: 'else',
         label: 'edit again',
       },
-      { id: 'noProgress-giveUp', from: 'noProgress', to: cfg.giveUp, label: 'no progress' },
+      ...(cfg.reviewedExit
+        ? [
+            { id: 'noProgress-reviewed', from: 'noProgress', to: 'atReviewed' },
+            {
+              id: 'atReviewed-ask',
+              from: 'atReviewed',
+              to: cfg.reviewedExit,
+              branch: 'then' as const,
+              label: 'the reviewed patch',
+            },
+            {
+              id: 'atReviewed-giveUp',
+              from: 'atReviewed',
+              to: cfg.giveUp,
+              branch: 'else' as const,
+              label: 'no progress',
+            },
+          ]
+        : [{ id: 'noProgress-giveUp', from: 'noProgress', to: cfg.giveUp, label: 'no progress' }]),
     );
   }
 

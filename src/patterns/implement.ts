@@ -53,6 +53,7 @@ const edit = editVerifyPhase({
   ],
   triageReads: ['request', 'design', 'plan'],
   success: TESTS_KEPT_CHECK,
+  reviewedExit: 'acceptAnyway',
   giveUp: 'learnFailed',
   rediagnose: { node: 'explore', gaps: 'gaps' },
 });
@@ -304,7 +305,8 @@ export const implement: Pattern = {
       id: 'reviewsLeft',
       kind: 'condition',
       label: 'Review again?',
-      expression: 'reviews < maxReviews',
+      // The run-wide edit budget holds here too.
+      expression: 'reviews < maxReviews && edits < maxEdits',
     },
     {
       id: 'backToEdit',

@@ -131,6 +131,52 @@ describe('PR review after the tests pass', () => {
     expect(unattended.end).toBe('reviewStopped');
   });
 
+  it('a review round whose edit changes nothing lets a person decide, only on the reviewed, verified patch', () => {
+    const once = {
+      prReview: (_s: unknown, visit: number) =>
+        visit === 0 ? changes('BLOCKING src/a.ts:1 — rename the flag') : approve(),
+    };
+    // The green patch h1 is reviewed; the review edit changes nothing (still h1).
+    const stuck = play(fix, {
+      agents: once,
+      tools: { captureDiff: () => ({ diff: 'p1', hash: 'h1', files: ['src/a.ts'] }) },
+      approvals: { acceptAnyway: () => ({ approved: true }) },
+    });
+    expect(stuck.state.reviewedHash).toBe('h1');
+    expect(stuck.ran('acceptAnyway')).toBe(1);
+    expect(stuck.end).toBe('fixed');
+    expect(stuck.ran('runTests')).toBe(1);
+    // Nobody to ask: a blocked change is not accepted.
+    const unattended = play(fix, {
+      agents: once,
+      tools: { captureDiff: () => ({ diff: 'p1', hash: 'h1', files: ['src/a.ts'] }) },
+    });
+    expect(unattended.end).toBe('reviewStopped');
+    // The review edit fails the tests (h2), and the next edit repeats it: h2 is not the
+    // reviewed patch, so no person is asked to accept a failing change.
+    const seq = ['h1', 'h2', 'h2'];
+    let n = 0;
+    let t = 0;
+    const failing = play(fix, {
+      agents: once,
+      tools: {
+        captureDiff: () => {
+          const h = seq[Math.min(n++, seq.length - 1)]!;
+          return { diff: h, hash: h, files: ['src/a.ts'] };
+        },
+        runTests: () => ({
+          passed: t++ === 0,
+          output: t === 1 ? 'ok' : 'FAIL',
+          command: 'npm test',
+        }),
+      },
+      approvals: { acceptAnyway: () => ({ approved: true }) },
+    });
+    expect(failing.ran('noProgress')).toBeGreaterThan(0);
+    expect(failing.ran('acceptAnyway')).toBe(0);
+    expect(failing.r.state.outcome).not.toBe('success');
+  });
+
   it('refactor and implement are reviewed too (implement after its acceptance review)', () => {
     const r = play(refactor, { agents: { prReview: approve } });
     expect(r.end).toBe('refactored');

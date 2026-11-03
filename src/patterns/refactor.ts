@@ -17,6 +17,7 @@ const edit = editVerifyPhase({
   applyWrites: ['noticedBugs'],
   triageReads: ['target', 'plan', 'invariants'],
   success: 'prReview',
+  reviewedExit: 'acceptAnyway',
   giveUp: 'gaveUp',
 });
 const prReview = prReviewPhase({

@@ -41,6 +41,7 @@ const edit = editVerifyPhase({
   triageReads: ['issue', 'rootCause', 'plan'],
   success: 'prReview',
   giveUp: 'learnFailed',
+  reviewedExit: 'acceptAnyway',
   rediagnose: { node: 'research', gaps: 'gaps' },
 });
 const prReview = prReviewPhase({

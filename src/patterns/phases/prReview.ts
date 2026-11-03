@@ -31,6 +31,11 @@ export const PR_REVIEW_STATE: readonly StateField[] = [
   { name: 'reviewSummary', type: 'string', description: 'The review in a few sentences' },
   { name: 'reviewRounds', type: 'number', description: 'Reviews sent back to editing' },
   { name: 'maxReviewRounds', type: 'number', initial: 2 },
+  {
+    name: 'reviewedHash',
+    type: 'string',
+    description: 'The patch the review last sent back: it passed the checks',
+  },
 ];
 
 export function prReviewPhase(cfg: PrReviewConfig): Fragment {
@@ -90,7 +95,8 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       id: 'reviewRoundsLeft',
       kind: 'condition',
       label: 'Review again?',
-      expression: 'reviewRounds < maxReviewRounds',
+      // Out of review rounds, or out of the run's edit budget: a person decides.
+      expression: 'reviewRounds < maxReviewRounds && edits < maxEdits',
     },
     {
       id: 'addressReview',
@@ -98,6 +104,8 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       label: 'Back to editing',
       assign: [
         { field: 'reviewRounds', expr: 'reviewRounds + 1' },
+        // What the reviewer saw, verified: the only patch a person may accept if no edit helps.
+        { field: 'reviewedHash', expr: 'diffHash' },
         { field: 'failureKind', expr: '"REVIEW"' },
         {
           field: 'failureReason',
@@ -114,7 +122,7 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       unattended: 'reject',
       label: 'Accept despite review?',
       message:
-        'The reviewer still requests changes after the last review round. Approve to accept the change as it is (the comments stay in the result), or reject to stop.',
+        'The reviewer still requests changes, and no review round is left (or no edit changed the reviewed patch). The change shown is the one that passed the tests and was reviewed. Approve to accept it as it is (the comments stay in the result), or reject to stop.',
       writes: [],
       shows: ['reviewDecision', 'reviewComments', 'reviewSummary', 'checkFiles', 'diff'],
     },
