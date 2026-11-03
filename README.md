@@ -74,7 +74,7 @@ commands only).
 | Result | When a run ends, its result (the last data carried toward the end, e.g. `answer` and `openQuestions`) appears formatted at the top of the inspector. **Read full result** opens a wide reader with Copy and Download .md; long results open it automatically. Esc closes it. |
 | Timeline | Every engine event. Scrub back and forth; the canvas and inspector follow. |
 | Opening screen | With no pattern open (no `#pattern` in the URL) the canvas asks the maestro: describe the work and compose, or open a pattern from the quick links. **⌂ Home** in the sidebar comes back here (a run keeps playing; it stays under **Running now**). |
-| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, **Features** (the open pattern's switches: lean run (on by default), support judge, single-pass triage, hypotheses to readers, keep unchallenged sub-answers, pragmatist from, gap research; kept between visits and applied to every run you start, and to the runs the maestro composes, unless a run input says otherwise; patterns, features, the palette and saved runs fold from their titles and stay as you left them; the maestro box shows here once a pattern or run is open), and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). Offline-demo runs are hidden behind **Show N offline-demo runs**, so the list holds your real runs. **Running now** lists every run the server is playing; click one to switch to it (its stream replays from the start). |
+| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, **Features** (the open pattern's switches: lean run (on by default), support judge, single-pass triage, hypotheses to readers, keep unchallenged sub-answers, pragmatist from, gap research; kept between visits and applied to every run you start, and to the runs the maestro composes, unless a run input says otherwise; patterns, features, the palette and saved runs fold from their titles and stay as you left them; the maestro box shows here once a pattern or run is open), and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). Offline-demo runs are hidden behind **Show N offline-demo runs**, so the list holds your real runs. **Running now** lists every run the server is playing, and the runs your VS Code chats play (tagged **chat**); click one to switch to it (its stream replays from the start). |
 
 Stop mid-process: **Pause** halts at the next gate, **breakpoints** (the dot on a node) halt
 before and after that node, **step mode** halts at every gate, and **Stop** aborts the live AI call
@@ -462,6 +462,16 @@ VS Code starts the server whenever the agent needs it, so there is nothing to ke
 the window, then type `/maestrov2 find out why login fails on CI, then fix it` in Chat. It works
 on the folder you have open (the workspace root VS Code reports), and the AI runs on your signed-in
 Copilot account.
+
+**Watch it in the studio.** Every run a chat starts also shows in the studio (`npm start`) under
+**Running now**, tagged **chat**, from whichever folder it plays in. Open it to follow the flow
+of data live, step by step. You can also pause it, stop it, set breakpoints, or answer its
+approvals from there instead of in the chat; the chat's process still plays it.
+
+The runs are shared through `~/.symphony/live` on this machine: each run's messages, and the
+studio's commands to it (`src/runtime/live.ts`). `SYMPHONY_LIVE_DIR` moves the folder, and
+`SYMPHONY_LIVE=off` turns this off. A run whose chat session closed shows as cancelled; its saved
+run stays in the workspace's `.symphony/runs`. Folders older than a week are removed.
 
 ### Copilot Studio
 

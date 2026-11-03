@@ -181,10 +181,15 @@ export function Library(p: Props) {
               key={r.id}
               className={`lib-item saved${r.id === p.liveId ? ' active' : ''}`}
               onClick={() => p.onOpenLive?.(r.id)}
-              title={r.goal}
+              title={r.source ? `${r.goal}\n\nPlayed by a chat session${r.workspace ? ` in ${r.workspace}` : ''}: you can watch it and answer it here.` : r.goal}
               disabled={r.id === p.liveId}
             >
               <b>{r.pattern}</b> <span className={`tag status-${r.status}`}>{r.status}</span>
+              {r.source === 'chat' && (
+                <span className="tag" data-testid="from-chat">
+                  chat
+                </span>
+              )}
               {r.id === p.liveId && <span className="tag">on screen</span>}
               <small>{r.goal}</small>
             </button>

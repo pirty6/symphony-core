@@ -9,6 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { mcpHttpHandler } from './http.js';
+import { LiveRuns } from '../runtime/live.js';
 import { RunManager, usageOf, type RunView } from './runs.js';
 import { createSymphonyServer } from './server.js';
 
@@ -20,8 +21,13 @@ writeFileSync(
   join(workspace, 'package.json'),
   JSON.stringify({ scripts: { test: 'node -e "setTimeout(() => {}, 30000)"' } }),
 );
-afterAll(() => rmSync(workspace, { recursive: true, force: true }));
-const env = { SYMPHONY_MCP: 'off' } as NodeJS.ProcessEnv;
+// Where the chat's runs are published for the studio (src/runtime/live.ts).
+const live = mkdtempSync(join(tmpdir(), 'symphony-mcp-live-'));
+afterAll(() => {
+  rmSync(workspace, { recursive: true, force: true });
+  rmSync(live, { recursive: true, force: true });
+});
+const env = { SYMPHONY_MCP: 'off', SYMPHONY_LIVE_DIR: live } as NodeJS.ProcessEnv;
 const manager = (editsAllowed = true) =>
   new RunManager({ workspace: async () => workspace, repoRoot: workspace, env, editsAllowed });
 
@@ -87,6 +93,14 @@ describe('Symphony MCP server', () => {
     expect(view).toMatchObject({ pattern: 'investigate', outcome: 'success' });
     expect(view.result).toContain('### answer');
     expect(view.savedTo).toContain(join(workspace, '.symphony', 'runs'));
+    // The studio sees the chat's run, and follows it to the end.
+    const studio = new LiveRuns(live);
+    const seen = await studio.get(started.body.run_id);
+    expect(seen).toMatchObject({ source: 'chat', workspace });
+    expect(seen!.score.pattern).toBe('investigate');
+    await seen!.poll();
+    expect(seen!.status).toBe('done');
+    studio.dispose();
   });
 
   it('relays approvals through the chat: the plan is shown, the user decides', async () => {

@@ -44,7 +44,8 @@ const read = (file: string, _enc?: string) => readFileSync(file, 'utf8').replace
 
 const status = (dir: string) => sh(dir, 'status', '--porcelain', '--untracked-files=all');
 
-describe('editing runs play in their own worktree', () => {
+// git spawns: 0.2-0.6 s per test alone, over 5 s when the machine is loaded (seen locally and on CI).
+describe('editing runs play in their own worktree', { timeout: 30_000 }, () => {
   it('knows which patterns edit files', () => {
     expect([fix, refactor, implement].every(editsFiles)).toBe(true);
     expect([investigate, review].some(editsFiles)).toBe(false);

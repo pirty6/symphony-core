@@ -465,6 +465,7 @@ describe('fix: the stability gate (opt-in)', () => {
     expect(r.end).toBe('fixed');
   });
 
+  // Plays a whole run up to the 1000-step limit: about 3 s alone, more on a loaded runner.
   it('the worst case ends at the step limit or out of edits, never Fixed', () => {
     let k = 0;
     const r = play(
@@ -482,7 +483,7 @@ describe('fix: the stability gate (opt-in)', () => {
     );
     expect(r.r.state.outcome).not.toBe('success');
     expect(r.r.state.steps.length).toBeLessThanOrEqual(fix.maxSteps!);
-  });
+  }, 30_000);
 
   it('once armed, a re-diagnosis that no longer calls it intermittent does not disarm the gate', () => {
     let k = 0;

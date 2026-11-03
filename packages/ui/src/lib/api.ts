@@ -17,6 +17,9 @@ export interface LiveRun {
   pattern: string
   goal: string
   status: string
+  /** 'chat' for a run a VS Code chat plays (the MCP server); absent for this studio's own. */
+  source?: string
+  workspace?: string
 }
 
 export interface SavedSummary {

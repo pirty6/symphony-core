@@ -32,6 +32,7 @@ import { libraryPatterns } from '../patterns/index.js';
 import { chainNext } from '../runtime/chain.js';
 import { concertNext } from '../runtime/concert.js';
 import { Run } from '../runtime/driver.js';
+import { liveRoot, publishLive } from '../runtime/live.js';
 import type { Provider } from '../runtime/provider.js';
 import { envConfig, makeProvider, runtimeExtras, type ProviderName } from '../runtime/factory.js';
 import {
@@ -372,6 +373,13 @@ export class RunManager {
     });
     managed = { run, pattern };
     this.runs.set(run.id, managed);
+    // The studio shows the chat's runs live and can steer them (src/runtime/live.ts).
+    const live = liveRoot(this.opts.env);
+    const published = live
+      ? publishLive(run, { source: 'chat', workspace }, live).catch(() => undefined)
+      : undefined;
+    // Published before it starts, so the studio sees it from its first message.
+    await published;
     void run.start().finally(() => provider.dispose?.());
     return run.id;
   }

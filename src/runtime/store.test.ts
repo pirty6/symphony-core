@@ -286,7 +286,8 @@ describe('pattern files', () => {
   });
 });
 
-describe('gitFingerprint', () => {
+// git spawns: 0.2-0.6 s per test alone, over 5 s when the machine is loaded (seen locally and on CI).
+describe('gitFingerprint', { timeout: 30_000 }, () => {
   it('changes when the workspace changes', async () => {
     const repo = join(root, 'repo');
     execFileSync('git', ['init', '-q', repo]);
