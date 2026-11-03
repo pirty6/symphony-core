@@ -18,7 +18,7 @@ flowchart LR
     Provider["AI provider<br/>Copilot SDK or scripted"]
     Tools["Tools<br/>tests, git, citations, memory"]
   end
-  Disk[(".symphony/runs/*.json<br/>Performance record")]
+  Disk[("~/.symphony/workspaces/…/runs/*.json<br/>Performance record")]
   Canvas -- "start, approve, retry, stop" --> API
   API --> Run
   Run -- "advance(state, resolution)" --> Engine
@@ -115,7 +115,7 @@ change mid-run.
 | `src/runtime/` | All I/O: the driver, providers, tools, memory, the run store. |
 | `src/patterns/` | The pattern library, in TypeScript. |
 | `packages/ui/` | The studio (React Flow) and its dev server (`packages/ui/server/api.ts`). |
-| `.symphony/runs/` | Saved runs (Performance records), resumable and replayable. |
-| `.symphony/memory.json` | Facts, lessons and approved compositions remembered across runs. |
+| `~/.symphony/workspaces/<folder>-<hash>/runs/` | Saved runs (Performance records), resumable and replayable; outside the repository (`symphony where runs`). |
+| `~/.symphony/workspaces/<folder>-<hash>/memory.json` | Facts, lessons and approved compositions remembered across runs. |
 
 See also: [the maestro](./maestro.md) and [the algorithm flows](./patterns.md).

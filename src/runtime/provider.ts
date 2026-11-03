@@ -106,7 +106,7 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
       ? '- Only the input below. You have no workspace or shell tools for this step: reason from what you were given.'
       : pause.role === 'assessor'
         ? "- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff/ls-files/check-ignore, gh issue/pr/run/search view|list, gh api GETs, ls, cat, find, jq). No interpreters (python, node, bash -c…): they can write files, so they are refused. Read JSON with jq, e.g. `jq '.results[] | {task, pass}' file.json`. A command line runs only if every part is allowed; a refusal names the part, so run the rest again without it."
-        : `- Workspace: read, edit and run commands as this step needs. Put scripts, notes and other temporary files only in ${sources.scratchDir ? `the run's scratch folder \`${sources.scratchDir}\` (deleted when the run ends)` : '`.symphony/scratch/`'}, never in the project.`,
+        : `- Workspace: read, edit and run commands as this step needs. Put scripts, notes and other temporary files only in ${sources.scratchDir ? `the run's scratch folder \`${sources.scratchDir}\` (deleted when the run ends)` : 'the system temp folder'}, never in the project.`,
     ...(pause.capabilities.includes('web')
       ? [
           '- Web: web_search(query) to find pages, then web_fetch(url) to read them. Cite every URL you rely on.',

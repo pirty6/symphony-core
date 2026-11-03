@@ -217,7 +217,7 @@ export function Library(p: Props) {
         }
       >
         {saved.length === 0 && (
-          <small className="muted">{demoCount > 0 ? 'No runs with a real AI yet.' : 'Runs are saved to .symphony/runs'}</small>
+          <small className="muted">{demoCount > 0 ? 'No runs with a real AI yet.' : 'Runs are saved on this machine, outside your repository (~/.symphony)'}</small>
         )}
         {saved.slice(0, 30).map((r) => (
           <div key={r.file} className="saved-row" data-testid="saved-run" data-file={r.file}>

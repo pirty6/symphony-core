@@ -12,9 +12,9 @@ several waves) is the main fixture: it is heavy and runs only when named. Use `-
 because runs vary and there is no seed. The report then shows the spread.
 
 ```sh
-# The baseline, once: defaults. Its path is printed as "saved .symphony/evals/<stamp>.json".
+# The baseline, once: defaults. Its path is printed as "saved <evals>/<stamp>.json".
 npm run cli -- eval --task investigate-many-files -n 3
-BASE=.symphony/evals/<stamp>.json
+BASE=$(npm run -s cli -- where evals)/<stamp>.json
 ```
 
 Every report records per run:
@@ -25,7 +25,8 @@ Every report records per run:
 - rate limits hit (`rate limits`);
 - the read record's share of the saved run (`read record`).
 
-Each run is saved next to the report (`<stamp>-runs/`), to open in the studio or replay.
+Each run is saved next to the report (`<stamp>-runs/`), to open in the studio or replay. `<evals>`
+is `symphony where evals`, outside the repository.
 
 ## 1. Six vs four parallel sub-agents: wall time and HTTP 429s
 
@@ -57,7 +58,7 @@ and `tokens`. With `--compare`, use a baseline played on the same tasks.
 
 ```sh
 npm run cli -- eval --task investigate-many-files,investigate-multi-hop,investigate-history -n 3
-npm run cli -- eval --task investigate-many-files,investigate-multi-hop,investigate-history -n 3 --with singlePass=true --compare .symphony/evals/<off>.json
+npm run cli -- eval --task investigate-many-files,investigate-multi-hop,investigate-history -n 3 --with singlePass=true --compare <evals>/<off>.json
 ```
 
 Compare: tokens, time, solved, and how many files skipped the deep read. A file skips it only
@@ -73,7 +74,7 @@ A cheaper single-pass reader is a separate trial: target its node id. Trial 6 ta
 which does not play with singlePass on.
 
 ```sh
-SYMPHONY_NODE_MODELS=triageDeep=claude-sonnet-5 npm run cli -- eval --task investigate-multi-hop,investigate-history -n 3 --with singlePass=true --compare .symphony/evals/<singlePass>.json
+SYMPHONY_NODE_MODELS=triageDeep=claude-sonnet-5 npm run cli -- eval --task investigate-multi-hop,investigate-history -n 3 --with singlePass=true --compare <evals>/<singlePass>.json
 ```
 
 ## 4. Rejection reasons, then automatic fixes and delta repair
@@ -112,7 +113,7 @@ for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".json"))) {
     for (const t of [s.transcript, ...(s.transcript?.parts ?? [])])
       for (const c of t?.calls ?? [])
         if (c.nanoAiu) console.log([s.nodeId, c.inputTokens, c.cacheReadTokens, c.outputTokens, c.nanoAiu].join("\t"));
-}' .symphony/evals/<stamp>-runs
+}' <evals>/<stamp>-runs
 ```
 
 Fit `nanoAiu` against uncached input, cached input and output across calls. The cached
@@ -124,7 +125,7 @@ coefficient is what a cached token costs relative to an uncached one.
 
 ```sh
 SYMPHONY_NODE_MODELS=deepRead=claude-sonnet-5.5 npm run cli -- eval --task investigate-many-files -n 3
-SYMPHONY_NODE_MODELS=deepRead=claude-opus-5.5 npm run cli -- eval --task investigate-many-files -n 3 --compare .symphony/evals/<sonnet>.json
+SYMPHONY_NODE_MODELS=deepRead=claude-opus-5.5 npm run cli -- eval --task investigate-many-files -n 3 --compare <evals>/<sonnet>.json
 ```
 
 Compare: solved, `evidence`, `citations valid`, and the deep read's tokens and time
@@ -156,7 +157,7 @@ complexity.
 
 ```sh
 npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3
-npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3 --with maxDebateRounds=1 --compare .symphony/evals/<two-rounds>.json
+npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3 --with maxDebateRounds=1 --compare <evals>/<two-rounds>.json
 ```
 
 Compare: solved, `citations valid`, tokens and time. Round 2 cost ~16% of input and ~21% of
@@ -221,7 +222,7 @@ compare solved and `evidence` on the debate's known-answer tasks, not only token
 
 ```sh
 npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3 --improvisation 2
-npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3 --improvisation 3 --compare .symphony/evals/<at-2>.json
+npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3 --improvisation 3 --compare <evals>/<at-2>.json
 ```
 
 ## Waiting on these trials

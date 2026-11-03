@@ -18,6 +18,7 @@ import { replayPerformance } from '../core/replay.js';
 import type { Pattern, SavedRun } from '../core/types.js';
 import { validatePattern } from '../core/validate.js';
 import { repertoireFrom, type Repertoire } from './repertoire.js';
+import { stateDir } from './state.js';
 
 const exec = promisify(execFile);
 
@@ -84,7 +85,7 @@ export async function runScratch(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ dir: string; remove: () => Promise<void> }> {
   const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 8)}`;
-  const dir = join(workspace, '.symphony', 'scratch', id);
+  const dir = join(stateDir(workspace, env), 'scratch', id);
   await mkdir(dir, { recursive: true });
   const keep = env.SYMPHONY_KEEP_SCRATCH === '1';
   return {
@@ -95,10 +96,11 @@ export async function runScratch(
 
 /**
  * Where runs are saved: SYMPHONY_RUNS_DIR (tests point it at a temp folder so
- * their runs never reach your lists), else <root>/.symphony/runs.
+ * their runs never reach your lists), else the workspace's Symphony folder, outside it
+ * (src/runtime/state.ts): saved runs stay on this machine, never in the repository.
  */
 export function runsDirFor(root: string, env: NodeJS.ProcessEnv = process.env): string {
-  return env.SYMPHONY_RUNS_DIR || join(root, '.symphony', 'runs');
+  return env.SYMPHONY_RUNS_DIR || join(stateDir(root, env), 'runs');
 }
 
 const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, '-');
@@ -404,7 +406,7 @@ export async function autoPrune(
     if (last && Date.now() - last.mtimeMs < DAY) return undefined;
     await mkdir(runsDir, { recursive: true });
     await writeFile(marker, `${new Date().toISOString()}\n`);
-    return await pruneRuns(runsDir, { scratchDir: join(workspace, '.symphony', 'scratch') });
+    return await pruneRuns(runsDir, { scratchDir: join(stateDir(workspace, env), 'scratch') });
   } catch {
     return undefined;
   }

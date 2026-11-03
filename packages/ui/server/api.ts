@@ -49,6 +49,7 @@ import {
 } from '../../../src/runtime/factory.js'
 import { isolate, editsFiles } from '../../../src/runtime/worktree.js'
 import { autoPrune, cachedReplayCheck, checkReplay, deleteRun, type ReplayCheck, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
+import { stateDir } from '../../../src/runtime/state.js'
 
 /** A JSON object of strings (anything else dropped). */
 function stringRecord(v: unknown): Record<string, string> {
@@ -152,7 +153,7 @@ export function createApi(opts: ApiOptions) {
   const workspace = opts.workspace ?? opts.repoRoot
   const runsDir = runsDirFor(opts.repoRoot, env)
   const draftsDir = join(opts.repoRoot, DRAFTS_DIR)
-  const scratchDir = join(workspace, '.symphony', 'scratch')
+  const scratchDir = join(stateDir(workspace, env), 'scratch')
   void autoPrune(workspace, runsDir, env)
 
   /**

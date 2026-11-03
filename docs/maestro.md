@@ -9,7 +9,7 @@ pattern played by the same engine, so every decision is recorded and replayable.
 | Search engine | Maestro | Where |
 |---|---|---|
 | Query | Your request, kept verbatim as the goal | `request` |
-| Cache of past queries | Approved compositions for the same request: reused without a debate | `.symphony/memory.json` → `compositions` |
+| Cache of past queries | Approved compositions for the same request: reused without a debate | The workspace's memory (`symphony where memory`) → `compositions` |
 | Keyword index | Each pattern's `verbTriggers` ("fix", "bug", "refactor", "investigate"…); the opening verb counts twice | `patterns.route` tool |
 | Ranker | The classifier (AI) confirms the pattern, or `new` when nothing fits, and rates complexity | `classify` |
 | Related results | The three closest approved compositions, shown to the classifier and proposer as precedent | `pastCompositions` |
