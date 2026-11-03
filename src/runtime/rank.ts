@@ -33,6 +33,9 @@ export function termsOf(texts: readonly string[]): string[] {
  * path), ties in the given order; `matched` are those with any hit. Not a git repository:
  * path terms only.
  */
+/** git greps run at once while ranking. */
+const GREPS_AT_ONCE = 4;
+
 export async function rankFiles(
   workspace: string,
   paths: readonly string[],
@@ -41,15 +44,21 @@ export async function rankFiles(
 ): Promise<{ ranked: string[]; matched: string[] }> {
   const terms = termsOf(texts);
   const score = new Map(paths.map((p) => [p, 0]));
-  for (const term of terms) {
-    const out = await run('git', ['grep', '-l', '-i', '-I', '-F', '-e', term], {
+  const grep = (term: string) =>
+    run('git', ['grep', '-l', '-i', '-I', '-F', '-e', term], {
       cwd: workspace,
       maxBuffer: 64 * 1024 * 1024,
       ...(signal ? { signal } : {}),
     }).catch(() => ({ stdout: '' }));
-    for (const hit of out.stdout.split('\n'))
-      if (score.has(hit)) score.set(hit, score.get(hit)! + 1);
-    for (const p of paths) if (p.toLowerCase().includes(term)) score.set(p, score.get(p)! + 2);
+  // A few greps at once (each is threaded already); scores are sums, so the order is the same.
+  for (let i = 0; i < terms.length; i += GREPS_AT_ONCE) {
+    const batch = terms.slice(i, i + GREPS_AT_ONCE);
+    const outs = await Promise.all(batch.map(grep));
+    batch.forEach((term, j) => {
+      for (const hit of outs[j]!.stdout.split('\n'))
+        if (score.has(hit)) score.set(hit, score.get(hit)! + 1);
+      for (const p of paths) if (p.toLowerCase().includes(term)) score.set(p, score.get(p)! + 2);
+    });
   }
   const ranked = paths
     .map((p, i) => ({ p, i, s: score.get(p) ?? 0 }))

@@ -221,6 +221,11 @@ function jsonProp(f: StateField): Record<string, unknown> {
 export function resultJsonSchema(
   writes: readonly StateField[],
   choices?: readonly { readonly edgeId: string }[],
+  /**
+   * partialUpdates: no update field is required by the schema (delta repair: a correction
+   * resends only what changes). The engine still checks the whole result after merging.
+   */
+  opts: { readonly partialUpdates?: boolean } = {},
 ): Record<string, unknown> {
   return {
     type: 'object',
@@ -228,7 +233,7 @@ export function resultJsonSchema(
       updates: {
         type: 'object',
         properties: Object.fromEntries(writes.map((f) => [f.name, jsonProp(f)])),
-        required: writes.map((f) => f.name),
+        ...(opts.partialUpdates ? {} : { required: writes.map((f) => f.name) }),
         additionalProperties: false,
       },
       ...(choices?.length

@@ -36,7 +36,10 @@ The plan chooses `agents` (at most 6). `agentsCap` caps that choice, and the sav
 npm run cli -- eval --task investigate-many-files -n 3 --with agentsCap=4 --compare $BASE
 ```
 
-Compare: `time`, `slowest steps` (triage, deepRead) and `rate limits: N model calls`.
+Compare: `time`, `slowest steps` (triage, deepRead) and `rate limits: N model calls`, and also
+`evidence` and each step's input. The cap is not only concurrency: it sets the wave sizes, and
+`leadStatus` (the hypothesis tally that steers later readers) is refreshed once per wave. A
+different cap can therefore change what later readers are told, not only how many run at once.
 
 ## 2. Gap-aimed vs current research
 
@@ -53,11 +56,25 @@ and `tokens`. With `--compare`, use a baseline played on the same tasks.
 ## 3. singlePass A/B
 
 ```sh
-npm run cli -- eval --task investigate-many-files -n 3 --with singlePass=true --compare $BASE
+npm run cli -- eval --task investigate-many-files,investigate-multi-hop,investigate-history -n 3
+npm run cli -- eval --task investigate-many-files,investigate-multi-hop,investigate-history -n 3 --with singlePass=true --compare .symphony/evals/<off>.json
 ```
 
 Compare: tokens, time, solved, and how many files skipped the deep read. A file skips it only
-when the engine's record shows triage was given that file whole.
+when the engine's record shows triage was given that file whole. The engine checks only that
+the single-pass reader was given the file whole and wrote a note per file. Whether it followed
+callers, imports, tests and history rests on the reader:
+- `investigate-multi-hop`'s answer is two imports away from the question.
+- `investigate-history`'s reason is only in a commit message.
+
+So these two tasks are the ones that can show what singlePass loses.
+
+A cheaper single-pass reader is a separate trial: target its node id. Trial 6 targets `deepRead`,
+which does not play with singlePass on.
+
+```sh
+SYMPHONY_NODE_MODELS=triageDeep=claude-sonnet-5 npm run cli -- eval --task investigate-multi-hop,investigate-history -n 3 --with singlePass=true --compare .symphony/evals/<singlePass>.json
+```
 
 ## 4. Rejection reasons, then automatic fixes and delta repair
 
@@ -119,7 +136,11 @@ Compare: solved, `evidence`, `citations valid`, and the deep read's tokens and t
 npm run cli -- eval --task investigate-many-files -n 3 --with deepBatchSize=8 --compare $BASE
 ```
 
-Compare: tokens (more files share one prompt prefix), time, `growing context` and solved.
+Compare: tokens (more files share one prompt prefix), time, `growing context`, solved and
+`evidence`. A larger batch also makes the waves larger (deepBatchSize × agents × 3), so fewer
+items get the evidence an earlier wave adds to `leadStatus`. It can also replace parallel calls
+with fewer, longer ones, so fewer calls do not mean faster. Include a multi-wave task
+(`investigate-many-files`) and a small one (`investigate-multi-hop`).
 
 ## 8. The overhead of recording output per range
 
@@ -179,6 +200,29 @@ npm run cli -- eval --task investigate-many-files,investigate-multi-hop,investig
 `npm run cli -- cost <run.json> [more.json]` prints each step's share of input tokens and AI
 time, with fan-out parts and rejected answers counted. Use it on the runs each trial saves
 (`<stamp>-runs/`), not on shares taken from an investigation's own analysis.
+
+## Warm start off: time for tokens
+
+Gap research and part answers start one sub-agent first, so the others reuse its cached prompt
+(`warmFirst`). Turning it off can save up to ~30 s per step, and costs the cache reuse.
+
+```sh
+npm run cli -- eval --task investigate-many-files -n 3 --with warmFirst=false --compare $BASE
+```
+
+Compare: time, tokens and `first-call cache` (the cached share of each step's first calls).
+
+## Improvisation: quality, not only cost
+
+At improvisation 3 and above, non-fanned-out assessor steps (the skeptic among them) get 2–3
+independent takes and an integrator call. That multiplies their calls. It is also a second look
+that can find evidence or raise an objection the first take missed. So lowering it is not free:
+compare solved and `evidence` on the debate's known-answer tasks, not only tokens.
+
+```sh
+npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3 --improvisation 2
+npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,investigate-multi-hop -n 3 --improvisation 3 --compare .symphony/evals/<at-2>.json
+```
 
 ## Waiting on these trials
 

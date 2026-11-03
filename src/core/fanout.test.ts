@@ -84,12 +84,18 @@ describe('fanOut: one AI call per chunk, merged in chunk order', () => {
     expect(replayPerformance(score, toPerformance(done.state)).divergence.reproduced).toBe(true);
   });
 
-  it('names the part that was wrong, and checks run on the merged answer', () => {
+  it('names the part that was wrong; the checks hold for each part on its own slice', () => {
     let r = createEngine(score, { startedAt: 't' });
     r = submit(r, { parts: [answer(['a', 'b']), { updates: { read: 'c' } }, answer(['e'])] });
     expect(r.state.pause?.feedback?.join('\n')).toMatch(/^part 2 of 3: /);
+    // Part 2 skipped a file of its own slice (d): named, even though the others are complete.
     r = submit(r, { parts: [answer(['a', 'b']), answer(['c']), answer(['e'])] });
-    expect(r.state.pause?.feedback?.[0]).toMatch(/^Read every file\./);
+    expect(r.state.pause?.feedback?.[0]).toMatch(/^part 2 of 3: Read every file\./);
+    // A well-formed empty part beside full ones is caught too.
+    const empty = submit(createEngine(score, { startedAt: 't' }), {
+      parts: [answer(['a', 'b', 'c', 'd', 'e']), answer([]), answer(['e'])],
+    });
+    expect(empty.state.pause?.feedback?.[0]).toMatch(/^part 2 of 3: Read every file\./);
     const short = submit(createEngine(score, { startedAt: 't' }), { parts: [answer(['a', 'b'])] });
     expect(short.state.pause?.feedback).toEqual(['expected 3 part results, got 1']);
   });
@@ -150,6 +156,43 @@ describe('fanOut: one AI call per chunk, merged in chunk order', () => {
     expect(r.state.outcome).toBe('success');
     expect(r.state.state.partly).toEqual([]);
     expect(replayPerformance(reporting, toPerformance(r.state)).divergence.reproduced).toBe(true);
+  });
+
+  it('the warm start may be a setting: a boolean field turns it on or off', () => {
+    const warmed = (warmFirst: boolean) => {
+      const p = {
+        ...reader,
+        state: [
+          ...reader.state,
+          { name: 'warmFirst', type: 'boolean' as const, initial: warmFirst },
+        ],
+        nodes: reader.nodes.map((n) =>
+          n.id === 'readAll' && n.kind === 'agent'
+            ? { ...n, fanOut: { ...n.fanOut!, warm: 'warmFirst' } }
+            : n,
+        ),
+      } as Pattern;
+      expect(validatePattern(p).errors).toEqual([]);
+      const sc = compileScore(p, {
+        goal: 'g',
+        context: { files: ['a', 'b', 'c'] },
+        generatedAt: 't',
+      });
+      return (createEngine(sc, { startedAt: 't' }).state.pause as AgentPause).warmFirst;
+    };
+    expect(warmed(true)).toBe(true);
+    expect(warmed(false)).toBeUndefined();
+    const bad = {
+      ...reader,
+      nodes: reader.nodes.map((n) =>
+        n.id === 'readAll' && n.kind === 'agent'
+          ? { ...n, fanOut: { ...n.fanOut!, warm: 'per' } }
+          : n,
+      ),
+    } as Pattern;
+    expect(validatePattern(bad).errors.map((e) => e.message)).toContain(
+      "fanOut.warm 'per' must be a boolean field",
+    );
   });
 
   it('keeps nothing when every part passed but the merged answer was rejected', () => {

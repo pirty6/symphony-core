@@ -14,8 +14,10 @@ import type { SavedRun } from './types.js';
  * recorded preload manifest.
  * 1.4.0: that report is item by item against the preload list, and fails closed: an item the
  * record does not mention counts as not read; a cut one gets a chunk of its remaining lines.
+ * 1.5.0: each part of a fanned-out step must pass the step's checks on its own slice, not
+ * only the merged answer (an empty part beside a full one was accepted).
  */
-export const ENGINE_VERSION = '1.4.0';
+export const ENGINE_VERSION = '1.5.0';
 
 /** The run format this engine writes. */
 export const RUN_SCHEMA_VERSION = 3;

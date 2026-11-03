@@ -102,6 +102,14 @@ const callTool = async (cfg: SessionConfig, name: string, args: unknown) => {
 
 const listModels = async () => [{ id: 'claude-haiku-5.5', supportedReasoningEfforts: ['low'] }];
 
+/** The update fields the submit_result tool's schema requires, in a played session. */
+const required = (r: { session: { cfg: SessionConfig } }) =>
+  (
+    r.session.cfg.tools!.find((t) => t.name === 'submit_result') as unknown as {
+      parameters: { properties: { updates: { required?: string[] } } };
+    }
+  ).parameters.properties.updates.required ?? [];
+
 describe('CopilotProvider', () => {
   it('streams, enforces read-only and captures submit_result', async () => {
     const { client, sessions } = fakeClient(async (cfg, emit) => {
@@ -503,6 +511,19 @@ describe('CopilotProvider', () => {
       const off = await play({}, [first, fix], listed);
       expect(off.replies[0]).toMatch(/complete corrected result/);
       expect(off.replies[1]).toMatch(/^REJECTED/);
+      // The tool's schema lets the correction through (a CLI that validates arguments against it
+      // would otherwise refuse it before the merge); without delta repair every field is required.
+      expect(required(on)).toEqual([]);
+      expect(required(off)).toEqual(['items', 'notes']);
+      expect(required(off).every((k) => k in fix.updates)).toBe(false);
+      // A first answer missing a field is still sent back, in the same session.
+      const partial = await play(
+        { deltaRepair: true },
+        [{ updates: { items: ['a'] }, verdict }],
+        listed,
+      );
+      expect(partial.replies[0]).toMatch(/^REJECTED/);
+      expect(partial.replies[0]).toMatch(/notes/);
     });
 
     it('header in the system message: the step instructions there, the input in the prompt', async () => {

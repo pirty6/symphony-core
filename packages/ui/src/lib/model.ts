@@ -872,6 +872,15 @@ export function featureRows(
   })
 }
 
+/** Your choices with these switches back at their defaults (the others are kept). */
+export function resetFeatures(
+  chosen: Readonly<Record<string, string>>,
+  rows: readonly FeatureRow[],
+): Record<string, string> {
+  const fields = new Set(rows.map((r) => r.feature.field))
+  return Object.fromEntries(Object.entries(chosen).filter(([k]) => !fields.has(k)))
+}
+
 /** Your choices after setting one switch: a default is not kept (the pattern's own stays in charge). */
 export function chooseFeature(
   chosen: Readonly<Record<string, string>>,

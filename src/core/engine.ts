@@ -313,7 +313,9 @@ function partsOf(
   return Object.assign(
     { parts },
     parallel ? { parallel } : {},
-    node.fanOut.warm ? { warmFirst: true } : {},
+    (typeof node.fanOut.warm === 'string' ? state[node.fanOut.warm] === true : node.fanOut.warm)
+      ? { warmFirst: true }
+      : {},
   );
 }
 
@@ -362,6 +364,7 @@ function checkParts(
   raw: unknown,
   pause: AgentPause,
   transcript: AiTranscript | undefined,
+  state: Readonly<Record<string, unknown>>,
 ): Checked<NodeResult> | undefined {
   const given = (raw as { parts?: unknown } | null | undefined)?.parts;
   if (!pause.parts || !Array.isArray(given)) return undefined;
@@ -376,10 +379,15 @@ function checkParts(
   const errors: string[] = [];
   const values: NodeResult[] = [];
   parts.forEach((p, i) => {
+    // Each part answers its own slice: the step's checks hold for it alone, so an empty part
+    // cannot pass beside a full one (a gap nobody researched). Kept parts passed already.
+    const kept = given[i] == null && pause.partsDone?.[i] != null;
     const c: Checked<NodeResult> =
       p === undefined
         ? { ok: false, errors: [noResult(transcript?.parts?.[i])] }
-        : checkAgentResult(p, pause.outputSchema);
+        : kept
+          ? checkAgentResult(p, pause.outputSchema)
+          : checkPart(p, pause, i, state);
     if (c.ok) values.push(c.value);
     else errors.push(...c.errors.map((e) => `part ${i + 1} of ${parts.length}: ${e}`));
   });
@@ -917,7 +925,7 @@ function resolveAgent(
   res: AgentResolution,
 ): void {
   const routed: ReturnType<typeof checkAgentResult> =
-    checkParts(res.result, pause, res.transcript) ??
+    checkParts(res.result, pause, res.transcript, ctx.state) ??
     (res.result === undefined
       ? { ok: false, errors: [noResult(res.transcript)] }
       : checkAgentResult(res.result, pause.outputSchema, pause.choices));

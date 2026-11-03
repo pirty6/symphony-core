@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { advance, createEngine, toPerformance } from '../core/engine.js';
+import { evaluateGuard } from '../core/expr.js';
 import { replayPerformance } from '../core/replay.js';
 import { runScripted, scriptedResolution } from '../core/scripted.js';
 import type {
@@ -532,6 +533,38 @@ describe('narrowed read (opt-in)', () => {
   });
 });
 
+describe('what the skeptic and the gap research see', () => {
+  it('the skeptic reads every sub-answer; gap research reads the sub-questions too', () => {
+    const score = compileScore(investigate, { context: demo.context! });
+    const reads = (id: string) => {
+      const n = score.nodes.find((x) => x.id === id);
+      return n?.kind === 'agent' ? n.reads : [];
+    };
+    // A sub-answer new evidence contradicts can be named, so keepUnchallenged cannot freeze it.
+    expect(reads('challenge')).toContain('subAnswers');
+    // With gapAimed the gaps are notes; the questions they belong to stay in view.
+    expect(reads('chase')).toEqual(expect.arrayContaining(['subQuestions', 'chaseGaps']));
+  });
+
+  it('the support judge reads each quote with the lines around it', () => {
+    const r = runScripted(
+      compileScore(investigate, { context: { ...demo.context!, supportJudge: 'shadow' } }),
+      demo,
+    );
+    const order = r.state.steps.map((x) => x.nodeId);
+    expect(order.indexOf('judgeContext')).toBeGreaterThan(order.indexOf('takeJudgeItems'));
+    expect(order.indexOf('judgeContext')).toBeLessThan(order.indexOf('judgeSupport'));
+    const node = compileScore(investigate, { context: demo.context! }).nodes.find(
+      (n) => n.id === 'judgeContext',
+    );
+    expect(node).toMatchObject({
+      tool: 'evidence.context',
+      inputs: { findings: 'judgeItems' },
+      output: { items: 'judgeItems' },
+    });
+  });
+});
+
 describe('gap-aimed research (a pilot, off by default)', () => {
   const chased = (context: Record<string, unknown>) => {
     const r = runScripted(
@@ -749,6 +782,40 @@ describe('investigate always ends: research rounds are bounded', () => {
     expect(gaps.length).toBeGreaterThan(1);
     expect(pause.parts?.map((p) => p.chaseGaps)).toEqual(gaps.map((g) => [g]));
   });
+
+  it('with one sub-agent per gap, a gap researched by nobody is sent back, even beside full ones', () => {
+    const v = { outcome: 'applied' as const, confidence: 0.6, shouldTerminate: false, reason: 'r' };
+    const r = runScripted(
+      compileScore(investigate, {
+        goal: 'g',
+        context: { ...demo.context!, gapsPerChase: 1, maxExpandRounds: 0 },
+      }),
+      {
+        ...demo,
+        agents: {
+          ...demo.agents,
+          assess: (s, visit) => ({
+            updates: {
+              ...assessFor(s, visit === 0 ? ((s.subQuestions as string[]) ?? []) : []),
+              confidence: 0.9,
+            },
+            verdict: v,
+          }),
+          // The first gap's sub-agent finds nothing and says so with a well-formed, empty answer.
+          chase: (s, visit) => {
+            const first = (s.chaseGaps as string[])[0] === (s.subQuestions as string[])[0];
+            return first
+              ? { updates: { queries: ['grep x'], newFindings: [] }, verdict: v }
+              : demo.agents!.chase!(s, visit);
+          },
+        },
+      },
+    );
+    const rejected = r.state.events.flatMap((e) =>
+      e.type === 'response-rejected' && e.nodeId === 'chase' ? e.errors : [],
+    );
+    expect(rejected[0]).toMatch(/^part 1 of \d+: Report a finding for every gap/);
+  });
 });
 
 describe('investigate answers several subjects side by side', () => {
@@ -791,6 +858,25 @@ describe('investigate answers several subjects side by side', () => {
     const { r, ran } = runWith(['workspace']);
     expect(ran).not.toContain('answerParts');
     expect(String(r.state.state.answer)).not.toContain('---');
+  });
+
+  it('rejects a synthesis or summary part: the overall answer is the synthesis', () => {
+    for (const extra of ['synthesis', 'Summary', 'Overall recommendations', '5. Conclusion:']) {
+      const { r } = runWith(['workspace'], demo.approvals, { parts: [...ALGOS, extra] });
+      const plan = r.state.steps.find((st) => st.nodeId === 'plan');
+      expect(JSON.stringify(plan?.attempts ?? r.state.pause), extra).toMatch(
+        /leave out a synthesis, summary, overview or conclusion part/,
+      );
+    }
+    // A subject that merely contains or starts with such a word is fine.
+    for (const parts of [
+      ['token summary cache', 'speed'],
+      ['summarize.py', 'parse.py', 'fetch.py'],
+      ['the Summarizer', 'Synthesizer', 'Overview page'],
+    ]) {
+      const ok = runWith(['workspace'], demo.approvals, { parts });
+      expect(ok.r.state.outcome, parts.join()).toBe('success');
+    }
   });
 
   it('rejects a plan with exactly one part', () => {
@@ -1153,6 +1239,38 @@ describe('investigate holds "read completely" to what the engine gave', () => {
     expect(String(s.answer)).toMatch(/Could not read in full: .*src\/core\/engine\.ts/);
   });
 
+  it("each read note is matched to its item by what comes before ' — ', so paths may hold spaces", () => {
+    // Both note checks: the deep read's (deepBatch) and the single-pass reader's (readFully).
+    const checks = investigate.nodes.flatMap((n) =>
+      ((n as unknown as { checks?: { expr: string }[] }).checks ?? []).flatMap((c) => {
+        const m = /heads\(readNotes, .*\) == (\w+)$/.exec(c.expr);
+        return m ? [{ expr: c.expr, field: m[1]! }] : [];
+      }),
+    );
+    expect(checks.map((c) => c.field).toSorted()).toEqual(['deepBatch', 'readFully']);
+    const items = ['Loop Experiences/plan.md', 'src/a.ts#chunk=401-800', 'src/b.ts'];
+    for (const { expr, field } of checks) {
+      const ok = (readNotes: string[]) => evaluateGuard(expr, { [field]: items, readNotes });
+      expect(
+        ok([
+          'Loop Experiences/plan.md — the rollout plan',
+          'src/a.ts#chunk=401-800 — nothing relevant',
+          'src/b.ts – the retry loop',
+        ]),
+        field,
+      ).toBe(true);
+      // No dash: the first word, as before.
+      expect(ok(['Loop Experiences/plan.md — x', 'src/a.ts#chunk=401-800 x', 'src/b.ts x'])).toBe(
+        true,
+      );
+      expect(ok(['Loop Experiences/plan.md — x', 'src/b.ts — x'])).toBe(false);
+      expect(
+        ok(['src/b.ts — x', 'src/a.ts#chunk=401-800 — x', 'Loop Experiences/plan.md — x']),
+      ).toBe(false);
+      expect(ok(['Loop — x', 'src/a.ts#chunk=401-800 — x', 'src/b.ts — x'])).toBe(false);
+    }
+  });
+
   it('a reader that leaves out the note for an item is sent back', () => {
     const script: DemoScript = {
       ...demo,
@@ -1377,6 +1495,37 @@ describe('single-pass triage pilot (off by default)', () => {
     return { r, s: r.state.state, deepRead, score };
   };
   const RELEVANT_FILES = ['src/core/engine.ts', 'src/core/schema.ts', 'src/core/validate.ts'];
+
+  it('the single-pass reader writes a note per file it read in depth, as the deep read does', () => {
+    const r = runScripted(
+      compileScore(investigate, { context: { ...demo.context!, singlePass: true } }),
+      {
+        ...demo,
+        agents: {
+          ...demo.agents,
+          triageDeep: (s, visit) => {
+            const good = demo.agents!.triageDeep!(s, visit);
+            return {
+              ...good,
+              updates: {
+                ...good.updates,
+                readNotes: (good.updates.readNotes as string[]).slice(1),
+              },
+            };
+          },
+        },
+      },
+    );
+    expect(r.state.outcome).toBe('partial');
+    expect(r.state.reason).toMatch(/one readNotes entry per file of readFully/);
+    const ok = runScripted(
+      compileScore(investigate, { context: { ...demo.context!, singlePass: true } }),
+      demo,
+    );
+    expect(ok.state.state.readLog).toEqual(
+      expect.arrayContaining([expect.stringMatching(/ — read in depth at triage/)]),
+    );
+  });
 
   it('off: the usual triage plays, and every relevant file is read in depth', () => {
     const { r } = runWith(['workspace']);

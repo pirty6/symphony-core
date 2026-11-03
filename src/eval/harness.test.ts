@@ -16,6 +16,7 @@ import {
 } from './harness.js';
 import {
   buildFixture,
+  finalFiles,
   EVAL_TASKS,
   requirementCoverage,
   ROUTES,
@@ -424,6 +425,12 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
   'investigate-default-port': () => ({
     state: { answer: 'It listens on 8081: loadConfig in src/config.js uses DEFAULTS.port + 1.' },
   }),
+  'investigate-history': () => ({
+    state: {
+      answer:
+        'It was lowered from 50 MB because the edge proxy rejects bodies over 8 MB with a bare 413 (the commit that set MAX_UPLOAD_MB = 5).',
+    },
+  }),
 };
 
 for (const [i, route] of ROUTES.entries())
@@ -443,7 +450,7 @@ describe('eval tasks', () => {
       expect(solve).toBeDefined();
       const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
       try {
-        await buildFixture(dir, t.files);
+        await buildFixture(dir, t.files, t.history);
         const wrong: Record<string, unknown> =
           t.pattern !== 'investigate'
             ? {}
@@ -551,6 +558,22 @@ describe('memory fixtures', () => {
       expect((await recall(dir, String(t.inputs.question))).lessons).toEqual([
         expect.stringMatching(/S1: 8080, set by DEFAULT_PORT/),
       ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a task can hold history: the reason for a change is only in its commit', async () => {
+    const t = EVAL_TASKS.find((x) => x.id === 'investigate-history')!;
+    const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
+    try {
+      await buildFixture(dir, t.files, t.history);
+      const { execFileSync } = await import('node:child_process');
+      const log = execFileSync('git', ['log', '--format=%s'], { cwd: dir, encoding: 'utf8' });
+      expect(log.trim().split('\n')).toEqual(['Lower the upload limit to 5 MB', 'fixture']);
+      expect(readFileSync(join(dir, 'src/upload.js'), 'utf8')).toMatch(/MAX_UPLOAD_MB = 5;/);
+      // Citations are checked against the files as the workspace holds them: the last commit's.
+      expect(finalFiles(t)['src/upload.js']).toMatch(/MAX_UPLOAD_MB = 5;/);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

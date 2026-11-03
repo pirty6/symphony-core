@@ -31,6 +31,9 @@ const challenge = challengePhase({
   alongside: [
     'partAnswers',
     'subQuestions',
+    // Every sub-answer, so one the new evidence contradicts can be named (with keepUnchallenged
+    // on, a sub-answer no objection names is kept word for word).
+    'subAnswers',
     'notRead',
     'unverified',
     'hypothesisStatus',
@@ -45,6 +48,12 @@ const challenge = challengePhase({
 
 /** Most independent parts one investigation answers side by side. */
 export const MAX_PARTS = 8;
+
+/**
+ * The item a read note starts with: everything before its " — " (paths may hold spaces, e.g.
+ * "Loop Experiences/a.md — …"); a note with no dash falls back to its first word, as before.
+ */
+export const NOTE_ITEM = '^(.+?(?= [—–] )|[^ ]+)';
 
 /** The S tag of each entry ("S2"). */
 const TAGS = (field: string) => `heads(${field}, "^S[0-9]+")`;
@@ -210,20 +219,26 @@ function triageStep(deep: boolean): ScoreNode {
     label: 'Triage and read in depth',
     directive:
       node.directive +
-      ' For each file you count as relevant, also read it as the deep read would: follow the references out of it that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame), and record every fact that bears on the question in `newFindings`. List in `readFully` the relevant files you read that way, completely; leave out any you only skimmed, and any the prompt says were not given whole: those get a deep read of their own.',
+      ' For each file you count as relevant, also read it as the deep read would: follow the references out of it that matter for the question (imports, callers, tests, config) and the history of the relevant lines (git log -p, git blame), and record every fact that bears on the question in `newFindings`. List in `readFully` the relevant files you read that way, completely; leave out any you only skimmed, and any the prompt says were not given whole: those get a deep read of their own. In `readNotes`, give one entry per file of `readFully`, in the same order, starting with the file exactly as listed: "<file> — what it holds for the question, and the callers, imports, tests or history you followed".',
     // The engine says which it gave whole: readFully counts only for those.
     preloadReport: {
       paths: 'triagePartial',
       reasons: 'triagePartialReasons',
       whole: 'triageWhole',
     },
-    writes: [...node.writes, 'readFully'],
+    writes: [...node.writes, 'readFully', 'readNotes'],
     complexityShift: 0,
     checks: [
       ...(node.checks ?? []),
       {
         expr: 'subset(readFully, batchRelevant)',
         message: 'readFully may only list files of batchRelevant.',
+      },
+      {
+        // As the deep read: a note for every file it says it read in depth, none left out.
+        expr: `heads(readNotes, "${NOTE_ITEM}") == readFully`,
+        message:
+          'Give exactly one readNotes entry per file of readFully, in the same order, each starting with the file exactly as listed, then " — " and what it holds.',
       },
     ],
   };
@@ -403,6 +418,13 @@ export const investigate: Pattern = {
         min: 1,
         max: MAX_AGENTS,
         description: `Parallel sub-agents for triage, deep reads and parts (1 to ${MAX_AGENTS}), chosen when planning`,
+      },
+      {
+        name: 'warmFirst',
+        type: 'boolean',
+        initial: true,
+        description:
+          'Gap research and part answers start one sub-agent first, so the rest reuse its cached prompt (off: up to ~30 s sooner per step, more tokens; a trial)',
       },
       {
         name: 'agentsCap',
@@ -789,7 +811,14 @@ export const investigate: Pattern = {
       id: 'judgePhase',
       label: 'Support judge',
       description: "Off by default: does each cited finding's quote back its claim?",
-      nodes: ['useJudge', 'takeJudgeItems', 'hasJudgeItems', 'judgeSupport', 'splitRulings'],
+      nodes: [
+        'useJudge',
+        'takeJudgeItems',
+        'judgeContext',
+        'hasJudgeItems',
+        'judgeSupport',
+        'splitRulings',
+      ],
     },
   ],
   nodes: [
@@ -826,7 +855,7 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'assessor',
       label: 'Plan research',
-      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side. Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): ${MAX_AGENTS} unless the question is narrow, 1-3 for one about a few files; parallel calls finish sooner at the same total reading, and an idle slot only costs time.`,
+      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side; the overall answer then writes what holds across them, so never add a part for that (a synthesis, summary, overview or conclusion). Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): ${MAX_AGENTS} unless the question is narrow, 1-3 for one about a few files; parallel calls finish sooner at the same total reading, and an idle slot only costs time.`,
       reads: ['question', 'hint', 'sourceNames', 'sourceInfo'],
       writes: [
         'subQuestions',
@@ -865,6 +894,14 @@ export const investigate: Pattern = {
         {
           expr: `len(parts) != 1 && len(parts) <= ${MAX_PARTS}`,
           message: `List 2 to ${MAX_PARTS} independent subjects in parts, or none.`,
+        },
+        {
+          // The overall answer is the synthesis: a part for it answers the same thing twice.
+          // The whole entry is the label (e.g. "synthesis", "Overall recommendations"); a subject
+          // that only starts with such a word (summarize.py, the Summarizer) is not.
+          expr: 'count(parts, "^[^A-Za-z]*([Oo]verall |[Ff]inal )?([Ss]ynthesis|[Ss]ummary|[Oo]verview|[Cc]onclusions?|[Rr]ecommendations?)[^A-Za-z]*$") == 0',
+          message:
+            'parts are subjects of the question: leave out a synthesis, summary, overview or conclusion part (the overall answer writes it).',
         },
         {
           expr: `agents >= 1 && agents <= ${MAX_AGENTS}`,
@@ -1097,7 +1134,9 @@ export const investigate: Pattern = {
         },
         ...MERGE_FINDINGS,
         ...STATUS,
-        // Each wave's claims are its own.
+        // Each wave's claims are its own; what the single-pass reader said of each file is kept.
+        { field: 'readLog', expr: 'readLog + readNotes' },
+        { field: 'readNotes', expr: '[]' },
         { field: 'readFully', expr: '[]' },
         { field: 'triageWhole', expr: '[]' },
       ],
@@ -1166,7 +1205,7 @@ export const investigate: Pattern = {
         },
         {
           // Output for every item, by the item each note starts with: none left out.
-          expr: 'heads(readNotes, "^[^ ]+") == deepBatch',
+          expr: `heads(readNotes, "${NOTE_ITEM}") == deepBatch`,
           message:
             'Give exactly one readNotes entry per item of deepBatch, in the same order, each starting with the item exactly as listed, then " — " and what it holds.',
         },
@@ -1521,14 +1560,15 @@ export const investigate: Pattern = {
       label: 'Close gaps',
       capabilities: ['web', 'mcp'],
       // gapsPerChase 1: one sub-agent per gap, each with the whole brief (for an A/B).
-      fanOut: { over: 'chaseGaps', per: 'gapsPerChase', agents: 'agents', warm: true },
+      fanOut: { over: 'chaseGaps', per: 'gapsPerChase', agents: 'agents', warm: 'warmFirst' },
       directive:
-        'Close every gap in `chaseGaps` with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
+        'Close every gap in `chaseGaps` (the sub-questions not yet answered, or what the gap check says each one is missing: `subQuestions` are the questions they belong to) with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
         AGAINST,
       reads: [
         'leadHypotheses',
         'leadStatus',
         'question',
+        'subQuestions',
         'chaseGaps',
         'hint',
         'findingsBrief',
@@ -1620,7 +1660,7 @@ export const investigate: Pattern = {
       // One call per part, side by side: each stays on its own subject over the shared
       // evidence, instead of one call answering everything and drifting or running out.
       // The parts share everything but their subject: the first one warms the prompt cache.
-      fanOut: { over: 'parts', per: 1, agents: 'agents', warm: true },
+      fanOut: { over: 'parts', per: 1, agents: 'agents', warm: 'warmFirst' },
       directive:
         'Answer `question` for the ONE subject in `parts` only, using only `findingsBrief` (the findings, quotes left out). ' +
         CITE_BY_ID +
@@ -1796,6 +1836,17 @@ export const investigate: Pattern = {
       ],
     },
     {
+      // The lines around each quote: a claim is judged on what the code there shows, so an
+      // honest reading of it is not flagged for using other words, and a misreading is caught
+      // by the line that contradicts it.
+      id: 'judgeContext',
+      kind: 'tool',
+      label: 'Lines around each quote',
+      tool: 'evidence.context',
+      inputs: { findings: 'judgeItems' },
+      output: { items: 'judgeItems' },
+    },
+    {
       id: 'hasJudgeItems',
       kind: 'condition',
       label: 'Any to judge?',
@@ -1811,7 +1862,7 @@ export const investigate: Pattern = {
       isolated: true,
       otherModel: true,
       directive:
-        'For EVERY entry of `judgeItems`, in order, write one `supportRulings` entry: "F<n>: SUPPORTED — <why>" if the quoted text (in backticks), read as it stands, states what the claim says, or "F<n>: UNSUPPORTED — <why>" if it does not: it only mentions the subject, says something else, needs a step it does not show, or the claim adds a number, name or condition the quote lacks. Judge each one on its own quote and claim only; be strict, a quote that is merely near the claim is UNSUPPORTED. Start each entry with the id of its finding and nothing before it.',
+        'For EVERY entry of `judgeItems`, in order, write one `supportRulings` entry. Each entry is a claim, its quote (in backticks) and the numbered lines around the quote in that file (`context`). Write "F<n>: SUPPORTED — <why>" if the quote, read with those lines, shows what the claim says: a claim may describe the code in its own words or draw a conclusion, as long as the lines shown bear it out. Write "F<n>: UNSUPPORTED — <why>" if the lines contradict the claim (e.g. a limit the loop never reaches), are about something else, or the claim adds a number, name or condition they do not show. Do not rule UNSUPPORTED only because the claim uses other words than the quote. Judge each one on its own lines and claim only. Start each entry with the id of its finding and nothing before it.',
       reads: ['judgeItems'],
       writes: ['supportRulings'],
       fanOut: { over: 'judgeItems', per: 'judgeBatch', agents: 'agents' },
@@ -2009,7 +2060,8 @@ export const investigate: Pattern = {
     { id: 'attachParts-useJudge', from: 'attachParts', to: 'useJudge' },
     { id: 'useJudge-take', from: 'useJudge', to: 'takeJudgeItems', branch: 'then' },
     { id: 'useJudge-settled', from: 'useJudge', to: 'settled', branch: 'else' },
-    { id: 'take-hasItems', from: 'takeJudgeItems', to: 'hasJudgeItems' },
+    { id: 'take-context', from: 'takeJudgeItems', to: 'judgeContext' },
+    { id: 'context-hasItems', from: 'judgeContext', to: 'hasJudgeItems' },
     { id: 'hasItems-judge', from: 'hasJudgeItems', to: 'judgeSupport', branch: 'then' },
     { id: 'hasItems-split', from: 'hasJudgeItems', to: 'splitRulings', branch: 'else' },
     { id: 'judge-split', from: 'judgeSupport', to: 'splitRulings' },
@@ -2065,6 +2117,8 @@ export const investigate: Pattern = {
         const hit = files.filter((f) => RELEVANT.test(f));
         return { ranked: [...hit, ...files.filter((f) => !hit.includes(f))], matched: hit };
       },
+      // The demo's files are not on disk: the items go to the judge as they are.
+      judgeContext: (s) => ({ items: s.judgeItems }),
       // The gap names the command line: the CLI shares its words.
       rankGaps: (s) => {
         const pool = (s.expandPool as string[]) ?? [];
@@ -2157,6 +2211,7 @@ export const investigate: Pattern = {
             triaged: batch,
             batchRelevant: relevant,
             readFully: relevant,
+            readNotes: relevant.map((f) => `${f} — read in depth at triage, callers followed`),
             newFindings: relevant.map((f) => `${f}:1 — read in depth at triage`),
           },
           verdict: v(`triaged and read ${relevant.length} of ${batch.length} files`),

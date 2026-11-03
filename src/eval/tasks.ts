@@ -30,6 +30,14 @@ export interface EvalTask {
   readonly goal?: string;
   readonly inputs: Readonly<Record<string, unknown>>;
   readonly files: Readonly<Record<string, string>>;
+  /**
+   * Commits made after the fixture, in order (file changes and a message): evidence only the
+   * history holds (why a line changed), for a question that needs git log.
+   */
+  readonly history?: readonly {
+    readonly message: string;
+    readonly files: Readonly<Record<string, string>>;
+  }[];
   /** Written after the fixture is committed: uncommitted work (e.g. for a review). */
   readonly changes?: Readonly<Record<string, string>>;
   readonly check: (ctx: EvalContext) => Promise<EvalCheck>;
@@ -47,13 +55,28 @@ export async function writeFiles(dir: string, files: Readonly<Record<string, str
   }
 }
 
-export async function buildFixture(dir: string, files: Readonly<Record<string, string>>) {
+export async function buildFixture(
+  dir: string,
+  files: Readonly<Record<string, string>>,
+  history: EvalTask['history'] = [],
+) {
   await writeFiles(dir, files);
   const git = (...args: string[]) => run('git', args, { cwd: dir });
+  const commit = (message: string) =>
+    git('-c', 'user.name=eval', '-c', 'user.email=eval@localhost', 'commit', '-qm', message);
   await git('init', '-q');
   await git('add', '-A');
-  await git('-c', 'user.name=eval', '-c', 'user.email=eval@localhost', 'commit', '-qm', 'fixture');
+  await commit('fixture');
+  for (const c of history) {
+    await writeFiles(dir, c.files);
+    await git('add', '-A');
+    await commit(c.message);
+  }
 }
+
+/** The files as the task's workspace holds them: the fixture, its later commits, the changes. */
+export const finalFiles = (task: EvalTask): Record<string, string> =>
+  Object.assign({}, task.files, ...(task.history ?? []).map((c) => c.files), task.changes);
 
 /** Run node's test runner on some files in the workspace; pass = exit code 0. */
 export async function nodeTests(dir: string, ...files: string[]): Promise<EvalCheck> {
@@ -456,6 +479,41 @@ export const EVAL_TASKS: readonly EvalTask[] = [
         succeeded(outcome),
         mentions(String(state.answer ?? ''), ['45', 'src/client.js', 'src/overrides.js']),
       ),
+  },
+  {
+    // The reason is only in the history: the code says 5, the commit that lowered it says why.
+    // A reader that skips git log (e.g. singlePass's triage reader) cannot answer it.
+    id: 'investigate-history',
+    pattern: 'investigate',
+    inputs: { question: 'Why is the upload limit 5 MB? It used to be larger.' },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/upload.js':
+        'export const MAX_UPLOAD_MB = 50;\n\nexport function accept(sizeMb) {\n  return sizeMb <= MAX_UPLOAD_MB;\n}\n',
+    },
+    history: [
+      {
+        message:
+          'Lower the upload limit to 5 MB\n\nThe edge proxy rejects request bodies over 8 MB with a bare 413, so uploads between 8 and 50 MB failed with no message. 5 MB leaves room for the multipart overhead.',
+        files: {
+          'src/upload.js':
+            'export const MAX_UPLOAD_MB = 5;\n\nexport function accept(sizeMb) {\n  return sizeMb <= MAX_UPLOAD_MB;\n}\n',
+        },
+      },
+    ],
+    check: async ({ outcome, state }) => {
+      const answer = String(state.answer ?? '');
+      const proxy = /proxy/i.test(answer);
+      const eight = /\b8\s?MB\b/i.test(answer);
+      return both(succeeded(outcome), {
+        pass: proxy && eight,
+        notes: [
+          proxy ? 'names the proxy' : 'misses the proxy',
+          eight ? 'says 8 MB' : 'misses 8 MB',
+        ],
+      });
+    },
   },
   {
     id: 'investigate-false-premise',

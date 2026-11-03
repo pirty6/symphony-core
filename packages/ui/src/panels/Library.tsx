@@ -39,10 +39,16 @@ interface Props {
   /** The switches the open pattern has (or, for the maestro, every pattern it may compose). */
   features?: readonly FeatureRow[]
   onFeature?: (row: FeatureRow, value: string) => void
+  /** Every switch of the open pattern back to its default. */
+  onResetFeatures?: () => void
   /** On the opening screen, which has its own maestro prompt: this one is not shown. */
   home?: boolean
   onHome?: () => void
 }
+
+
+/** How many switches are away from their defaults. */
+const changedFeatures = (rows: readonly FeatureRow[]) => rows.filter((r) => r.value !== r.default).length
 
 export function Library(p: Props) {
   const [request, setRequest] = useState('')
@@ -119,7 +125,25 @@ export function Library(p: Props) {
       </Collapsible>
 
       {!p.home && p.features && p.onFeature && (
-        <Collapsible id="features" title="Features">
+        <Collapsible
+          id="features"
+          title="Features"
+          extra={
+            changedFeatures(p.features) > 0 && (
+              <span className="section-actions">
+                {/* They are kept between visits: say so, so a trial setting is not forgotten. */}
+                <span className="tag" data-testid="features-changed" title="Switches away from their defaults, kept between visits">
+                  {changedFeatures(p.features)} changed
+                </span>
+                {p.onResetFeatures && (
+                  <button type="button" className="link" onClick={p.onResetFeatures} title="Every switch back to its default">
+                    Reset
+                  </button>
+                )}
+              </span>
+            )
+          }
+        >
           {p.features.length === 0 ? (
             <p className="muted small">This pattern has no switches.</p>
           ) : (

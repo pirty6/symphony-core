@@ -235,9 +235,11 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         if (n.fanOut) {
           const typeOf = (name: string) => g.state.find((f) => f.name === name)?.type;
           const isList = (name: string) => String(typeOf(name) ?? '').endsWith('[]');
-          const { over, per, agents } = n.fanOut;
+          const { over, per, agents, warm } = n.fanOut;
           if (agents !== undefined && typeOf(agents) !== 'number')
             errors.push({ ...at, message: `fanOut.agents '${agents}' must be a number field` });
+          if (typeof warm === 'string' && typeOf(warm) !== 'boolean')
+            errors.push({ ...at, message: `fanOut.warm '${warm}' must be a boolean field` });
           if (!n.reads.includes(over) || !isList(over))
             errors.push({ ...at, message: `fanOut.over '${over}' must be a list field it reads` });
           if (

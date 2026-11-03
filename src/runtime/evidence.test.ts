@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { checkCitations } from './evidence.js';
+import { checkCitations, withContext } from './evidence.js';
 
 const ws = mkdtempSync(join(tmpdir(), 'symphony-evidence-'));
 afterAll(() => rmSync(ws, { recursive: true, force: true }));
@@ -173,5 +173,26 @@ describe('checkCitations', () => {
       'README.md:3 and src/config.js:3 — `port: Number(process.env.PORT ?? 8080)`',
     ]);
     expect(ok.invalid).toEqual([]);
+  });
+});
+
+describe('withContext', () => {
+  it('adds the numbered lines around the cited place, so a misreading meets the line that contradicts it', async () => {
+    writeFileSync(
+      join(ws, 'send.js'),
+      'export const MAX_TRIES = 3;\n\nexport async function send(request) {\n  for (let attempt = 1; attempt < MAX_TRIES; attempt++) {\n    return await request();\n  }\n}\n',
+    );
+    const [item, web, gone] = await withContext(ws, [
+      'F1 send.js:1 — send() tries 3 times `MAX_TRIES = 3`',
+      'F2 https://example.com — a fact',
+      'F3 missing.ts:4 — gone `const a = 1`',
+    ]);
+    expect(item).toMatch(
+      /^F1 send\.js:1 — send\(\) tries 3 times `MAX_TRIES = 3`\n  context \(send\.js:1-8\):\n/,
+    );
+    expect(item).toContain('    4|   for (let attempt = 1; attempt < MAX_TRIES; attempt++) {');
+    // Nothing to read: unchanged.
+    expect(web).toBe('F2 https://example.com — a fact');
+    expect(gone).toBe('F3 missing.ts:4 — gone `const a = 1`');
   });
 });

@@ -59,8 +59,9 @@ experiments, git history, GitHub, dependencies, MCP servers.
    retried once at the end, one per call, except PDFs and binaries, which would fail the same
    way.
    `singlePass: true` is an off-by-default pilot: triage also reads the relevant files in
-   depth (following references and history), and those it read completely skip the deep read
-   only if the engine's preload record shows it gave them whole (no record: none skip).
+   depth (following references and history) and writes a checked note per file, and those it
+   read completely skip the deep read only if the engine's preload record shows it gave them
+   whole (no record: none skip).
 5. **Experiments** (after your approval) and **source searches**, in parallel.
 6. **Close gaps.** The gap check writes one entry per sub-question, in order: `S<n>:
    ANSWERED [F…]` citing findings, or `S<n>: GAP — what is missing`; the engine derives the
@@ -77,8 +78,9 @@ experiments, git history, GitHub, dependencies, MCP servers.
    research budget). `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
    keep word for word the sub-answers no objection named, so it opens no new front.
 9. **Support judge** (`supportJudge`: off by default; `shadow`, `enforce`). Each cited
-   workspace finding's quote is shown, with its claim and nothing else, to another model
-   family, which rules SUPPORTED or UNSUPPORTED. Unsupported findings are never remembered;
+   workspace finding's quote, with the numbered lines around it, its claim and nothing else, is
+   shown to another model family. It rules SUPPORTED when those lines bear the claim out, even in
+   other words, and UNSUPPORTED when they contradict it or don't show what it adds. Unsupported findings are never remembered;
    in `enforce` they also make the answer partial. Web and other sources are said to be
    uncheckable, never judged.
 10. **Settle.** Settled means no unresolved objection, no OPEN sub-answer or objection
@@ -114,7 +116,7 @@ flowchart TD
   n_sourcePhase[["Search sources · 5 steps"]]
   n_gapPhase[["Close gaps · 17 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
-  n_judgePhase[["Support judge · 5 steps"]]
+  n_judgePhase[["Support judge · 6 steps"]]
   n_start --> n_recall
   n_recall --> n_planPhase
   n_planPhase --> n_hypothesesPhase
@@ -154,7 +156,7 @@ flowchart TD
 | Search sources | History, GitHub, dependencies, MCP | Sources left? → Next source → Search source → Check citations → Record source |
 | Close gaps | Targeted research, then a human hint | Find gaps → Record gaps → Expand the read? → Unread files → Rank by the gaps → Queue gap files → Files queued? → Gap expansion read? → Back to the gaps → Chase gaps? → Aim the research → Close gaps → Check citations → Record gap research → Gaps closed? → Ask for a hint → Use hint |
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
-| Support judge | Off by default: does each cited finding's quote back its claim? | Support judge? → What the judge can check → Any to judge? → Support judge → Record the rulings |
+| Support judge | Off by default: does each cited finding's quote back its claim? | Support judge? → What the judge can check → Lines around each quote → Any to judge? → Support judge → Record the rulings |
 
 <!-- /flow:investigate -->
 
