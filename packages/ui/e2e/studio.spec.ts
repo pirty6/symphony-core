@@ -114,8 +114,6 @@ test('phases collapse into one node, light up while running and open into their 
   await expect(page.getByTestId('node-inventory')).toHaveCount(0)
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('run-status')).toHaveText('done')
-  await expect(page.getByTestId('result-reader')).toBeVisible()
-  await page.keyboard.press('Escape')
   await expect(page.getByTestId('phase-deepPhase')).toHaveAttribute('data-status', 'done')
   await page.getByRole('button', { name: 'open phase listPhase' }).dispatchEvent('click')
   await expect(page.getByTestId('frame-listPhase')).toBeVisible()
@@ -126,22 +124,22 @@ test('phases collapse into one node, light up while running and open into their 
   await expect(page.locator('.phase-frame')).toHaveCount(investigate.groups!.length)
 })
 
-test('the result opens in a reader when a run ends', async ({ page }) => {
+test('the result opens in a reader: people\'s version first, then the brief for an AI agent', async ({ page }) => {
   await open(page, 'investigate')
   await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('run-status')).toHaveText('done', { timeout: 30_000 })
+  // The people's version is short: it shows in the inspector, and the reader stays closed (the
+  // long brief for an AI agent does not open it).
   const reader = page.getByTestId('result-reader')
-  await expect(reader).toBeVisible()
-  await expect(reader.getByRole('heading', { level: 2 })).toContainText('offline demo (canned answers)')
-  // People's version first, then the brief for an AI agent.
-  await expect(reader.getByTestId('result-summary')).toContainText('In short')
-  await expect(reader.getByTestId('result-handoff')).toContainText('Instructions for the next agent')
-  await expect(reader.getByRole('dialog')).toHaveAttribute('aria-label', 'run result')
-  await page.keyboard.press('Escape')
   await expect(reader).toHaveCount(0)
   await expect(page.getByTestId('result-preview')).toContainText('summary')
   await page.getByRole('button', { name: '⤢ Read full result' }).click()
   await expect(reader).toBeVisible()
-  await reader.getByRole('button', { name: 'close result' }).click()
+  await expect(reader.getByRole('heading', { level: 2 })).toContainText('offline demo (canned answers)')
+  await expect(reader.getByTestId('result-summary')).toContainText('In short')
+  await expect(reader.getByTestId('result-handoff')).toContainText('Instructions for the next agent')
+  await expect(reader.getByRole('dialog')).toHaveAttribute('aria-label', 'run result')
+  await page.keyboard.press('Escape')
   await expect(reader).toHaveCount(0)
 })
 
@@ -477,9 +475,6 @@ test('library sections fold away, and a feature switch reaches the run it starts
   await page.getByText('auto-approve').click()
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('run-status')).toHaveText('done', { timeout: 30_000 })
-  // A long answer opens the reader by itself.
-  await expect(page.getByTestId('result-reader')).toBeVisible()
-  await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'State', exact: true }).click()
   await expect(page.getByTestId('state-supportJudge')).toContainText('shadow')
   // The judge played (the demo's rulings): every cited workspace finding was ruled on.

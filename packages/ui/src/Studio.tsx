@@ -382,8 +382,14 @@ export default function Studio() {
   const goalText = view.goal ?? ''
 
   // Open the reader once when a live run finishes with more than the inspector card can show
-  // (empty fields, such as an unused gate's report, do not make it long).
-  const finished = view.mode === 'live' && result && resultMarkdown(filled(result), '').length > LONG_RESULT ? view.runId : undefined
+  // (empty fields, such as an unused gate's report, do not make it long). What a person reads
+  // decides: the brief for an AI agent (handoff) is in the reader, but does not open it; nor does
+  // a run that hands on to another, which the studio follows instead.
+  const forPeople = result ? { ...result, keys: result.keys.filter((k) => k !== 'handoff') } : undefined
+  const finished =
+    view.mode === 'live' && !view.next && forPeople && resultMarkdown(filled(forPeople), '').length > LONG_RESULT
+      ? view.runId
+      : undefined
   useEffect(() => {
     if (finished) setReading(true)
   }, [finished])
