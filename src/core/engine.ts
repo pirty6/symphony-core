@@ -17,7 +17,7 @@
  */
 import { chunkItem, isUrl, itemOf } from './items.js';
 import { ENGINE_VERSION, RUN_SCHEMA_VERSION } from './migrate.js';
-import { evalExpr, evaluateGuard, parseExpr } from './expr.js';
+import { evalExpr, evaluateGuard, parseExpr, type Expr } from './expr.js';
 import { freezeJson, hashOf } from './hash.js';
 import { solosActive, takesFor } from './jazz.js';
 import { checkAgentResult, checkValue, validateUpdates, type Checked } from './schema.js';
@@ -754,7 +754,33 @@ function resolveTool(
   if (follow(score, ctx, node)) drive(score, ctx);
 }
 
-/** Evaluate acceptance checks against state as it would be after applying the answer. */
+/** Entries a failed subset(a, b) in the check let through that b does not have: named, so they can be fixed. */
+function notInSubset(expr: string, scope: Readonly<Record<string, unknown>>): string {
+  const out: string[] = [];
+  const walk = (e: Expr): void => {
+    if (e.t === 'call' && e.fn === 'subset' && e.args.length === 2) {
+      const [a, b] = e.args.map((x) => evalExpr(x, scope));
+      if (Array.isArray(a) && Array.isArray(b)) {
+        const allowed = new Set(b.map((x) => JSON.stringify(x)));
+        out.push(...a.filter((x) => !allowed.has(JSON.stringify(x))).map(String));
+      }
+    }
+    if (e.t === 'call') e.args.forEach(walk);
+    else if (e.t === 'bin') [e.l, e.r].forEach(walk);
+    else if (e.t === 'not') walk(e.e);
+    else if (e.t === 'list') e.items.forEach(walk);
+  };
+  try {
+    walk(parseExpr(expr));
+  } catch {
+    return '';
+  }
+  const shown = [...new Set(out)];
+  if (shown.length === 0) return '';
+  const head = shown.slice(0, 8).map((x) => JSON.stringify(x));
+  return ` Not allowed: ${head.join(', ')}${shown.length > 8 ? ` and ${shown.length - 8} more` : ''}.`;
+}
+
 /** A step's own checks on its answer, evaluated against the state it would produce. */
 export function acceptance(
   checks: readonly AcceptanceCheck[],
@@ -765,7 +791,8 @@ export function acceptance(
   const errors: string[] = [];
   for (const c of checks) {
     try {
-      if (!evaluateGuard(c.expr, scope)) errors.push(`${c.message} (check failed: ${c.expr})`);
+      if (!evaluateGuard(c.expr, scope))
+        errors.push(`${c.message} (check failed: ${c.expr})${notInSubset(c.expr, scope)}`);
     } catch (e) {
       errors.push(`${c.message} (check '${c.expr}' errored: ${(e as Error).message})`);
     }

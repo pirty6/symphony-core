@@ -3,6 +3,7 @@ import { validatePattern } from './validate.js';
 import { hangman } from '../patterns/hangman.js';
 import { compileScore } from './compile.js';
 import {
+  acceptance,
   advance,
   createEngine,
   mapToolOutput,
@@ -144,6 +145,42 @@ describe('engine: advance leaves the state it was given as it was', () => {
     const lists = Object.values(next.state.state).filter((v) => Array.isArray(v));
     expect(lists.length).toBeGreaterThan(0);
     for (const list of lists) expect(Object.isFrozen(list)).toBe(true);
+  });
+});
+
+describe('engine: a failed subset check names what is not allowed', () => {
+  const v = { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' };
+  const check = {
+    expr: 'len(scopeFiles) > 0 && subset(scopeFiles, repoFiles)',
+    message: 'scopeFiles may only list files of this repository.',
+  };
+  const repoFiles = ['src/a.ts', 'src/b c.ts'];
+  it('lists the entries outside the allowed list, at most 8', () => {
+    const bad = acceptance(
+      [check],
+      { repoFiles },
+      {
+        updates: { scopeFiles: ['src/a.ts', './src/b c.ts', 'src/', 'src/a.ts'] },
+        verdict: v,
+      },
+    );
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.errors[0]).toMatch(/ Not allowed: "\.\/src\/b c\.ts", "src\/"\.$/);
+    const many = acceptance(
+      [check],
+      { repoFiles },
+      {
+        updates: { scopeFiles: Array.from({ length: 10 }, (_, i) => `x${i}`) },
+        verdict: v,
+      },
+    );
+    if (!many.ok) expect(many.errors[0]).toMatch(/"x7" and 2 more\.$/);
+    // Passing, or failing for another reason: nothing to name.
+    expect(
+      acceptance([check], { repoFiles }, { updates: { scopeFiles: ['src/a.ts'] }, verdict: v }).ok,
+    ).toBe(true);
+    const empty = acceptance([check], { repoFiles }, { updates: { scopeFiles: [] }, verdict: v });
+    if (!empty.ok) expect(empty.errors[0]).not.toMatch(/Not allowed/);
   });
 });
 
