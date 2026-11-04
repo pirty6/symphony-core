@@ -303,6 +303,15 @@ export interface PhaseTime {
   readonly outputTokens: number;
 }
 
+function addPhase(into: Partial<Record<CallPhase, PhaseTime>>, p: CallPhase, c: CallUsage) {
+  const was = into[p] ?? { calls: 0, ms: 0, outputTokens: 0 };
+  into[p] = {
+    calls: was.calls + 1,
+    ms: was.ms + (c.ms ?? 0),
+    outputTokens: was.outputTokens + c.outputTokens,
+  };
+}
+
 /**
  * Per node and in total: model calls, their time and output by phase, and how many
  * submit_result calls a session did not record (rejected, or an emptying refused): corrections
@@ -316,21 +325,13 @@ export function callPhases(perf: Pick<Performance, 'steps'>): {
   const total: Partial<Record<CallPhase, PhaseTime>> = {};
   const byNode: Record<string, Partial<Record<CallPhase, PhaseTime>>> = {};
   let corrections = 0;
-  const add = (into: Partial<Record<CallPhase, PhaseTime>>, p: CallPhase, c: CallUsage) => {
-    const was = into[p] ?? { calls: 0, ms: 0, outputTokens: 0 };
-    into[p] = {
-      calls: was.calls + 1,
-      ms: was.ms + (c.ms ?? 0),
-      outputTokens: was.outputTokens + c.outputTokens,
-    };
-  };
   for (const s of perf.steps)
     for (const t of stepTranscripts(s)) {
       const calls = t.calls ?? [];
       const phases = sessionCallPhases(calls);
       calls.forEach((c, i) => {
-        add(total, phases[i]!, c);
-        add((byNode[s.nodeId] ??= {}), phases[i]!, c);
+        addPhase(total, phases[i]!, c);
+        addPhase((byNode[s.nodeId] ??= {}), phases[i]!, c);
         corrections += (c.submits ?? []).filter((o) => o !== 'recorded').length;
       });
     }
@@ -431,4 +432,70 @@ export function costliest(
         timeShare !== undefined ? { timeShare } : {},
       );
     });
+}
+
+const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
+
+/** "answer 94s · closing 23s (19%) · …": model time by what the calls were for, largest first. */
+export function formatPhases(phases: Readonly<Partial<Record<CallPhase, PhaseTime>>>): string {
+  const all = Object.values(phases).reduce((a, p) => a + (p?.ms ?? 0), 0);
+  return CALL_PHASES.flatMap((name) => (phases[name] ? [[name, phases[name]!] as const] : []))
+    .toSorted(([, a], [, b]) => b.ms - a.ms)
+    .map(
+      ([name, p]) => `${name} ${secs(p.ms)}${all ? ` (${Math.round((p.ms / all) * 100)}%)` : ''}`,
+    )
+    .join(' · ');
+}
+
+export interface HumanWait {
+  readonly nodeId: string;
+  readonly by?: string;
+  /** From the question to the answer. */
+  readonly ms: number;
+  /** Until a client first showed it (MCP get_run), then until the person decided. */
+  readonly shownAfterMs?: number;
+  readonly decidedInMs?: number;
+}
+
+/**
+ * How long each approval kept the run waiting for a person: from when it was asked (or, in
+ * runs recorded before that, the previous step's end) to when it was answered.
+ */
+export function humanWaits(perf: Pick<Performance, 'steps'>): HumanWait[] {
+  const out: HumanWait[] = [];
+  let lastEnd: number | undefined;
+  for (const s of perf.steps) {
+    const at = Date.parse(s.at ?? '');
+    if (s.kind === 'approval' && s.approval && Number.isFinite(at)) {
+      const asked = Date.parse(s.approval.askedAt ?? '');
+      const shown = Date.parse(s.approval.shownAt ?? '');
+      const from = Number.isFinite(asked) ? asked : lastEnd;
+      if (from !== undefined && at >= from)
+        out.push({
+          nodeId: s.nodeId,
+          ...(s.approval.by ? { by: s.approval.by } : {}),
+          ms: at - from,
+          ...(Number.isFinite(shown) && Number.isFinite(asked) && shown >= asked && at >= shown
+            ? { shownAfterMs: shown - asked, decidedInMs: at - shown }
+            : {}),
+        });
+    }
+    const end = Math.max(
+      Number.isFinite(at) ? at : -Infinity,
+      ...[s.transcript, ...(s.attempts ?? []).map((a) => a.transcript)].map((t) => {
+        const span = spanOf(t);
+        return span ? span[1] : -Infinity;
+      }),
+    );
+    if (Number.isFinite(end)) lastEnd = end;
+  }
+  return out;
+}
+
+/** "gate 93s (shown after 45s, decided in 48s)" for each wait. */
+export function formatWaits(waits: readonly HumanWait[]): string[] {
+  return waits.map(
+    (w) =>
+      `${w.nodeId} ${secs(w.ms)}${w.shownAfterMs !== undefined ? ` (shown after ${secs(w.shownAfterMs)}, decided in ${secs(w.decidedInMs!)})` : ''}`,
+  );
 }

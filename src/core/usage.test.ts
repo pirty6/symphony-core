@@ -3,6 +3,9 @@ import type { AiTranscript, CallUsage, PerformedStep, TokenUsage } from './types
 import {
   callPhases,
   costliest,
+  formatPhases,
+  formatWaits,
+  humanWaits,
   firstCallCache,
   growthRatios,
   wallTimeByNode,
@@ -307,15 +310,15 @@ describe('first-call cache', () => {
   });
 });
 
-describe('call phases', () => {
-  const c = (ms: number, extra: Partial<CallUsage> = {}): CallUsage => ({
-    inputTokens: 10,
-    outputTokens: ms / 10,
-    cacheReadTokens: 0,
-    ms,
-    ...extra,
-  });
+const c = (ms: number, extra: Partial<CallUsage> = {}): CallUsage => ({
+  inputTokens: 10,
+  outputTokens: ms / 10,
+  cacheReadTokens: 0,
+  ms,
+  ...extra,
+});
 
+describe('call phases', () => {
   it('names each call of a session by what it was for', () => {
     expect(
       sessionCallPhases([
@@ -370,5 +373,50 @@ describe('call phases', () => {
     });
     expect(r.total.closing).toEqual({ calls: 2, ms: 15, outputTokens: 1.5 });
     expect(r.corrections).toBe(2);
+  });
+});
+
+describe('human waits', () => {
+  const ai = (nodeId: string, startedAt: string, completedAt: string) =>
+    step(nodeId, { transcript: t(undefined, { startedAt, completedAt }), at: completedAt });
+  const gate = (at: string, approval: Record<string, unknown>) =>
+    step('gate', { kind: 'approval', at, approval: { approved: true, ...approval } } as never);
+
+  it('splits a wait where the chat first showed the question', () => {
+    const waits = humanWaits({
+      steps: [
+        ai('context', '2026-11-04T05:02:00.000Z', '2026-11-04T05:02:12.000Z'),
+        gate('2026-11-04T05:03:40.000Z', {
+          by: 'mcp',
+          askedAt: '2026-11-04T05:02:12.500Z',
+          shownAt: '2026-11-04T05:03:01.000Z',
+        }),
+      ],
+    });
+    expect(waits).toEqual([
+      { nodeId: 'gate', by: 'mcp', ms: 87_500, shownAfterMs: 48_500, decidedInMs: 39_000 },
+    ]);
+    expect(formatWaits(waits)).toEqual(['gate 88s (shown after 49s, decided in 39s)']);
+  });
+
+  it('runs recorded before that wait from the previous step', () => {
+    const waits = humanWaits({
+      steps: [
+        ai('context', '2026-11-04T05:02:00.000Z', '2026-11-04T05:02:12.000Z'),
+        gate('2026-11-04T05:03:39.000Z', { by: 'mcp' }),
+      ],
+    });
+    expect(waits).toEqual([{ nodeId: 'gate', by: 'mcp', ms: 87_000 }]);
+    // Nothing before it and nothing asked: no wait to tell.
+    expect(humanWaits({ steps: [gate('2026-11-04T05:03:39.000Z', {})] })).toEqual([]);
+  });
+
+  it('formats model time by phase, largest first', () => {
+    expect(
+      formatPhases({
+        closing: { calls: 2, ms: 20_000, outputTokens: 5 },
+        answer: { calls: 2, ms: 80_000, outputTokens: 50 },
+      }),
+    ).toBe('answer 80s (80%) · closing 20s (20%)');
   });
 });

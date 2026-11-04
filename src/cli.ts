@@ -30,7 +30,16 @@ import {
   stepContext,
   stepPattern,
 } from './core/chain.js';
-import { formatUsage, performanceUsage, rejectionUsage, stepShares } from './core/usage.js';
+import {
+  callPhases,
+  formatPhases,
+  formatUsage,
+  formatWaits,
+  humanWaits,
+  performanceUsage,
+  rejectionUsage,
+  stepShares,
+} from './core/usage.js';
 import { describeEdits } from './core/edits.js';
 import { agreement, compareRuns } from './core/compare.js';
 import { engineNote, RUN_SCHEMA_VERSION } from './core/migrate.js';
@@ -991,6 +1000,21 @@ async function cmdCost(files: string[]): Promise<number> {
       console.log(
         `  ${r.node.padEnd(22)} ${`${Math.round(r.usage.inputTokens / 1000)}k`.padStart(8)} ${share(r.inputShare)} ${`${Math.round(r.ms / 1000)}s`.padStart(6)} ${share(r.timeShare)}`,
       );
+    // What the model time went to: the answer, corrections, the reply to "stop now", a blocked model.
+    const phases = callPhases(perf);
+    if (Object.keys(phases.total).length) {
+      console.log(`  model time by call: ${formatPhases(phases.total)}`);
+      if (phases.corrections)
+        console.log(
+          `  ${phases.corrections} submit_result calls not recorded, corrected in the session`,
+        );
+      for (const [node, p] of Object.entries(phases.byNode))
+        if (p.correction || p.revision || p.closing || p.blocked)
+          console.log(c.dim(`    ${node.padEnd(20)} ${formatPhases(p)}`));
+    }
+    // A person's waits are not the pipeline's time: shown apart.
+    const waits = formatWaits(humanWaits(perf));
+    if (waits.length) console.log(`  waiting for a person: ${waits.join(' · ')}`);
   }
   return 0;
 }

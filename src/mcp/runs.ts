@@ -14,9 +14,13 @@ import { playsFromRepertoire } from '../core/jazz.js';
 import { zeroValue } from '../core/schema.js';
 import {
   addUsage,
+  callPhases,
   costliest,
   growth,
+  formatPhases,
   formatUsage,
+  formatWaits,
+  humanWaits,
   performanceUsage,
   rejectionUsage,
 } from '../core/usage.js';
@@ -151,6 +155,12 @@ export interface Usage {
   readonly byStep: Readonly<Record<string, string>>;
   /** Attempts thrown away and what they cost, and answers that sent updates as text. */
   readonly rejected?: string;
+  /** Model time by what the calls were for (answer, correction, closing…). */
+  readonly modelTime?: string;
+  /** submit_result calls corrected inside a session (engine attempts never count them). */
+  readonly inSessionCorrections?: number;
+  /** Each approval's wait for a person, apart from the pipeline's own time. */
+  readonly waits?: readonly string[];
   /** The whole chain (maestro -> composed -> chained): composing apart from performing. */
   readonly chain?: {
     readonly compose: string;
@@ -179,6 +189,8 @@ export function usageOf(
 ): Usage {
   const mine = performanceUsage(latest);
   const rejected = rejectionUsage(latest);
+  const phases = callPhases(latest);
+  const waits = formatWaits(chain.flatMap((r) => humanWaits(r)));
   let compose = NONE;
   let perform = NONE;
   for (const r of chain) {
@@ -196,6 +208,9 @@ export function usageOf(
           rejected: `${rejected.attempts} attempts (${formatUsage(rejected.attemptUsage)})${rejected.textUpdates ? ` · ${rejected.textUpdates} answers sent updates as text` : ''}`,
         }
       : {}),
+    ...(Object.keys(phases.total).length ? { modelTime: formatPhases(phases.total) } : {}),
+    ...(phases.corrections ? { inSessionCorrections: phases.corrections } : {}),
+    ...(waits.length ? { waits } : {}),
     ...(chain.length > 1
       ? {
           chain: {

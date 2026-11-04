@@ -363,4 +363,43 @@ describe('get_run usage', () => {
     // A run on its own: no chain split.
     expect(usageOf(maestroRun, [maestroRun]).chain).toBeUndefined();
   });
+  it('shows model time by phase, in-session corrections and the waits for a person', () => {
+    const tagged = step('skeptic', 1000, 1, {
+      transcript: {
+        provider: 'copilot',
+        prompt: '',
+        output: '',
+        toolCalls: [],
+        startedAt: '2026-11-04T05:00:00.000Z',
+        completedAt: '2026-11-04T05:00:30.000Z',
+        calls: [
+          {
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            ms: 20_000,
+            submits: ['rejected'],
+          },
+          { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, ms: 5000, submits: ['recorded'] },
+          { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, ms: 5000 },
+        ],
+      },
+    });
+    const gate = {
+      nodeId: 'gate',
+      kind: 'approval',
+      at: '2026-11-04T05:01:30.000Z',
+      approval: {
+        approved: true,
+        by: 'mcp',
+        askedAt: '2026-11-04T05:00:30.000Z',
+        shownAt: '2026-11-04T05:01:00.000Z',
+      },
+    } as never;
+    const run = { pattern: 'maestro', steps: [tagged, gate] };
+    const u = usageOf(run, [run]);
+    expect(u.modelTime).toBe('answer 20s (67%) · correction 5s (17%) · closing 5s (17%)');
+    expect(u.inSessionCorrections).toBe(1);
+    expect(u.waits).toEqual(['gate 60s (shown after 30s, decided in 30s)']);
+  });
 });
