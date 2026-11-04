@@ -2,7 +2,7 @@
  * Token accounting for a performance: what the AI steps actually spent.
  * Answers replayed from the repertoire (classical) cost nothing this run.
  */
-import type { AiTranscript, Performance, TokenUsage } from './types.js';
+import type { AiTranscript, CallUsage, Performance, TokenUsage } from './types.js';
 
 export const NO_USAGE: TokenUsage = {
   calls: 0,
@@ -244,6 +244,98 @@ const everyTranscript = (t: AiTranscript | undefined): AiTranscript[] =>
 
 const stepTranscripts = (s: Performance['steps'][number]): AiTranscript[] =>
   [s.transcript, ...(s.attempts ?? []).map((a) => a.transcript)].flatMap(everyTranscript);
+
+/**
+ * What each model call of a session was for, from the submit_result outcomes it is tagged with:
+ * work (reading before any answer), answer (the first submission), correction (after a rejected
+ * one, until an answer is recorded), revision (a submission after one was recorded), closing (a
+ * call after the answer that submitted nothing: the reply to "stop now"), blocked (on a model
+ * that refused, before another one answered), untagged (recorded before calls were tagged).
+ */
+export type CallPhase =
+  | 'work'
+  | 'answer'
+  | 'correction'
+  | 'revision'
+  | 'closing'
+  | 'blocked'
+  | 'untagged';
+
+export const CALL_PHASES: readonly CallPhase[] = [
+  'work',
+  'answer',
+  'correction',
+  'revision',
+  'closing',
+  'blocked',
+  'untagged',
+];
+
+export function sessionCallPhases(calls: readonly CallUsage[]): CallPhase[] {
+  if (!calls.some((c) => c.submits?.length || c.blocked)) return calls.map(() => 'untagged');
+  let recorded = false;
+  let rejected = false;
+  return calls.map((c) => {
+    if (c.blocked) return 'blocked';
+    const subs = c.submits ?? [];
+    const phase: CallPhase =
+      subs.length > 0
+        ? recorded
+          ? 'revision'
+          : rejected
+            ? 'correction'
+            : 'answer'
+        : recorded
+          ? 'closing'
+          : rejected
+            ? 'correction'
+            : 'work';
+    // A refused emptying asks for a correction just as a rejection does.
+    if (subs.includes('rejected') || (subs.includes('kept') && !recorded)) rejected = true;
+    if (subs.includes('recorded')) recorded = true;
+    return phase;
+  });
+}
+
+export interface PhaseTime {
+  readonly calls: number;
+  readonly ms: number;
+  readonly outputTokens: number;
+}
+
+/**
+ * Per node and in total: model calls, their time and output by phase, and how many
+ * submit_result calls a session did not record (rejected, or an emptying refused): corrections
+ * made inside the session, which engine attempts and rejectionUsage never see.
+ */
+export function callPhases(perf: Pick<Performance, 'steps'>): {
+  readonly total: Readonly<Partial<Record<CallPhase, PhaseTime>>>;
+  readonly byNode: Readonly<Record<string, Partial<Record<CallPhase, PhaseTime>>>>;
+  readonly corrections: number;
+} {
+  const total: Partial<Record<CallPhase, PhaseTime>> = {};
+  const byNode: Record<string, Partial<Record<CallPhase, PhaseTime>>> = {};
+  let corrections = 0;
+  const add = (into: Partial<Record<CallPhase, PhaseTime>>, p: CallPhase, c: CallUsage) => {
+    const was = into[p] ?? { calls: 0, ms: 0, outputTokens: 0 };
+    into[p] = {
+      calls: was.calls + 1,
+      ms: was.ms + (c.ms ?? 0),
+      outputTokens: was.outputTokens + c.outputTokens,
+    };
+  };
+  for (const s of perf.steps)
+    for (const t of stepTranscripts(s)) {
+      const calls = t.calls ?? [];
+      const phases = sessionCallPhases(calls);
+      calls.forEach((c, i) => {
+        add(total, phases[i]!, c);
+        add((byNode[s.nodeId] ??= {}), phases[i]!, c);
+        corrections += (c.submits ?? []).filter((o) => o !== 'recorded').length;
+      });
+    }
+  return { total, byNode, corrections };
+}
 
 /**
  * Rate limits a run hit: model calls that failed with one (HTTP 429, "rate limit", "too many

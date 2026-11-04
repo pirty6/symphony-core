@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { AiTranscript, PerformedStep, TokenUsage } from './types.js';
+import type { AiTranscript, CallUsage, PerformedStep, TokenUsage } from './types.js';
 import {
+  callPhases,
   costliest,
   firstCallCache,
   growthRatios,
@@ -12,6 +13,7 @@ import {
   recordSize,
   rejectionReasons,
   rejectionUsage,
+  sessionCallPhases,
   stepShares,
   transcriptUsage,
 } from './usage.js';
@@ -302,5 +304,71 @@ describe('first-call cache', () => {
       parts: { sessions: 2, inputTokens: 200, cacheReadTokens: 90 },
       one: { sessions: 2, inputTokens: 100, cacheReadTokens: 10 },
     });
+  });
+});
+
+describe('call phases', () => {
+  const c = (ms: number, extra: Partial<CallUsage> = {}): CallUsage => ({
+    inputTokens: 10,
+    outputTokens: ms / 10,
+    cacheReadTokens: 0,
+    ms,
+    ...extra,
+  });
+
+  it('names each call of a session by what it was for', () => {
+    expect(
+      sessionCallPhases([
+        c(1, { blocked: true }),
+        c(2),
+        c(3, { submits: ['rejected'] }),
+        c(4),
+        c(5, { submits: ['recorded'] }),
+        c(6, { submits: ['recorded'] }),
+        c(7),
+      ]),
+    ).toEqual(['blocked', 'work', 'answer', 'correction', 'correction', 'revision', 'closing']);
+    // A refused emptying is a correction too; one valid first try is an answer and a closing call.
+    expect(
+      sessionCallPhases([c(1, { submits: ['kept'] }), c(2, { submits: ['recorded'] }), c(3)]),
+    ).toEqual(['answer', 'correction', 'closing']);
+    expect(sessionCallPhases([c(1, { submits: ['recorded'] }), c(2)])).toEqual([
+      'answer',
+      'closing',
+    ]);
+    // Recorded before calls were tagged: say so instead of guessing.
+    expect(sessionCallPhases([c(1), c(2)])).toEqual(['untagged', 'untagged']);
+  });
+
+  it('adds them per node and in total, parts, takes and attempts included', () => {
+    const tr = (calls: CallUsage[], extra: Partial<AiTranscript> = {}) =>
+      t(u(1, 1), { calls, ...extra });
+    const steps = [
+      step('skeptic', {
+        transcript: tr([
+          c(100, { submits: ['rejected'] }),
+          c(50, { submits: ['recorded'] }),
+          c(10),
+        ]),
+        attempts: [{ errors: ['x'], transcript: tr([c(30, { submits: ['recorded'] })]) }],
+      }),
+      step('triage', {
+        transcript: t(undefined, {
+          parts: [tr([c(40, { submits: ['recorded'] }), c(5)]), tr([c(20, { submits: ['kept'] })])],
+        }),
+      }),
+    ];
+    const r = callPhases({ steps });
+    expect(r.byNode.skeptic).toEqual({
+      answer: { calls: 2, ms: 130, outputTokens: 13 },
+      correction: { calls: 1, ms: 50, outputTokens: 5 },
+      closing: { calls: 1, ms: 10, outputTokens: 1 },
+    });
+    expect(r.byNode.triage).toEqual({
+      answer: { calls: 2, ms: 60, outputTokens: 6 },
+      closing: { calls: 1, ms: 5, outputTokens: 0.5 },
+    });
+    expect(r.total.closing).toEqual({ calls: 2, ms: 15, outputTokens: 1.5 });
+    expect(r.corrections).toBe(2);
   });
 });
