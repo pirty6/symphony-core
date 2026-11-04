@@ -8,6 +8,8 @@ import { ApprovalCard, GateCard, NodeEditor, RecoveryCard, StateView } from './I
 import { newNode } from '../lib/model'
 import { PatternPanel } from './PatternPanel'
 import { Library } from './Library'
+import { SideToggle } from './SideToggle'
+import { useSidebar } from '../lib/sidebar'
 import { describeEvent } from '../lib/events'
 import { Timeline } from './Timeline'
 import { Toolbar } from './Toolbar'
@@ -426,5 +428,34 @@ describe('PromptBox', () => {
     expect((screen.getByLabelText('context issue') as HTMLTextAreaElement).value).toBe(value)
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('sidebar toggles', () => {
+  function Side({ side }: { side: 'left' | 'right' }) {
+    const [open, toggle] = useSidebar(side)
+    return <SideToggle side={side} open={open} name={side === 'left' ? 'library' : 'inspector'} onToggle={toggle} />
+  }
+
+  it('fold and open each side, name what they do, and are remembered', () => {
+    localStorage.clear()
+    const { unmount } = render(
+      <>
+        <Side side="left" />
+        <Side side="right" />
+      </>,
+    )
+    const left = screen.getByTestId('toggle-left')
+    expect(left).toHaveAccessibleName('Hide the library')
+    expect(left).toHaveTextContent('«')
+    expect(screen.getByTestId('toggle-right')).toHaveTextContent('»')
+    fireEvent.click(left)
+    expect(left).toHaveAccessibleName('Show the library')
+    expect(left).toHaveAttribute('aria-expanded', 'false')
+    expect(left).toHaveTextContent('»')
+    unmount()
+    render(<Side side="left" />)
+    expect(screen.getByTestId('toggle-left')).toHaveAccessibleName('Show the library')
+    localStorage.clear()
   })
 })

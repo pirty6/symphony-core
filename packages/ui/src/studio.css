@@ -1398,6 +1398,61 @@ pre {
   cursor: default;
 }
 
+.studio.no-left {
+  grid-template-columns: 34px 1fr 400px;
+}
+.studio.no-right {
+  grid-template-columns: 260px 1fr 34px;
+}
+.studio.no-left.no-right {
+  grid-template-columns: 34px 1fr 34px;
+}
+/* Folded: only the toggle shows, so nothing typed or opened in the sidebar is lost. */
+.studio.no-left .library > :not(.side-toggle),
+.studio.no-right .inspector > :not(.side-toggle) {
+  display: none;
+}
+.studio.no-left .library,
+.studio.no-right .inspector {
+  padding: 8px 4px;
+  overflow: hidden;
+}
+.side-toggle {
+  align-self: flex-end;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  line-height: 22px;
+  text-align: center;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.side-toggle.side-right {
+  align-self: flex-start;
+}
+/* Open, the library's toggle sits in its top corner, beside Home, taking no row of its own. */
+.library {
+  position: relative;
+}
+.studio:not(.no-left) .library > .side-toggle {
+  position: absolute;
+  top: 12px;
+  right: 10px;
+  z-index: 1;
+}
+.studio.no-left .side-toggle,
+.studio.no-right .side-toggle {
+  align-self: center;
+}
+.side-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
 .studio.at-home {
   grid-template-areas:
     'toolbar toolbar toolbar'

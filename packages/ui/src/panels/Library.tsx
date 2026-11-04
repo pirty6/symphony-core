@@ -1,4 +1,4 @@
-import { useState, type DragEvent } from 'react'
+import { useState, type DragEvent, type ReactNode } from 'react'
 import { TERMINAL, type LibraryItem, type LiveRun, type SavedSummary } from '../lib/api'
 import type { FeatureRow, PaletteKind } from '../lib/model'
 import { Collapsible } from './Collapsible'
@@ -44,6 +44,8 @@ interface Props {
   /** On the opening screen, which has its own maestro prompt: this one is not shown. */
   home?: boolean
   onHome?: () => void
+  /** The button that folds this sidebar (shown first, and alone while folded). */
+  toggle?: ReactNode
 }
 
 
@@ -66,6 +68,7 @@ export function Library(p: Props) {
   }
   return (
     <aside className="library">
+      {p.toggle}
       {p.onHome && (
         <button
           type="button"

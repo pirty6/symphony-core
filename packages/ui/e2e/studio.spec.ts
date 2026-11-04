@@ -426,6 +426,26 @@ test('the sub-agents of a fanned-out step show as nodes beside it, each with its
   await gate.getByRole('button', { name: '⏹ Stop' }).click()
 })
 
+test('both sidebars fold to a rail and open again, and stay as you left them', async ({ page }) => {
+  await open(page, 'hangman')
+  const library = page.locator('.library')
+  const inspector = page.locator('.inspector')
+  const canvas = page.locator('.canvas')
+  const wide = (await canvas.boundingBox())!.width
+  await page.getByTestId('toggle-left').click()
+  await page.getByTestId('toggle-right').click()
+  await expect(library.getByText('Home')).toBeHidden()
+  await expect(inspector.getByRole('button', { name: 'Pattern' })).toBeHidden()
+  expect((await library.boundingBox())!.width).toBeLessThan(40)
+  expect((await canvas.boundingBox())!.width).toBeGreaterThan(wide + 500)
+  await page.reload()
+  await expect(page.getByTestId('toggle-left')).toHaveAttribute('aria-expanded', 'false')
+  await page.getByTestId('toggle-left').click()
+  await page.getByTestId('toggle-right').click()
+  await expect(library.getByText('Home')).toBeVisible()
+  await expect(inspector.getByRole('button', { name: 'Pattern' })).toBeVisible()
+})
+
 test('library sections fold away, and a feature switch reaches the run it starts', async ({ page }) => {
   await open(page, 'investigate')
   await page.evaluate(() => localStorage.removeItem('symphony.open.patterns'))

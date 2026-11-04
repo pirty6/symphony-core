@@ -64,6 +64,8 @@ import { subAgentItems, subAgentNodes,
   type RunView,
 } from './lib/model'
 import { AiTakes, ApprovalCard, RecoveryCard, EdgeEditor, GateCard, OvertimeCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
+import { SideToggle } from './panels/SideToggle'
+import { useSidebar } from './lib/sidebar'
 import { Library } from './panels/Library'
 import { ResultPreview, ResultReader } from './panels/Result'
 import { PatternPanel } from './panels/PatternPanel'
@@ -110,6 +112,9 @@ export default function Studio() {
   useEffect(() => setMoved(new Map()), [expanded])
   const [phaseSizes, setPhaseSizes] = useState<ReadonlyMap<string, { width: number; height: number }>>(new Map())
   const [library, setLibrary] = useState<LibraryItem[]>([])
+  // Both sidebars fold to a thin rail; each side is remembered.
+  const [leftOpen, toggleLeft] = useSidebar('left')
+  const [rightOpen, toggleRight] = useSidebar('right')
   const [saved, setSaved] = useState<SavedSummary[]>([])
   const [live, setLive] = useState<LiveRun[]>([])
   /** The last poll could not reach the server (stopped or restarting); clears when it answers. */
@@ -713,7 +718,7 @@ export default function Studio() {
     ) : null
 
   return (
-    <div className={`studio${home ? ' at-home' : ''}`}>
+    <div className={`studio${home ? ' at-home' : ''}${leftOpen ? '' : ' no-left'}${rightOpen ? '' : ' no-right'}`}>
       {reading && result && result.keys.length > 0 && (
         <ResultReader
           result={result}
@@ -743,6 +748,7 @@ export default function Studio() {
         }}
       />
       <Library
+        toggle={<SideToggle side="left" open={leftOpen} name="library" onToggle={toggleLeft} />}
         library={library}
         activeName={meta.name}
         saved={saved}
@@ -875,6 +881,7 @@ export default function Studio() {
         </ReactFlow>
       </main>
       <aside className="inspector">
+        <SideToggle side="right" open={rightOpen} name="inspector" onToggle={toggleRight} />
         {serverDown && (
           <div className="card issue warning" role="status" data-testid="server-down">
             ⚠ Can't reach the studio server (stopped, or restarting after a code change). Reconnecting…
