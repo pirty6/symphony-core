@@ -93,14 +93,14 @@ describe('scrubValue', () => {
   });
 });
 
-describe('StreamScrubber', () => {
-  const stream = (text: string, size: number) => {
-    const sc = new StreamScrubber();
-    let out = '';
-    for (let i = 0; i < text.length; i += size) out += sc.push(text.slice(i, i + size));
-    return out + sc.end();
-  };
+const stream = (text: string, size: number) => {
+  const sc = new StreamScrubber();
+  let out = '';
+  for (let i = 0; i < text.length; i += size) out += sc.push(text.slice(i, i + size));
+  return out + sc.end();
+};
 
+describe('StreamScrubber', () => {
   it('streamed in random pieces, always equals scrubbing the whole text (seeded fuzz)', () => {
     let seed = 42;
     const rnd = (n: number) => {

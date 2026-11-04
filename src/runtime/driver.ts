@@ -241,7 +241,9 @@ export class Run {
   }
 
   /** Off only with SYMPHONY_SCRUB=off (e.g. to debug a repair against the raw text). */
-  private readonly scrubbing = process.env.SYMPHONY_SCRUB !== 'off';
+  private readonly scrubbing =
+    (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+      ?.SYMPHONY_SCRUB !== 'off';
 
   private now(): string {
     return this.opts.clock?.() ?? new Date().toISOString();
