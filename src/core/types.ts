@@ -116,6 +116,11 @@ export interface AgentNode extends NodeBase {
   /** No workspace tools at all: the agent works only from its input. */
   readonly isolated?: boolean;
   /**
+   * This step reviews code: it judges it against the code standard (Clean Code) too.
+   * Executors with workspace tools are held to the standard without it.
+   */
+  readonly reviewsCode?: boolean;
+  /**
    * A string[] field this step writes whose entries cite the workspace
    * ("path:line — fact `quote`"). The provider checks them while the AI still has
    * its context and sends wrong ones back; patterns also check them with a tool step.
@@ -488,6 +493,9 @@ export interface Musician {
 /** Most parallel AI calls (sub-agents) one step may run at once. */
 export const MAX_AGENTS = 6;
 
+/** How a step meets the code standard: it writes code, or it reviews code. */
+export type CodeStandardMode = 'write' | 'review';
+
 export interface AgentPause {
   readonly kind: 'agent';
   readonly pauseId: string;
@@ -507,6 +515,8 @@ export interface AgentPause {
   readonly complexity: Complexity;
   readonly improvisation: Improvisation;
   readonly isolated: boolean;
+  /** The code standard this step writes to or reviews against (see core/standards). */
+  readonly codeStandard?: CodeStandardMode;
   /** Field of `updates` whose entries cite the workspace (AgentNode.cites). */
   readonly cites?: string;
   /** AgentNode.otherModel: a different model family than the tier's. */
