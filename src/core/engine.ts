@@ -20,6 +20,7 @@ import { ENGINE_VERSION, RUN_SCHEMA_VERSION } from './migrate.js';
 import { evalExpr, evaluateGuard, parseExpr, type Expr } from './expr.js';
 import { freezeJson, hashOf } from './hash.js';
 import { solosActive, takesFor } from './jazz.js';
+import { codeStandardFor } from './standards.js';
 import { checkAgentResult, checkValue, validateUpdates, type Checked } from './schema.js';
 import { MAX_AGENTS } from './types.js';
 import type {
@@ -455,6 +456,7 @@ function makePause(
       ),
       improvisation: score.improvisation,
       isolated: node.isolated === true,
+      ...(codeStandardFor(node) ? { codeStandard: codeStandardFor(node) } : {}),
       ...(node.cites ? { cites: node.cites } : {}),
       ...(node.checks?.length ? { checks: node.checks } : {}),
       ...(node.otherModel ? { otherModel: true } : {}),
