@@ -2,8 +2,7 @@
  * Deterministic tools that `tool` nodes run (no AI). Results are recorded in
  * the Performance, so replay feeds them back instead of re-running them.
  */
-import type { ToolPause } from '../core/types.js';
-import type { PrInfo } from './pr.js';
+import type { PrInfo, ToolPause } from '../core/types.js';
 
 export interface ToolContext {
   /** Folder the agents work in. */

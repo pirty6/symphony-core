@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { checkoutPr, prNumber } from './pr.js';
+import { checkoutPr, prForRun, prNumber } from './pr.js';
 
 const tmp = mkdtempSync(join(tmpdir(), 'symphony-pr-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -74,6 +74,17 @@ describe('checkoutPr', () => {
     expect(git(ws, 'for-each-ref', '--format=%(refname)')).not.toMatch(/pull/);
     await pr!.finish();
     expect(existsSync(pr!.dir!)).toBe(false);
+  });
+
+  it('a run checks a PR out only when its pattern reads one and a real AI plays it', async () => {
+    const review = { checkout: 'target' };
+    const ctx = { target: 'PR 7' };
+    const real = await prForRun(review, ctx, ws, { provider: 'copilot' });
+    expect(real?.info).toMatchObject({ number: 7 });
+    await real?.finish();
+    expect(await prForRun(review, ctx, ws, { provider: 'scripted' })).toBeUndefined();
+    expect(await prForRun({}, ctx, ws, { provider: 'copilot' })).toBeUndefined();
+    expect(await prForRun(review, { target: 'main' }, ws, { provider: 'copilot' })).toBeUndefined();
   });
 
   it('a PR that cannot be fetched says why; a target that is no PR is left alone', async () => {

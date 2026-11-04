@@ -800,6 +800,8 @@ describe('scratch cleanup', () => {
       autoApprove: true,
       clock,
       scratch: { dir: '/w/.symphony/scratch/r1', remove: async () => void removed.push('r1') },
+      // The PR worktree a review played in goes the same way.
+      cleanup: async () => void removed.push('pr'),
     });
     return { run, removed };
   };
@@ -817,7 +819,7 @@ describe('scratch cleanup', () => {
     });
     expect((await run.start()).outcome).toBe('success');
     expect(new Set(seen)).toEqual(new Set(['/w/.symphony/scratch/r1']));
-    expect(removed).toEqual(['r1']);
+    expect(removed).toEqual(['r1', 'pr']);
   });
 
   it('is removed when the run fails or is stopped too, and a failing removal is ignored', async () => {
@@ -830,7 +832,7 @@ describe('scratch cleanup', () => {
       draft: () => Promise.reject(new Error('n/a')),
     });
     expect((await failing.run.start()).outcome).not.toBe('success');
-    expect(failing.removed).toEqual(['r1']);
+    expect(failing.removed).toEqual(['r1', 'pr']);
 
     const run = new Run({
       score: fixScore,

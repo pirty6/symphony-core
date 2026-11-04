@@ -9,19 +9,10 @@ import { spawn } from 'node:child_process';
 import { mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
-import { git, linkDependencies, must, sweep } from './worktree.js';
+import type { Pattern, PrInfo } from '../core/types.js';
 
-/** What a run knows about the PR it plays on (ToolContext.pr). */
-export type PrInfo =
-  | {
-      readonly number: number;
-      /** The target branch's commit the PR merges into: `git diff <base> HEAD` is the PR. */
-      readonly base: string;
-      readonly head: string;
-      /** `git diff --name-status <base> HEAD`, one line per changed file. */
-      readonly files: readonly string[];
-    }
-  | { readonly number: number; readonly error: string };
+export type { PrInfo };
+import { git, linkDependencies, must, sweep } from './worktree.js';
 
 export interface PrCheckout {
   readonly info: PrInfo;
@@ -96,6 +87,21 @@ export async function checkoutPr(
       await rm(wt, { recursive: true, force: true });
     },
   };
+}
+
+/**
+ * The PR checkout for a run, when its pattern reads a PR (Pattern.checkout) and that input
+ * names one. Only for a real AI: scripted demos play on the workspace as it is.
+ */
+export async function prForRun(
+  pattern: Pick<Pattern, 'checkout'>,
+  context: Readonly<Record<string, unknown>>,
+  workspace: string,
+  opts: { readonly provider: string; readonly env?: NodeJS.ProcessEnv },
+): Promise<PrCheckout | undefined> {
+  const target = pattern.checkout ? context[pattern.checkout] : undefined;
+  if (opts.provider !== 'copilot' || typeof target !== 'string') return undefined;
+  return checkoutPr(workspace, target, opts.env ? { env: opts.env } : {});
 }
 
 /** origin, else the only remote. */

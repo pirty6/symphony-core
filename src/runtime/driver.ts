@@ -146,6 +146,8 @@ export interface RunOptions {
    * deletes it when the run ends (see store.ts runScratch).
    */
   readonly scratch?: { readonly dir: string; readonly remove: () => Promise<void> };
+  /** Removed when the run ends, like scratch (e.g. the worktree of the PR it reviewed). */
+  readonly cleanup?: () => Promise<void>;
   /**
    * The run plays in its own worktree (worktree.ts); `finish` brings its edits back
    * to the workspace (or saves a patch) when the run ends.
@@ -928,6 +930,7 @@ export class Run {
     }
     // Clean up what the run no longer needs; a failed removal never fails the run.
     await this.opts.scratch?.remove().catch(() => undefined);
+    await this.opts.cleanup?.().catch(() => undefined);
     const status: RunStatus =
       this.engine.kind === 'failed'
         ? 'failed'

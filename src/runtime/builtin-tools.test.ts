@@ -121,6 +121,7 @@ describe('sources.catalog', () => {
       'sources.catalog',
       'tests.run',
       'files.read',
+      'git.pr',
       'git.diff',
       'evidence.check',
       'evidence.context',
