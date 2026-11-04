@@ -45,7 +45,7 @@ const AUTHOR = [
   'commit.gpgsign=false',
 ];
 
-function git(
+export function git(
   cwd: string,
   args: readonly string[],
   input?: string,
@@ -75,14 +75,14 @@ function git(
   });
 }
 
-async function must(cwd: string, args: readonly string[], input?: string): Promise<string> {
+export async function must(cwd: string, args: readonly string[], input?: string): Promise<string> {
   const r = await git(cwd, args, input);
   if (r.code !== 0) throw new Error(`git ${args.join(' ')}: ${r.err.trim() || `exit ${r.code}`}`);
   return r.out;
 }
 
 /** Remove worktrees that crashed runs left behind (older than a day). */
-async function sweep(root: string, top: string): Promise<void> {
+export async function sweep(root: string, top: string): Promise<void> {
   const names = await readdir(root).catch(() => [] as string[]);
   for (const n of names) {
     const s = await stat(join(root, n)).catch(() => undefined);
@@ -96,6 +96,22 @@ async function sweep(root: string, top: string): Promise<void> {
  * A worktree for one run, or undefined when the workspace is not a git repository
  * or SYMPHONY_WORKTREES=off (the run then edits the workspace directly).
  */
+/** Link the workspace's installed dependencies into a worktree, so its tests run as they do there. */
+export async function linkDependencies(top: string, wt: string): Promise<void> {
+  const packages = (await must(top, ['ls-files', '-z', '--', 'package.json', '*/package.json']))
+    .split('\0')
+    .filter(Boolean)
+    .map(dirname);
+  for (const d of new Set(['.', ...packages])) {
+    for (const name of DEPENDENCY_DIRS) {
+      const from = join(top, d, name);
+      const to = join(wt, d, name);
+      if (existsSync(from) && existsSync(dirname(to)) && !existsSync(to))
+        await symlink(from, to, 'dir');
+    }
+  }
+}
+
 export async function isolateRun(
   workspace: string,
   opts: { readonly label: string; readonly env?: NodeJS.ProcessEnv; readonly root?: string },
@@ -131,17 +147,7 @@ export async function isolateRun(
         }),
       );
     }
-    const packages = (await must(top, ['ls-files', '-z', '--', 'package.json', '*/package.json']))
-      .split('\0')
-      .filter(Boolean)
-      .map(dirname);
-    for (const d of new Set(['.', ...packages])) {
-      for (const name of DEPENDENCY_DIRS) {
-        const from = join(top, d, name);
-        const to = join(wt, d, name);
-        if (existsSync(from) && !existsSync(to)) await symlink(from, to, 'dir');
-      }
-    }
+    await linkDependencies(top, wt);
     await must(wt, ['add', '-A']);
     await must(wt, [
       ...AUTHOR,
