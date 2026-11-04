@@ -11,16 +11,19 @@ import {
   CopilotProvider,
   ISOLATED_SYSTEM,
   SIGN_IN_HELP,
+  emptiedFields,
   hasContent,
   normalizeSubmission,
   retryAfterMs,
   withoutTokenVars,
   parseTiers,
+  splitModelEffort,
   type ClientLike,
   type SessionLike,
 } from './copilot-provider.js';
 import type { ProviderEvent } from './provider.js';
 import { Run } from './driver.js';
+import { modelSettings } from './repertoire.js';
 
 const pause: AgentPause = {
   kind: 'agent',
@@ -176,6 +179,8 @@ describe('CopilotProvider', () => {
         cacheReadTokens: 900,
         cacheWriteTokens: 300,
         ms: 1500,
+        // The call that submitted is tagged; the closing one after it is not.
+        submits: ['recorded'],
       },
       { inputTokens: 300, outputTokens: 20, cacheReadTokens: 0 },
     ]);
@@ -218,14 +223,20 @@ describe('CopilotProvider', () => {
         }
         emit('session.idle');
       });
-    const tiers = { 1: { model: 'c' }, 2: { model: 'b' }, 3: { model: 'a' }, 4: { model: 'a' } };
+    const tiers = {
+      1: { model: 'c', effort: 'low' as const },
+      2: { model: 'b' },
+      3: { model: 'a', effort: 'high' as const },
+      4: { model: 'a' },
+    };
     const run = async (blocking: string[]) => {
       const { client, sessions } = play(blocking);
       const events: string[] = [];
       const p = new CopilotProvider({
         clientFactory: () => ({
           ...client,
-          listModels: async () => ['a', 'b', 'c'].map((id) => ({ id })),
+          listModels: async () =>
+            ['a', 'b', 'c'].map((id) => ({ id, supportedReasoningEfforts: ['low', 'high'] })),
         }),
         tiers,
       });
@@ -246,7 +257,16 @@ describe('CopilotProvider', () => {
     expect(healed.res.transcript.musician).toMatchObject({
       requestedModel: 'a',
       blockedOn: ['a', 'b'],
+      // The effort asked with the requested model (replay's key), and the one that answered.
+      effort: 'high',
+      answeredEffort: 'low',
     });
+    // The blocked calls answered nothing: tagged, so their time is not the answer's.
+    expect(healed.res.transcript.calls!.map((c) => c.blocked ?? false)).toEqual([
+      true,
+      true,
+      false,
+    ]);
     expect(healed.res.transcript.usage).toMatchObject({
       calls: 3,
       inputTokens: 300,
@@ -466,7 +486,10 @@ describe('CopilotProvider', () => {
       opts: Partial<ConstructorParameters<typeof CopilotProvider>[0]>,
       calls: unknown[],
       over: Partial<AgentPause> = {},
-      models = ['claude-sonnet-5', 'claude-opus-5.5'],
+      models: (string | { id: string; supportedReasoningEfforts: string[] })[] = [
+        'claude-sonnet-5',
+        'claude-opus-5.5',
+      ],
     ) => {
       const replies: string[] = [];
       const { client, sessions } = fakeClient(async (cfg, emit) => {
@@ -474,7 +497,10 @@ describe('CopilotProvider', () => {
         emit('session.idle');
       });
       const provider = new CopilotProvider({
-        clientFactory: () => ({ ...client, listModels: async () => models.map((id) => ({ id })) }),
+        clientFactory: () => ({
+          ...client,
+          listModels: async () => models.map((m) => (typeof m === 'string' ? { id: m } : m)),
+        }),
         tiers: { 2: { model: 'claude-sonnet-5' } },
         ...opts,
       });
@@ -557,6 +583,80 @@ describe('CopilotProvider', () => {
       expect(other.session.cfg.model).toBe('claude-sonnet-5');
       const missing = await play({ nodeModels: { pick: 'nope-1' } }, [call]);
       expect(missing.session.cfg.model).toBe('claude-sonnet-5');
+    });
+
+    it("maxEffort caps the tier's effort; a named effort or SYMPHONY_EFFORT_CAPS=0 is played as is", async () => {
+      const call = { updates: { word: 'cat' }, verdict };
+      const all = ['low', 'medium', 'high', 'xhigh'];
+      const models = [
+        { id: 'claude-opus-5.5', supportedReasoningEfforts: all },
+        { id: 'claude-sonnet-5', supportedReasoningEfforts: all },
+        { id: 'only-xhigh', supportedReasoningEfforts: ['xhigh'] },
+      ];
+      const xhigh = { 2: { model: 'claude-opus-5.5', effort: 'xhigh' as const } };
+      const capped: Partial<AgentPause> = { maxEffort: 'high' };
+      const effortOf = async (
+        opts: Partial<ConstructorParameters<typeof CopilotProvider>[0]>,
+        over = capped,
+      ) => {
+        const r = await play(opts, [call], over, models);
+        expect(r.requested).toBe(
+          modelSettings(r.session.cfg.model!, r.session.cfg.reasoningEffort),
+        );
+        return r.session.cfg.reasoningEffort;
+      };
+      expect(await effortOf({ tiers: xhigh })).toBe('high');
+      expect(await effortOf({ tiers: xhigh }, {})).toBe('xhigh');
+      expect(await effortOf({ tiers: xhigh, effortCaps: false })).toBe('xhigh');
+      // Below the cap, the tier's effort stands.
+      expect(await effortOf({ tiers: { 2: { model: 'claude-opus-5.5', effort: 'medium' } } })).toBe(
+        'medium',
+      );
+      // A node model without an effort inherits the tier's, capped; a named one is played as named.
+      expect(await effortOf({ tiers: xhigh, nodeModels: { pick: 'claude-sonnet-5' } })).toBe(
+        'high',
+      );
+      expect(await effortOf({ tiers: xhigh, nodeModels: { pick: 'claude-sonnet-5:xhigh' } })).toBe(
+        'xhigh',
+      );
+      // A model that has no such effort keeps its own.
+      expect(await effortOf({ tiers: { 2: { model: 'only-xhigh', effort: 'xhigh' } } })).toBe(
+        'xhigh',
+      );
+    });
+
+    it('node models: "model:effort" sets the effort; without one the step keeps its tier\'s', async () => {
+      const call = { updates: { word: 'cat' }, verdict };
+      const tiers = { 2: { model: 'claude-sonnet-5', effort: 'medium' as const } };
+      const efforts = ['low', 'medium', 'high', 'xhigh'];
+      const models = [
+        { id: 'claude-sonnet-5', supportedReasoningEfforts: efforts },
+        { id: 'claude-opus-5.5', supportedReasoningEfforts: efforts },
+      ];
+      const high = await play(
+        { tiers, nodeModels: { pick: 'claude-opus-5.5:high' } },
+        [call],
+        {},
+        models,
+      );
+      expect(high.session.cfg.model).toBe('claude-opus-5.5');
+      expect(high.session.cfg.reasoningEffort).toBe('high');
+      expect(high.requested).toBe(modelSettings('claude-opus-5.5', 'high'));
+      // The effort recorded is the one sent.
+      expect(high.res.transcript.musician).toMatchObject({ effort: 'high' });
+      const kept = await play(
+        { tiers, nodeModels: { pick: 'claude-opus-5.5' } },
+        [call],
+        {},
+        models,
+      );
+      expect(kept.session.cfg.reasoningEffort).toBe('medium');
+      expect(kept.res.transcript.musician).toMatchObject({ effort: 'medium' });
+      expect(splitModelEffort('gpt-6.1-sol:xhigh')).toEqual({
+        model: 'gpt-6.1-sol',
+        effort: 'xhigh',
+      });
+      expect(splitModelEffort('a:b')).toEqual({ model: 'a:b' });
     });
   });
 
@@ -649,6 +749,137 @@ describe('CopilotProvider', () => {
     expect((await play([normalizeSubmission(first), revised])).result).toEqual(revised);
     expect(hasContent({ updates: { a: [], b: '  ', c: {}, d: 0, e: false } })).toBe(false);
     expect(hasContent({ updates: { a: ['x'] } })).toBe(true);
+  });
+
+  describe('a correction that would empty what the rejected answer found', () => {
+    const verdict = { outcome: 'applied', confidence: 0.6, shouldTerminate: false, reason: 'r' };
+    const skeptic: AgentPause = {
+      ...pause,
+      nodeId: 'skeptic',
+      outputSchema: [
+        { name: 'failureModes', type: 'string[]' },
+        { name: 'contested', type: 'string[]' },
+        { name: 'edits', type: 'string[]' },
+      ],
+    };
+    const play = async (calls: unknown[], deltaRepair = true) => {
+      const replies: string[] = [];
+      const { client } = fakeClient(async (cfg, emit) => {
+        for (const c of calls) {
+          replies.push(String(await callTool(cfg, 'submit_result', c)));
+          emit('assistant.usage', { inputTokens: 10, outputTokens: 5 });
+        }
+        emit('session.idle');
+      });
+      const res = await new CopilotProvider({ clientFactory: () => client, deltaRepair }).runAgent({
+        pause: skeptic,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      });
+      return { result: res.result, replies, calls: res.transcript.calls ?? [] };
+    };
+    // As recorded (2026-11-04T05-01-07): the findings as text with no verdict, then empty lists and a verdict.
+    const rejected = {
+      updates: '{"failureModes":["Nothing measures a run after the change"]}',
+      contested: ['Assumption 1: maestro is in this workspace'],
+      edits: ['Check first whether maestro is in the workspace'],
+    };
+    const emptied = { updates: { failureModes: [], contested: [], edits: [] }, verdict };
+    const found = {
+      failureModes: ['Nothing measures a run after the change'],
+      contested: ['Assumption 1: maestro is in this workspace'],
+      edits: ['Check first whether maestro is in the workspace'],
+    };
+
+    it('is refused once, so the AI can keep the content by sending only the verdict', async () => {
+      const r = await play([rejected, emptied, { verdict }]);
+      expect(r.replies[0]).toMatch(/^REJECTED/);
+      expect(r.replies[1]).toMatch(
+        /^Not recorded: this result empties contested, edits, failureModes,/,
+      );
+      expect(r.replies[1]).toMatch(/only the verdict/);
+      expect(r.replies[2]).toMatch(/^Result recorded/);
+      expect(r.result).toEqual({ updates: found, verdict });
+      expect(r.calls.map((c) => c.submits)).toEqual([['rejected'], ['kept'], ['recorded']]);
+    });
+
+    it('is recorded when the AI sends it again: emptying can be meant', async () => {
+      const r = await play([rejected, emptied, emptied]);
+      expect(r.replies[2]).toMatch(/^Result recorded/);
+      expect(r.result).toEqual(emptied);
+      // Without delta repair it asks for the fields as they were.
+      const full = await play([rejected, emptied], false);
+      expect(full.replies[1]).toMatch(/with those fields as you had them/);
+    });
+
+    it('a correction that keeps or changes the content is recorded at once', async () => {
+      const changed = { updates: { ...found, edits: ['Another edit'] }, verdict };
+      expect((await play([rejected, changed])).replies[1]).toMatch(/^Result recorded/);
+      expect(
+        emptiedFields({ updates: { a: ['x'], b: [] } }, { updates: { a: [], b: [] } }),
+      ).toEqual(['a']);
+      expect(emptiedFields({ updates: { a: ['x'] } }, { updates: { b: [] } })).toEqual([]);
+    });
+  });
+
+  describe('endOnSubmit', () => {
+    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+    const play = async (endOnSubmit: boolean, turns: unknown[][]) => {
+      const events: string[] = [];
+      const { client, sessions } = fakeClient(async (cfg, emit, s) => {
+        for (const turn of turns) {
+          for (const c of turn) await callTool(cfg, 'submit_result', c);
+          emit('assistant.usage', {
+            inputTokens: 100,
+            outputTokens: turn.length ? 50 : 3,
+            duration: 900,
+          });
+          emit('assistant.turn_end');
+          if (s.aborted) {
+            emit('session.error', { message: 'aborted' });
+            return;
+          }
+        }
+        emit('assistant.message', { content: 'Done.' });
+        emit('session.idle');
+      });
+      const res = await new CopilotProvider({ clientFactory: () => client, endOnSubmit }).runAgent({
+        pause,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: (e) => e.type === 'info' && events.push(e.text),
+      });
+      return { res, session: sessions[0]!, events };
+    };
+    const good = { updates: { word: 'cat' }, verdict };
+    const better = { updates: { word: 'dog' }, verdict };
+
+    it('ends the session after the turn with a valid answer: no closing call', async () => {
+      const on = await play(true, [[good], []]);
+      expect(on.session.aborted).toBe(true);
+      expect(on.res.result).toEqual(good);
+      expect(on.res.transcript.calls).toHaveLength(1);
+      expect(on.res.transcript.output).toBe('');
+      expect(on.events).toContain('answer recorded: ending the session without a closing call');
+      const off = await play(false, [[good], []]);
+      expect(off.session.aborted).toBe(false);
+      expect(off.res.transcript.calls!.map((c) => c.submits ?? [])).toEqual([['recorded'], []]);
+    });
+
+    it('keeps every submission of that turn, and waits through rejected ones', async () => {
+      // Parallel calls in one turn: the last valid one wins, as without the setting.
+      expect((await play(true, [[good, better]])).res.result).toEqual(better);
+      // A rejected answer does not end the session: the correction comes in the next turn.
+      const fixed = await play(true, [[{ updates: {} }], [good], []]);
+      expect(fixed.res.result).toEqual(good);
+      expect(fixed.res.transcript.calls!.map((c) => c.submits)).toEqual([
+        ['rejected'],
+        ['recorded'],
+      ]);
+    });
   });
 
   it('repairs updates sent as text in every shape recorded from Claude models, deterministically', () => {

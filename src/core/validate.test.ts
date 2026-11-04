@@ -104,6 +104,24 @@ describe('validatePattern', () => {
     expect(m).toMatch(/requiredContext 'missing'/);
   });
 
+  it('accepts a known maxEffort and names the choices for any other', () => {
+    const gather = base.nodes[1] as ScoreNode & { kind: 'agent' };
+    const ok = withNodes([
+      base.nodes[0]!,
+      { ...gather, maxEffort: 'high' },
+      ...base.nodes.slice(2),
+    ]);
+    expect(validateGraph(ok).errors).toEqual([]);
+    const bad = withNodes([
+      base.nodes[0]!,
+      { ...gather, maxEffort: 'max' as never },
+      ...base.nodes.slice(2),
+    ]);
+    expect(validateGraph(bad).errors.map((e) => e.message)).toContain(
+      'maxEffort must be one of low, medium, high, xhigh',
+    );
+  });
+
   it('allows guards on verdict', () => {
     const edges: ScoreEdge[] = [
       base.edges[0]!,

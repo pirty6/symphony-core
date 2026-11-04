@@ -7,6 +7,7 @@ import { ExprError, exprFields, parseExpr } from './expr.js';
 import { checkFieldValue, isFieldType, isValidFieldName } from './schema.js';
 import {
   CAPABILITIES,
+  EFFORTS,
   type Pattern,
   type PatternGraph,
   type ScoreEdge,
@@ -195,6 +196,8 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         ) {
           errors.push({ ...at, message: 'complexityShift must be a whole number from -3 to 3' });
         }
+        if (n.maxEffort !== undefined && !EFFORTS.includes(n.maxEffort))
+          errors.push({ ...at, message: `maxEffort must be one of ${EFFORTS.join(', ')}` });
         if (n.cites !== undefined && !n.writes.includes(n.cites)) {
           errors.push({ ...at, message: `cites '${n.cites}' must be one of the fields it writes` });
         }

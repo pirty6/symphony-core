@@ -8,7 +8,16 @@
 import { checkFieldValue, isFieldType } from './schema.js';
 import type { Checked } from './schema.js';
 import { isImprovisation } from './jazz.js';
-import type { Capability, Complexity, Pattern, ScoreEdge, ScoreNode, StateField } from './types.js';
+import { EFFORTS } from './types.js';
+import type {
+  Capability,
+  Complexity,
+  Effort,
+  Pattern,
+  ScoreEdge,
+  ScoreNode,
+  StateField,
+} from './types.js';
 import { validatePattern } from './validate.js';
 
 const isComplexity = (v: unknown): v is Complexity => v === 1 || v === 2 || v === 3 || v === 4;
@@ -76,6 +85,9 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...preloadReportOf(raw.preloadReport),
         ...(typeof raw.verifyBelow === 'number' ? { verifyBelow: raw.verifyBelow } : {}),
         ...(raw.otherModel === true ? { otherModel: true } : {}),
+        ...(EFFORTS.includes(raw.maxEffort as Effort)
+          ? { maxEffort: raw.maxEffort as Effort }
+          : {}),
         ...fanOutOf(raw.fanOut),
         ...(Number.isInteger(raw.complexityShift)
           ? { complexityShift: raw.complexityShift as number }
@@ -421,7 +433,7 @@ export function draftInstructions(): string {
 Node kinds:
 - start {id,kind:"start",label}: exactly one.
 - agent {id,kind:"agent",role:"assessor"|"executor",label,directive,reads:[state keys],writes:[state keys],maxVisits?,
-  capabilities?:["web","mcp"], checks?:[{expr,message}], complexity?:1-4 (fixed tier), complexityShift?:-2..2 (tiers above or below the run's complexity: bulk steps -1, judging or concluding steps +1), isolated?:true (no workspace tools), fresh?:true (never replayed: it reads something outside the workspace, e.g. a PR on GitHub), cites?:"<string[] field it writes>" (entries cite path:line, checked against the workspace),
+  capabilities?:["web","mcp"], checks?:[{expr,message}], complexity?:1-4 (fixed tier), complexityShift?:-2..2 (tiers above or below the run's complexity: bulk steps -1, judging or concluding steps +1), maxEffort?:"low"|"medium"|"high"|"xhigh" (the highest reasoning effort the step asks for, whatever its tier), isolated?:true (no workspace tools), fresh?:true (never replayed: it reads something outside the workspace, e.g. a PR on GitHub), cites?:"<string[] field it writes>" (entries cite path:line, checked against the workspace),
   solo?:true (assessor only: from Swing up the AI picks one of its labelled, unguarded out edges)} - checks are expressions over state+answer that must be true
   or the answer is rejected and re-asked (use them to force full coverage, e.g. subset(batch, examined)).
   assessor = read-only research/analysis; executor = may edit files and run commands. AI runs ONLY in agent nodes.

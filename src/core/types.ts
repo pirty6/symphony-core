@@ -27,6 +27,10 @@ export interface AcceptanceCheck {
 }
 export type FieldType = 'string' | 'number' | 'boolean' | 'string[]' | 'number[]' | 'object';
 
+/** A model's reasoning effort, lowest first. */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh';
+export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh'];
+
 export const FIELD_TYPES: readonly FieldType[] = [
   'string',
   'number',
@@ -159,6 +163,12 @@ export interface AgentNode extends NodeBase {
   readonly verifyBelow?: number;
   /** Play on a different model family than the tier's (an independent second opinion). */
   readonly otherModel?: boolean;
+  /**
+   * The highest reasoning effort this step asks for, whatever its tier: the tier's model with
+   * at most this effort (e.g. the maestro's tier-4 debate on 'high': 39% faster, the planted
+   * concern still caught in trial 13).
+   */
+  readonly maxEffort?: Effort;
   /**
    * Solo point: from Swing (improvisation >= 2) the AI chooses which labelled
    * out edge to take. Below that the first edge (the written melody) is played.
@@ -383,7 +393,14 @@ export interface CallUsage {
   readonly ms?: number;
   /** What Copilot billed for this call, in nano AI units. */
   readonly nanoAiu?: number;
+  /** submit_result calls this model call made, and what became of each. */
+  readonly submits?: readonly SubmitOutcome[];
+  /** Made on a model that blocked the response (content filtering); another one answered. */
+  readonly blocked?: true;
 }
+
+/** recorded: the step's answer now; rejected: sent back for a correction; kept: refused, an earlier answer stays. */
+export type SubmitOutcome = 'recorded' | 'rejected' | 'kept';
 
 export interface ContextSplit {
   readonly systemTokens?: number;
@@ -433,6 +450,7 @@ export interface Musician {
   readonly tier: Complexity;
   /** Model the tier (or MODEL) resolved to; the provider's default when absent. */
   readonly requestedModel?: string;
+  /** The effort asked for with requestedModel (the pair replay looks answers up by). */
   readonly effort?: string;
   /** Account the provider used, e.g. 'token' or 'signed-in user'. */
   readonly account?: string;
@@ -442,6 +460,8 @@ export interface Musician {
   readonly sampling: string;
   /** Models whose content filter blocked this answer before another model gave it. */
   readonly blockedOn?: readonly string[];
+  /** After a block: the effort sent with the model that answered ('default' when none was). */
+  readonly answeredEffort?: string;
   /** Times a rate limit (HTTP 429) stopped the session before it began, and it waited to retry. */
   readonly rateLimitWaits?: number;
 }
@@ -474,6 +494,8 @@ export interface AgentPause {
   readonly cites?: string;
   /** AgentNode.otherModel: a different model family than the tier's. */
   readonly otherModel?: boolean;
+  /** AgentNode.maxEffort: the tier's effort, capped at this. */
+  readonly maxEffort?: Effort;
   /** The step's acceptance checks, so a provider can apply them while the AI still has its context. */
   readonly checks?: readonly AcceptanceCheck[];
   /**
@@ -587,6 +609,9 @@ export interface ApprovalResolution {
   readonly updates?: Readonly<Record<string, unknown>>;
   readonly by?: string;
   readonly at?: string;
+  /** When the run began to wait for this answer, and when a client first fetched it (MCP). */
+  readonly askedAt?: string;
+  readonly shownAt?: string;
 }
 
 export interface CancelResolution {
@@ -712,7 +737,13 @@ export interface PerformedStep {
     readonly at?: string;
   }[];
   readonly transcript?: AiTranscript;
-  readonly approval?: { readonly approved: boolean; readonly by?: string };
+  readonly approval?: {
+    readonly approved: boolean;
+    readonly by?: string;
+    /** asked → shown → at: the wait before anyone saw the question, then the decision. */
+    readonly askedAt?: string;
+    readonly shownAt?: string;
+  };
   /** Human decisions when the step got stuck (retry with hint or model, or stop). */
   readonly recoveries?: readonly Recovery[];
   readonly at?: string;

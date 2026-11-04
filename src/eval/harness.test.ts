@@ -20,7 +20,9 @@ import {
   buildFixture,
   finalFiles,
   EVAL_TASKS,
+  plantedConcern,
   requirementCoverage,
+  SUM_CONCERN,
   ROUTES,
   ROUTING_TASKS,
   routedAs,
@@ -303,6 +305,20 @@ function fixSearch(dir: string) {
 }
 
 /** What a right answer looks like for each task, to prove its check can tell. */
+/** The closed form, with the cases it breaks kept: what the maestro should compose. */
+const SUM_SCORE = {
+  nodes: [
+    { id: 'baseline', label: 'Run tests first', tool: 'tests.run' },
+    {
+      id: 'apply',
+      label: 'Edit',
+      directive:
+        'Implement the plan. For this request: keep returning 0 when n < 1 and use Math.floor(n) before n*(n+1)/2.',
+    },
+    { id: 'verify', label: 'Run tests', tool: 'tests.run' },
+  ],
+};
+
 const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown> }> = {
   'fix-off-by-one': (dir) => {
     const f = join(dir, 'src/sum.js');
@@ -423,6 +439,8 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
       },
     },
   }),
+  'maestro-planted-concern': () => ({ state: { finalPattern: SUM_SCORE } }),
+  'maestro-planted-concern-tier3': () => ({ state: { finalPattern: SUM_SCORE } }),
   'review-clean': () => ({ state: { findings: [], report: 'No real issues found.' } }),
   'review-off-by-one': () => ({
     state: {
@@ -541,6 +559,29 @@ describe('requirement coverage judge', () => {
   });
 });
 
+const judgeSum = (finalPattern: unknown) =>
+  plantedConcern('success', { finalPattern }, SUM_CONCERN, 'n < 1 and fractions');
+
+describe('planted concern judge', () => {
+  it('needs a test run and the concern dealt with, in the composed score', () => {
+    expect(judgeSum(SUM_SCORE).pass).toBe(true);
+    const noTests = { nodes: SUM_SCORE.nodes.filter((n) => n.tool !== 'tests.run') };
+    expect(judgeSum(noTests).notes.join()).toMatch(/no step runs the tests/);
+    // The request's own words are not the remedy: a score that only restates it misses.
+    const naive = {
+      nodes: [
+        { id: 'baseline', tool: 'tests.run' },
+        { id: 'apply', directive: 'Replace the loop with n*(n+1)/2. Change only src/sum.js.' },
+      ],
+    };
+    expect(judgeSum(naive).notes.join()).toMatch(/missing: the planted concern/);
+    expect(judgeSum(undefined).notes.join()).toMatch(/no composed score/);
+    expect(plantedConcern('partial', { finalPattern: SUM_SCORE }, SUM_CONCERN, 'x').pass).toBe(
+      false,
+    );
+  });
+});
+
 describe('routing judge', () => {
   const route = ROUTES.find((r) => r.thenPattern === 'fix')!;
   const ok = { chosen: 'investigate', complexity: 3, thenPattern: 'fix' };
@@ -601,7 +642,11 @@ describe('memory fixtures', () => {
   });
 
   it('heavy tasks are only played when named', () => {
-    expect(EVAL_TASKS.filter((x) => x.heavy).map((x) => x.id)).toEqual(['investigate-many-files']);
+    expect(EVAL_TASKS.filter((x) => x.heavy).map((x) => x.id)).toEqual([
+      'investigate-many-files',
+      'maestro-planted-concern',
+      'maestro-planted-concern-tier3',
+    ]);
   });
 });
 

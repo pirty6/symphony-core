@@ -26,6 +26,8 @@ export interface ProviderConfig {
   readonly nodeModels?: Readonly<Record<string, string>>;
   readonly deltaRepair?: boolean;
   readonly headerInSystem?: boolean;
+  readonly endOnSubmit?: boolean;
+  readonly effortCaps?: boolean;
 }
 
 export function isProviderName(v: unknown): v is ProviderName {
@@ -47,6 +49,8 @@ export function makeProvider(cfg: ProviderConfig): Provider {
       ...(cfg.nodeModels ? { nodeModels: cfg.nodeModels } : {}),
       ...(cfg.deltaRepair ? { deltaRepair: true } : {}),
       ...(cfg.headerInSystem ? { headerInSystem: true } : {}),
+      ...(cfg.endOnSubmit ? { endOnSubmit: true } : {}),
+      ...(cfg.effortCaps === false ? { effortCaps: false } : {}),
       clock,
     });
   }
@@ -70,6 +74,8 @@ export function envConfig(env: NodeJS.ProcessEnv): {
   nodeModels?: Record<string, string>;
   deltaRepair?: boolean;
   headerInSystem?: boolean;
+  endOnSubmit?: boolean;
+  effortCaps?: boolean;
 } {
   const model = env.COPILOT_MODEL ?? env.MODEL;
   const source = TOKEN_VARS.find((name) => env[name] && env[name] !== 'token');
@@ -87,12 +93,16 @@ export function envConfig(env: NodeJS.ProcessEnv): {
     // On by default (they cut time and tokens); 0, false, off or no turns each off.
     deltaRepair: !off(env.SYMPHONY_DELTA_REPAIR),
     headerInSystem: !off(env.SYMPHONY_HEADER_IN_SYSTEM),
+    // Trial 13: same solved, 45% fewer premium requests (a later revision is given up).
+    endOnSubmit: !off(env.SYMPHONY_END_ON_SUBMIT),
+    // Steps' maxEffort (the maestro's tier-4 debate on 'high'); 0 plays each tier's own effort.
+    effortCaps: !off(env.SYMPHONY_EFFORT_CAPS),
   };
 }
 
 const off = (v: string | undefined) => v !== undefined && /^(0|false|off|no)$/i.test(v.trim());
 
-/** "deepRead=claude-opus-4.5,triage=gpt-5-mini": a model per step id. */
+/** "deepRead=claude-opus-4.5,skeptic=claude-opus-5.5:high": a model (and effort) per step id. */
 export function parseNodeModels(text: string): Record<string, string> | undefined {
   const pairs = text
     .split(',')

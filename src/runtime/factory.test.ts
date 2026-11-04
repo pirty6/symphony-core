@@ -13,7 +13,12 @@ describe('envConfig', () => {
   });
 
   it('no token, or the template placeholder: use the signed-in account', () => {
-    const defaults = { deltaRepair: true, headerInSystem: true };
+    const defaults = {
+      deltaRepair: true,
+      headerInSystem: true,
+      endOnSubmit: true,
+      effortCaps: true,
+    };
     expect(envConfig({})).toEqual(defaults);
     expect(envConfig({ TOKEN: 'token' })).toEqual(defaults);
     expect(envConfig({ TOKEN: '' })).toEqual(defaults);
@@ -30,10 +35,21 @@ describe('envConfig', () => {
       nodeModels: { deepRead: 'claude-opus-5.5', triage: 'gpt-6-luna' },
       deltaRepair: true,
       headerInSystem: true,
+      endOnSubmit: true,
+      effortCaps: true,
     });
-    expect(envConfig({ SYMPHONY_DELTA_REPAIR: '0', SYMPHONY_HEADER_IN_SYSTEM: 'off' })).toEqual({
+    expect(
+      envConfig({
+        SYMPHONY_DELTA_REPAIR: '0',
+        SYMPHONY_HEADER_IN_SYSTEM: 'off',
+        SYMPHONY_END_ON_SUBMIT: 'no',
+        SYMPHONY_EFFORT_CAPS: 'false',
+      }),
+    ).toEqual({
       deltaRepair: false,
       headerInSystem: false,
+      endOnSubmit: false,
+      effortCaps: false,
     });
     expect(parseNodeModels('=x,y=')).toBeUndefined();
   });

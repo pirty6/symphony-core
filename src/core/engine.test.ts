@@ -112,6 +112,23 @@ describe('engine: hangman', () => {
   });
 });
 
+describe("engine: a step's effort cap reaches the provider", () => {
+  it('copies maxEffort into the agent pause', () => {
+    const capped = {
+      ...hangman,
+      nodes: hangman.nodes.map((n) => (n.id === 'pick' ? { ...n, maxEffort: 'high' as const } : n)),
+    };
+    const r = createEngine(compileScore(capped, { goal: 'g', generatedAt: 't' }), {
+      startedAt: 't',
+    });
+    expect(r.state.pause).toMatchObject({ kind: 'agent', nodeId: 'pick', maxEffort: 'high' });
+    const plain = createEngine(compileScore(hangman, { goal: 'g', generatedAt: 't' }), {
+      startedAt: 't',
+    });
+    expect(plain.state.pause).not.toHaveProperty('maxEffort');
+  });
+});
+
 describe('engine: advance leaves the state it was given as it was', () => {
   it('grows its lists in place only on its own copy; state values are frozen', () => {
     const start = createEngine(score);

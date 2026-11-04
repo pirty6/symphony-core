@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -130,7 +130,16 @@ describe('Symphony MCP server', () => {
       'plan',
     ]);
     await call(client, 'answer_approval', { run_id: body.run_id, approved: true });
-    expect(await settle(client, body.run_id)).toMatchObject({ outcome: 'success' });
+    const done = await settle(client, body.run_id);
+    expect(done).toMatchObject({ outcome: 'success' });
+    // The gate's wait splits where the chat first got the question: asked → shown → answered.
+    const saved = JSON.parse(readFileSync(done.savedTo!, 'utf8')) as {
+      performance: { steps: { kind: string; at?: string; approval?: Record<string, string> }[] };
+    };
+    const gate = saved.performance.steps.find((st) => st.kind === 'approval')!;
+    expect(gate.approval).toMatchObject({ by: 'mcp' });
+    const { askedAt, shownAt } = gate.approval!;
+    expect(askedAt! <= shownAt! && shownAt! <= gate.at!).toBe(true);
     const again = await call(client, 'answer_approval', { run_id: body.run_id, approved: true });
     expect(again.isError).toBe(true);
     expect(again.body).toMatch(/no approval is pending/);
@@ -353,5 +362,44 @@ describe('get_run usage', () => {
     });
     // A run on its own: no chain split.
     expect(usageOf(maestroRun, [maestroRun]).chain).toBeUndefined();
+  });
+  it('shows model time by phase, in-session corrections and the waits for a person', () => {
+    const tagged = step('skeptic', 1000, 1, {
+      transcript: {
+        provider: 'copilot',
+        prompt: '',
+        output: '',
+        toolCalls: [],
+        startedAt: '2026-11-04T05:00:00.000Z',
+        completedAt: '2026-11-04T05:00:30.000Z',
+        calls: [
+          {
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            ms: 20_000,
+            submits: ['rejected'],
+          },
+          { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, ms: 5000, submits: ['recorded'] },
+          { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, ms: 5000 },
+        ],
+      },
+    });
+    const gate = {
+      nodeId: 'gate',
+      kind: 'approval',
+      at: '2026-11-04T05:01:30.000Z',
+      approval: {
+        approved: true,
+        by: 'mcp',
+        askedAt: '2026-11-04T05:00:30.000Z',
+        shownAt: '2026-11-04T05:01:00.000Z',
+      },
+    } as never;
+    const run = { pattern: 'maestro', steps: [tagged, gate] };
+    const u = usageOf(run, [run]);
+    expect(u.modelTime).toBe('answer 20s (67%) · correction 5s (17%) · closing 5s (17%)');
+    expect(u.inSessionCorrections).toBe(1);
+    expect(u.waits).toEqual(['gate 60s (shown after 30s, decided in 30s)']);
   });
 });

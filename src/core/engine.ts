@@ -458,6 +458,7 @@ function makePause(
       ...(node.cites ? { cites: node.cites } : {}),
       ...(node.checks?.length ? { checks: node.checks } : {}),
       ...(node.otherModel ? { otherModel: true } : {}),
+      ...(node.maxEffort ? { maxEffort: node.maxEffort } : {}),
       ...(node.preload ? { preload: node.preload } : {}),
       ...partsOf(node, ctx.state),
       // Parallel parts already multiply the calls: a fanned-out step plays one take.
@@ -1089,7 +1090,12 @@ function resolveApproval(
       changes,
       updates,
       ...(attempts.length > 0 ? { attempts } : {}),
-      approval: { approved: res.approved, ...(res.by ? { by: res.by } : {}) },
+      approval: {
+        approved: res.approved,
+        ...(res.by ? { by: res.by } : {}),
+        ...(res.askedAt ? { askedAt: res.askedAt } : {}),
+        ...(res.shownAt ? { shownAt: res.shownAt } : {}),
+      },
       ...(res.at ? { at: res.at } : {}),
     },
     hashBefore,

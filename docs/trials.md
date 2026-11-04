@@ -203,6 +203,85 @@ npm run cli -- eval --task investigate-many-files,investigate-multi-hop,investig
 time, with fan-out parts and rejected answers counted. Use it on the runs each trial saves
 (`<stamp>-runs/`), not on shares taken from an investigation's own analysis.
 
+It also prints:
+- **Model time by call.** Each model call is tagged with the `submit_result` calls it made, so
+  its time is split into these phases:
+  - `work`: reading before any answer.
+  - `answer`: the call that submitted.
+  - `correction`: after a rejected answer, until one is recorded.
+  - `revision`: a new answer after one was recorded.
+  - `closing`: the reply to "stop now".
+  - `blocked`: a call on a model whose content filter blocked the reply, before another model answered.
+
+  Runs recorded before the tagging show `untagged`.
+- **In-session corrections.** Engine attempts never count these. `get_run`'s `usage` shows
+  them too (`modelTime`, `inSessionCorrections`).
+- **Waits for a person, apart.** Each approval records when it was asked and, over MCP, when
+  `get_run` first showed it. The wait therefore splits into client polling (`shown after`) and
+  the person deciding (`decided in`).
+
+## 13. Maestro under five minutes: closing calls and the debate's effort
+
+Composing at tier 3 already fits in five minutes, review included. At tier 4, model time alone
+was 325–408 s. Two levers remained. Both are now defaults, after the results below.
+
+**End the session at the answer** (`SYMPHONY_END_ON_SUBMIT`, on by default since this trial;
+`=0` turns it off). The session ends
+when the model turn that made a valid `submit_result` ends. Without the setting, the model
+answers "stop now" with one more call (4–6 s per step). Parallel submissions in that turn still
+count. A revision in a later turn is lost, and saved runs show the AI does revise after an
+accepted answer (for example "I also corrected three part answers"). So read `revision` in
+`cost` on the baseline first.
+
+```sh
+TASKS=maestro-requirements,maestro-planted-concern
+npm run cli -- eval --task $TASKS -n 3
+BASE=<evals>/<that-stamp>.json
+SYMPHONY_END_ON_SUBMIT=1 npm run cli -- eval --task $TASKS -n 3 --compare $BASE
+```
+
+**A lower effort on the tier-4 debate.** The pragmatist marks concerns THEORETICAL, and the
+conductor then ignores them. Only the triage count is checked in code, so a cheaper debater
+could downgrade a real concern without any test noticing. `maestro-planted-concern` (tier 4,
+heavy) checks for exactly this. Its request asks for the closed form `n*(n+1)/2`, which breaks
+the documented cases `n < 1` and fractions. It passes only when the composed score runs the
+tests and deals with those cases. `maestro-planted-concern-tier3` is the same request without
+the critic.
+
+A node model scopes the cut to the maestro's own steps; the composed run keeps its tiers.
+`step=model:effort` sets the effort. Without an effort, the step keeps its tier's effort, and
+the effort that was sent is recorded under `musician`.
+
+```sh
+npm run cli -- eval --task maestro-planted-concern -n 3
+SYMPHONY_NODE_MODELS=propose=claude-opus-5.5:high,skeptic=claude-opus-5.5:high,pragmatist=claude-opus-5.5:high \
+  npm run cli -- eval --task maestro-planted-concern -n 3 --compare <evals>/<baseline>.json
+```
+
+**Results (2026-11-04, live, n=3 per task).**
+
+| | `maestro-requirements` | `maestro-planted-concern` (tier 4) | Whole report |
+|---|---|---|---|
+| Baseline | 3/3 solved, 33–41 s, 46–52k in | 3/3, 240–259 s, 99–106k in, 24–26k out | 82 premium requests. Closing calls: 39 of 82 calls, 140 s (17% of model time). 1 revision (cover) in 39 steps |
+| `SYMPHONY_END_ON_SUBMIT=1` | 3/3, 23–30 s, 21–29k in | 3/3, 230–250 s, 44–61k in, 23–25k out | 45 premium requests (−45%), input −51%, no closing calls, 3 in-session corrections |
+| Debate on `opus:high` (propose, skeptic, pragmatist) | — | 3/3, 146–155 s, 86–89k in, 14–15k out | Still has closing calls: 107 s (25% of model time) |
+
+The planted concern was caught in every run. Ending at the answer saves premium requests and
+input tokens. Wall time drops only on short runs, because long ones are dominated by the
+skeptic's and the pragmatist's reasoning. Lowering the debate's effort cuts the tier-4
+composition by ~39% (≈246 s → 150 s). Both results come from small fixtures, so confirm them on a
+real request before relying on them.
+
+Both are now on by default. `SYMPHONY_END_ON_SUBMIT=0` turns the first off. The maestro's
+propose, skeptic and pragmatist set `maxEffort: 'high'`, and `SYMPHONY_EFFORT_CAPS=0` plays each
+tier's own effort again. To re-run the trial against the new defaults, the baseline is now the
+run with those switches at `=0`.
+
+Read: solved on the planted concern (it must not drop), time per run, and `model time by call`
+for the debate steps. Recorded replays are keyed on model and effort, so they will not match
+across the two runs. Do not use `--complexity 3` or `complexityShift` for this trial: they also
+change the child run, or tier 3.
+
 ## Warm start off: time for tokens
 
 Gap research and part answers start one sub-agent first, so the others reuse its cached prompt

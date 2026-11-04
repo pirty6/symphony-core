@@ -14,9 +14,13 @@ import { playsFromRepertoire } from '../core/jazz.js';
 import { zeroValue } from '../core/schema.js';
 import {
   addUsage,
+  callPhases,
   costliest,
   growth,
+  formatPhases,
   formatUsage,
+  formatWaits,
+  humanWaits,
   performanceUsage,
   rejectionUsage,
 } from '../core/usage.js';
@@ -125,6 +129,8 @@ interface Managed {
   /** Why a hand-off did not start (e.g. the composed score edits files over HTTP). */
   blocked?: string;
   savedTo?: string;
+  /** The approval a get_run first returned, and when: the gate wait splits there. */
+  shown?: { readonly pauseId: string; readonly at: string };
 }
 
 export type Waiting =
@@ -149,6 +155,12 @@ export interface Usage {
   readonly byStep: Readonly<Record<string, string>>;
   /** Attempts thrown away and what they cost, and answers that sent updates as text. */
   readonly rejected?: string;
+  /** Model time by what the calls were for (answer, correction, closing…). */
+  readonly modelTime?: string;
+  /** submit_result calls corrected inside a session (engine attempts never count them). */
+  readonly inSessionCorrections?: number;
+  /** Each approval's wait for a person, apart from the pipeline's own time. */
+  readonly waits?: readonly string[];
   /** The whole chain (maestro -> composed -> chained): composing apart from performing. */
   readonly chain?: {
     readonly compose: string;
@@ -177,6 +189,8 @@ export function usageOf(
 ): Usage {
   const mine = performanceUsage(latest);
   const rejected = rejectionUsage(latest);
+  const phases = callPhases(latest);
+  const waits = formatWaits(chain.flatMap((r) => humanWaits(r)));
   let compose = NONE;
   let perform = NONE;
   for (const r of chain) {
@@ -194,6 +208,9 @@ export function usageOf(
           rejected: `${rejected.attempts} attempts (${formatUsage(rejected.attemptUsage)})${rejected.textUpdates ? ` · ${rejected.textUpdates} answers sent updates as text` : ''}`,
         }
       : {}),
+    ...(Object.keys(phases.total).length ? { modelTime: formatPhases(phases.total) } : {}),
+    ...(phases.corrections ? { inSessionCorrections: phases.corrections } : {}),
+    ...(waits.length ? { waits } : {}),
     ...(chain.length > 1
       ? {
           chain: {
@@ -511,7 +528,12 @@ export class RunManager {
         }
       });
     }
-    return this.view(runId);
+    const v = this.view(runId);
+    const { managed } = this.latest(runId);
+    const pause = managed.run.engine?.pause;
+    if (v.waitingFor?.kind === 'approval' && pause && managed.shown?.pauseId !== pause.pauseId)
+      managed.shown = { pauseId: pause.pauseId, at: new Date().toISOString() };
+    return v;
   }
 
   answerApproval(
@@ -527,10 +549,12 @@ export class RunManager {
             pause.outputSchema.map((f) => [f.name, answer.updates?.[f.name] ?? zeroValue(f.type)]),
           )
         : answer.updates;
+    const shownAt = managed.shown?.pauseId === pause?.pauseId ? managed.shown?.at : undefined;
     const error = managed.run.answerApproval({
       approved: answer.approved,
       ...(updates ? { updates } : {}),
       by: 'mcp',
+      ...(shownAt ? { shownAt } : {}),
     });
     if (error) throw new Error(error);
     return this.view(id);

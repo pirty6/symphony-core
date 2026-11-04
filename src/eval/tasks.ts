@@ -168,6 +168,37 @@ export function requirementCoverage(
   };
 }
 
+/**
+ * A concern the request does not state, judged in the maestro's composed score: a step runs
+ * the tests, and the score's text deals with the concern (`remedy`). Debate depth and the
+ * debaters' model or effort decide whether it is caught, so a cheaper debate is A/B'd on it.
+ */
+export function plantedConcern(
+  outcome: string,
+  state: Readonly<Record<string, unknown>>,
+  remedy: RegExp,
+  concern: string,
+): EvalCheck {
+  const score = state.finalPattern as { nodes?: ScoreNodeLike[] } | undefined;
+  const nodes = (score?.nodes ?? []).filter(Boolean);
+  const notes: string[] = [];
+  if (nodes.length === 0) notes.push('missing: no composed score');
+  else {
+    if (!nodes.some((n) => n.tool === 'tests.run' || /\btests?\b/i.test(n.directive ?? '')))
+      notes.push('missing: no step runs the tests');
+    if (!remedy.test(JSON.stringify(score)))
+      notes.push(`missing: the planted concern (${concern})`);
+  }
+  return {
+    pass: outcome === 'success' && notes.length === 0,
+    notes: [`outcome ${outcome}`, ...(notes.length ? notes : [`caught: ${concern}`])],
+  };
+}
+
+/** The closed form n*(n+1)/2 is wrong below 1 and for fractions: what the debate must catch. */
+export const SUM_CONCERN =
+  /negative|n\s*<=?\s*[01]\b|n\s*is\s*(less than|below)\s*1|below 1|less than 1|non-?integer|fraction|decimal|Math\.floor|floor|round(ed|s)? down|integer part/i;
+
 const PKG = '{ "name": "fixture", "type": "module", "scripts": { "test": "node --test" } }\n';
 const IGNORE = '.symphony/\nnode_modules/\n';
 /** Content hash as memory.json stores it for lessons (16 hex characters of sha256). */
@@ -697,6 +728,30 @@ export const EVAL_TASKS: readonly EvalTask[] = [
     },
     check: async ({ outcome, state }) => requirementCoverage(outcome, state, [/\btests?\b/i]),
   },
+  ...(['', '-tier3'] as const).map(
+    (suffix): EvalTask => ({
+      // A concern the request leaves out: the closed form breaks the documented n < 1 and
+      // fraction cases. Tier 4 (critic on) against tier 3; A/B a cheaper debate on tier 4.
+      id: `maestro-planted-concern${suffix}`,
+      pattern: 'maestro',
+      complexity: suffix ? 3 : 4,
+      // A tier-4 debate costs minutes: named with --task, not in the default run.
+      heavy: true,
+      inputs: {
+        request:
+          'Speed up sumTo in src/sum.js for large n: replace the loop with the closed form n*(n+1)/2. Change only src/sum.js.',
+      },
+      files: {
+        'package.json': PKG,
+        '.gitignore': IGNORE,
+        'src/sum.js':
+          '/** Sum of the whole numbers from 1 to n: 0 when n < 1, and a fraction counts as its whole part. */\nexport function sumTo(n) {\n  let total = 0;\n  for (let i = 1; i <= n; i++) total += i;\n  return total;\n}\n',
+        'test/sum.test.js': `${TEST_HEAD}import { sumTo } from '../src/sum.js';\ntest('sums 1..n', () => assert.equal(sumTo(4), 10));\ntest('0 below 1', () => assert.equal(sumTo(-3), 0));\ntest('whole part of a fraction', () => assert.equal(sumTo(2.5), 3));\n`,
+      },
+      check: async ({ outcome, state }) =>
+        plantedConcern(outcome, state, SUM_CONCERN, 'n < 1 and fractions break the closed form'),
+    }),
+  ),
   {
     // A review of uncommitted work with one real bug: found, cited, and not called clean.
     id: 'review-off-by-one',
