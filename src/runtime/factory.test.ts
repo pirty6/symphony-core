@@ -35,6 +35,9 @@ describe('envConfig', () => {
       deltaRepair: false,
       headerInSystem: false,
     });
+    // Ending a session at the answer is opt-in.
+    expect(envConfig({ SYMPHONY_END_ON_SUBMIT: '1' })).toMatchObject({ endOnSubmit: true });
+    expect(envConfig({ SYMPHONY_END_ON_SUBMIT: '0' }).endOnSubmit).toBeUndefined();
     expect(parseNodeModels('=x,y=')).toBeUndefined();
   });
 });

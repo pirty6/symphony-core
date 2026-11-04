@@ -624,7 +624,10 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     return 1;
   }
   const switches = Object.entries(process.env)
-    .filter(([k, v]) => /^SYMPHONY_(NODE_MODELS|DELTA_REPAIR|HEADER_IN_SYSTEM)$/.test(k) && v)
+    .filter(
+      ([k, v]) =>
+        /^SYMPHONY_(NODE_MODELS|DELTA_REPAIR|HEADER_IN_SYSTEM|END_ON_SUBMIT)$/.test(k) && v,
+    )
     .map(([k, v]) => `${k}=${v}`)
     .toSorted();
   const improvisation = levelOf(args.values.improvisation);
