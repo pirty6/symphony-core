@@ -100,6 +100,67 @@ const COVERAGE = [
   `text(len(findings) - count(findings, "${FILE_CITE}")) + " of " + text(len(findings))`,
 ].join(' + ');
 
+/** A list as Markdown bullets, or "none". */
+const bullets = (list: string) => `if(len(${list}) == 0, "none", "- " + join(${list}, "\n- "))`;
+
+/**
+ * The answer for an AI agent, by the engine from what the run recorded: what was asked, how sure
+ * it is, every sub-question and ruling, the full cited answer with its coverage, the verified
+ * evidence, what not to rely on, what is still open, and what to do with it. Complete and
+ * deterministic: an agent reading it needs nothing else from the run.
+ */
+const HANDOFF = [
+  '"# Investigation brief for an AI agent\n\nRead all of it before you act. Claims cite findings by id, like [F3]; the findings are under Evidence, each checked against the workspace. The most important comes first.\n\n## Task\n\nQuestion: " + question',
+  'if(empty(hint), "", "\nHint from the person who asked: " + hint)',
+  '"\n\n## Status\n\n" + if(len(doubts) == 0, "Settled: every sub-question is answered from the evidence, and no objection is open.", "Not settled. Why:\n- " + join(doubts, "\n- "))',
+  '"\nConfidence that the findings answer the question (0 to 1): " + text(confidence)',
+  '"\n\n## Instructions for the next agent\n\n- Start from Still open: what is settled below need not be investigated again.\n- When you rely on a finding, cite its id. Before you change code it cites, read the cited line again: the files may have changed since this run.\n- Use the Do not rely on entries only as leads to check.\n- Treat recommendations in the Answer as proposals: check each against the current code, and run the tests after a change.\n- Where this brief says open or unknown, say so in your own answer; do not fill the gap with a guess."',
+  `"\n\n## Still open\n\n" + ${bullets('openQuestions + disagreements')}`,
+  `"\n\n## Sub-questions and their answers\n\n" + ${bullets('subAnswers')}`,
+  `"\n\n## Hypotheses and rulings\n\n" + ${bullets('rulings')}`,
+  `"\n\n## Evidence: the findings the answer cites\n\n" + ${bullets('citedFindings')}`,
+  `"\n\n## Do not rely on: findings that could not be verified\n\n" + ${bullets('unverified')}`,
+  '"\n\n## Answer (with what was and was not investigated)\n\n" + answer',
+].join(' + ');
+
+/**
+ * The answer for people, by an AI, in ASD-STE100 Simplified Technical English: short sentences,
+ * one idea each, common words, active voice, terms explained. It rewords the cited answer and
+ * adds nothing; the AI version keeps the ids and the detail.
+ */
+const PLAIN_DIRECTIVE = [
+  'Write `summary`: the answer to `question` for a reader with no prior knowledge of the project. Use only what `answer`, `rulings`, `subAnswers`, `openQuestions`, `unresolvedObjections` and `doubts` say. Add nothing, and leave out nothing that changes the conclusion. Keep every number exact.',
+  'Write in Simplified Technical English (ASD-STE100):',
+  '- One idea in each sentence. Descriptive sentences have at most 25 words, instructions at most 20. Paragraphs have at most 6 sentences.',
+  '- Use the active voice and simple tenses. Write instructions as commands ("Run the tests.").',
+  '- Use common words, and use one word for one thing (do not change between "run", "execution" and "job").',
+  '- The first time you use a technical term, explain it in a few plain words. Do not use abbreviations without explaining them.',
+  '- Do not use citation ids ([F12]), file paths with line numbers, or hypothesis ids (H1). The AI version keeps them.',
+  'Use these Markdown sections, in this order:',
+  '## In short: the answer in 2 or 3 sentences.',
+  '## What we found: a list of the main facts, each one sentence.',
+  '## What to do: numbered steps, one command each, only if the answer recommends actions. Leave this section out if it does not.',
+  '## What is not certain: a list of what is still open or unsure, each one sentence; "Nothing." if all is settled.',
+  '## How we checked: 1 to 3 sentences on what was examined (code, history, web pages, tests).',
+].join('\n');
+
+const PLAIN_CHECKS = [
+  { expr: 'len(summary) > 0', message: 'Write the summary.' },
+  {
+    expr: 'len(longSentences(summary, 25)) == 0',
+    message: 'Make each sentence 25 words or fewer: split long sentences into two.',
+  },
+  {
+    expr: 'len(refs(summary)) == 0',
+    message: 'Leave out citation ids like [F12]: the AI version keeps them.',
+  },
+  {
+    expr: 'includes(summary, "## In short") && includes(summary, "## What we found") && includes(summary, "## What is not certain") && includes(summary, "## How we checked")',
+    message:
+      'Use the sections ## In short, ## What we found, ## What is not certain and ## How we checked (and ## What to do when there are actions).',
+  },
+];
+
 const LESSON_INPUTS = {
   problem: 'question',
   // The checked sub-answers, whole: not answer prose cut at a length.
@@ -254,19 +315,10 @@ export const investigate: Pattern = {
     'Answer a question thoroughly with the evidence it needs: repo files (big repos are searched first), web pages, experiments, history, GitHub, dependencies, MCP. Nothing listed is skipped; every claim is cited.',
   verbTriggers: ['investigate', 'explain', 'why', 'how does', 'find out', 'research'],
   requiredContext: ['question'],
-  result: [
-    'answer',
-    'rulings',
-    'openQuestions',
-    'disagreements',
-    'unresolvedObjections',
-    // The evidence the answer rests on, so a chained run (fix, refactor…) need not find it again.
-    'citedFindings',
-    // Why a partial answer is partial.
-    'doubts',
-    // Each sub-question, answered (cited) or said to be open.
-    'subAnswers',
-  ],
+  // Two readers: people first (plain, short), then an AI agent (complete, cited, with
+  // instructions). The handoff holds the answer, rulings, sub-answers, the cited evidence, what
+  // is open and why a partial answer is partial, so a chained run (fix…) gets all of it.
+  result: ['summary', 'handoff'],
   goalFrom: 'question',
   // A backstop, never the bound: the loops are bounded by their counters and the citation
   // checks' visit caps (a scripted worst case takes about 400-525 steps; exhaustive stops at a
@@ -277,6 +329,24 @@ export const investigate: Pattern = {
     [
       { name: 'question', type: 'string', description: 'What to find out' },
       { name: 'hint', type: 'string', description: 'Optional human clarification' },
+      {
+        name: 'plainSummary',
+        type: 'boolean',
+        initial: true,
+        description:
+          'Start the result with a short version for people (Simplified Technical English)',
+      },
+      {
+        name: 'summary',
+        type: 'string',
+        description: 'The answer for people: short, plain English, no citation ids',
+      },
+      {
+        name: 'handoff',
+        type: 'string',
+        description:
+          'The answer for an AI agent: everything found, cited, with instructions (by the engine)',
+      },
       { name: 'hintAsked', type: 'boolean', description: 'A person was asked for a hint once' },
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
@@ -1986,6 +2056,36 @@ export const investigate: Pattern = {
         },
       ],
     },
+    {
+      id: 'handoffDoc',
+      kind: 'compute',
+      label: 'Write the AI version',
+      // From the record, not by the AI: complete and the same every time.
+      assign: [{ field: 'handoff', expr: HANDOFF }],
+    },
+    { id: 'wantPlain', kind: 'condition', label: 'Plain summary?', expression: 'plainSummary' },
+    {
+      id: 'explain',
+      kind: 'agent',
+      role: 'assessor',
+      isolated: true,
+      label: 'Write the version for people',
+      // Rewording what is already decided: a cheaper tier does it well.
+      complexityShift: -1,
+      directive: PLAIN_DIRECTIVE,
+      reads: [
+        'question',
+        'answer',
+        'rulings',
+        'subAnswers',
+        'openQuestions',
+        'unresolvedObjections',
+        'doubts',
+      ],
+      writes: ['summary'],
+      retries: 2,
+      checks: PLAIN_CHECKS,
+    },
     // Only a settled answer teaches: what was asked and how it ended, a lead for later questions
     // like it, stale once its cited files change. An unsettled one leaves no lesson.
     // Only one that names a workspace file: a file-less lesson cannot go stale with the code.
@@ -2128,18 +2228,24 @@ export const investigate: Pattern = {
     ...challenge.edges,
     { id: 'attachParts-useJudge', from: 'attachParts', to: 'useJudge' },
     { id: 'useJudge-take', from: 'useJudge', to: 'takeJudgeItems', branch: 'then' },
-    { id: 'useJudge-settled', from: 'useJudge', to: 'settled', branch: 'else' },
+    { id: 'useJudge-settled', from: 'useJudge', to: 'noteDoubts', branch: 'else' },
     { id: 'take-context', from: 'takeJudgeItems', to: 'judgeContext' },
     { id: 'context-hasItems', from: 'judgeContext', to: 'hasJudgeItems' },
     { id: 'hasItems-judge', from: 'hasJudgeItems', to: 'judgeSupport', branch: 'then' },
     { id: 'hasItems-split', from: 'hasJudgeItems', to: 'splitRulings', branch: 'else' },
     { id: 'judge-split', from: 'judgeSupport', to: 'splitRulings' },
-    { id: 'split-settled', from: 'splitRulings', to: 'settled' },
+    { id: 'split-settled', from: 'splitRulings', to: 'noteDoubts' },
+    // Why it is unsettled is noted first (nothing, when it is settled), so both readers' versions
+    // say it; then whether it is settled decides how the run ends.
+    { id: 'note-handoff', from: 'noteDoubts', to: 'handoffDoc' },
+    { id: 'handoff-wantPlain', from: 'handoffDoc', to: 'wantPlain' },
+    { id: 'wantPlain-explain', from: 'wantPlain', to: 'explain', branch: 'then' },
+    { id: 'wantPlain-settled', from: 'wantPlain', to: 'settled', branch: 'else' },
+    { id: 'explain-settled', from: 'explain', to: 'settled' },
     { id: 'settled-learn', from: 'settled', to: 'learnAnswer', branch: 'then' },
-    { id: 'settled-note', from: 'settled', to: 'noteDoubts', branch: 'else' },
+    { id: 'settled-doubts', from: 'settled', to: 'doubts', branch: 'else' },
     { id: 'learn-cited', from: 'learnAnswer', to: 'rememberCited' },
     { id: 'cited-done', from: 'rememberCited', to: 'done' },
-    { id: 'note-doubts', from: 'noteDoubts', to: 'doubts' },
   ],
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
@@ -2206,6 +2312,31 @@ export const investigate: Pattern = {
       },
     },
     agents: {
+      explain: () => ({
+        updates: {
+          summary: [
+            '## In short',
+            'The engine checks each answer from the AI before the answer changes the run. A wrong answer is sent back, and the run does not change.',
+            '',
+            '## What we found',
+            '- The engine compares each answer with a fixed list of fields and types.',
+            '- Each step can also have its own rules, for example "at least three items".',
+            '- The engine checks these rules before it records the answer.',
+            '',
+            '## What is not certain',
+            'Nothing.',
+            '',
+            '## How we checked',
+            'We read the engine code and its tests.',
+          ].join('\n'),
+        },
+        verdict: {
+          outcome: 'applied',
+          confidence: 0.9,
+          shouldTerminate: false,
+          reason: 'Reworded the cited answer in plain English.',
+        },
+      }),
       locate: () => ({
         updates: {
           scopeFiles: ['src/core/engine.ts', 'src/core/schema.ts', 'src/core/validate.ts'],

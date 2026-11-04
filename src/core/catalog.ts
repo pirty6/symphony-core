@@ -143,6 +143,12 @@ export const FEATURES: readonly Feature[] = [
     ],
   },
   {
+    field: 'plainSummary',
+    label: 'Plain summary',
+    description:
+      'On by default: the result starts with a short version for people, in Simplified Technical English (short sentences, common words, no citation ids), written from the cited answer. The full version for AI agents is always there. Off saves one model call.',
+  },
+  {
     field: 'verify',
     label: 'Run the tests (review)',
     description:

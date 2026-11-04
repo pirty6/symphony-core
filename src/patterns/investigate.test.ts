@@ -10,6 +10,7 @@ import type {
   EngineEvent,
   PreloadRecord,
   Resolution,
+  NodeResult,
 } from '../core/types.js';
 import { buildAgentPrompt } from '../runtime/provider.js';
 import { itemOf } from '../core/items.js';
@@ -921,7 +922,61 @@ describe('investigate hands on its evidence', () => {
         (f) => /^F\d+ /.test(f) && String(r.state.state.answer).includes(`[${f.split(' ')[0]}]`),
       ),
     ).toBe(true);
-    expect(investigate.result).toContain('citedFindings');
+    // The AI version carries them, each with its id, as the chained run reads it.
+    expect(investigate.result).toEqual(['summary', 'handoff']);
+    const handoff = String(r.state.state.handoff);
+    for (const f of cited) expect(handoff).toContain(`- ${f}`);
+  });
+
+  it('two versions: a plain one for people first, then a complete one for an AI agent', () => {
+    const { r } = runWith(['workspace']);
+    const s = r.state.state;
+    const handoff = String(s.handoff);
+    // The AI version: every section, the full answer, and what to do with it.
+    for (const h of [
+      '## Task',
+      '## Status',
+      '## Sub-questions and their answers',
+      '## Hypotheses and rulings',
+      '## Answer (with what was and was not investigated)',
+      '## Evidence: the findings the answer cites',
+      '## Do not rely on: findings that could not be verified',
+      '## Still open',
+      '## Instructions for the next agent',
+    ])
+      expect(handoff).toContain(h);
+    expect(handoff).toContain(String(s.answer));
+    expect(handoff).toContain(`Question: ${String(s.question)}`);
+    // The plain one: short sentences, no ids.
+    const summary = String(s.summary);
+    expect(summary).toMatch(/^## In short/);
+    expect(summary).not.toMatch(/\[F\d+\]/);
+    // Off: one model call fewer, and the AI version alone.
+    const off = runWith(['workspace'], demo.approvals, { context: { plainSummary: false } });
+    expect(off.ran).not.toContain('explain');
+    expect(off.r.state.state.summary).toBe('');
+    expect(String(off.r.state.state.handoff)).toContain('## Instructions for the next agent');
+  });
+
+  it('the plain version is sent back with each sentence that is too long, and with any id', () => {
+    let n = 0;
+    const long =
+      'This sentence is far too long for a reader who does not know the project, because it goes on and on without a single stop in it.';
+    const { r } = runWith(['workspace'], demo.approvals, {
+      agents: {
+        explain: (st) => {
+          n += 1;
+          const ok = demo.agents!.explain!(st, 0) as unknown as NodeResult;
+          const summary = String(ok.updates.summary);
+          return n === 1 ? { ...ok, updates: { summary: `${summary}\n\n${long} See [F1].` } } : ok;
+        },
+      },
+    });
+    const step = r.state.steps.find((x) => x.nodeId === 'explain')!;
+    const errors = step.attempts![0]!.errors.join(' ');
+    expect(errors).toContain(`Found: "${long.slice(0, 60)}`);
+    expect(errors).toMatch(/Leave out citation ids like \[F12\]/);
+    expect(r.state.outcome).toBe('success');
   });
 });
 
