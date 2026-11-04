@@ -35,6 +35,8 @@ export const review: Pattern = {
   verbTriggers: ['review', 'audit', 'check my changes'],
   requiredContext: ['target'],
   goalFrom: 'target',
+  // A PR link or number: the runtime checks the PR out apart and the review plays on its code.
+  checkout: 'target',
   result: ['report', 'findings', 'unverified', 'coverage', 'testsPassed'],
   maxSteps: 200,
   state: [
@@ -45,6 +47,15 @@ export const review: Pattern = {
         'Branch, commit range or PR to review (its code must be checked out here: citations are checked against this workspace)',
     },
     { name: 'hint', type: 'string', description: 'Optional: what to focus on' },
+    { name: 'prNumber', type: 'number', description: 'The PR checked out here (0: none)' },
+    {
+      name: 'prBase',
+      type: 'string',
+      description: 'The commit the PR merges into: `git diff <prBase> HEAD` is the PR',
+    },
+    { name: 'prFiles', type: 'string[]', description: 'The PR\'s changed files, "M\tpath"' },
+    { name: 'prPaths', type: 'string[]', description: "The PR's changed paths" },
+    { name: 'prError', type: 'string', description: 'Why the PR could not be fetched' },
     { name: 'diffSummary', type: 'string', description: 'What changed, per file' },
     {
       name: 'claims',
@@ -124,14 +135,34 @@ export const review: Pattern = {
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
     {
+      id: 'prInfo',
+      kind: 'tool',
+      label: 'Pull request',
+      tool: 'git.pr',
+      output: {
+        number: 'prNumber',
+        base: 'prBase',
+        files: 'prFiles',
+        paths: 'prPaths',
+        error: 'prError',
+      },
+    },
+    { id: 'prFetched', kind: 'condition', label: 'PR fetched?', expression: 'empty(prError)' },
+    {
+      id: 'noPr',
+      kind: 'compute',
+      label: 'Say why',
+      assign: [{ field: 'report', expr: '"Could not review: " + prError + "."' }],
+    },
+    {
       id: 'collect',
       kind: 'agent',
       role: 'assessor',
       label: 'Collect diff',
       // A PR can change on GitHub, which the workspace fingerprint does not see: never replayed.
       fresh: true,
-      directive: `Read the diff for \`target\` (e.g. git diff, or gh pr diff and gh pr view for a PR; use \`hint\` if set). List every changed file to review in \`files\` (paths only). List in \`skipped\` every changed file you leave out, with why ("path — lockfile", "— generated", "— binary"): leave out only lockfiles, generated, binary and deleted files ("path — deleted": the reviewers see the deletion in the diff). Summarize what changed per file in \`diffSummary\`, and in \`claims\` what the change says it does (the PR description or the commit messages, quoted briefly; "" if none). Set \`agents\` to how many reviewers should read in parallel (1 to ${MAX_AGENTS}): 1 for a few small files, more for a large diff. If there is no diff, leave \`files\` empty and say why in \`diffSummary\`.`,
-      reads: ['target', 'hint'],
+      directive: `Read the diff for \`target\` (use \`hint\` if set). When \`prBase\` is set, this workspace is the PR's code (its merge into the target branch, checked out by the engine): its change is exactly \`git diff <prBase> HEAD\`, and \`prFiles\` lists every changed file; read it that way, never from another source. Otherwise use git diff, or gh pr diff and gh pr view for a GitHub PR. List every changed file to review in \`files\` (paths only). List in \`skipped\` every changed file you leave out, with why ("path — lockfile", "— generated", "— binary"): leave out only lockfiles, generated, binary and deleted files ("path — deleted": the reviewers see the deletion in the diff). Summarize what changed per file in \`diffSummary\`, and in \`claims\` what the change says it does (the PR description or the commit messages, quoted briefly; "" if none). Set \`agents\` to how many reviewers should read in parallel (1 to ${MAX_AGENTS}): 1 for a few small files, more for a large diff. If there is no diff, leave \`files\` empty and say why in \`diffSummary\`.`,
+      reads: ['target', 'hint', 'prBase', 'prFiles'],
       writes: ['diffSummary', 'claims', 'files', 'skipped', 'agents'],
       retries: 2,
       checks: [
@@ -142,6 +173,15 @@ export const review: Pattern = {
         {
           expr: 'len(unmatched(skipped, " — ")) == 0',
           message: 'Give each skipped file with why: "path — lockfile".',
+        },
+        {
+          expr: 'empty(prBase) || subset(files, prPaths)',
+          message: 'List in files only paths the PR changes (prFiles), exactly as written there.',
+        },
+        {
+          expr: 'empty(prBase) || len(files) + len(skipped) == len(prPaths)',
+          message:
+            'Account for every file the PR changes (prFiles): each one in files, or in skipped with why.',
         },
       ],
     },
@@ -341,14 +381,25 @@ export const review: Pattern = {
     { id: 'clean', kind: 'end', label: 'Looks good', outcome: 'success' },
     { id: 'notVerified', kind: 'end', label: 'Could not verify', outcome: 'partial' },
     { id: 'partlyReviewed', kind: 'end', label: 'Reviewed in part', outcome: 'partial' },
+    {
+      id: 'noDiffReport',
+      kind: 'compute',
+      label: 'Say why',
+      assign: [{ field: 'report', expr: '"Could not review: " + diffSummary' }],
+    },
     { id: 'noDiff', kind: 'end', label: 'No changes found', outcome: 'failed' },
     { id: 'notReviewed', kind: 'end', label: 'Could not review', outcome: 'failed' },
   ],
   edges: [
-    { id: 'start-collect', from: 'start', to: 'collect' },
+    { id: 'start-prInfo', from: 'start', to: 'prInfo' },
+    { id: 'prInfo-fetched', from: 'prInfo', to: 'prFetched' },
+    { id: 'fetched-collect', from: 'prFetched', to: 'collect', branch: 'then' },
+    { id: 'fetched-noPr', from: 'prFetched', to: 'noPr', branch: 'else' },
+    { id: 'noPr-notReviewed', from: 'noPr', to: 'notReviewed' },
     { id: 'collect-hasDiff', from: 'collect', to: 'hasDiff' },
     { id: 'hasDiff-cap', from: 'hasDiff', to: 'capFiles', branch: 'then' },
-    { id: 'hasDiff-noDiff', from: 'hasDiff', to: 'noDiff', branch: 'else' },
+    { id: 'hasDiff-noDiff', from: 'hasDiff', to: 'noDiffReport', branch: 'else' },
+    { id: 'noDiffReport-end', from: 'noDiffReport', to: 'noDiff' },
     { id: 'cap-verifyOn', from: 'capFiles', to: 'verifyOn' },
     { id: 'verifyOn-tests', from: 'verifyOn', to: 'runTests', branch: 'then' },
     { id: 'verifyOn-analyze', from: 'verifyOn', to: 'analyze', branch: 'else' },

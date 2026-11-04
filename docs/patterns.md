@@ -528,9 +528,21 @@ flowchart TD
 
 Review a branch or PR. Only real issues are reported, each cited and checked.
 
-1. **Collect the diff** (never replayed: a PR can change on GitHub): the files to review, the
-   files left out and why (lockfiles, generated, binary), and what the change claims to do. No
-   changes ends `failed` ("no changes found"), not "looks good".
+0. **Check out the PR.** When `target` is a pull request link (Azure DevOps
+   `…/pullrequest/N` or GitHub `…/pull/N`) or "PR N", the runtime fetches `refs/pull/N/merge`
+   with your own git credentials. Both hosts publish that ref. It checks the commit out in a
+   temporary worktree outside your repository, and the review plays there, on the PR's own code,
+   whatever branch your workspace is on. The worktree is removed when the run ends, and your
+   workspace, branches and refs are left as they were. The `git.pr` step gives the PR's base and
+   changed files. A PR that cannot be fetched ends `failed` before any AI step, with why ("Could
+   not review: could not fetch refs/pull/N/merge … (Authentication failed)"). Only real AI runs
+   check out; scripted demos play on the workspace as it is.
+1. **Collect the diff** (never replayed: a PR can change on its host): the files to review, the
+   files left out and why (lockfiles, generated, binary, deleted), and what the change claims to
+   do. With a PR checked out, the diff is `git diff <prBase> HEAD`. Every changed file must be
+   listed or left out with why, and a path the PR does not change is sent back by name. No
+   changes ends `failed` with why in the report ("Could not review: …"), never an empty report
+   and never "looks good".
 2. **Cap.** At most `maxFiles` (60) files are reviewed; the rest are named as not reviewed.
 3. **Run the checks** (`verify`, on by default; a Features switch): the engine runs the tests,
    and `lintCommand` if set, on the code as it is. A project with no test command says "not run",
@@ -564,6 +576,9 @@ Known limits:
 ```mermaid
 flowchart TD
   n_start(["Start"])
+  n_prInfo[/"🔧 Pull request"/]
+  n_prFetched{"PR fetched?"}
+  n_noPr["Say why"]
   n_collect["🤖 Collect diff"]
   n_hasDiff{"Anything changed?"}
   n_capFiles["Files to review"]
@@ -586,12 +601,18 @@ flowchart TD
   n_clean(["Looks good · success"])
   n_notVerified(["Could not verify · partial"])
   n_partlyReviewed(["Reviewed in part · partial"])
+  n_noDiffReport["Say why"]
   n_noDiff(["No changes found · failed"])
   n_notReviewed(["Could not review · failed"])
-  n_start --> n_collect
+  n_start --> n_prInfo
+  n_prInfo --> n_prFetched
+  n_prFetched -->|"yes"| n_collect
+  n_prFetched -->|"no"| n_noPr
+  n_noPr --> n_notReviewed
   n_collect --> n_hasDiff
   n_hasDiff -->|"yes"| n_capFiles
-  n_hasDiff -->|"no"| n_noDiff
+  n_hasDiff -->|"no"| n_noDiffReport
+  n_noDiffReport --> n_noDiff
   n_capFiles --> n_verifyOn
   n_verifyOn -->|"yes"| n_runTests
   n_verifyOn -->|"no"| n_analyze
