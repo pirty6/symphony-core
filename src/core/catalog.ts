@@ -15,7 +15,7 @@ export const TOOL_OUTPUTS: Readonly<Record<string, readonly string[]>> = {
   'sources.catalog': ['names', 'descriptions'],
   'tests.run': ['passed', 'output', 'command'],
   'git.diff': ['diff', 'hash', 'files'],
-  'git.pr': ['number', 'base', 'files', 'error'],
+  'git.pr': ['number', 'base', 'files', 'paths', 'error'],
   'files.read': ['files'],
   'evidence.check': ['valid', 'invalid', 'checked'],
   'evidence.context': ['items'],
