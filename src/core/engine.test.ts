@@ -255,6 +255,25 @@ describe('engine: paths a subset check holds are read in its spelling', () => {
   });
 });
 
+describe('engine: a failed "none of these" check names what it found', () => {
+  const v = { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' };
+  it('names the long sentences a plain-English check found, at most 3', () => {
+    const check = { expr: 'len(longSentences(summary, 5)) == 0', message: 'Keep sentences short.' };
+    const r = acceptance(
+      [check],
+      {},
+      {
+        updates: { summary: 'Short. This sentence has far too many words. Fine.' },
+        verdict: v,
+      },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors[0]).toMatch(/ Found: "This sentence has far too many words\."\.$/);
+    const fine = acceptance([check], {}, { updates: { summary: 'Short. Fine.' }, verdict: v });
+    expect(fine.ok).toBe(true);
+  });
+});
+
 describe('engine: a failed subset check names what is not allowed', () => {
   const v = { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' };
   const check = {

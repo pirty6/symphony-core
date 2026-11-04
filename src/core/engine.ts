@@ -781,6 +781,38 @@ function notInSubset(expr: string, scope: Readonly<Record<string, unknown>>): st
   return ` Not allowed: ${head.join(', ')}${shown.length > 8 ? ` and ${shown.length - 8} more` : ''}.`;
 }
 
+const isZero = (e: Expr) => e.t === 'lit' && e.v === 0;
+const cut200 = (x: string) => (x.length > 200 ? `${x.slice(0, 200)}…` : x);
+
+/** What a failed "len(x) == 0" check found in x, named (at most 3, each cut), so it can be fixed. */
+function foundEntries(expr: string, scope: Readonly<Record<string, unknown>>): string {
+  const out: string[] = [];
+  const walk = (e: Expr): void => {
+    if (e.t === 'bin') {
+      if (e.op === '==') {
+        const len = isZero(e.r) ? e.l : isZero(e.l) ? e.r : undefined;
+        if (len?.t === 'call' && len.fn === 'len' && len.args[0]) {
+          const v = evalExpr(len.args[0], scope);
+          if (Array.isArray(v))
+            out.push(...v.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))));
+        }
+      }
+      [e.l, e.r].forEach(walk);
+    } else if (e.t === 'call') e.args.forEach(walk);
+    else if (e.t === 'not') walk(e.e);
+  };
+  try {
+    walk(parseExpr(expr));
+  } catch {
+    return '';
+  }
+  if (out.length === 0) return '';
+  return ` Found: ${out
+    .slice(0, 3)
+    .map((x) => JSON.stringify(cut200(x)))
+    .join(', ')}${out.length > 3 ? ` and ${out.length - 3} more` : ''}.`;
+}
+
 /**
  * The allowed spelling of a path the AI wrote another way: backslashes, a leading "./", quotes or
  * backticks around it, a ":line" after it, or the workspace's absolute path before it. Undefined
@@ -858,7 +890,9 @@ export function acceptance(
   for (const c of checks) {
     try {
       if (!evaluateGuard(c.expr, scope))
-        errors.push(`${c.message} (check failed: ${c.expr})${notInSubset(c.expr, scope)}`);
+        errors.push(
+          `${c.message} (check failed: ${c.expr})${notInSubset(c.expr, scope)}${foundEntries(c.expr, scope)}`,
+        );
     } catch (e) {
       errors.push(`${c.message} (check '${c.expr}' errored: ${(e as Error).message})`);
     }
