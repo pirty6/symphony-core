@@ -4,6 +4,7 @@
  *   repo.files       every file in the workspace (git-aware), plus what was excluded and why
  *   sources.catalog  every evidence source available to agents right now
  */
+import { resolvePaths } from '../core/paths.js';
 import { DEMO_ONLY } from '../core/catalog.js';
 import { rankFiles } from './rank.js';
 import { workspaceTools } from './workspace-tools.js';
@@ -289,6 +290,21 @@ export function builtinTools(opts: CatalogOptions = {}): ToolSpec[] {
           [args.question, args.subQuestions, args.searchTerms, args.hint].flatMap(strings),
           ctx.signal,
         );
+      },
+    },
+    {
+      name: 'paths.resolve',
+      description:
+        "Resolve paths an AI named against `files`: the right file written another way, a folder's files, a glob's matches; in the order named, each once, at most `max`. { files, reasons (at the same position), unmatched ('entry — not a file of this repository'), over (beyond max) }.",
+      outputs: ['files', 'reasons', 'unmatched', 'over'],
+      run: async (args) => {
+        const r = resolvePaths(
+          Array.isArray(args.entries) ? args.entries : [],
+          Array.isArray(args.reasons) ? args.reasons : [],
+          strings(args.files),
+          typeof args.max === 'number' ? args.max : Number.POSITIVE_INFINITY,
+        );
+        return { files: r.files, reasons: r.reasons, unmatched: r.unmatched, over: r.over };
       },
     },
     {

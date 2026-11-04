@@ -118,6 +118,7 @@ describe('sources.catalog', () => {
     expect([...tools.keys()]).toEqual([
       'repo.files',
       'repo.rank',
+      'paths.resolve',
       'sources.catalog',
       'tests.run',
       'files.read',
