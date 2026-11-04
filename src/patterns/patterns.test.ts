@@ -2,11 +2,39 @@ import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { toPerformance } from '../core/engine.js';
 import { hashOf } from '../core/hash.js';
+import { codeStandardFor } from '../core/standards.js';
 import { runScripted } from '../core/scripted.js';
 import { validatePattern } from '../core/validate.js';
 import { findPattern, PATTERNS, routePrompt } from './index.js';
 
 describe('pattern library', () => {
+  it('holds every step that edits or reviews code to Clean Code', () => {
+    const held = PATTERNS.flatMap((p) =>
+      compileScore(p, { goal: 'g', context: p.demo?.context ?? {} })
+        .nodes.filter((n) => n.kind === 'agent')
+        .map((n) => [`${p.name}.${n.id}`, codeStandardFor(n)] as const)
+        .filter(([, mode]) => mode),
+    );
+    const of = (mode: string) => held.filter(([, m]) => m === mode).map(([id]) => id);
+    // Every executor with workspace tools writes code; the code reviewers judge it.
+    expect(of('write')).toEqual(
+      expect.arrayContaining([
+        'fix.apply',
+        'refactor.apply',
+        'implement.apply',
+        'implement.writeTests',
+      ]),
+    );
+    expect(of('review')).toEqual(
+      expect.arrayContaining([
+        'review.analyze',
+        'fix.prReview',
+        'refactor.prReview',
+        'implement.prReview',
+      ]),
+    );
+  });
+
   it.each(PATTERNS.map((p) => [p.name, p] as const))('%s is valid', (_name, p) => {
     const report = validatePattern(p);
     expect(report.errors).toEqual([]);
