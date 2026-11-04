@@ -60,6 +60,23 @@ describe('buildAgentPrompt', () => {
     expect(p).toContain('- updates.findings is required');
   });
 
+  it("states the step's checks up front, once each, before the input", () => {
+    expect(buildAgentPrompt(pause)).not.toContain('checked before it is recorded');
+    const p = buildAgentPrompt({
+      ...pause,
+      checks: [
+        { expr: 'len(failureModes) > 0', message: 'Name at least one failure mode.' },
+        { expr: 'len(triage) == len(failureModes)', message: 'One triage entry per failure mode.' },
+        { expr: 'len(failureModes) < 20', message: 'Name at least one failure mode.' },
+      ],
+    });
+    const at = p.indexOf('sent back unless it passes each of these:');
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(p.indexOf('## Input'));
+    expect(p.match(/Name at least one failure mode\./g)).toHaveLength(1);
+    expect(p).toContain('  - One triage entry per failure mode.');
+  });
+
   it('is deterministic', () => {
     expect(buildAgentPrompt(pause)).toBe(buildAgentPrompt(pause));
   });

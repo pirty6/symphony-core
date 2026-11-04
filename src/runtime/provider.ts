@@ -136,6 +136,13 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
   );
   if (pause.outputSchema.length === 0)
     lines.push('- This step writes no state: send `updates: {}`.');
+  // Said up front, a check costs nothing; learned from a rejection, it costs a model call.
+  const checks = [...new Set((pause.checks ?? []).map((c) => c.message))];
+  if (checks.length)
+    lines.push(
+      '- Your answer is checked before it is recorded, and sent back unless it passes each of these:',
+      ...checks.map((m) => `  - ${m}`),
+    );
   if (pause.cites) {
     lines.push(
       `- Write each \`${pause.cites}\` entry from the workspace as "path:line — fact \`exact text from that line\`" (a short verbatim quote in backticks). The file, the line and the quote are checked, and entries that fail are sent back or dropped. Entries from other sources: "source | location — fact".`,
