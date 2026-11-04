@@ -1,5 +1,6 @@
 import { MAX_AGENTS, type Pattern } from '../core/types.js';
 import { TEST_PATH } from './phases/stability.js';
+import { bullets, READER_STATE, readers } from './phases/readers.js';
 import {
   checkFindings,
   CITE_BY_ID,
@@ -7,6 +8,38 @@ import {
   EVIDENCE_STATE,
   MERGE_FINDINGS,
 } from './phases/evidence.js';
+
+/**
+ * The review for an AI agent (the engine writes it from the record): what was reviewed, how
+ * it ended, what to do, the verified findings, what not to rely on, the checks and the coverage.
+ */
+const REVIEW_HANDOFF = [
+  '"# Code review brief for an AI agent\n\nRead all of it before you act. Each finding cites the code as path:line with a quote, and has an id like F3. The most important comes first.\n\n## Task\n\nReview of: " + target',
+  'if(empty(hint), "", "\nFocus asked for: " + hint)',
+  '"\n\n## Status\n\n" + if(reviewStatus == "issues", "Issues found: see Findings.", if(reviewStatus == "notVerified", "Not verified: the findings\' quotes are not in this checkout, so nothing could be confirmed.", if(reviewStatus == "partlyReviewed", "Reviewed in part: see Coverage for what was not reviewed or not checked.", "Looks good: every changed file was reviewed, every finding checked, and no issue found.")))',
+  '"\nTests: " + if(!verify, "not run (verify is off)", if(testsPassed, "passed", "FAILED")) + if(empty(lintCommand), "", "; lint: " + if(lintPassed, "passed", "FAILED"))',
+  '"\n\n## Instructions for the next agent\n\n- Fix the findings HIGH first. Before you change a line, read it again: the code may have changed since this review.\n- Run the tests after each change; a failing test the review reported must pass.\n- Use the Do not rely on entries only as leads to check.\n- Files the coverage lists as not reviewed are not known to be good: review them before you rely on them."',
+  `"\n\n## Findings (checked against the code)\n\n" + ${bullets('findings')}`,
+  `"\n\n## Do not rely on: findings that could not be verified\n\n" + ${bullets('unverified')}`,
+  '"\n\n## What the change says it does\n\n" + if(empty(claims), "not stated", claims)',
+  '"\n\n## Coverage\n\n" + if(empty(coverage), "Every changed file was reviewed.", coverage)',
+  'if(!testsPassed, "\n\n## Test output\n\n" + testOutput, "")',
+  'if(!lintPassed, "\n\n## Lint output\n\n" + lintOutput, "")',
+  '"\n\n## The review as written\n\n" + report',
+].join(' + ');
+
+const READERS = readers({
+  handoff: REVIEW_HANDOFF,
+  about: 'the review of `target`: whether the change is safe to merge, and what to fix',
+  sources: ['report', 'findings', 'coverage', 'testsPassed', 'lintPassed', 'claims', 'unverified'],
+  ends: [
+    { id: 'issues', label: 'Issues reported' },
+    { id: 'notVerified', label: 'Could not verify' },
+    { id: 'partlyReviewed', label: 'Reviewed in part' },
+    { id: 'clean', label: 'Looks good' },
+  ],
+  status: 'reviewStatus',
+});
 
 const v = (reason: string) => ({
   outcome: 'applied' as const,
@@ -37,7 +70,9 @@ export const review: Pattern = {
   goalFrom: 'target',
   // A PR link or number: the runtime checks the PR out apart and the review plays on its code.
   checkout: 'target',
-  result: ['report', 'findings', 'unverified', 'coverage', 'testsPassed'],
+  // People first (plain, short), then an AI agent (the findings, checks and coverage, with
+  // instructions): a chained fix gets the brief whole.
+  result: ['summary', 'handoff'],
   maxSteps: 200,
   state: [
     {
@@ -130,6 +165,8 @@ export const review: Pattern = {
       description: 'What was not reviewed or not checked, and why',
     },
     { name: 'report', type: 'string', description: 'The review, by severity' },
+    { name: 'reviewStatus', type: 'string', description: 'The end reached (by the engine)' },
+    ...READER_STATE,
   ],
   start: 'start',
   nodes: [
@@ -389,8 +426,9 @@ export const review: Pattern = {
     },
     { id: 'noDiff', kind: 'end', label: 'No changes found', outcome: 'failed' },
     { id: 'notReviewed', kind: 'end', label: 'Could not review', outcome: 'failed' },
+    ...READERS.nodes,
   ],
-  edges: [
+  edges: READERS.route([
     { id: 'start-prInfo', from: 'start', to: 'prInfo' },
     { id: 'prInfo-fetched', from: 'prInfo', to: 'prFetched' },
     { id: 'fetched-collect', from: 'prFetched', to: 'collect', branch: 'then' },
@@ -422,7 +460,7 @@ export const review: Pattern = {
     { id: 'gaps-clean', from: 'anyGaps', to: 'cleanReport', branch: 'else' },
     { id: 'partReport-end', from: 'partReport', to: 'partlyReviewed' },
     { id: 'cleanReport-clean', from: 'cleanReport', to: 'clean' },
-  ],
+  ]).concat(READERS.edges),
   demo: {
     goal: 'Review the current branch',
     context: { target: 'HEAD~1..HEAD' },
@@ -431,6 +469,29 @@ export const review: Pattern = {
       checkReview: (s) => ({ valid: s.newFindings, invalid: [] }),
     },
     agents: {
+      explain: () => ({
+        updates: {
+          summary: [
+            '## In short',
+            'The change has one serious problem. Fix it before you merge the change.',
+            '',
+            '## What we found',
+            '- The new retry code can run the same step more than three times.',
+            '- The tests pass, but no test checks the retry limit.',
+            '',
+            '## What to do',
+            '1. Stop the retries after the third try.',
+            '2. Add a test for the retry limit.',
+            '',
+            '## What is not certain',
+            'Nothing.',
+            '',
+            '## How we checked',
+            'We read each changed file and ran the tests.',
+          ].join('\n'),
+        },
+        verdict: v('Reworded the review in plain English.'),
+      }),
       collect: () => ({
         updates: {
           diffSummary: 'src/core/engine.ts: new retry logic',

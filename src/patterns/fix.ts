@@ -2,6 +2,7 @@ import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
 import { prReviewPhase } from './phases/prReview.js';
+import { bullets, READER_STATE, readers } from './phases/readers.js';
 import { stabilityPhases, targetFailed } from './phases/stability.js';
 import { TESTS_KEPT_CHECK, testFirstPhase } from './phases/testFirst.js';
 import {
@@ -15,6 +16,53 @@ import {
   recallMemory,
   rememberLessonNode,
 } from './phases/evidence.js';
+
+/**
+ * The fix for an AI agent (the engine writes it from the record): the issue, how it ended, what
+ * to do next, the root cause and plan, what changed, the checks, and the evidence.
+ */
+const FIX_HANDOFF = [
+  '"# Fix brief for an AI agent\n\nRead all of it before you act. Evidence cites the code as path:line with a quote, and has an id like F3. The most important comes first.\n\n## Task\n\nIssue: " + issue',
+  'if(empty(hint), "", "\nHint from the person who asked: " + hint)',
+  '"\n\n## Status\n\n" + if(fixStatus == "fixed", "Fixed: the change is in the workspace, the tests pass and the review approved it.", if(fixStatus == "uncertified", "Not certified: the change is in, but the stability check could not show the intermittent failure is gone.", if(fixStatus == "gaveUp", "Gave up: no change made the tests pass. Last failure (" + failureKind + "): " + failureReason, if(fixStatus == "reviewStopped", "Stopped at review: the change is in, but the review asked for changes (" + reviewDecision + ").", "Plan rejected: nothing was changed."))))',
+  '"\nTests: " + if(testsPassed, "passed", "FAILED")',
+  '"\n\n## Instructions for the next agent\n\n" + if(fixStatus == "fixed", "- Check the changed files below against the issue before you build on them. Run the tests after any further change.", if(fixStatus == "rejected", "- The plan below was rejected: do not apply it. Start from the root cause and the open objections.", "- The issue is not solved. Start from the status above, the review comments and the open objections, then the root cause. Read each cited line again before you change it.")) + "\n- Where this brief says unknown or open, say so; do not fill the gap with a guess."',
+  '"\n\n## Root cause\n\n" + if(empty(rootCause), "not found", rootCause)',
+  '"\n\n## Plan\n\n" + if(empty(plan), "none", plan)',
+  `"\n\n## Changed files\n\n" + ${bullets('changedFiles')}`,
+  `"\n\n## Review\n\n" + if(empty(reviewDecision), "not reached", reviewDecision) + "\n" + ${bullets('reviewComments')}`,
+  `"\n\n## Open objections\n\n" + ${bullets('unresolvedObjections')}`,
+  'if(empty(stabilityReport), "", "\n\n## Stability\n\n" + stabilityReport)',
+  `if(len(maskingFlags) == 0, "", "\n\n## Changes that may hide the failure\n\n" + ${bullets('maskingFlags')})`,
+  `"\n\n## Hypotheses and rulings\n\n" + ${bullets('rulings')}`,
+  `"\n\n## Evidence\n\n" + ${bullets('findings')}`,
+].join(' + ');
+
+const READERS = readers({
+  handoff: FIX_HANDOFF,
+  about: 'what was done about `issue`, and whether it is fixed',
+  sources: [
+    'issue',
+    'rootCause',
+    'plan',
+    'changedFiles',
+    'testsPassed',
+    'failureKind',
+    'failureReason',
+    'reviewDecision',
+    'reviewComments',
+    'stabilityReport',
+    'unresolvedObjections',
+  ],
+  ends: [
+    { id: 'fixed', label: 'Fixed' },
+    { id: 'uncertified', label: 'Not certified' },
+    { id: 'gaveUp', label: 'Gave up' },
+    { id: 'reviewStopped', label: 'Stopped at review' },
+    { id: 'rejected', label: 'Plan rejected' },
+  ],
+  status: 'fixStatus',
+});
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -108,20 +156,9 @@ export const fix: Pattern = {
   verbTriggers: ['fix', 'bug', 'broken', 'repair', 'crash', 'failing'],
   requiredContext: ['issue'],
   goalFrom: 'issue',
-  result: [
-    'reviewDecision',
-    'reviewComments',
-    'rootCause',
-    'plan',
-    'changedFiles',
-    'testsPassed',
-    'failureKind',
-    'failureReason',
-    'rulings',
-    'unresolvedObjections',
-    'stabilityReport',
-    'maskingFlags',
-  ],
+  // People first (plain, short), then an AI agent (the root cause, plan, changes, checks and
+  // evidence, with instructions): a chained run gets the brief whole.
+  result: ['summary', 'handoff'],
   // The stability gate takes about three steps per run (49 runs per patch by default).
   maxSteps: 1000,
   state: withState(
@@ -180,6 +217,8 @@ export const fix: Pattern = {
       },
       ...EVIDENCE_STATE,
       ...MEMORY_STATE,
+      { name: 'fixStatus', type: 'string', description: 'The end reached (by the engine)' },
+      ...READER_STATE,
     ],
     hypotheses,
     challenge,
@@ -386,8 +425,9 @@ export const fix: Pattern = {
     { id: 'uncertified', kind: 'end', label: 'Not certified', outcome: 'partial' },
     { id: 'gaveUp', kind: 'end', label: 'Gave up', outcome: 'failed' },
     { id: 'rejected', kind: 'end', label: 'Plan rejected', outcome: 'partial' },
+    ...READERS.nodes,
   ],
-  edges: [
+  edges: READERS.route([
     { id: 'start-baseline', from: 'start', to: 'baseline' },
     { id: 'baseline-snapshot', from: 'baseline', to: 'snapshot' },
     { id: 'snapshot-recall', from: 'snapshot', to: 'recall' },
@@ -420,10 +460,30 @@ export const fix: Pattern = {
     ...edit.edges,
     ...stability.gate.edges,
     ...prReview.edges,
-  ],
+  ]).concat(READERS.edges),
   demo: {
     context: { issue: 'Page 2 repeats the last item of page 1' },
     agents: {
+      explain: () => ({
+        updates: {
+          summary: [
+            '## In short',
+            'The bug is fixed. Page 2 does not show the last item of page 1 again.',
+            '',
+            '## What we found',
+            '- Each page started one item too early.',
+            '- The change makes each page start at the right item.',
+            '- All tests pass with the change.',
+            '',
+            '## What is not certain',
+            'Nothing.',
+            '',
+            '## How we checked',
+            'We read the paging code and ran the tests before and after the change.',
+          ].join('\n'),
+        },
+        verdict: v('Reworded the fix in plain English.'),
+      }),
       prReview: () => ({
         updates: {
           reviewDecision: 'APPROVE',

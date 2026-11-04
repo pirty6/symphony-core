@@ -328,11 +328,12 @@ describe('feature switches', () => {
     expect(rows.find((r) => r.feature.field === 'maxExpandRounds')).toMatchObject({ value: '2', default: '2' })
     expect(rows.find((r) => r.feature.field === 'narrowRead')).toMatchObject({ value: 'false', default: 'false' })
     expect(rows.find((r) => r.feature.field === 'readerHypotheses')).toMatchObject({ value: 'true', default: 'true' })
-    // fix has the debate's switch and its own two; hangman none; the maestro every one it may compose.
+    // fix has the debate's switch, its own two and the plain summary; hangman none; the maestro every one it may compose.
     expect(featureRows(fix, PATTERNS, {}).map((r) => r.feature.field)).toEqual([
       'pragmatistFrom',
       'reproduceFirst',
       'hypothesesPerResearch',
+      'plainSummary',
     ])
     expect(featureRows(hangman, PATTERNS, {})).toEqual([])
     expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(14)

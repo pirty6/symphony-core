@@ -298,6 +298,12 @@ passes on a re-run).
   result: `src/a.test.ts > suite > test` for vitest, the test's name for node and jest. If it is
   wrong, the control never sees it fail, and the run stops at "Flake not shown".
 
+**Two versions of the result.** As in investigate (step 11), the result starts with a short version
+for people in Simplified Technical English (`summary`, checked by the engine; the `plainSummary`
+switch turns it off), then a brief for an AI agent written by the engine from the record
+(`handoff`): the status (fixed, not certified, gave up, stopped at review or plan rejected), instructions for that status, the root cause, the plan, the changed files, the review, open objections, the stability report, rulings and evidence. The run marks which end it reached, writes both, then ends there; a chained
+run gets the brief whole.
+
 <!-- flow:fix -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
 
@@ -318,6 +324,18 @@ flowchart TD
   n_uncertified(["Not certified · partial"])
   n_gaveUp(["Gave up · failed"])
   n_rejected(["Plan rejected · partial"])
+  n_mark_fixed["Ending: Fixed"]
+  n_mark_uncertified["Ending: Not certified"]
+  n_mark_gaveUp["Ending: Gave up"]
+  n_mark_reviewStopped["Ending: Stopped at review"]
+  n_mark_rejected["Ending: Plan rejected"]
+  n_handoffDoc["Write the AI version"]
+  n_wantPlain{"Plain summary?"}
+  n_explain["🤖 Write the version for people"]
+  n_endIs_fixed{"Fixed?"}
+  n_endIs_uncertified{"Not certified?"}
+  n_endIs_gaveUp{"Gave up?"}
+  n_endIs_reviewStopped{"Stopped at review?"}
   n_hypothesesPhase[["Competing hypotheses · 2 steps"]]
   n_diagnosePhase[["Diagnose · 4 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
@@ -330,9 +348,9 @@ flowchart TD
   n_baseline --> n_snapshot
   n_snapshot --> n_recall
   n_recall --> n_hypothesesPhase
-  n_learnFixed --> n_fixed
-  n_learnFailed --> n_gaveUp
-  n_learnUncertified --> n_uncertified
+  n_learnFixed --> n_mark_fixed
+  n_learnFailed --> n_mark_gaveUp
+  n_learnUncertified --> n_mark_uncertified
   n_hypothesesPhase --> n_diagnosePhase
   n_diagnosePhase --> n_challengePhase
   n_challengePhase --> n_approve
@@ -343,10 +361,10 @@ flowchart TD
   n_reproduceFirstOn -->|"no"| n_editPhase
   n_reproduced -.->|"yes"| n_testFirstPhase
   n_reproduced -->|"no"| n_prReviewPhase
-  n_testFirstPhase --> n_reviewStopped
+  n_testFirstPhase --> n_mark_reviewStopped
   n_testFirstPhase --> n_editPhase
   n_testFirstPhase --> n_prReviewPhase
-  n_approve -->|"rejected"| n_rejected
+  n_approve -->|"rejected"| n_mark_rejected
   n_editPhase --> n_stabilityPhase
   n_editPhase --> n_learnFailed
   n_editPhase -.-> n_diagnosePhase
@@ -356,7 +374,24 @@ flowchart TD
   n_stabilityPhase --> n_learnUncertified
   n_prReviewPhase --> n_learnFixed
   n_prReviewPhase -.-> n_editPhase
-  n_prReviewPhase --> n_reviewStopped
+  n_prReviewPhase --> n_mark_reviewStopped
+  n_mark_fixed --> n_handoffDoc
+  n_mark_uncertified --> n_handoffDoc
+  n_mark_gaveUp --> n_handoffDoc
+  n_mark_reviewStopped --> n_handoffDoc
+  n_mark_rejected --> n_handoffDoc
+  n_handoffDoc --> n_wantPlain
+  n_wantPlain -->|"yes"| n_explain
+  n_wantPlain -->|"no"| n_endIs_fixed
+  n_explain --> n_endIs_fixed
+  n_endIs_fixed -->|"yes"| n_fixed
+  n_endIs_fixed -->|"no"| n_endIs_uncertified
+  n_endIs_uncertified -->|"yes"| n_uncertified
+  n_endIs_uncertified -->|"no"| n_endIs_gaveUp
+  n_endIs_gaveUp -->|"yes"| n_gaveUp
+  n_endIs_gaveUp -->|"no"| n_endIs_reviewStopped
+  n_endIs_reviewStopped -->|"yes"| n_reviewStopped
+  n_endIs_reviewStopped -->|"no"| n_rejected
 ```
 
 | Phase | What it does | Steps |
@@ -601,6 +636,12 @@ Known limits:
 - Files are given to the model whole by the engine, so a file your organisation's Copilot content
   exclusion covers is not held back here: review such repositories with that in mind.
 
+**Two versions of the result.** As in investigate (step 11), the result starts with a short version
+for people in Simplified Technical English (`summary`, checked by the engine; the `plainSummary`
+switch turns it off), then a brief for an AI agent written by the engine from the record
+(`handoff`): the status, instructions (fix HIGH first, re-read each line, run the tests), the checked findings, what not to rely on, what the change says it does, the coverage, failing test or lint output, and the review as written. The run marks which end it reached, writes both, then ends there; a chained
+run gets the brief whole.
+
 <!-- flow:review -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
 
@@ -635,6 +676,16 @@ flowchart TD
   n_noDiffReport["Say why"]
   n_noDiff(["No changes found · failed"])
   n_notReviewed(["Could not review · failed"])
+  n_mark_issues["Ending: Issues reported"]
+  n_mark_notVerified["Ending: Could not verify"]
+  n_mark_partlyReviewed["Ending: Reviewed in part"]
+  n_mark_clean["Ending: Looks good"]
+  n_handoffDoc["Write the AI version"]
+  n_wantPlain{"Plain summary?"}
+  n_explain["🤖 Write the version for people"]
+  n_endIs_issues{"Issues reported?"}
+  n_endIs_notVerified{"Could not verify?"}
+  n_endIs_partlyReviewed{"Reviewed in part?"}
   n_start --> n_prInfo
   n_prInfo --> n_prFetched
   n_prFetched -->|"yes"| n_collect
@@ -658,14 +709,28 @@ flowchart TD
   n_mergeReview --> n_hasIssues
   n_hasIssues -->|"yes"| n_report
   n_hasIssues -->|"no"| n_anyUnverified
-  n_report --> n_issues
+  n_report --> n_mark_issues
   n_anyUnverified -->|"yes"| n_unverifiedReport
   n_anyUnverified -->|"no"| n_anyGaps
-  n_unverifiedReport --> n_notVerified
+  n_unverifiedReport --> n_mark_notVerified
   n_anyGaps -->|"yes"| n_partReport
   n_anyGaps -->|"no"| n_cleanReport
-  n_partReport --> n_partlyReviewed
-  n_cleanReport --> n_clean
+  n_partReport --> n_mark_partlyReviewed
+  n_cleanReport --> n_mark_clean
+  n_mark_issues --> n_handoffDoc
+  n_mark_notVerified --> n_handoffDoc
+  n_mark_partlyReviewed --> n_handoffDoc
+  n_mark_clean --> n_handoffDoc
+  n_handoffDoc --> n_wantPlain
+  n_wantPlain -->|"yes"| n_explain
+  n_wantPlain -->|"no"| n_endIs_issues
+  n_explain --> n_endIs_issues
+  n_endIs_issues -->|"yes"| n_issues
+  n_endIs_issues -->|"no"| n_endIs_notVerified
+  n_endIs_notVerified -->|"yes"| n_notVerified
+  n_endIs_notVerified -->|"no"| n_endIs_partlyReviewed
+  n_endIs_partlyReviewed -->|"yes"| n_partlyReviewed
+  n_endIs_partlyReviewed -->|"no"| n_clean
 ```
 
 <!-- /flow:review -->

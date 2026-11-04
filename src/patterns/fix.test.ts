@@ -324,3 +324,38 @@ describe('fix', () => {
     );
   });
 });
+
+const playFix = (over: Partial<DemoScript> = {}) => {
+  const script: DemoScript = {
+    ...fix.demo!,
+    ...over,
+    approvals: { ...fix.demo!.approvals, ...over.approvals },
+  };
+  const r = runScripted(
+    compileScore(fix, { context: fix.demo!.context!, generatedAt: 't' }),
+    script,
+  );
+  return { r, state: r.state.state, end: r.state.cursor };
+};
+
+describe('fix: a version for people and a brief for an AI agent', () => {
+  it('fixed: the brief says so, with the root cause, plan and changes; the run ends Fixed', () => {
+    const { state, end, r } = playFix();
+    expect(end).toBe('fixed');
+    expect(r.state.outcome).toBe('success');
+    const brief = String(state.handoff);
+    expect(brief).toMatch(/## Status\n\nFixed:/);
+    for (const h of ['## Root cause', '## Plan', '## Changed files', '## Review', '## Evidence'])
+      expect(brief).toContain(h);
+    expect(String(state.summary)).toMatch(/^## In short/);
+    expect(fix.result).toEqual(['summary', 'handoff']);
+  });
+
+  it('a rejected plan: the brief says nothing was changed and not to apply it', () => {
+    const { state, end, r } = playFix({ approvals: { approve: () => ({ approved: false }) } });
+    expect(end).toBe('rejected');
+    expect(r.state.outcome).toBe('partial');
+    expect(String(state.handoff)).toMatch(/## Status\n\nPlan rejected: nothing was changed\./);
+    expect(String(state.handoff)).toMatch(/do not apply it/);
+  });
+});
