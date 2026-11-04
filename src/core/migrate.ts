@@ -16,8 +16,10 @@ import type { SavedRun } from './types.js';
  * record does not mention counts as not read; a cut one gets a chunk of its remaining lines.
  * 1.5.0: each part of a fanned-out step must pass the step's checks on its own slice, not
  * only the merged answer (an empty part beside a full one was accepted).
+ * 1.6.0: a subset() check's entries are first written in its list's spelling ("./src/a.ts",
+ * "src\\a.ts", an absolute path → "src/a.ts"), so a right answer spelled another way passes.
  */
-export const ENGINE_VERSION = '1.5.0';
+export const ENGINE_VERSION = '1.6.0';
 
 /** The run format this engine writes. */
 export const RUN_SCHEMA_VERSION = 3;

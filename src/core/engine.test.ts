@@ -5,6 +5,7 @@ import { compileScore } from './compile.js';
 import {
   acceptance,
   advance,
+  canonicalEntry,
   createEngine,
   mapToolOutput,
   toPerformance,
@@ -148,6 +149,112 @@ describe('engine: advance leaves the state it was given as it was', () => {
   });
 });
 
+describe('engine: paths a subset check holds are read in its spelling', () => {
+  const v = { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' };
+  const check = {
+    expr: 'subset(scopeFiles, repoFiles) && len(scopeReasons) == len(scopeFiles)',
+    message: 'scopeFiles may only list files of this repository.',
+  };
+  const repoFiles = ['src/a.ts', 'src/b c.ts', 'a.ts'];
+
+  it("accepts a right file written another way, in the list's spelling and order", () => {
+    const r = acceptance(
+      [check],
+      { repoFiles },
+      {
+        updates: {
+          scopeFiles: [
+            './src/a.ts',
+            'src\\b c.ts',
+            '/Users/me/repo/src/a.ts',
+            'C:/work/repo/a.ts',
+            '`src/a.ts`',
+            'src/b c.ts:12-20',
+          ],
+          scopeReasons: ['1', '2', '3', '4', '5', '6'],
+        },
+        verdict: v,
+      },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok)
+      expect(r.value.updates.scopeFiles).toEqual([
+        'src/a.ts',
+        'src/b c.ts',
+        'src/a.ts',
+        'a.ts',
+        'src/a.ts',
+        'src/b c.ts',
+      ]);
+  });
+
+  it('never guesses: a folder, a missing file or a relative path to another place stays an error', () => {
+    for (const wrong of ['src/', 'src', 'b c.ts', '../repo/src/a.ts', 'lib/a.ts'])
+      expect(
+        acceptance(
+          [check],
+          { repoFiles },
+          {
+            updates: { scopeFiles: [wrong], scopeReasons: ['r'] },
+            verdict: v,
+          },
+        ).ok,
+      ).toBe(false);
+    expect(canonicalEntry('/x/src/a.ts', new Set(['src/a.ts', 'a.ts']))).toBe('src/a.ts');
+  });
+
+  it('the run stores the canonical paths, and replays them', () => {
+    const p: Pattern = {
+      name: 'scope',
+      description: 'd',
+      requiredContext: [],
+      state: [
+        { name: 'repoFiles', type: 'string[]', initial: ['src/a.ts'] },
+        { name: 'scopeFiles', type: 'string[]' },
+        { name: 'scopeReasons', type: 'string[]' },
+      ],
+      start: 's',
+      nodes: [
+        { id: 's', kind: 'start', label: 'S' },
+        {
+          id: 'locate',
+          kind: 'agent',
+          role: 'assessor',
+          label: 'Locate',
+          directive: 'd',
+          reads: ['repoFiles'],
+          writes: ['scopeFiles', 'scopeReasons'],
+          checks: [check],
+        },
+        { id: 'e', kind: 'end', label: 'E' },
+      ],
+      edges: [
+        { id: 'a', from: 's', to: 'locate' },
+        { id: 'b', from: 'locate', to: 'e' },
+      ],
+    };
+    const scoped = compileScore(p, { goal: 'g', generatedAt: 't' });
+    let r = createEngine(scoped, { startedAt: 't' });
+    r = advance(scoped, r.state, {
+      kind: 'agent',
+      pauseId: r.state.pause!.pauseId,
+      result: { updates: { scopeFiles: ['./src/a.ts'], scopeReasons: ['r'] }, verdict: v },
+      at: 't',
+    });
+    expect(r.state.outcome).toBe('success');
+    expect(r.state.state.scopeFiles).toEqual(['src/a.ts']);
+    expect(replayPerformance(scoped, toPerformance(r.state)).divergence.reproduced).toBe(true);
+  });
+
+  it('a replay of the same answer is accepted the same way, and the answer is not changed', () => {
+    const answer = { updates: { scopeFiles: ['./a.ts'], scopeReasons: ['r'] }, verdict: v };
+    expect(acceptance([check], { repoFiles }, answer)).toEqual(
+      acceptance([check], { repoFiles }, answer),
+    );
+    expect(answer.updates.scopeFiles).toEqual(['./a.ts']);
+  });
+});
+
 describe('engine: a failed subset check names what is not allowed', () => {
   const v = { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' };
   const check = {
@@ -160,12 +267,13 @@ describe('engine: a failed subset check names what is not allowed', () => {
       [check],
       { repoFiles },
       {
-        updates: { scopeFiles: ['src/a.ts', './src/b c.ts', 'src/', 'src/a.ts'] },
+        updates: { scopeFiles: ['src/a.ts', './src/b c.ts', 'src/', 'lib/x.ts', 'src/a.ts'] },
         verdict: v,
       },
     );
     expect(bad.ok).toBe(false);
-    if (!bad.ok) expect(bad.errors[0]).toMatch(/ Not allowed: "\.\/src\/b c\.ts", "src\/"\.$/);
+    // "./src/b c.ts" is read as "src/b c.ts"; what has no allowed spelling is named.
+    if (!bad.ok) expect(bad.errors[0]).toMatch(/ Not allowed: "src\/", "lib\/x\.ts"\.$/);
     const many = acceptance(
       [check],
       { repoFiles },
