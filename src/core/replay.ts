@@ -250,6 +250,8 @@ function resolutionFrom(
       approved: step.approval.approved,
       ...(step.updates ? { updates: step.updates } : {}),
       ...(step.approval.by ? { by: step.approval.by } : {}),
+      ...(step.approval.askedAt ? { askedAt: step.approval.askedAt } : {}),
+      ...(step.approval.shownAt ? { shownAt: step.approval.shownAt } : {}),
       ...(step.at ? { at: step.at } : {}),
     };
   }

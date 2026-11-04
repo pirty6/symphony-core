@@ -587,6 +587,9 @@ export interface ApprovalResolution {
   readonly updates?: Readonly<Record<string, unknown>>;
   readonly by?: string;
   readonly at?: string;
+  /** When the run began to wait for this answer, and when a client first fetched it (MCP). */
+  readonly askedAt?: string;
+  readonly shownAt?: string;
 }
 
 export interface CancelResolution {
@@ -712,7 +715,13 @@ export interface PerformedStep {
     readonly at?: string;
   }[];
   readonly transcript?: AiTranscript;
-  readonly approval?: { readonly approved: boolean; readonly by?: string };
+  readonly approval?: {
+    readonly approved: boolean;
+    readonly by?: string;
+    /** asked → shown → at: the wait before anyone saw the question, then the decision. */
+    readonly askedAt?: string;
+    readonly shownAt?: string;
+  };
   /** Human decisions when the step got stuck (retry with hint or model, or stop). */
   readonly recoveries?: readonly Recovery[];
   readonly at?: string;

@@ -168,6 +168,41 @@ describe('divergence', () => {
     expect(replayPerformance(score, legacy).divergence.reproduced).toBe(true);
   });
 
+  it('keeps when an approval was asked, shown and answered, and replays it', () => {
+    const score = compileScore(hangman, { goal: 'g', generatedAt: 't' });
+    let r = createEngine(score, { startedAt: 't' });
+    r = advance(score, r.state, {
+      kind: 'agent',
+      pauseId: r.state.pause!.pauseId,
+      result: {
+        updates: { word: 'cat' },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+      },
+      at: 't',
+    });
+    r = advance(score, r.state, {
+      kind: 'approval',
+      pauseId: r.state.pause!.pauseId,
+      approved: true,
+      updates: { letter: 'c' },
+      by: 'mcp',
+      askedAt: '2026-11-04T05:02:12.514Z',
+      shownAt: '2026-11-04T05:03:01.000Z',
+      at: '2026-11-04T05:03:39.705Z',
+    });
+    const perf = toPerformance(r.state);
+    const gate = perf.steps.find((s) => s.kind === 'approval')!;
+    expect(gate.approval).toEqual({
+      approved: true,
+      by: 'mcp',
+      askedAt: '2026-11-04T05:02:12.514Z',
+      shownAt: '2026-11-04T05:03:01.000Z',
+    });
+    const replayed = replayPerformance(score, perf);
+    expect(replayed.divergence.reproduced).toBe(true);
+    expect(toPerformance(replayed.result.state).steps).toEqual(perf.steps);
+  });
+
   it('replays a stuck step that a human retried with a hint and a tier', () => {
     const score = compileScore(hangman, { goal: 'g', generatedAt: 't' });
     let r = createEngine(score, { startedAt: 't' });

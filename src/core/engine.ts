@@ -1088,7 +1088,12 @@ function resolveApproval(
       changes,
       updates,
       ...(attempts.length > 0 ? { attempts } : {}),
-      approval: { approved: res.approved, ...(res.by ? { by: res.by } : {}) },
+      approval: {
+        approved: res.approved,
+        ...(res.by ? { by: res.by } : {}),
+        ...(res.askedAt ? { askedAt: res.askedAt } : {}),
+        ...(res.shownAt ? { shownAt: res.shownAt } : {}),
+      },
       ...(res.at ? { at: res.at } : {}),
     },
     hashBefore,
