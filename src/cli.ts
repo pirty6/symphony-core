@@ -258,43 +258,50 @@ async function play(
   if (pr && 'error' in pr.info) console.log(c.yellow(`PR ${pr.info.number}: ${pr.info.error}`));
   const dir = isolation?.dir ?? pr?.dir ?? cwd;
   if (dir !== cwd) console.log(c.dim(`playing in its own worktree: ${dir}`));
-  const run = new Run({
-    score,
-    tools: extras.tools,
-    toolContext: {
-      ...extras.toolContext,
-      ...(dir !== cwd ? { workspace: dir, memoryRoot: extras.toolContext.workspace } : {}),
-      ...(pr ? { pr: pr.info } : {}),
-    },
-    provider: makeProvider({
-      provider: o.providerName,
-      pattern: demo ? { ...pattern, demo } : pattern,
-      workingDirectory: dir,
-      mcpServers: extras.mcpServers,
-      ...envConfig(process.env),
-      ...(o.model ? { model: o.model } : {}),
-    }),
-    ...(demo ? { demo } : {}),
-    ...(playsFromRepertoire(score.improvisation) && !o.fresh
-      ? { repertoire: await loadRepertoire(runsDir, score.id) }
-      : {}),
-    autoApprove: o.autoApprove,
-    stepMode: o.step,
-    breakpoints: o.breakpoints,
-    ...(o.providerName === 'copilot'
-      ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(cwd) }
-      : {}),
-    ...(isolation ? { isolation } : {}),
-    ...(pr ? { cleanup: pr.finish } : {}),
-    ...(o.save
-      ? {
-          onSave: (r, how) => saveRun(runsDir, r, { compact: how?.checkpoint === true }),
-          checkpoint: true,
-        }
-      : {}),
-    ...(o.restore ? { restore: o.restore } : {}),
-    ...(o.next ? { next: o.next } : {}),
-  });
+  // Until the run owns the PR checkout (cleanup), a failure here must remove it.
+  let run: Run;
+  try {
+    run = new Run({
+      score,
+      tools: extras.tools,
+      toolContext: {
+        ...extras.toolContext,
+        ...(dir !== cwd ? { workspace: dir, memoryRoot: extras.toolContext.workspace } : {}),
+        ...(pr ? { pr: pr.info } : {}),
+      },
+      provider: makeProvider({
+        provider: o.providerName,
+        pattern: demo ? { ...pattern, demo } : pattern,
+        workingDirectory: dir,
+        mcpServers: extras.mcpServers,
+        ...envConfig(process.env),
+        ...(o.model ? { model: o.model } : {}),
+      }),
+      ...(demo ? { demo } : {}),
+      ...(playsFromRepertoire(score.improvisation) && !o.fresh
+        ? { repertoire: await loadRepertoire(runsDir, score.id) }
+        : {}),
+      autoApprove: o.autoApprove,
+      stepMode: o.step,
+      breakpoints: o.breakpoints,
+      ...(o.providerName === 'copilot'
+        ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(cwd) }
+        : {}),
+      ...(isolation ? { isolation } : {}),
+      ...(pr ? { cleanup: pr.finish } : {}),
+      ...(o.save
+        ? {
+            onSave: (r, how) => saveRun(runsDir, r, { compact: how?.checkpoint === true }),
+            checkpoint: true,
+          }
+        : {}),
+      ...(o.restore ? { restore: o.restore } : {}),
+      ...(o.next ? { next: o.next } : {}),
+    });
+  } catch (e) {
+    await pr?.finish();
+    throw e;
+  }
   const level = IMPROVISATION_LEVELS[score.improvisation]!;
   console.log(
     `${c.bold(pattern.name)} ${c.dim(`score ${score.id.slice(0, 12)} · provider ${o.providerName} · complexity ${score.complexity} · ${level.icon} ${level.name}`)}`,

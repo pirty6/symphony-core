@@ -387,35 +387,44 @@ export class RunManager {
     const next =
       concertNext({ maestroScore: score, start: handOff }) ??
       chainNext({ chain, score, library: () => this.library(), start: handOff });
-    const run = new Run({
-      score,
-      provider,
-      tools: extras.tools,
-      toolContext: {
-        ...extras.toolContext,
-        ...(dir !== workspace ? { workspace: dir, memoryRoot: extras.toolContext.workspace } : {}),
-        ...(pr ? { pr: pr.info } : {}),
-        // Remote callers read only: no command (tests, lint) runs on this machine for them.
-        ...(this.opts.editsAllowed ? {} : { runsCode: false }),
-      },
-      ...(pattern.demo ? { demo: pattern.demo } : {}),
-      ...(playsFromRepertoire(score.improvisation)
-        ? { repertoire: await loadRepertoire(runsDir, score.id) }
-        : {}),
-      autoApprove: req.autoApprove === true,
-      ...(providerName === 'copilot'
-        ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
-        : {}),
-      ...(isolation ? { isolation } : {}),
-      ...(pr ? { cleanup: pr.finish } : {}),
-      checkpoint: true,
-      onSave: async (r, how) => {
-        const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true });
-        if (managed) managed.savedTo = file;
-        return file;
-      },
-      ...(next ? { next } : {}),
-    });
+    // Until the run owns the PR checkout (cleanup), a failure here must remove it.
+    let run: Run;
+    try {
+      run = new Run({
+        score,
+        provider,
+        tools: extras.tools,
+        toolContext: {
+          ...extras.toolContext,
+          ...(dir !== workspace
+            ? { workspace: dir, memoryRoot: extras.toolContext.workspace }
+            : {}),
+          ...(pr ? { pr: pr.info } : {}),
+          // Remote callers read only: no command (tests, lint) runs on this machine for them.
+          ...(this.opts.editsAllowed ? {} : { runsCode: false }),
+        },
+        ...(pattern.demo ? { demo: pattern.demo } : {}),
+        ...(playsFromRepertoire(score.improvisation)
+          ? { repertoire: await loadRepertoire(runsDir, score.id) }
+          : {}),
+        autoApprove: req.autoApprove === true,
+        ...(providerName === 'copilot'
+          ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
+          : {}),
+        ...(isolation ? { isolation } : {}),
+        ...(pr ? { cleanup: pr.finish } : {}),
+        checkpoint: true,
+        onSave: async (r, how) => {
+          const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true });
+          if (managed) managed.savedTo = file;
+          return file;
+        },
+        ...(next ? { next } : {}),
+      });
+    } catch (e) {
+      await pr?.finish();
+      throw e;
+    }
     managed = { run, pattern };
     this.runs.set(run.id, managed);
     // The studio shows the chat's runs live and can steer them (src/runtime/live.ts).

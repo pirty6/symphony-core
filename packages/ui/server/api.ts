@@ -239,33 +239,40 @@ export function createApi(opts: ApiOptions) {
       ...(settings.features ? { features: settings.features } : {}),
       start: async (s, p, rest) => (await launch(s, p, { ...settings, breakpoints: [], chain: rest })).id,
     })
-    const run = new Run({
-      id,
-      score,
-      provider,
-      tools,
-      toolContext,
-      ...(demo ? { demo } : {}),
-      ...(playsFromRepertoire(score.improvisation) ? { repertoire: await loadRepertoire(runsDir, score.id) } : {}),
-      autoApprove: settings.autoApprove,
-      stepMode: settings.stepMode,
-      breakpoints: settings.breakpoints,
-      ...(provider.name === 'copilot'
-        ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
-        : {}),
-      ...(isolation ? { isolation } : {}),
-      ...(pr ? { cleanup: pr.finish } : {}),
-      onSave: async (r, how) => {
-        const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true })
-        savedFiles.set(id, file)
-        return file
-      },
-      checkpoint: true,
-      // You are watching: at the time limit you decide whether a step keeps going.
-      askOnOvertime: true,
-      ...(settings.restore ? { restore: settings.restore } : {}),
-      ...(next ? { next } : {}),
-    })
+    // Until the run owns the PR checkout (cleanup), a failure here must remove it.
+    let run: Run
+    try {
+      run = new Run({
+        id,
+        score,
+        provider,
+        tools,
+        toolContext,
+        ...(demo ? { demo } : {}),
+        ...(playsFromRepertoire(score.improvisation) ? { repertoire: await loadRepertoire(runsDir, score.id) } : {}),
+        autoApprove: settings.autoApprove,
+        stepMode: settings.stepMode,
+        breakpoints: settings.breakpoints,
+        ...(provider.name === 'copilot'
+          ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
+          : {}),
+        ...(isolation ? { isolation } : {}),
+        ...(pr ? { cleanup: pr.finish } : {}),
+        onSave: async (r, how) => {
+          const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true })
+          savedFiles.set(id, file)
+          return file
+        },
+        checkpoint: true,
+        // You are watching: at the time limit you decide whether a step keeps going.
+        askOnOvertime: true,
+        ...(settings.restore ? { restore: settings.restore } : {}),
+        ...(next ? { next } : {}),
+      })
+    } catch (e) {
+      await pr?.finish()
+      throw e
+    }
     runs.set(run.id, run)
     void run.start().finally(() => {
       provider.dispose?.()
