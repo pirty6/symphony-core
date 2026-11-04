@@ -556,9 +556,10 @@ describe('requirement coverage judge', () => {
   });
 });
 
+const judgeSum = (finalPattern: unknown) =>
+  plantedConcern('success', { finalPattern }, SUM_CONCERN, 'n < 1 and fractions');
+
 describe('planted concern judge', () => {
-  const judgeSum = (finalPattern: unknown) =>
-    plantedConcern('success', { finalPattern }, SUM_CONCERN, 'n < 1 and fractions');
   it('needs a test run and the concern dealt with, in the composed score', () => {
     expect(judgeSum(SUM_SCORE).pass).toBe(true);
     const noTests = { nodes: SUM_SCORE.nodes.filter((n) => n.tool !== 'tests.run') };

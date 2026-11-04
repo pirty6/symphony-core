@@ -643,7 +643,9 @@ solved rate or citation validity.
   fixtures also cover a real quote that does not support the claim, a stale lesson in memory
   on unchanged files, a false hint, and a planted flaw played with the debate (complexity 3)
   and without (1), so what the debate catches is measured; `investigate-many-files` (240 files,
-  several waves) is heavy and runs only when named. `--task routing` adds 21 maestro requests (compose only) judged in code on the
+  several waves) is heavy and runs only when named, as is
+  `maestro-planted-concern` (a concern the request leaves out, which the composed score must
+  deal with, at tier 4 and tier 3). `--task routing` adds 21 maestro requests (compose only) judged in code on the
   pattern chosen, a complexity band and the chained pattern; `rehearse maestro --fields
   chosen,complexity` measures how often routing agrees with itself.
 - **Checked evidence.** Findings are written `path:line — fact \`quote\``. A **Check citations**
@@ -694,7 +696,10 @@ solved rate or citation validity.
   one tier smarter. **Second opinions use another model family** (`otherModel`; set
   `SYMPHONY_ALT_MODEL`, default `gpt-6.1-sol`).
 - **Switches** (for the offline trials in [docs/trials.md](docs/trials.md)):
-  `SYMPHONY_NODE_MODELS=deepRead=claude-opus-5.5` plays the named steps on their own model.
+  `SYMPHONY_NODE_MODELS=deepRead=claude-opus-5.5` plays the named steps on their own model
+  (`skeptic=claude-opus-5.5:high` also sets the effort; without one the tier's is kept).
+  Off by default: `SYMPHONY_END_ON_SUBMIT=1` ends a step's session at its answer instead of
+  letting the model reply to "stop now".
   On by default, `=0` turns each off if a trial shows it makes things worse:
   `SYMPHONY_DELTA_REPAIR` lets a rejected `submit_result` be corrected by resending only the
   fields that change; `SYMPHONY_HEADER_IN_SYSTEM` sends each step's fixed instructions as the
