@@ -585,6 +585,46 @@ describe('CopilotProvider', () => {
       expect(missing.session.cfg.model).toBe('claude-sonnet-5');
     });
 
+    it("maxEffort caps the tier's effort; a named effort or SYMPHONY_EFFORT_CAPS=0 is played as is", async () => {
+      const call = { updates: { word: 'cat' }, verdict };
+      const all = ['low', 'medium', 'high', 'xhigh'];
+      const models = [
+        { id: 'claude-opus-5.5', supportedReasoningEfforts: all },
+        { id: 'claude-sonnet-5', supportedReasoningEfforts: all },
+        { id: 'only-xhigh', supportedReasoningEfforts: ['xhigh'] },
+      ];
+      const xhigh = { 2: { model: 'claude-opus-5.5', effort: 'xhigh' as const } };
+      const capped: Partial<AgentPause> = { maxEffort: 'high' };
+      const effortOf = async (
+        opts: Partial<ConstructorParameters<typeof CopilotProvider>[0]>,
+        over = capped,
+      ) => {
+        const r = await play(opts, [call], over, models);
+        expect(r.requested).toBe(
+          modelSettings(r.session.cfg.model!, r.session.cfg.reasoningEffort),
+        );
+        return r.session.cfg.reasoningEffort;
+      };
+      expect(await effortOf({ tiers: xhigh })).toBe('high');
+      expect(await effortOf({ tiers: xhigh }, {})).toBe('xhigh');
+      expect(await effortOf({ tiers: xhigh, effortCaps: false })).toBe('xhigh');
+      // Below the cap, the tier's effort stands.
+      expect(await effortOf({ tiers: { 2: { model: 'claude-opus-5.5', effort: 'medium' } } })).toBe(
+        'medium',
+      );
+      // A node model without an effort inherits the tier's, capped; a named one is played as named.
+      expect(await effortOf({ tiers: xhigh, nodeModels: { pick: 'claude-sonnet-5' } })).toBe(
+        'high',
+      );
+      expect(await effortOf({ tiers: xhigh, nodeModels: { pick: 'claude-sonnet-5:xhigh' } })).toBe(
+        'xhigh',
+      );
+      // A model that has no such effort keeps its own.
+      expect(await effortOf({ tiers: { 2: { model: 'only-xhigh', effort: 'xhigh' } } })).toBe(
+        'xhigh',
+      );
+    });
+
     it('node models: "model:effort" sets the effort; without one the step keeps its tier\'s', async () => {
       const call = { updates: { word: 'cat' }, verdict };
       const tiers = { 2: { model: 'claude-sonnet-5', effort: 'medium' as const } };

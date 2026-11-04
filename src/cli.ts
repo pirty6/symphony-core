@@ -626,7 +626,9 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
   const switches = Object.entries(process.env)
     .filter(
       ([k, v]) =>
-        /^SYMPHONY_(NODE_MODELS|DELTA_REPAIR|HEADER_IN_SYSTEM|END_ON_SUBMIT)$/.test(k) && v,
+        /^SYMPHONY_(NODE_MODELS|DELTA_REPAIR|HEADER_IN_SYSTEM|END_ON_SUBMIT|EFFORT_CAPS)$/.test(
+          k,
+        ) && v,
     )
     .map(([k, v]) => `${k}=${v}`)
     .toSorted();

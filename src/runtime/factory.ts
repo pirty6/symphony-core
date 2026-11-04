@@ -27,6 +27,7 @@ export interface ProviderConfig {
   readonly deltaRepair?: boolean;
   readonly headerInSystem?: boolean;
   readonly endOnSubmit?: boolean;
+  readonly effortCaps?: boolean;
 }
 
 export function isProviderName(v: unknown): v is ProviderName {
@@ -49,6 +50,7 @@ export function makeProvider(cfg: ProviderConfig): Provider {
       ...(cfg.deltaRepair ? { deltaRepair: true } : {}),
       ...(cfg.headerInSystem ? { headerInSystem: true } : {}),
       ...(cfg.endOnSubmit ? { endOnSubmit: true } : {}),
+      ...(cfg.effortCaps === false ? { effortCaps: false } : {}),
       clock,
     });
   }
@@ -73,6 +75,7 @@ export function envConfig(env: NodeJS.ProcessEnv): {
   deltaRepair?: boolean;
   headerInSystem?: boolean;
   endOnSubmit?: boolean;
+  effortCaps?: boolean;
 } {
   const model = env.COPILOT_MODEL ?? env.MODEL;
   const source = TOKEN_VARS.find((name) => env[name] && env[name] !== 'token');
@@ -90,12 +93,12 @@ export function envConfig(env: NodeJS.ProcessEnv): {
     // On by default (they cut time and tokens); 0, false, off or no turns each off.
     deltaRepair: !off(env.SYMPHONY_DELTA_REPAIR),
     headerInSystem: !off(env.SYMPHONY_HEADER_IN_SYSTEM),
-    // Off until a trial shows it keeps quality: a revision after the answer would be lost.
-    ...(on(env.SYMPHONY_END_ON_SUBMIT) ? { endOnSubmit: true } : {}),
+    // Trial 13: same solved, 45% fewer premium requests (a later revision is given up).
+    endOnSubmit: !off(env.SYMPHONY_END_ON_SUBMIT),
+    // Steps' maxEffort (the maestro's tier-4 debate on 'high'); 0 plays each tier's own effort.
+    effortCaps: !off(env.SYMPHONY_EFFORT_CAPS),
   };
 }
-
-const on = (v: string | undefined) => v !== undefined && /^(1|true|on|yes)$/i.test(v.trim());
 
 const off = (v: string | undefined) => v !== undefined && /^(0|false|off|no)$/i.test(v.trim());
 

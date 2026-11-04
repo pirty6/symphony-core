@@ -15,6 +15,7 @@ import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
 import { webSearch, type SearchResult } from './web-search.js';
 import { acceptance, isProviderBlock } from '../core/engine.js';
 import { checkAgentResult, resultJsonSchema } from '../core/schema.js';
+import { EFFORTS } from '../core/types.js';
 import { addUsage } from '../core/usage.js';
 import { checkCitations } from './evidence.js';
 import { modelSettings } from './repertoire.js';
@@ -169,6 +170,8 @@ export interface CopilotProviderOptions {
    * turn still count (the last valid one wins); a revision in a later turn is given up.
    */
   readonly endOnSubmit?: boolean;
+  /** false: ignore the steps' maxEffort and play each tier's own effort. */
+  readonly effortCaps?: boolean;
   readonly workingDirectory?: string;
   /** MCP servers connected to nodes with the 'mcp' capability. */
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
@@ -835,26 +838,51 @@ export class CopilotProvider implements Provider {
     pause: AgentPause,
   ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
     const spec = this.opts.nodeModels?.[pause.nodeId];
-    if (spec) {
-      const own = splitModelEffort(spec);
-      const available = await this.availableModels();
-      const tier = await this.modelFor(pause.complexity);
-      if (!available || available.has(own.model)) {
-        const want = own.effort ?? tier.effort;
-        const efforts = available?.get(own.model);
-        const effort = want && (!efforts || efforts.includes(want)) ? want : undefined;
-        return {
-          model: own.model,
-          ...(effort ? { effort } : {}),
-          note: `${pause.nodeId} on ${own.model}${effort ? ` (${effort})` : ''} (nodeModels)${want && !effort ? `; ${own.model} has no '${want}' effort, so its default is used` : ''}`,
-        };
-      }
+    const t = spec ? await this.ownModel(pause, spec) : await this.tierModel(pause);
+    // An effort named for the step is played as named; any other is capped by its maxEffort.
+    const named = spec ? splitModelEffort(spec) : undefined;
+    return named?.effort && t.model === named.model ? t : this.capped(pause, t);
+  }
+
+  private tierModel(pause: AgentPause) {
+    return pause.otherModel ? this.otherFamily(pause.complexity) : this.modelFor(pause.complexity);
+  }
+
+  /** The effort lowered to the step's maxEffort, when the model offers that effort. */
+  private async capped(
+    pause: AgentPause,
+    t: { model?: string; effort?: ReasoningEffort; note?: string },
+  ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
+    const cap = pause.maxEffort;
+    if (!cap || this.opts.effortCaps === false || !t.effort) return t;
+    if (EFFORTS.indexOf(t.effort) <= EFFORTS.indexOf(cap)) return t;
+    const efforts = t.model ? (await this.availableModels())?.get(t.model) : undefined;
+    if (efforts && !efforts.includes(cap)) return t;
+    const note = `${pause.nodeId}: effort ${cap}, not ${t.effort} (maxEffort)`;
+    return { ...t, effort: cap, note: t.note ? `${t.note}; ${note}` : note };
+  }
+
+  private async ownModel(
+    pause: AgentPause,
+    spec: string,
+  ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
+    const own = splitModelEffort(spec);
+    const available = await this.availableModels();
+    const tier = await this.modelFor(pause.complexity);
+    if (!available || available.has(own.model)) {
+      const want = own.effort ?? tier.effort;
+      const efforts = available?.get(own.model);
+      const effort = want && (!efforts || efforts.includes(want)) ? want : undefined;
       return {
-        ...tier,
-        note: `model '${own.model}' for ${pause.nodeId} (nodeModels) is not available to you; using ${tier.model ?? 'the default model'}`,
+        model: own.model,
+        ...(effort ? { effort } : {}),
+        note: `${pause.nodeId} on ${own.model}${effort ? ` (${effort})` : ''} (nodeModels)${want && !effort ? `; ${own.model} has no '${want}' effort, so its default is used` : ''}`,
       };
     }
-    return pause.otherModel ? this.otherFamily(pause.complexity) : this.modelFor(pause.complexity);
+    return {
+      ...tier,
+      note: `model '${own.model}' for ${pause.nodeId} (nodeModels) is not available to you; using ${tier.model ?? 'the default model'}`,
+    };
   }
 
   /** The alternate model when it is available and from another family than the tier's. */
