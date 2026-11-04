@@ -16,6 +16,7 @@
  *   pick(list, positions) (1-based, e.g. ["1", "3"]),
  *   get(objectOrList, keyOrIndex) (null when missing), keys(object),
  *   lines(text), linesWith(text, needle) (the lines containing a literal string),
+ *   longSentences(text, n) (its sentences of more than n words),
  *   diffLines(diff, pathPattern) (a unified diff's lines for the files whose path matches),
  *   runsNeeded(tolerance, candidates) (clean runs that bound a failure rate, see below).
  */
@@ -63,6 +64,7 @@ type FnName =
   | 'seq'
   | 'lines'
   | 'linesWith'
+  | 'longSentences'
   | 'diffLines'
   | 'runsNeeded';
 
@@ -100,6 +102,7 @@ const FNS: Record<FnName, number> = {
   seq: 2,
   lines: 1,
   linesWith: 2,
+  longSentences: 2,
   diffLines: 2,
   runsNeeded: 2,
 };
@@ -337,6 +340,23 @@ function requireBool(v: unknown, what: string): boolean {
   return v;
 }
 
+/** The sentences of a Markdown text: not headings or code; list markers dropped; split at . ! ? */
+function sentencesOf(text: string): string[] {
+  const out: string[] = [];
+  let code = false;
+  for (const raw of text.split(/\r?\n/)) {
+    if (/^\s*```/.test(raw)) {
+      code = !code;
+      continue;
+    }
+    if (code || /^\s*#/.test(raw)) continue;
+    const line = raw.replace(/^\s*(?:[-*+]|[0-9]+[.)])\s+/, '').trim();
+    if (!line) continue;
+    for (const s of line.split(/(?<=[.!?])\s+(?=[A-Z0-9"'(])/)) if (s.trim()) out.push(s.trim());
+  }
+  return out;
+}
+
 export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unknown {
   switch (e.t) {
     case 'lit':
@@ -545,6 +565,15 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
             throw new ExprError('linesWith() needs a text and a string to find');
           const needle = args[1];
           return x === '' ? [] : x.split(/\r?\n/).filter((l) => l.includes(needle));
+        }
+        case 'longSentences': {
+          // longSentences(summary, 25): the sentences of a text with more words than that, so a
+          // plain-English rule can be checked and each sentence over it named. Headings, list
+          // markers and code blocks are not sentences; each line of a list is one.
+          if (typeof x !== 'string' || typeof args[1] !== 'number')
+            throw new ExprError('longSentences() needs a text and a number of words');
+          const most = args[1];
+          return sentencesOf(x).filter((t) => t.split(/\s+/).filter(Boolean).length > most);
         }
         case 'diffLines': {
           // diffLines(diff, "[.]test[.]"): the lines of the files whose path matches, so test

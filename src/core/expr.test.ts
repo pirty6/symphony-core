@@ -98,6 +98,12 @@ describe('evalExpr values', () => {
     ['lines("")', []],
     ['linesWith(" ✓ a > t 1ms\n × a > u\n FAIL  a > u", "a > u")', [' × a > u', ' FAIL  a > u']],
     ['count(lines("+++ b/x\n+  it.skip(1)\n- old"), "^[+][^+].*[.]skip[(]")', 1],
+    // Sentences over n words: headings and code are not sentences; each list line is one.
+    [
+      'longSentences("## A very long heading that has many many words in it\n\nShort one. This one has seven words in it.\n- one two three four five six\n```\na b c d e f g h\n```", 5)',
+      ['This one has seven words in it.', 'one two three four five six'],
+    ],
+    ['longSentences("Fine. Also fine.", 5)', []],
     [
       'diffLines("diff --git a/src/a.ts b/src/a.ts\n+code\ndiff --git a/test/a.test.ts b/test/a.test.ts\n-old\n+new", "[.]test[.]")',
       ['-old', '+new'],
