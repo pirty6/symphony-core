@@ -253,6 +253,23 @@ export function createSymphonyServer(runs: RunManager): McpServer {
   );
 
   server.registerTool(
+    'set_auto_approve',
+    {
+      title: 'Auto-approve from now on',
+      description:
+        "Only when the user asks for it: approvals answer themselves from now on, each with its unattended answer (the one waiting now included), in this run and the runs it hands on to. on: false asks again. A stuck step still waits for the user's decision.",
+      inputSchema: { run_id: z.string(), on: z.boolean() },
+    },
+    async (a) => {
+      try {
+        return json(runs.setAutoApprove(a.run_id, a.on));
+      } catch (e) {
+        return failure(e);
+      }
+    },
+  );
+
+  server.registerTool(
     'stop_run',
     {
       title: 'Stop a run',

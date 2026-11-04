@@ -72,6 +72,7 @@ describe('Symphony MCP server', () => {
       'list_patterns',
       'maestro',
       'run_pattern',
+      'set_auto_approve',
       'stop_run',
     ]);
     const { body } = await call(client, 'list_patterns');
@@ -181,6 +182,27 @@ describe('Symphony MCP server', () => {
     // Stopping by the maestro's id stops the composed run, and says so once it has ended.
     const stopped = await call(client, 'stop_run', { run_id: body.run_id });
     expect(stopped.body).toMatchObject({ pattern: 'fix', status: 'cancelled' });
+  });
+
+  it('auto-approve mid-run: the waiting go-gate answers itself, and the composed run keeps it', async () => {
+    const client = await connect(manager());
+    const { body } = await call(client, 'maestro', {
+      request: 'Fix the flaky login test that fails on CI',
+      provider: 'scripted',
+    });
+    const go = await settle(client, body.run_id);
+    expect(go.waitingFor).toMatchObject({ kind: 'approval', step: 'Go-gate' });
+    expect(go).not.toHaveProperty('autoApprove');
+    const on = await call(client, 'set_auto_approve', { run_id: body.run_id, on: true });
+    expect(on.body).toMatchObject({ autoApprove: true });
+    // No answer_approval: the go-gate answered itself and the composed fix started, auto-approving.
+    let next = (await call(client, 'get_run', { run_id: body.run_id, wait_seconds: 0 })).body;
+    for (let i = 0; i < 100 && next.pattern !== 'fix'; i++) {
+      await new Promise((done) => setTimeout(done, 50));
+      next = (await call(client, 'get_run', { run_id: body.run_id, wait_seconds: 0 })).body;
+    }
+    expect(next).toMatchObject({ pattern: 'fix', autoApprove: true });
+    await call(client, 'stop_run', { run_id: body.run_id });
   });
 
   it('a chat may name another folder to work in (e.g. a separate worktree); remote callers may not', async () => {
