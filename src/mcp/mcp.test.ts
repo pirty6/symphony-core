@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -27,7 +27,14 @@ afterAll(() => {
   rmSync(workspace, { recursive: true, force: true });
   rmSync(live, { recursive: true, force: true });
 });
-const env = { SYMPHONY_MCP: 'off', SYMPHONY_LIVE_DIR: live } as NodeJS.ProcessEnv;
+// Symphony's files for the workspace: outside it, here (src/runtime/state.ts).
+const home = join(live, 'home');
+const env = {
+  SYMPHONY_MCP: 'off',
+  SYMPHONY_LIVE_DIR: live,
+  SYMPHONY_HOME: home,
+  SYMPHONY_STATE: 'home',
+} as NodeJS.ProcessEnv;
 const manager = (editsAllowed = true) =>
   new RunManager({ workspace: async () => workspace, repoRoot: workspace, env, editsAllowed });
 
@@ -92,7 +99,11 @@ describe('Symphony MCP server', () => {
     const view = await settle(client, started.body.run_id);
     expect(view).toMatchObject({ pattern: 'investigate', outcome: 'success' });
     expect(view.result).toContain('### answer');
-    expect(view.savedTo).toContain(join(workspace, '.symphony', 'runs'));
+    // Saved on this machine, outside the workspace: never in its git status.
+    expect(view.savedTo).toContain(join(home, 'workspaces'));
+    expect(
+      execFileSync('git', ['status', '--porcelain'], { cwd: workspace }).toString(),
+    ).not.toMatch(/[.]symphony/);
     // The studio sees the chat's run, and follows it to the end.
     const studio = new LiveRuns(live);
     const seen = await studio.get(started.body.run_id);
@@ -160,6 +171,46 @@ describe('Symphony MCP server', () => {
     // Stopping by the maestro's id stops the composed run, and says so once it has ended.
     const stopped = await call(client, 'stop_run', { run_id: body.run_id });
     expect(stopped.body).toMatchObject({ pattern: 'fix', status: 'cancelled' });
+  });
+
+  it('a chat may name another folder to work in (e.g. a separate worktree); remote callers may not', async () => {
+    const other = mkdtempSync(join(tmpdir(), 'symphony-mcp-other-'));
+    try {
+      const client = await connect(manager());
+      const started = await call(client, 'run_pattern', {
+        pattern: 'investigate',
+        inputs: { question: 'q' },
+        provider: 'scripted',
+        auto_approve: true,
+        workspace: other,
+      });
+      const view = await settle(client, started.body.run_id);
+      expect(view.outcome).toBe('success');
+      // Saved under that folder's own Symphony folder, outside it, not the open workspace's.
+      expect(view.savedTo).toMatch(/workspaces[/\\]symphony-mcp-other-/);
+      expect(existsSync(join(other, '.symphony'))).toBe(false);
+      for (const bad of ['relative/dir', join(other, 'missing')])
+        expect(
+          (
+            await call(client, 'run_pattern', {
+              pattern: 'investigate',
+              inputs: { question: 'q' },
+              provider: 'scripted',
+              workspace: bad,
+            })
+          ).isError,
+        ).toBe(true);
+      const remote = await connect(manager(false));
+      const refused = await call(remote, 'run_pattern', {
+        pattern: 'investigate',
+        inputs: { question: 'q' },
+        provider: 'scripted',
+        workspace: other,
+      });
+      expect(refused.body).toMatch(/only be chosen from a local chat/);
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
   });
 
   it('remote callers may not run patterns that edit files', async () => {

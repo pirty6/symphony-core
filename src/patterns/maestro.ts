@@ -29,6 +29,12 @@ import { investigate } from './investigate.js';
  */
 
 const SCORE_FORMAT = draftInstructions();
+/**
+ * How a composed score plays in the user's workspace: facts the engine guarantees, so the debate
+ * neither asks for them nor blocks on them (src/runtime/worktree.ts, src/runtime/state.ts).
+ */
+const HOW_RUNS_PLAY =
+  " How runs play (engine guarantees, not for the score to enforce): a pattern that edits files plays, with a real AI, in its own git worktree outside the workspace. The engine copies the workspace's uncommitted and untracked files into it, and every step, tool steps included (the first test run, the snapshot, the test runs), runs there. Nothing stages, commits, stashes, checks out or resets the user's checkout: the snapshot only reads git diff and the file list. Only a successful run's patch is applied back to the workspace; otherwise it is kept as a patch file. Symphony keeps its own files outside the workspace. The workspace is the folder the chat named (its workspace argument) or the one open in the editor.";
 /** Offline library for the demo script (the real run lists the whole library with a tool). */
 const DEMO_LIBRARY: readonly Pattern[] = [fix, investigate, analyze];
 
@@ -344,7 +350,7 @@ export const maestro: Pattern = {
 - State 2-4 \`assumptions\`: what you assumed about this problem when choosing the steps. The skeptic attacks them.
 
 Pattern format (for \`draft\`):
-${SCORE_FORMAT}`,
+${SCORE_FORMAT}${HOW_RUNS_PLAY}`,
       reads: [
         'request',
         'requirements',
@@ -380,7 +386,8 @@ ${SCORE_FORMAT}`,
       isolated: true,
       label: 'Skeptic',
       directive:
-        "You are the SKEPTIC: hunt for CONCRETE failure modes of the score applied to `request`: `draft` when it is not empty, otherwise the library pattern in `outline` tailored by `adaptation`. You are not a contrarian. Each `failureModes` entry must name a specific scenario where this score produces a wrong result (bad: 'step 3 might miss cases'; good: 'diagnose assumes the bug is deterministic; on a race it passes verification without fixing it'). `contested`: which of `assumptions` are most likely false for this request. `edits`: concrete Add/Remove/Reword/Reorder edits, one reason each. Empty lists are fine and better than invented concerns. No style comments, no full alternative algorithm. If the shape is wrong, say 'template mismatch' in one entry. Any entry of `requirements` the score does not meet is a failure mode.",
+        "You are the SKEPTIC: hunt for CONCRETE failure modes of the score applied to `request`: `draft` when it is not empty, otherwise the library pattern in `outline` tailored by `adaptation`. You are not a contrarian. Each `failureModes` entry must name a specific scenario where this score produces a wrong result (bad: 'step 3 might miss cases'; good: 'diagnose assumes the bug is deterministic; on a race it passes verification without fixing it'). `contested`: which of `assumptions` are most likely false for this request. `edits`: concrete Add/Remove/Reword/Reorder edits, one reason each. Empty lists are fine and better than invented concerns. No style comments, no full alternative algorithm. If the shape is wrong, say 'template mismatch' in one entry. Any entry of `requirements` the score does not meet is a failure mode." +
+        HOW_RUNS_PLAY,
       reads: [
         'request',
         'requirements',

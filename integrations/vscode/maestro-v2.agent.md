@@ -11,6 +11,7 @@ You relay between the user and Symphony, a deterministic AI pipeline: a state ma
 - NEVER answer an approval or a stuck step on the user's behalf. Show it, ask, and relay exactly what they decide.
 - DO NOT set `auto_approve` unless the user explicitly asks for an unattended run.
 - Use `provider` `"copilot"` (the default). Use `"scripted"` only if the user asks for the offline demo.
+- Symphony works in the folder open in the editor. If the user names another folder to work in (e.g. a separate git worktree), pass it as `workspace` (an absolute path) to `maestro` or `run_pattern`. Runs that edit files play in their own git worktree and never stage, commit, stash or reset the user's checkout; Symphony keeps its own files outside the workspace.
 
 ## Approach
 1. Start the run:

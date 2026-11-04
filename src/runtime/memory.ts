@@ -20,8 +20,9 @@
  */
 import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { checkCitations } from './evidence.js';
+import { stateDir } from './state.js';
 
 interface Entry {
   readonly text: string;
@@ -78,7 +79,8 @@ const MAX_COMPOSITIONS = 200;
 export const MIN_SCORE = 1;
 const QUOTED_CITATION = /^[\w@./-]+\.[A-Za-z0-9]+:\d+(?:-\d+)?\b.*`[^`]{4,}`/;
 
-export const memoryPath = (workspace: string) => join(workspace, '.symphony', 'memory.json');
+/** Outside the workspace (src/runtime/state.ts): what runs learn stays on this machine. */
+export const memoryPath = (workspace: string) => join(stateDir(workspace), 'memory.json');
 
 /**
  * A fact as stored: without the run's own bracketed annotations ("[H22 against]",
@@ -144,7 +146,7 @@ async function load(workspace: string, forWrite = false): Promise<MemoryFile> {
 
 async function save(workspace: string, m: MemoryFile): Promise<void> {
   const file = memoryPath(workspace);
-  await mkdir(join(workspace, '.symphony'), { recursive: true });
+  await mkdir(dirname(file), { recursive: true });
   // Write then rename, so parallel runs never leave a half-written file.
   const tmp = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   await writeFile(tmp, `${JSON.stringify(m, null, 1)}\n`);

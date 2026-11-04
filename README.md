@@ -106,20 +106,21 @@ npm run cli -- run analyze -i swing --complexity 3   # improvisation and complex
 npm run cli -- list                                  # pattern library
 npm run cli -- show fix                              # nodes and edges
 npm run cli -- run hangman                           # play in the terminal
-npm run cli -- run fix --auto-approve                # scripted run, saved to .symphony/runs
+npm run cli -- run fix --auto-approve                # scripted run, saved (see `where`)
 npm run cli -- run investigate -c question="Where is auth handled?" --provider copilot
 npm run cli -- run fix --step --break apply          # pause at gates
 npm run cli -- run investigate -c question="Why do logins fail on CI?" --then fix --provider copilot
 #   chain: fix starts with what investigate found; inputs for it: -c fix.testCommand="npm test"
 npm run cli -- run backlog -c source=docs/improvements.md --provider copilot   # one implement run per picked item
 npm run cli -- draft "triage a flaky test" --provider copilot --save
-npm run cli -- verify .symphony/runs/fix/<file>.json # integrity + deterministic replay check
+npm run cli -- verify <runs>/fix/<file>.json         # integrity + deterministic replay check
 npm run cli -- compare <a.json> <b.json>             # where two runs diverge, and why
 npm run cli -- rehearse analyze -n 5 --provider copilot -i swing   # how deterministic is the AI here?
 npm run cli -- rehearse maestro -n 5 --provider copilot -c "request=..." --fields chosen,complexity  # does routing agree?
-npm run cli -- resume .symphony/runs/fix/<file>.json # continue an interrupted or stopped run
-npm run cli -- fork .symphony/runs/fix/<file>.json --at 4   # keep steps 1-3, play the rest again
+npm run cli -- resume <runs>/fix/<file>.json         # continue an interrupted or stopped run
+npm run cli -- fork <runs>/fix/<file>.json --at 4    # keep steps 1-3, play the rest again
 npm run cli -- runs [--all]                          # saved runs (in-progress = resumable); --all adds demo runs
+npm run cli -- where [runs|evals|memory]             # where this workspace's runs are kept: <runs>
 npm run cli -- runs --prune [--dry-run]              # delete old demo runs, compact old runs (see Cleaning up)
 npm run cli -- eval [--task a,b] [-n 3] [--compare <report.json>] [--with key=value]   # tasks with known answers (see Quality, cost and speed)
 ```
@@ -270,7 +271,7 @@ tests maps to a step that is about tests. (One entry per requirement is still pa
 the go-gate remains the backstop.)
 
 **Memory of compositions.** What you approve at the go-gate is remembered in the workspace's
-`.symphony/memory.json`: the request, the pattern, complexity, then-pattern and its adaptation (or
+memory (`symphony where memory`): the request, the pattern, complexity, then-pattern and its adaptation (or
 the whole pattern for new ones), with a fingerprint of the library pattern it adapted.
 
 - **The same request again** (ignoring case and spacing), on an unchanged pattern, skips
@@ -321,7 +322,7 @@ wording is not part of a move's identity, so trimming never breaks Classical rep
 
 | Level | What the musicians may do |
 |---|---|
-| 0 🎻 Classical | Same song (same score, inputs and workspace) ⇒ **exactly the same notes**: answers recorded for an identical move are replayed from the repertoire (`.symphony/runs`) instead of asking the AI again. Only the saved runs of the same score are read (on a 1.2 GB store: 0.3 s and 369 MB instead of 5.4 s and 2.3 GB for every run). Routes are scripted. |
+| 0 🎻 Classical | Same song (same score, inputs and workspace) ⇒ **exactly the same notes**: answers recorded for an identical move are replayed from the repertoire (the saved runs, `symphony where runs`) instead of asking the AI again. Only the saved runs of the same score are read (on a 1.2 GB store: 0.3 s and 369 MB instead of 5.4 s and 2.3 GB for every run). Routes are scripted. |
 | 1 🎷 Cool | A fresh take every performance; routes still scripted. |
 | 2 🎷 Swing | **Solo points**: the AI chooses where the tune goes next among the score's labelled routes. |
 | 3 🎺 Bebop | Read-only agents play **2 independent takes**; a bandleader merges them (call and response). |
@@ -396,8 +397,14 @@ roster the maestro uses to debate a plan, aimed at a conclusion instead.
 npm run cli -- run investigate -c question="Why do runs replay exactly?" --provider copilot
 ```
 
-Runs are saved to `.symphony/runs`, or to `SYMPHONY_RUNS_DIR` when it is set. The test suites
-point it at a temporary folder, so their runs never reach your lists.
+**Symphony's files stay out of your repository.** Saved runs, memory, scratch folders, patches it
+could not apply and eval reports are kept per workspace in
+`~/.symphony/workspaces/<folder>-<hash>/` (`symphony where` prints it), never inside the
+workspace. Nothing Symphony writes shows in `git status`, so saved runs stay on this machine and
+cannot be committed or pushed. A workspace's older `.symphony` folder is moved there the first time
+(not while a run may still be writing to it). `SYMPHONY_HOME` moves `~/.symphony`;
+`SYMPHONY_STATE=workspace` keeps the old layout, inside the workspace; `SYMPHONY_RUNS_DIR` moves
+only the runs. The test suites use temporary folders, so their runs never reach your lists.
 
 ### Several runs at once
 
@@ -414,7 +421,7 @@ results:
    you. The snapshot is committed only inside the worktree, so the run's diff shows its own edits.
 2. When the run ends, its edits come back as one patch. They are **applied to your workspace** if
    the run succeeded and the patch applies cleanly; otherwise (it failed, was stopped, or you
-   changed the same lines meanwhile) the patch is kept in `.symphony/patches/` and the result
+   changed the same lines meanwhile) the patch is kept in the workspace's Symphony folder (`patches/`) and the result
    says `git apply <patch>`. The worktree is then removed.
 3. The result card, the CLI and `get_run` say where the edits went (`Performance.edits`).
 
@@ -424,7 +431,8 @@ runs edit the workspace directly. A resumed editing run starts again from your w
 
 ### Cleaning up
 
-- **Scratch**: each real run gets its own `.symphony/scratch/<run>` folder; executors are told to
+- **Scratch**: each real run gets its own scratch folder (`scratch/<run>` in the workspace's
+  Symphony folder, outside it); executors are told to
   put temporary scripts and output there, and it is deleted when the run ends (success, failure or
   stop). `SYMPHONY_KEEP_SCRATCH=1` keeps it for debugging.
 - **Retention**, once a day by itself (`SYMPHONY_RETENTION=off` disables it), or on demand with
@@ -471,7 +479,12 @@ approvals from there instead of in the chat; the chat's process still plays it.
 The runs are shared through `~/.symphony/live` on this machine: each run's messages, and the
 studio's commands to it (`src/runtime/live.ts`). `SYMPHONY_LIVE_DIR` moves the folder, and
 `SYMPHONY_LIVE=off` turns this off. A run whose chat session closed shows as cancelled; its saved
-run stays in the workspace's `.symphony/runs`. Folders older than a week are removed.
+run stays with the workspace's saved runs (`symphony where runs`). Folders older than a week are
+removed.
+
+**Work in another folder.** A chat can name the folder to work in, instead of the one open in the
+editor: `maestro` and `run_pattern` take a `workspace` argument (an absolute path, e.g. a
+separate git worktree you prepared). Only local chats may; remote callers are refused.
 
 ### Copilot Studio
 
@@ -660,7 +673,7 @@ solved rate or citation validity.
   read in full in batches of 4) and play them at once (at most 6 calls; the plan picks 1-6);
   answers are checked per part and merged in part order,
   so the result does not depend on timing and replays exactly.
-- **Memory across runs** (`.symphony/memory.json`). Facts that passed the citation check are
+- **Memory across runs** (the workspace's memory, `symphony where memory`). Facts that passed the citation check are
   remembered; a **Recall earlier runs** step brings back those that share words with the question
   *and still match the files today* (re-checked at recall), plus lessons from earlier fix and
   implement runs. They are leads to check, never evidence. The store stays clean: run tags such

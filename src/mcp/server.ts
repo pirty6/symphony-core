@@ -30,6 +30,12 @@ const provider = z
   .enum(['copilot', 'scripted'])
   .optional()
   .describe("'copilot' (default) for real AI; 'scripted' plays the offline demo's canned answers.");
+const workspace = z
+  .string()
+  .optional()
+  .describe(
+    "Absolute path of the folder to work in, instead of the open workspace (e.g. a separate git worktree the user prepared). Symphony's own files never go inside it. Local chats only.",
+  );
 const autoApprove = z
   .boolean()
   .optional()
@@ -104,6 +110,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
         improvisation,
         provider,
         auto_approve: autoApprove,
+        workspace,
       },
     },
     async (a) => {
@@ -117,6 +124,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
             : {}),
           ...(a.provider ? { provider: a.provider } : {}),
           autoApprove: a.auto_approve === true,
+          ...(a.workspace ? { workspace: a.workspace } : {}),
         });
         return json({ run_id: id, ...(await runs.wait(id, 5)) });
       } catch (e) {
@@ -146,6 +154,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
         improvisation,
         provider,
         auto_approve: autoApprove,
+        workspace,
       },
     },
     async (a) => {
@@ -160,6 +169,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
             : {}),
           ...(a.provider ? { provider: a.provider } : {}),
           autoApprove: a.auto_approve === true,
+          ...(a.workspace ? { workspace: a.workspace } : {}),
         });
         return json({ run_id: id, ...(await runs.wait(id, 5)) });
       } catch (e) {

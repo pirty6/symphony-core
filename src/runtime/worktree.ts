@@ -15,6 +15,7 @@ import { copyFile, mkdir, readdir, realpath, rm, stat, symlink, writeFile } from
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import type { EditsResult, Pattern, PerformanceOutcome } from '../core/types.js';
+import { stateDir } from './state.js';
 
 /** True when a pattern changes the workspace to do its job (the engine diffs and runs the tests). */
 export function editsFiles(p: Pick<Pattern, 'nodes'>): boolean {
@@ -176,7 +177,7 @@ export async function isolateRun(
           const applied = await git(top, ['apply', '--binary', '--whitespace=nowarn'], patch);
           if (applied.code === 0) return { kind: 'applied', files };
         }
-        const dir = join(top, '.symphony', 'patches');
+        const dir = join(stateDir(top, env), 'patches');
         await mkdir(dir, { recursive: true });
         const file = join(dir, `${id}.patch`);
         await writeFile(file, patch);

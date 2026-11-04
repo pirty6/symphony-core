@@ -324,17 +324,26 @@ describe('demo runs stay out of your lists', () => {
     await saveRun(dir, { schemaVersion: 3, score, performance: perf });
     await saveRun(dir, { schemaVersion: 3, score, performance: { ...live, startedAt: 'u' } });
     expect((await listRuns(dir)).map((r) => r.demo).toSorted()).toEqual([false, true]);
-    expect(runsDirFor('/repo', {})).toBe(join('/repo', '.symphony', 'runs'));
+    // Outside the workspace by default (never in the repository); the old layout on request.
+    const home = join(root, 'home');
+    const out = runsDirFor('/repo', { SYMPHONY_HOME: home, SYMPHONY_STATE: 'home' });
+    expect(out.startsWith(join(home, 'workspaces', 'repo-'))).toBe(true);
+    expect(out.endsWith(join('', 'runs'))).toBe(true);
+    expect(runsDirFor('/repo', { SYMPHONY_STATE: 'workspace' })).toBe(
+      join('/repo', '.symphony', 'runs'),
+    );
     expect(runsDirFor('/repo', { SYMPHONY_RUNS_DIR: '/tmp/x' })).toBe('/tmp/x');
   });
 });
 
 describe('run scratch folders', () => {
-  it('each run gets its own folder under .symphony/scratch, removed at the end', async () => {
-    const a = await runScratch(root, {});
-    const b = await runScratch(root, {});
+  it('each run gets its own scratch folder, outside the workspace, removed at the end', async () => {
+    const env = { SYMPHONY_HOME: join(root, 'scratch-home'), SYMPHONY_STATE: 'home' };
+    const a = await runScratch(root, env);
+    const b = await runScratch(root, env);
     expect(a.dir).not.toBe(b.dir);
-    expect(a.dir.startsWith(join(root, '.symphony', 'scratch'))).toBe(true);
+    expect(a.dir.startsWith(join(root, 'scratch-home', 'workspaces'))).toBe(true);
+    expect(a.dir).toMatch(/[/\\]scratch[/\\]/);
     writeFileSync(join(a.dir, 'bench.sh'), 'echo hi');
     await a.remove();
     expect(existsSync(a.dir)).toBe(false);
@@ -433,10 +442,11 @@ describe('retention: saved runs do not pile up', () => {
 
   it('runs by itself at most once a day, and SYMPHONY_RETENTION=off turns it off', async () => {
     const { ws, dir } = await workspace();
-    expect(await autoPrune(ws, dir, { SYMPHONY_RETENTION: 'off' })).toBeUndefined();
-    expect(await autoPrune(ws, dir, {})).toBeDefined();
+    const env = { SYMPHONY_STATE: 'workspace' };
+    expect(await autoPrune(ws, dir, { ...env, SYMPHONY_RETENTION: 'off' })).toBeUndefined();
+    expect(await autoPrune(ws, dir, env)).toBeDefined();
     expect(existsSync(join(dir, '.last-prune'))).toBe(true);
-    expect(await autoPrune(ws, dir, {})).toBeUndefined();
+    expect(await autoPrune(ws, dir, env)).toBeUndefined();
     expect((await listRuns(dir)).length).toBe(4);
   });
 });

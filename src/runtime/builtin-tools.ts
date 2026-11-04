@@ -17,7 +17,7 @@ import type { Pattern } from '../core/types.js';
 import { PATTERNS, routeMatches } from '../patterns/index.js';
 import { discoverMcpServers, type McpOptions } from './mcp.js';
 import { recallCompositions, rememberComposition } from './memory.js';
-import { DRAFTS_DIR, listRuns, savePatternFile } from './store.js';
+import { DRAFTS_DIR, listRuns, runsDirFor, savePatternFile } from './store.js';
 import { registry, type ToolContext, type ToolRegistry, type ToolSpec } from './tools.js';
 
 const exec = promisify(execFile);
@@ -249,12 +249,12 @@ export async function sourceCatalog(
   for (const name of Object.keys(mcp.servers).toSorted()) {
     entries.push([`mcp:${name}`, `MCP server '${name}' (read-only tools only)`]);
   }
-  const runs = await listRuns(join(ctx.repoRoot, '.symphony', 'runs'));
+  const runs = await listRuns(runsDirFor(ctx.repoRoot));
   if (runs.length > 0) {
     entries.push([
       'prior-runs',
       // No count: a run's own history must not change the next run's input.
-      `earlier Symphony runs with recorded answers in ${join(ctx.repoRoot, '.symphony', 'runs')}`,
+      `earlier Symphony runs with recorded answers in ${runsDirFor(ctx.repoRoot)}`,
     ]);
   }
   return { names: entries.map(([n]) => n), descriptions: entries.map(([n, d]) => `${n}: ${d}`) };

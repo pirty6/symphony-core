@@ -70,6 +70,7 @@ import {
   savePatternFile,
   saveRun,
 } from './runtime/store.js';
+import { stateDir } from './runtime/state.js';
 
 export const RUNS_DIR = '.symphony/runs';
 export const DRAFTS_DIR = 'src/patterns/drafts';
@@ -637,12 +638,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
       ...(complexity !== undefined ? [`complexity=${complexity}`] : []),
       ...switches,
     ],
-    runsDir: join(
-      cwd,
-      '.symphony',
-      'evals',
-      `${new Date().toISOString().replace(/[:.]/g, '-')}-runs`,
-    ),
+    runsDir: join(stateDir(cwd), 'evals', `${new Date().toISOString().replace(/[:.]/g, '-')}-runs`),
     provider: (workspace, pattern) =>
       makeProvider({
         provider: providerName,
@@ -654,7 +650,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     onResult: (r) =>
       console.log(c.dim(`  ${r.pass ? '✔' : '✘'} ${r.task} ${(r.ms / 1000).toFixed(0)}s`)),
   });
-  const dir = join(cwd, '.symphony', 'evals');
+  const dir = join(stateDir(cwd), 'evals');
   await mkdir(dir, { recursive: true });
   const file = join(dir, `${report.startedAt.replace(/[:.]/g, '-')}.json`);
   await writeFile(file, `${JSON.stringify(report, null, 2)}\n`);
@@ -1082,11 +1078,28 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       return cmdContinue('resumed', rest, cwd);
     case 'fork':
       return cmdContinue('forked', rest, cwd);
+    case 'where': {
+      // This workspace's Symphony folder (outside it), or one part of it.
+      // Only looks: moves nothing.
+      const dir = stateDir(cwd, process.env, { move: false });
+      const part = rest[0];
+      const paths: Record<string, string> = {
+        runs: process.env.SYMPHONY_RUNS_DIR || join(dir, 'runs'),
+        evals: join(dir, 'evals'),
+        memory: join(dir, 'memory.json'),
+      };
+      if (part !== undefined && !(part in paths)) {
+        console.error('usage: symphony where [runs|evals|memory]');
+        return 1;
+      }
+      console.log(part ? paths[part] : dir);
+      return 0;
+    }
     case 'runs': {
       const dir = runsDirFor(cwd);
       if (rest.includes('--prune')) {
         const dryRun = rest.includes('--dry-run');
-        const r = await pruneRuns(dir, { scratchDir: join(cwd, '.symphony', 'scratch'), dryRun });
+        const r = await pruneRuns(dir, { scratchDir: join(stateDir(cwd), 'scratch'), dryRun });
         const verb = dryRun ? 'would' : 'did';
         console.log(
           `${verb} delete ${r.deleted.length} old demo run(s), compact ${r.compacted.length} old run(s), clear ${r.scratch.length} scratch folder(s); ${(r.freed / 1e6).toFixed(1)} MB`,
@@ -1126,6 +1139,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   fork <run.json> --at <step>  keep steps before <step>, play the rest again as a new run
       --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
+  where [runs|evals|memory]    where this workspace's saved runs, memory and reports are kept (outside it)
   eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time
       --with key=value         an input for every task whose pattern has it (a trial: --with deepBatchSize=8)
       --improvisation 0-4      play every task at this improvisation (a trial)

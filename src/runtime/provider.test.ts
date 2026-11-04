@@ -87,7 +87,7 @@ describe('buildAgentPrompt', () => {
     expect(buildAgentPrompt(executor, { scratchDir: '/w/.symphony/scratch/r1' })).toContain(
       '`/w/.symphony/scratch/r1` (deleted when the run ends)',
     );
-    expect(buildAgentPrompt(executor)).toContain('`.symphony/scratch/`');
+    expect(buildAgentPrompt(executor)).toContain('the system temp folder');
   });
 });
 

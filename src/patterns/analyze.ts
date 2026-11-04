@@ -69,7 +69,7 @@ export const analyze: Pattern = {
       role: 'executor',
       label: 'Profile the data',
       directive:
-        'Load `data` with a short script (Python, SQL or the shell, whatever fits) and profile it: row count, columns and types, missing values, ranges, obvious data-quality issues. Never modify the source data; write scratch files only under .symphony/scratch/. Put the profile in `profile` and notable facts in `newFindings`, each as "analysis | <the command or script you ran> — fact with its numbers".',
+        'Load `data` with a short script (Python, SQL or the shell, whatever fits) and profile it: row count, columns and types, missing values, ranges, obvious data-quality issues. Never modify the source data; write scripts and scratch files only in the scratch folder of the run, never in the project. Put the profile in `profile` and notable facts in `newFindings`, each as "analysis | <the command or script you ran> — fact with its numbers".',
       reads: ['question', 'data'],
       writes: ['profile', 'newFindings'],
     },
@@ -106,7 +106,7 @@ export const analyze: Pattern = {
       visitsFrom: 'maxAnalyses + 2',
       label: 'Run analysis',
       directive:
-        'Run `nextAnalysis` against `data` with a script under .symphony/scratch/ (never modify the source data); it serves `question`. Put the key output (tables or numbers, trimmed) in `result` and each insight in `newFindings` as "analysis | <the command or script you ran> — insight with its numbers", so it can be re-run.',
+        'Run `nextAnalysis` against `data` with a script in the scratch folder of the run (never modify the source data); it serves `question`. Put the key output (tables or numbers, trimmed) in `result` and each insight in `newFindings` as "analysis | <the command or script you ran> — insight with its numbers", so it can be re-run.',
       reads: ['question', 'data', 'profile', 'nextAnalysis'],
       writes: ['result', 'newFindings'],
     },

@@ -13,7 +13,7 @@ export default defineConfig({
   test: {
     globals: true,
     // Tests never read or publish the runs of other processes (src/runtime/live.ts).
-    env: { SYMPHONY_LIVE: 'off' },
+    env: { SYMPHONY_LIVE: 'off', SYMPHONY_STATE: 'workspace' },
     environment: 'jsdom',
     setupFiles: './src/test-setup.ts',
     include: ['src/**/*.{test,spec}.?(c|m)[jt]s?(x)', 'server/**/*.test.ts'],
