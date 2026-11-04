@@ -1125,6 +1125,9 @@ export function toPerformance(st: EngineState): Performance {
     events: st.events,
     ...(st.kind === 'running' && st.pause && st.attempts.length > 0
       ? { pending: { nodeId: st.pause.nodeId, step: st.pause.step, attempts: st.attempts } }
-      : {}),
+      : // Stopped while a step was being retried: what it answered is kept too.
+        st.outcome === 'cancelled' && st.attempts.length > 0
+        ? { pending: { nodeId: st.cursor, step: st.step, attempts: st.attempts } }
+        : {}),
   };
 }
