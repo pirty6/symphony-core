@@ -8,6 +8,7 @@
  * user can look at the node input and the AI's proposed output before the
  * engine applies it. stop() aborts the live AI call and cancels the run.
  */
+import { scrubValue } from '../core/scrub.js';
 import { itemOf } from '../core/items.js';
 import { stepTimeLimitMs } from './limits.js';
 import { KEEP_ANSWER } from './provider.js';
@@ -238,6 +239,9 @@ export class Run {
     this.breakpoints = new Set(opts.breakpoints ?? []);
     this.engine = undefined as unknown as EngineState;
   }
+
+  /** Off only with SYMPHONY_SCRUB=off (e.g. to debug a repair against the raw text). */
+  private readonly scrubbing = process.env.SYMPHONY_SCRUB !== 'off';
 
   private now(): string {
     return this.opts.clock?.() ?? new Date().toISOString();
@@ -897,7 +901,8 @@ export class Run {
         );
         break;
       }
-      this.apply(advance(this.score, this.engine, res));
+      // What the engine records is what gets saved: secrets go before it sees them (core/scrub).
+      this.apply(advance(this.score, this.engine, this.scrubbing ? scrubValue(res) : res));
       // Every AI answer and decision is saved at once; a tool result at most every
       // CHECKPOINT_EVERY_MS (the whole run is rewritten each time), since it runs again on
       // resume. Except before an executor: once it edits, the tool would see another workspace

@@ -1083,3 +1083,74 @@ describe('classical replay and the web', () => {
     expect(readsPages(pageStep({ note: 'https://x.dev/p' }, []))).toBe(false);
   });
 });
+
+describe('secrets never reach the record', () => {
+  // Built at run time: no literal a secret scanner would flag.
+  const token = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
+  const p: Pattern = {
+    name: 'leak',
+    description: 'd',
+    requiredContext: [],
+    state: [
+      { name: 'output', type: 'string' },
+      { name: 'note', type: 'string' },
+    ],
+    start: 's',
+    nodes: [
+      { id: 's', kind: 'start', label: 'S' },
+      { id: 'test', kind: 'tool', label: 'T', tool: 'tests.run', output: { output: 'output' } },
+      {
+        id: 'read',
+        kind: 'agent',
+        role: 'assessor',
+        label: 'R',
+        directive: 'd',
+        reads: ['output'],
+        writes: ['note'],
+      },
+      { id: 'e', kind: 'end', label: 'E' },
+    ],
+    edges: [
+      { id: '1', from: 's', to: 'test' },
+      { id: '2', from: 'test', to: 'read' },
+      { id: '3', from: 'read', to: 'e' },
+    ],
+  };
+  const score = compileScore(p, { goal: 'g', generatedAt: 't' });
+
+  it("a tool's output, an AI's answer and its transcript are scrubbed before the engine; the run still verifies", async () => {
+    const leaky: Provider = {
+      name: 'leaky',
+      runAgent: async () => ({
+        result: {
+          updates: { note: `the token is ${token}` },
+          verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+        },
+        transcript: {
+          provider: 'leaky',
+          prompt: `GITHUB_TOKEN=${token}`,
+          output: `found it: ${token}`,
+          toolCalls: [{ name: 'submit_result', args: { note: token } }],
+        },
+      }),
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const tools = registry([
+      {
+        name: 'tests.run',
+        description: 't',
+        outputs: ['passed', 'output', 'command'],
+        run: async () => ({ passed: true, output: `env: TOKEN=${token}`, command: 'npm test' }),
+      },
+    ]);
+    const perf = await new Run({ score, provider: leaky, tools, clock }).start();
+    expect(perf.outcome).toBe('success');
+    const saved = JSON.stringify(perf);
+    expect(saved).not.toContain(token);
+    expect(perf.finalState).toEqual({
+      output: 'env: TOKEN=[REDACTED:github-token]',
+      note: 'the token is [REDACTED:github-token]',
+    });
+    expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
+  });
+});
