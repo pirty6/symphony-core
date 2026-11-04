@@ -1,4 +1,5 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { codeStandardFor } from '@core/standards'
 import { KIND_LABEL, ORIGIN_LABEL, type FlowNode as FlowNodeType } from '../lib/model'
 
 const ICON: Record<string, string> = {
@@ -29,6 +30,7 @@ function Chips({ label, keys }: { label: string; keys: readonly string[] }) {
 export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNodeType>) {
   const n = data.node
   const kindKey = n.kind === 'agent' ? n.role : n.kind
+  const standard = n.kind === 'agent' ? codeStandardFor(n) : undefined
   const cls = [
     'flow-node',
     `kind-${kindKey}`,
@@ -78,11 +80,20 @@ export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNo
           <p className="fn-text">{n.directive}</p>
           <Chips label="in" keys={data.reads} />
           <Chips label="out" keys={data.writes} />
-          {n.capabilities?.length || n.checks?.length || n.solo || n.isolated || n.complexity ? (
+          {n.capabilities?.length || n.checks?.length || n.solo || n.isolated || n.complexity || standard ? (
             <div className="fn-badges">
               {n.solo && <span className="badge badge-solo" title="Solo point: from Swing up the AI chooses the route">🎷 solo</span>}
               {n.isolated && <span className="badge" title="No workspace tools: works only from its input">🔒 isolated</span>}
               {n.complexity && <span className="badge" title="Fixed model tier">tier {n.complexity}</span>}
+              {standard && (
+                <span
+                  className="badge"
+                  data-testid={`clean-code-${id}`}
+                  title={standard === 'write' ? 'Writes code to the Clean Code standard (Robert C. Martin)' : 'Reviews code against the Clean Code standard (Robert C. Martin)'}
+                >
+                  🧹 clean code
+                </span>
+              )}
               {n.capabilities?.includes('web') && <span className="badge" title="May search and read the web">🌐 web</span>}
               {n.capabilities?.includes('mcp') && <span className="badge" title="May use MCP servers">🔌 mcp</span>}
               {n.checks?.length ? (

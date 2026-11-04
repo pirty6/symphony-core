@@ -124,6 +124,12 @@ test('phases collapse into one node, light up while running and open into their 
   await expect(page.locator('.phase-frame')).toHaveCount(investigate.groups!.length)
 })
 
+test('steps that write or review code show the Clean Code badge; others do not', async ({ page }) => {
+  await open(page, 'review')
+  await expect(page.getByTestId('clean-code-analyze')).toHaveAttribute('title', /Reviews code against the Clean Code standard/)
+  await expect(page.getByTestId('clean-code-collect')).toHaveCount(0)
+})
+
 test('auto-approve can be turned on mid-run: the waiting approval answers itself', async ({ page }) => {
   await open(page, 'fix')
   await page.getByRole('button', { name: '▶ Run' }).click()

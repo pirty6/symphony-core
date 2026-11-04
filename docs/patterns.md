@@ -19,6 +19,18 @@ Shared building blocks (in [`src/patterns/phases/`](../src/patterns/phases)):
 | Edit and verify | fix, refactor, implement | An executor edits; the engine captures the diff (an edit that changed nothing is caught), runs the tests and the linter, and triages failures: environment, wrong diagnosis (back to research), or try again, bounded by `maxAttempts`. |
 | PR review | fix, refactor, implement | A reviewer reads the diff; blocking comments go back to editing, bounded; you can accept despite the review. |
 
+**Code standard.** Every step that writes or reviews code is held to the practices of *Clean
+Code* (Robert C. Martin), summarized in [`src/core/standards.ts`](../src/core/standards.ts):
+names that reveal intent, small functions that do one thing, no hidden side effects, no
+duplication, errors that are not swallowed, comments that say why, one reason to change, clean
+tests, and the code you touch left a little cleaner. The codebase's own conventions come first.
+- Executors with workspace tools always get it in their prompt.
+- Steps marked `reviewsCode` (review's *Find issues*, the PR review phase) judge against it:
+  - review reports a break as a `CLEAN` finding;
+  - the PR reviewer makes a clear break in the new code BLOCKING.
+
+The 🧹 badge on a node in the studio shows which steps are held to it.
+
 ---
 
 ## investigate
@@ -621,6 +633,7 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    - FLAKY;
    - REDUNDANT;
    - DESIGN (against the codebase's rules);
+   - CLEAN (new or edited code that breaks a Clean Code rule, named);
    - CLAIM (it does not do what it says).
 
    An honest "could not read it" ends `failed`.
