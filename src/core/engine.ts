@@ -447,6 +447,7 @@ function makePause(
       input: pick(ctx.state, node.reads),
       outputSchema: fieldsOf(score, node.writes),
       capabilities: node.capabilities ?? [],
+      ...(node.fresh ? { fresh: true } : {}),
       complexity: escalate(
         ctx.recoveries.findLast((r) => r.action === 'retry' && r.complexity)?.complexity ??
           complexityFor(score, ctx.state, node),

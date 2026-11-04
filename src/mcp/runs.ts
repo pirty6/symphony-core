@@ -366,9 +366,13 @@ export class RunManager {
       score,
       provider,
       tools: extras.tools,
-      toolContext: isolation
-        ? { ...extras.toolContext, workspace: dir, memoryRoot: extras.toolContext.workspace }
-        : extras.toolContext,
+      toolContext: {
+        ...(isolation
+          ? { ...extras.toolContext, workspace: dir, memoryRoot: extras.toolContext.workspace }
+          : extras.toolContext),
+        // Remote callers read only: no command (tests, lint) runs on this machine for them.
+        ...(this.opts.editsAllowed ? {} : { runsCode: false }),
+      },
       ...(pattern.demo ? { demo: pattern.demo } : {}),
       ...(playsFromRepertoire(score.improvisation)
         ? { repertoire: await loadRepertoire(runsDir, score.id) }

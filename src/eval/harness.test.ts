@@ -423,6 +423,7 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
       },
     },
   }),
+  'review-clean': () => ({ state: { findings: [], report: 'No real issues found.' } }),
   'review-off-by-one': () => ({
     state: {
       findings: ['F1 src/sum.js:4 — the loop stops before n `for (let i = 1; i < n; i++)`'],
@@ -471,7 +472,9 @@ describe('eval tasks', () => {
         await buildFixture(dir, t.files, t.history);
         const wrong: Record<string, unknown> =
           t.pattern !== 'investigate'
-            ? {}
+            ? t.id === 'review-clean'
+              ? { findings: ['F1 src/sum.js:3 — [DESIGN] [LOW] the name changed `let sum = 0;`'] }
+              : {}
             : t.id === 'investigate-false-premise'
               ? { answer: 'It retries three times because the network is flaky.' }
               : t.id === 'investigate-false-hint'

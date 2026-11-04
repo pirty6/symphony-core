@@ -333,7 +333,7 @@ describe('feature switches', () => {
       'hypothesesPerResearch',
     ])
     expect(featureRows(hangman, PATTERNS, {})).toEqual([])
-    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(12)
+    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(13)
     expect(featureRows(maestro, PATTERNS, {})[5]!.patterns).toEqual(['investigate', 'fix', 'implement'])
   })
 

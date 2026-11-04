@@ -627,7 +627,7 @@ solved rate or citation validity.
 
 - **`symphony eval`** (`src/eval/`): small fixture repos with a known right answer: two fixes, an
   implement and a refactor checked by hidden tests the AI never saw, an investigate whose
-  docs say 8080 while the code says 8081, a review of uncommitted work with one real bug, an
+  docs say 8080 while the code says 8081, a review of uncommitted work with one real bug and one of a sound change (false flags), an
   analysis of a small CSV (the answer and its margin, cited), and a backlog judged on the items
   it extracts (each real one once, the done one skipped). It records solved, citations valid, tokens, time and
   models, saves each run, and `--compare` flags (exit 2) a run worse than its baseline: fewer

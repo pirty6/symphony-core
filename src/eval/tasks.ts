@@ -726,6 +726,35 @@ export const EVAL_TASKS: readonly EvalTask[] = [
     },
   },
   {
+    // The false-flag measure: a sound change (a doc comment and a clearer name, tests passing)
+    // must end "Looks good", with no finding against it.
+    id: 'review-clean',
+    pattern: 'review',
+    inputs: { target: 'the uncommitted changes in the working tree (git diff)' },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/sum.js': SUM_RIGHT,
+      'test/sum.test.js': `${TEST_HEAD}import { sumTo } from '../src/sum.js';\ntest('sums 1..n', () => assert.equal(sumTo(4), 10));\n`,
+    },
+    changes: {
+      'src/sum.js': SUM_RIGHT.replace(
+        '/** Sum of the numbers from 1 to n. */',
+        '/** Sum of the numbers from 1 to n (0 for n < 1). */',
+      ).replaceAll('total', 'sum'),
+    },
+    check: async ({ outcome, state }) => {
+      const findings = (state.findings as string[] | undefined) ?? [];
+      return {
+        pass: outcome === 'success' && findings.length === 0,
+        notes: [
+          `outcome ${outcome}`,
+          findings.length === 0 ? 'no false flags' : `false flags: ${findings.join('; ')}`,
+        ],
+      };
+    },
+  },
+  {
     // An analysis judged on its answer and on citing the numbers it rests on.
     id: 'analyze-top-region',
     pattern: 'analyze',

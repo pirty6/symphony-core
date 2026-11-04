@@ -319,12 +319,22 @@ export function workspaceTools(): ToolSpec[] {
         "Run a test, lint or typecheck command in the workspace (the given `command`, or the project's test script). Failure is a result: { passed, output, command }.",
       outputs: ['passed', 'output', 'command'],
       run: async (args, ctx) => {
+        // A remote caller never runs code on this machine (review's tests, for one).
+        if (ctx.runsCode === false)
+          return {
+            passed: true,
+            output: 'not run: remote callers do not run commands here',
+            command: '',
+          };
         const given = typeof args.command === 'string' ? args.command.trim() : '';
         const command = given || (await detectTestCommand(ctx.workspace));
         if (!command) {
-          throw new Error(
-            'no test command: set the testCommand input (e.g. "npm test"), or add a test script to package.json',
-          );
+          const why =
+            'no test command: set the testCommand input (e.g. "npm test"), or add a test script to package.json';
+          // A step that runs the tests only if there are any (review): not run is not a failure.
+          if (args.optional === true)
+            return { passed: true, output: `not run: ${why}`, command: '' };
+          throw new Error(why);
         }
         const timeout = typeof args.timeoutMs === 'number' ? args.timeoutMs : TEST_TIMEOUT_MS;
         if (args.reuse !== true) return runCommand(command, ctx, timeout);

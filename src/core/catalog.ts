@@ -141,6 +141,12 @@ export const FEATURES: readonly Feature[] = [
     ],
   },
   {
+    field: 'verify',
+    label: 'Run the tests (review)',
+    description:
+      'The engine runs the tests (and the lint command, if set) on the reviewed code; failing tests are an issue. Off: the review only reads.',
+  },
+  {
     field: 'narrowRead',
     label: 'Narrowed read (opt-in)',
     description:
