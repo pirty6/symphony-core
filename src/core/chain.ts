@@ -100,10 +100,16 @@ export function resultText(
   finalState: Readonly<Record<string, unknown>>,
   limits?: ResultLimits,
 ): string {
-  return (score.result ?? [])
-    .filter((k) => k in finalState)
-    .map((k) => `### ${k}\n\n${render(finalState[k], limits)}`)
-    .join('\n\n');
+  return (
+    (score.result ?? [])
+      // An empty text says nothing (a step that was switched off): left out, as the studio does.
+      .filter(
+        (k) =>
+          k in finalState && !(typeof finalState[k] === 'string' && !String(finalState[k]).trim()),
+      )
+      .map((k) => `### ${k}\n\n${render(finalState[k], limits)}`)
+      .join('\n\n')
+  );
 }
 
 /**
@@ -136,7 +142,13 @@ export function handoffContext(
   if (next.goalFrom) {
     const own = ctx[next.goalFrom];
     const goal = typeof own === 'string' && own.trim() ? own.trim() : prev.score.goal;
-    const found = cut(resultText(prev.score, state, HANDOFF_LIMITS), HANDOFF_CHARS);
+    // A run that writes a brief for AI agents (its result's `handoff` text) hands on that, with
+    // the whole budget: it is written for the next agent, most important first. Else its result.
+    const brief = prev.score.result?.includes('handoff') ? state.handoff : undefined;
+    const found =
+      typeof brief === 'string' && brief.trim()
+        ? cut(brief.trim(), HANDOFF_CHARS)
+        : cut(resultText(prev.score, state, HANDOFF_LIMITS), HANDOFF_CHARS);
     ctx[next.goalFrom] = found
       ? `${goal}\n\n## What the ${prev.score.pattern} run found\n\n${found}`
       : goal;
