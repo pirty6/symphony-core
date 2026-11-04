@@ -106,6 +106,17 @@ describe('buildAgentPrompt', () => {
     );
     expect(buildAgentPrompt(executor)).toContain('the system temp folder');
   });
+
+  it('holds a step that writes or reviews code to Clean Code, before the changing part', () => {
+    const heading = '## Code standard: Clean Code (Robert C. Martin)';
+    expect(buildAgentPrompt(pause)).not.toContain(heading);
+    const writing = buildAgentPrompt({ ...pause, role: 'executor', codeStandard: 'write' });
+    expect(writing).toContain(heading);
+    expect(writing).toContain('Every line of code you write or change follows these practices');
+    expect(writing.indexOf(heading)).toBeLessThan(writing.indexOf('## Input'));
+    const reviewing = buildAgentPrompt({ ...pause, codeStandard: 'review' });
+    expect(reviewing).toContain('Judge the code under review against these practices');
+  });
 });
 
 describe('extractJson', () => {
