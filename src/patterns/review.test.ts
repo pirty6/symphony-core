@@ -248,3 +248,40 @@ describe('review of a pull request', () => {
     );
   });
 });
+
+describe('review: a version for people and a brief for an AI agent', () => {
+  it('each end says how the review ended, in the brief, and the run still ends there', () => {
+    const issues = play();
+    expect(issues.end).toBe('issues');
+    expect(String(issues.state.handoff)).toMatch(/## Status\n\nIssues found/);
+    expect(String(issues.state.summary)).toMatch(/^## In short/);
+    const clean = play({ agents: { analyze: sound } });
+    expect(clean.end).toBe('clean');
+    expect(String(clean.state.handoff)).toMatch(/## Status\n\nLooks good/);
+    const unverified = play({
+      tools: { checkReview: (s) => ({ valid: [], invalid: s.newFindings }) },
+    });
+    expect(unverified.end).toBe('notVerified');
+    expect(unverified.r.state.outcome).toBe('partial');
+    expect(String(unverified.state.handoff)).toMatch(/## Status\n\nNot verified/);
+  });
+
+  it('the brief has the findings, what not to rely on, the coverage and what to do; people come first', () => {
+    const { state } = play();
+    const brief = String(state.handoff);
+    for (const h of [
+      '## Task',
+      '## Instructions for the next agent',
+      '## Findings (checked against the code)',
+      '## Do not rely on',
+      '## Coverage',
+      '## The review as written',
+    ])
+      expect(brief).toContain(h);
+    for (const f of state.findings as string[]) expect(brief).toContain(`- ${f}`);
+    expect(review.result).toEqual(['summary', 'handoff']);
+    const off = play({}, { plainSummary: false });
+    expect(off.ran).not.toContain('explain');
+    expect(off.end).toBe('issues');
+  });
+});
