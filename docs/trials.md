@@ -197,6 +197,16 @@ worse?
 npm run cli -- eval --task investigate-many-files,investigate-multi-hop,investigate-planted-flaw -n 3 --with maxChaseRounds=4 --with maxDebateRounds=1 --compare $BASE
 ```
 
+## Rejected answers, replayed through today's repairs
+
+`npm run cli -- rejections` takes every answer the engine rejected in this workspace's saved
+runs and plays it again through the provider's repairs (`normalizeSubmission`) and the shape
+check. It reports how many now pass and why the rest fail. The first run saves the passing ones
+as a baseline in the workspace's Symphony folder, which stays on this machine like the runs. A
+later run exits 1 and names any of them that fails again, so run it after changing a repair;
+`--save` refreshes the baseline. A step's own checks ("at least 3 hypotheses") need the run's
+state at that step, so they are counted but not replayed.
+
 ## Per-step shares of a saved run
 
 `npm run cli -- cost <run.json> [more.json]` prints each step's share of input tokens and AI

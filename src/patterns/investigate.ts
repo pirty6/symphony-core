@@ -1,4 +1,5 @@
 import { itemOf } from '../core/items.js';
+import { resolvePaths } from '../core/paths.js';
 import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import {
@@ -75,6 +76,9 @@ const COVERAGE = [
   listed('excludedFiles', 'none'),
   '"\n- Not located, so not triaged: "',
   listed('unlocatedFiles', 'none'),
+  'if(len(scopeUnmatched) > 0, "\n- Named by Locate but not in this repository: " + ' +
+    listed('scopeUnmatched', 'none') +
+    ', "")',
   // Only where it narrowed something: above maxTriageFiles, Locate decides (unlocatedFiles).
   'if(narrowRead && len(narrowedOut) > 0, "\n- Left unread by the narrowed read (opt-in): " + ' +
     listed('narrowedOut', 'none') +
@@ -384,6 +388,16 @@ export const investigate: Pattern = {
       },
       { name: 'scopeFiles', type: 'string[]', description: 'Files the search located' },
       { name: 'scopeReasons', type: 'string[]', description: 'Why, per located file' },
+      {
+        name: 'scopeUnmatched',
+        type: 'string[]',
+        description: 'What Locate named that is no file here (by the engine)',
+      },
+      {
+        name: 'scopeOver',
+        type: 'string[]',
+        description: 'Files Locate named beyond maxTriageFiles (by the engine)',
+      },
       { name: 'scopeQueries', type: 'string[]', description: 'Every search made to locate them' },
       { name: 'pages', type: 'string[]', description: 'Web pages to read in full (URLs)' },
       {
@@ -1043,7 +1057,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Locate files',
       directive:
-        "This repository has too many files (`repoFileCount`) to triage each one, so first locate where the evidence can be. Search the workspace (read-only): `git grep` or ripgrep for the names, identifiers, error messages, test names and paths in `question`, `hint` and `searchTerms`; `git log` and `git show` for the commits, pull requests, branches or dates it mentions (the files a change touched come first); then follow imports, callers and tests one level out from what you find. `candidateFiles` are the files the engine's own search ranked highest for these words: a lead, check them, and look beyond them. List in `scopeFiles` the files that could hold evidence for or against any entry of `leadHypotheses` (or on the question, when it is empty), most likely first, at most `maxTriageFiles`, as paths relative to the repository root exactly as `git ls-files` prints them (files, not folders). At the same position in `scopeReasons`, say why: which search found it. Record every search you ran in `scopeQueries`.",
+        'This repository has too many files (`repoFileCount`) to triage each one, so first locate where the evidence can be. Search the workspace (read-only): `git grep` or ripgrep for the names, identifiers, error messages, test names and paths in `question`, `hint` and `searchTerms`; `git log` and `git show` for the commits, pull requests, branches or dates it mentions (the files a change touched come first); then follow imports, callers and tests one level out from what you find. `candidateFiles` are the files the engine\'s own search ranked highest for these words: a lead, check them, and look beyond them. List in `scopeFiles` the files that could hold evidence for or against any entry of `leadHypotheses` (or on the question, when it is empty), most likely first, as paths relative to the repository root (as `git ls-files` prints them). A folder or a glob ("src/auth/", "src/**/*.test.ts") stands for every file it holds; the engine resolves them and keeps the first `maxTriageFiles` files. An entry that names no file of this repository is dropped (it is listed in the report as not found), so name only paths your searches showed exist. At the same position in `scopeReasons`, say why: which search found it. Record every search you ran in `scopeQueries`.',
       reads: [
         'question',
         'hint',
@@ -1057,23 +1071,31 @@ export const investigate: Pattern = {
       ],
       writes: ['scopeFiles', 'scopeReasons', 'scopeQueries'],
       retries: 2,
+      // Paths, folders, globs, the cap and the reasons' order are resolved by the engine next
+      // (resolveScope), not sent back: what Locate names is a lead, unioned with the engine's own
+      // candidates, so a path that is no file here costs nothing but a line in the coverage.
       checks: [
         { expr: 'len(scopeFiles) > 0', message: 'Locate at least one file.' },
-        {
-          expr: 'len(scopeFiles) <= maxTriageFiles',
-          message: 'List at most maxTriageFiles files: the most likely ones.',
-        },
-        {
-          expr: 'subset(scopeFiles, repoFiles)',
-          message:
-            'scopeFiles may only list files of this repository, relative to its root exactly as `git ls-files` prints them (no folders, no globs).',
-        },
-        {
-          expr: 'len(scopeReasons) == len(scopeFiles)',
-          message: 'Give one reason in scopeReasons per entry of scopeFiles, in the same order.',
-        },
         { expr: 'len(scopeQueries) > 0', message: 'Record the searches you ran in scopeQueries.' },
       ],
+    },
+    {
+      id: 'resolveScope',
+      kind: 'tool',
+      label: 'Resolve located paths',
+      tool: 'paths.resolve',
+      inputs: {
+        entries: 'scopeFiles',
+        reasons: 'scopeReasons',
+        files: 'repoFiles',
+        max: 'maxTriageFiles',
+      },
+      output: {
+        files: 'scopeFiles',
+        reasons: 'scopeReasons',
+        unmatched: 'scopeUnmatched',
+        over: 'scopeOver',
+      },
     },
     {
       id: 'queueScope',
@@ -1996,7 +2018,8 @@ export const investigate: Pattern = {
     { id: 'count-small', from: 'countFiles', to: 'smallRepo' },
     { id: 'small-queueFiles', from: 'smallRepo', to: 'queueFiles', branch: 'then' },
     { id: 'small-locate', from: 'smallRepo', to: 'locate', branch: 'else', label: 'big repo' },
-    { id: 'locate-queueScope', from: 'locate', to: 'queueScope' },
+    { id: 'locate-resolveScope', from: 'locate', to: 'resolveScope' },
+    { id: 'resolveScope-queueScope', from: 'resolveScope', to: 'queueScope' },
     { id: 'queueFiles-needWeb', from: 'queueFiles', to: 'needWeb' },
     { id: 'queueScope-needWeb', from: 'queueScope', to: 'needWeb' },
     { id: 'needWeb-listPages', from: 'needWeb', to: 'listPages', branch: 'then' },
@@ -2122,6 +2145,16 @@ export const investigate: Pattern = {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
       recall: () => ({ facts: [], lessons: [] }),
+      // The real resolver: pure, so the demo resolves Locate's paths as a live run does.
+      resolveScope: (s) => {
+        const r = resolvePaths(
+          (s.scopeFiles as unknown[]) ?? [],
+          (s.scopeReasons as unknown[]) ?? [],
+          (s.repoFiles as string[]) ?? [],
+          s.maxTriageFiles as number,
+        );
+        return { files: r.files, reasons: r.reasons, unmatched: r.unmatched, over: r.over };
+      },
       learnAnswer: () => ({ saved: true }),
       rememberCited: (s) => ({ saved: ((s.citedFindings as string[]) ?? []).length }),
       ...Object.fromEntries(

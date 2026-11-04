@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CompileError, compileScore, verifyScore } from './compile.js';
 import type { Pattern } from './types.js';
+import { fix, hangman } from '../patterns/index.js';
 
 const pattern: Pattern = {
   name: 'tiny',
@@ -100,5 +101,21 @@ describe('compileScore', () => {
     expect(verifyScore(s)).toEqual([]);
     const tampered = { ...structuredClone(s), goal: 'changed' };
     expect(verifyScore(tampered)[0]?.message).toMatch(/score id mismatch/);
+  });
+});
+
+describe('inputs keep no credentials', () => {
+  it('a pasted token in the goal or an input is scrubbed in the score', () => {
+    // Built at run time: no literal a secret scanner would flag.
+    const token = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
+    const s = compileScore(fix, {
+      context: { issue: `CI fails with GITHUB_TOKEN=${token} in the log` },
+      generatedAt: 't',
+    });
+    expect(JSON.stringify(s)).not.toContain(token);
+    expect(s.context.issue).toBe('CI fails with GITHUB_TOKEN=[REDACTED:github-token] in the log');
+    expect(s.goal).toBe(s.context.issue);
+    const h = compileScore(hangman, { goal: `play with ${token}`, generatedAt: 't' });
+    expect(h.goal).toBe('play with [REDACTED:github-token]');
   });
 });

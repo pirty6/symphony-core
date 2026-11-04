@@ -800,6 +800,8 @@ describe('scratch cleanup', () => {
       autoApprove: true,
       clock,
       scratch: { dir: '/w/.symphony/scratch/r1', remove: async () => void removed.push('r1') },
+      // The PR worktree a review played in goes the same way.
+      cleanup: async () => void removed.push('pr'),
     });
     return { run, removed };
   };
@@ -817,7 +819,7 @@ describe('scratch cleanup', () => {
     });
     expect((await run.start()).outcome).toBe('success');
     expect(new Set(seen)).toEqual(new Set(['/w/.symphony/scratch/r1']));
-    expect(removed).toEqual(['r1']);
+    expect(removed).toEqual(['r1', 'pr']);
   });
 
   it('is removed when the run fails or is stopped too, and a failing removal is ignored', async () => {
@@ -830,7 +832,7 @@ describe('scratch cleanup', () => {
       draft: () => Promise.reject(new Error('n/a')),
     });
     expect((await failing.run.start()).outcome).not.toBe('success');
-    expect(failing.removed).toEqual(['r1']);
+    expect(failing.removed).toEqual(['r1', 'pr']);
 
     const run = new Run({
       score: fixScore,
@@ -1079,5 +1081,76 @@ describe('classical replay and the web', () => {
     expect(readsPages(pageStep({ deepBatch: ['src/a.ts'] }, ['web']))).toBe(false);
     // Without web access a URL is only text: the workspace key still holds.
     expect(readsPages(pageStep({ note: 'https://x.dev/p' }, []))).toBe(false);
+  });
+});
+
+describe('secrets never reach the record', () => {
+  // Built at run time: no literal a secret scanner would flag.
+  const token = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
+  const p: Pattern = {
+    name: 'leak',
+    description: 'd',
+    requiredContext: [],
+    state: [
+      { name: 'output', type: 'string' },
+      { name: 'note', type: 'string' },
+    ],
+    start: 's',
+    nodes: [
+      { id: 's', kind: 'start', label: 'S' },
+      { id: 'test', kind: 'tool', label: 'T', tool: 'tests.run', output: { output: 'output' } },
+      {
+        id: 'read',
+        kind: 'agent',
+        role: 'assessor',
+        label: 'R',
+        directive: 'd',
+        reads: ['output'],
+        writes: ['note'],
+      },
+      { id: 'e', kind: 'end', label: 'E' },
+    ],
+    edges: [
+      { id: '1', from: 's', to: 'test' },
+      { id: '2', from: 'test', to: 'read' },
+      { id: '3', from: 'read', to: 'e' },
+    ],
+  };
+  const score = compileScore(p, { goal: 'g', generatedAt: 't' });
+
+  it("a tool's output, an AI's answer and its transcript are scrubbed before the engine; the run still verifies", async () => {
+    const leaky: Provider = {
+      name: 'leaky',
+      runAgent: async () => ({
+        result: {
+          updates: { note: `the token is ${token}` },
+          verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+        },
+        transcript: {
+          provider: 'leaky',
+          prompt: `GITHUB_TOKEN=${token}`,
+          output: `found it: ${token}`,
+          toolCalls: [{ name: 'submit_result', args: { note: token } }],
+        },
+      }),
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const tools = registry([
+      {
+        name: 'tests.run',
+        description: 't',
+        outputs: ['passed', 'output', 'command'],
+        run: async () => ({ passed: true, output: `env: TOKEN=${token}`, command: 'npm test' }),
+      },
+    ]);
+    const perf = await new Run({ score, provider: leaky, tools, clock }).start();
+    expect(perf.outcome).toBe('success');
+    const saved = JSON.stringify(perf);
+    expect(saved).not.toContain(token);
+    expect(perf.finalState).toEqual({
+      output: 'env: TOKEN=[REDACTED:github-token]',
+      note: 'the token is [REDACTED:github-token]',
+    });
+    expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
   });
 });

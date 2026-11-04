@@ -420,5 +420,7 @@ export function validatePattern(p: Pattern): ValidationReport {
       errors.push({ message: `goalFrom '${p.goalFrom}' must be a required string input` });
     }
   }
+  if (p.checkout !== undefined && p.state.find((f) => f.name === p.checkout)?.type !== 'string')
+    errors.push({ message: `checkout '${p.checkout}' must be a string state field` });
   return { errors, warnings: report.warnings };
 }

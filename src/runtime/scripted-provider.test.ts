@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
-import { createEngine } from '../core/engine.js';
+import { advance, createEngine } from '../core/engine.js';
+import { zeroValue } from '../core/schema.js';
 import { parseDraft } from '../core/draft.js';
 import type { AgentPause } from '../core/types.js';
 import { hangman, review } from '../patterns/index.js';
@@ -8,9 +9,18 @@ import type { ProviderEvent } from './provider.js';
 import { genericDraft } from '../core/draft.js';
 import { ScriptedProvider } from './scripted-provider.js';
 
+/** The first AI step's pause (tool steps before it answer with empty outputs). */
 function firstPause(p = hangman, context = {}) {
   const score = compileScore(p, { goal: 'g', context });
-  const r = createEngine(score);
+  let r = createEngine(score);
+  while (r.state.pause?.kind === 'tool')
+    r = advance(score, r.state, {
+      kind: 'tool',
+      pauseId: r.state.pause.pauseId,
+      updates: Object.fromEntries(
+        r.state.pause.outputSchema.map((f) => [f.name, zeroValue(f.type)]),
+      ),
+    });
   return { pause: r.state.pause as AgentPause, state: r.state.state };
 }
 

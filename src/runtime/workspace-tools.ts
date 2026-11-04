@@ -361,6 +361,25 @@ export function workspaceTools(): ToolSpec[] {
       }),
     },
     {
+      name: 'git.pr',
+      description:
+        "The pull request this run plays on, checked out at its merge commit: { number, base, files, paths, error }. files are `git diff --name-status <base> HEAD` lines, paths the same files' paths; error says why the PR could not be fetched. All empty when the target names no PR.",
+      outputs: ['number', 'base', 'files', 'paths', 'error'],
+      run: async (_args, ctx) => {
+        const pr = ctx.pr;
+        if (!pr) return { number: 0, base: '', files: [], paths: [], error: '' };
+        return 'error' in pr
+          ? { number: pr.number, base: '', files: [], paths: [], error: pr.error }
+          : {
+              number: pr.number,
+              base: pr.base,
+              files: [...pr.files],
+              paths: pr.files.map((f) => f.split('\t').at(-1)!),
+              error: '',
+            };
+      },
+    },
+    {
       name: 'git.diff',
       description:
         'The workspace changes against HEAD (untracked files included), or only in `paths`: { diff, hash, files }. Equal hash means nothing changed.',

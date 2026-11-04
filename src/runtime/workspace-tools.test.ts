@@ -443,3 +443,27 @@ describe('truncateDiff', () => {
     );
   });
 });
+
+describe('git.pr', () => {
+  it('reports the PR the runtime checked out, why it could not, or nothing', async () => {
+    const run = (pr?: unknown) =>
+      tool('git.pr').run({}, { ...ctx(root), ...(pr ? { pr } : {}) } as never);
+    expect(await run()).toEqual({ number: 0, base: '', files: [], paths: [], error: '' });
+    expect(
+      await run({ number: 7, base: 'abc', head: 'def', files: ['M\ta.js', 'A\tsrc/b c.js'] }),
+    ).toEqual({
+      number: 7,
+      base: 'abc',
+      files: ['M\ta.js', 'A\tsrc/b c.js'],
+      paths: ['a.js', 'src/b c.js'],
+      error: '',
+    });
+    expect(await run({ number: 8, error: 'could not fetch' })).toEqual({
+      number: 8,
+      base: '',
+      files: [],
+      paths: [],
+      error: 'could not fetch',
+    });
+  });
+});

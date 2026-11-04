@@ -235,6 +235,7 @@ export function parseDraft(raw: unknown): Checked<Pattern> {
     verbTriggers: strList(raw.verbTriggers),
     requiredContext: strList(raw.requiredContext),
     ...(str(raw.goalFrom) ? { goalFrom: str(raw.goalFrom)! } : {}),
+    ...(str(raw.checkout) ? { checkout: str(raw.checkout)! } : {}),
     ...(strList(raw.result).length > 0 ? { result: strList(raw.result) } : {}),
     state,
     nodes,
@@ -426,6 +427,7 @@ export function draftInstructions(): string {
   return `You design deterministic workflows ("patterns") for a state machine. Return ONE JSON object:
 { name: kebab-case, description, verbTriggers: string[], requiredContext: string[] (state keys the user must supply),
   goalFrom?: the requiredContext string key that states the goal (e.g. "question"; omit if none does),
+  checkout?: a string input that may name a pull request; the run then plays on the PR's code (the tool git.pr says what changed),
   result?: string[] (state keys the run delivers, shown as its result),
   state: [{ name, type: string|number|boolean|string[]|number[]|object, description?, initial? }],
   nodes: [...], edges: [{ id, from, to, guard?, branch?, label? }], start: id of the start node, maxSteps? }

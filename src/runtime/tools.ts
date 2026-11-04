@@ -2,7 +2,7 @@
  * Deterministic tools that `tool` nodes run (no AI). Results are recorded in
  * the Performance, so replay feeds them back instead of re-running them.
  */
-import type { ToolPause } from '../core/types.js';
+import type { PrInfo, ToolPause } from '../core/types.js';
 
 export interface ToolContext {
   /** Folder the agents work in. */
@@ -19,6 +19,8 @@ export interface ToolContext {
   readonly memoryRoot?: string;
   /** false for a remote caller: commands (tests, lint) are not run, and say so. */
   readonly runsCode?: boolean;
+  /** The pull request the run plays on (Pattern.checkout), or why it could not be fetched. */
+  readonly pr?: PrInfo;
 }
 
 export interface ToolSpec {

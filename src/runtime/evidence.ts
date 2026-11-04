@@ -7,6 +7,7 @@
  * issue) are passed through: they cannot be checked here. A finding that cites
  * nothing at all is rejected.
  */
+import { scrubText } from '../core/scrub.js';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
@@ -190,11 +191,14 @@ export async function checkCitations(
       else if (to - from > MAX_SPAN)
         why = `${path}:${from}-${to} spans ${to - from + 1} lines: cite the line, or at most ${MAX_SPAN + 1}`;
       if (why) break;
+      // Scrubbed as the finding was (core/scrub): a quote of a line holding a secret still matches.
       near.push(
         plain(
-          lines!
-            .slice(Math.max(0, from - 1 - SLACK), Math.min(lines!.length, to + SLACK))
-            .join(' '),
+          scrubText(
+            lines!
+              .slice(Math.max(0, from - 1 - SLACK), Math.min(lines!.length, to + SLACK))
+              .join('\n'),
+          ).replaceAll('\n', ' '),
         ),
       );
     }

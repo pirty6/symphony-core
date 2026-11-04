@@ -113,6 +113,9 @@ const required = (r: { session: { cfg: SessionConfig } }) =>
     }
   ).parameters.properties.updates.required ?? [];
 
+const fixVerdict = (v: unknown) =>
+  (normalizeSubmission({ updates: { a: 1 }, verdict: v }) as { verdict: unknown }).verdict;
+
 describe('CopilotProvider', () => {
   it('streams, enforces read-only and captures submit_result', async () => {
     const { client, sessions } = fakeClient(async (cfg, emit) => {
@@ -880,6 +883,29 @@ describe('CopilotProvider', () => {
         ['recorded'],
       ]);
     });
+  });
+
+  it('repairs the verdict shapes a locate step sent (2026-11-03): no shouldTerminate, a broken JSON string', () => {
+    const verdict = { outcome: 'applied', confidence: 0.5, shouldTerminate: false, reason: 'r' };
+    // Left out: terminating the whole run is only ever asked for.
+    expect(fixVerdict({ outcome: 'applied', confidence: 0.5, reason: 'r' })).toEqual(verdict);
+    // As text.
+    expect(
+      fixVerdict({ outcome: 'applied', confidence: '0.5', shouldTerminate: 'false', reason: 'r' }),
+    ).toEqual(verdict);
+    expect(fixVerdict({ ...verdict, shouldTerminate: 'true' })).toMatchObject({
+      shouldTerminate: true,
+    });
+    // A JSON string, valid or broken by an unescaped quote in the reason.
+    expect(fixVerdict('{"confidence": 0.5, "outcome": "applied", "reason": "r"}')).toEqual(verdict);
+    expect(
+      fixVerdict(
+        '{"confidence": 0.5, "outcome": "applied", "reason": "The checker rejected "src/a b.ts" twice"}',
+      ),
+    ).toEqual({ ...verdict, reason: 'The checker rejected "src/a b.ts" twice' });
+    // Nothing to go on: left for the schema to reject.
+    expect(fixVerdict('looks fine')).toBe('looks fine');
+    expect(fixVerdict({ confidence: 1 })).toMatchObject({ shouldTerminate: false });
   });
 
   it('repairs updates sent as text in every shape recorded from Claude models, deterministically', () => {

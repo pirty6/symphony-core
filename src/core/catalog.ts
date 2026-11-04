@@ -12,9 +12,11 @@ export const DEMO_ONLY: ReadonlySet<string> = new Set(['hangman']);
 export const TOOL_OUTPUTS: Readonly<Record<string, readonly string[]>> = {
   'repo.files': ['files', 'excluded'],
   'repo.rank': ['ranked', 'matched'],
+  'paths.resolve': ['files', 'reasons', 'unmatched', 'over'],
   'sources.catalog': ['names', 'descriptions'],
   'tests.run': ['passed', 'output', 'command'],
   'git.diff': ['diff', 'hash', 'files'],
+  'git.pr': ['number', 'base', 'files', 'paths', 'error'],
   'files.read': ['files'],
   'evidence.check': ['valid', 'invalid', 'checked'],
   'evidence.context': ['items'],

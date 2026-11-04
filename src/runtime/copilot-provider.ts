@@ -324,9 +324,40 @@ function repairUpdates(
 }
 
 /** A verdict sent as JSON text or as tool-call markup, as an object. */
+/** A verdict's fields read one by one from text that is not valid JSON (an unescaped quote, cut short). */
+function verdictFields(text: string): Record<string, unknown> | undefined {
+  const outcome = /"outcome"\s*:\s*"(applied|failed|skipped)"/.exec(text)?.[1];
+  if (!outcome) return undefined;
+  const confidence = /"confidence"\s*:\s*"?([0-9.]+)/.exec(text)?.[1];
+  const stop = /"shouldTerminate"\s*:\s*"?(true|false)/.exec(text)?.[1];
+  const reason = /"reason"\s*:\s*"([\s\S]*?)"?\s*[,}]?\s*$/.exec(text)?.[1];
+  return {
+    outcome,
+    ...(confidence ? { confidence: Number(confidence) } : {}),
+    ...(stop ? { shouldTerminate: stop === 'true' } : {}),
+    ...(reason !== undefined ? { reason } : {}),
+  };
+}
+
+/**
+ * A verdict in the shapes models send it: as a JSON string (even a broken one), with "true"
+ * or "0.8" as text, or without shouldTerminate (which only aborts the whole run when asked for,
+ * so its absence means false). An outcome that cannot be read is left for the schema to reject.
+ */
 function repairVerdict(v: unknown): unknown {
-  if (typeof v !== 'string') return v;
-  return tryObject(v) ?? fromParameterMarkup(v) ?? v;
+  const o =
+    typeof v === 'string' ? (tryObject(v) ?? fromParameterMarkup(v) ?? verdictFields(v)) : v;
+  if (!isRecord(o)) return v;
+  const { shouldTerminate: stop, confidence } = o;
+  return {
+    ...o,
+    ...(typeof confidence === 'string' &&
+    confidence.trim() !== '' &&
+    !Number.isNaN(Number(confidence))
+      ? { confidence: Number(confidence) }
+      : {}),
+    shouldTerminate: stop === true || stop === 'true',
+  };
 }
 
 const RESULT_KEYS = new Set(['updates', 'verdict', 'next']);

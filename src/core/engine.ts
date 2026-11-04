@@ -17,7 +17,7 @@
  */
 import { chunkItem, isUrl, itemOf } from './items.js';
 import { ENGINE_VERSION, RUN_SCHEMA_VERSION } from './migrate.js';
-import { evalExpr, evaluateGuard, parseExpr } from './expr.js';
+import { evalExpr, evaluateGuard, parseExpr, type Expr } from './expr.js';
 import { freezeJson, hashOf } from './hash.js';
 import { solosActive, takesFor } from './jazz.js';
 import { checkAgentResult, checkValue, validateUpdates, type Checked } from './schema.js';
@@ -754,18 +754,111 @@ function resolveTool(
   if (follow(score, ctx, node)) drive(score, ctx);
 }
 
-/** Evaluate acceptance checks against state as it would be after applying the answer. */
-/** A step's own checks on its answer, evaluated against the state it would produce. */
+/** Entries a failed subset(a, b) in the check let through that b does not have: named, so they can be fixed. */
+function notInSubset(expr: string, scope: Readonly<Record<string, unknown>>): string {
+  const out: string[] = [];
+  const walk = (e: Expr): void => {
+    if (e.t === 'call' && e.fn === 'subset' && e.args.length === 2) {
+      const [a, b] = e.args.map((x) => evalExpr(x, scope));
+      if (Array.isArray(a) && Array.isArray(b)) {
+        const allowed = new Set(b.map((x) => JSON.stringify(x)));
+        out.push(...a.filter((x) => !allowed.has(JSON.stringify(x))).map(String));
+      }
+    }
+    if (e.t === 'call') e.args.forEach(walk);
+    else if (e.t === 'bin') [e.l, e.r].forEach(walk);
+    else if (e.t === 'not') walk(e.e);
+    else if (e.t === 'list') e.items.forEach(walk);
+  };
+  try {
+    walk(parseExpr(expr));
+  } catch {
+    return '';
+  }
+  const shown = [...new Set(out)];
+  if (shown.length === 0) return '';
+  const head = shown.slice(0, 8).map((x) => JSON.stringify(x));
+  return ` Not allowed: ${head.join(', ')}${shown.length > 8 ? ` and ${shown.length - 8} more` : ''}.`;
+}
+
+/**
+ * The allowed spelling of a path the AI wrote another way: backslashes, a leading "./", quotes or
+ * backticks around it, a ":line" after it, or the workspace's absolute path before it. Undefined
+ * when no such spelling is allowed (a folder, a file that is not there): that is still an error.
+ */
+export function canonicalEntry(entry: string, allowed: ReadonlySet<string>): string | undefined {
+  let t = entry
+    .trim()
+    .replace(/^[`'"]+|[`'"]+$/g, '')
+    .replaceAll('\\', '/');
+  while (t.startsWith('./')) t = t.slice(2);
+  if (allowed.has(t)) return t;
+  const noLine = t.replace(/:[0-9]+(-[0-9]+)?$/, '');
+  if (allowed.has(noLine)) return noLine;
+  if (/^(\/|[A-Za-z]:\/)/.test(noLine))
+    for (let i = noLine.indexOf('/'); i >= 0; i = noLine.indexOf('/', i + 1))
+      if (allowed.has(noLine.slice(i + 1))) return noLine.slice(i + 1);
+  return undefined;
+}
+
+/**
+ * For each check subset(field, list) on a field the answer writes, its entries in the list's
+ * spelling where one matches (canonicalEntry). Deterministic, so a replay does the same.
+ */
+function canonicalUpdates(
+  checks: readonly AcceptanceCheck[],
+  scope: Readonly<Record<string, unknown>>,
+  updates: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  let out = updates;
+  const walk = (e: Expr): void => {
+    if (e.t === 'call') {
+      const [a, b] = e.args;
+      if (e.fn === 'subset' && a?.t === 'path' && a.parts.length === 1 && b) {
+        const field = String(a.parts[0]);
+        const list = out[field];
+        const allowed = evalExpr(b, { ...scope, ...out });
+        if (Array.isArray(list) && Array.isArray(allowed)) {
+          const set = new Set(allowed.filter((x): x is string => typeof x === 'string'));
+          const fixed = list.map((x) =>
+            typeof x === 'string' && !set.has(x) ? (canonicalEntry(x, set) ?? x) : x,
+          );
+          if (fixed.some((x, i) => x !== list[i])) out = { ...out, [field]: fixed };
+        }
+      }
+      e.args.forEach(walk);
+    } else if (e.t === 'bin') [e.l, e.r].forEach(walk);
+    else if (e.t === 'not') walk(e.e);
+    else if (e.t === 'list') e.items.forEach(walk);
+  };
+  for (const c of checks) {
+    try {
+      walk(parseExpr(c.expr));
+    } catch {
+      // A check that does not parse or evaluate is reported by the check itself.
+    }
+  }
+  return out;
+}
+
+/**
+ * A step's own checks on its answer, evaluated against the state it would produce. Paths the
+ * answer spells another way than the list a subset() check holds them to are written in its
+ * spelling first (canonicalUpdates): the accepted value carries them.
+ */
 export function acceptance(
   checks: readonly AcceptanceCheck[],
   state: Readonly<Record<string, unknown>>,
-  value: NodeResult,
+  answer: NodeResult,
 ): Checked<NodeResult> {
+  const updates = canonicalUpdates(checks, state, answer.updates);
+  const value = updates === answer.updates ? answer : { ...answer, updates };
   const scope = { ...state, ...value.updates, verdict: value.verdict };
   const errors: string[] = [];
   for (const c of checks) {
     try {
-      if (!evaluateGuard(c.expr, scope)) errors.push(`${c.message} (check failed: ${c.expr})`);
+      if (!evaluateGuard(c.expr, scope))
+        errors.push(`${c.message} (check failed: ${c.expr})${notInSubset(c.expr, scope)}`);
     } catch (e) {
       errors.push(`${c.message} (check '${c.expr}' errored: ${(e as Error).message})`);
     }
@@ -1125,6 +1218,9 @@ export function toPerformance(st: EngineState): Performance {
     events: st.events,
     ...(st.kind === 'running' && st.pause && st.attempts.length > 0
       ? { pending: { nodeId: st.pause.nodeId, step: st.pause.step, attempts: st.attempts } }
-      : {}),
+      : // Stopped while a step was being retried: what it answered is kept too.
+        st.outcome === 'cancelled' && st.attempts.length > 0
+        ? { pending: { nodeId: st.cursor, step: st.step, attempts: st.attempts } }
+        : {}),
   };
 }

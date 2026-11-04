@@ -203,6 +203,38 @@ describe('divergence', () => {
     expect(toPerformance(replayed.result.state).steps).toEqual(perf.steps);
   });
 
+  it('a run stopped while a step was being retried keeps the rejected answers', () => {
+    const score = compileScore(hangman, { goal: 'g', generatedAt: 't' });
+    let r = createEngine(score, { startedAt: 't' });
+    for (let i = 0; i < 3; i += 1)
+      r = advance(score, r.state, {
+        kind: 'agent',
+        pauseId: r.state.pause!.pauseId,
+        result: { bogus: i },
+        transcript: { provider: 'copilot', prompt: 'p', output: `try ${i}`, toolCalls: [] },
+        at: 't',
+      });
+    expect(r.state.pause?.kind).toBe('stuck');
+    r = advance(score, r.state, {
+      kind: 'cancel',
+      pauseId: r.state.pause!.pauseId,
+      reason: 'stopped from chat',
+      at: 't',
+    });
+    const perf = toPerformance(r.state);
+    expect(perf.outcome).toBe('cancelled');
+    expect(perf.pending).toMatchObject({ nodeId: 'pick', step: 2 });
+    expect(perf.pending!.attempts.map((a) => a.transcript?.output)).toEqual([
+      'try 0',
+      'try 1',
+      'try 2',
+    ]);
+    expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
+    // A run that ended after the step recorded its attempts does not repeat them.
+    const done = demoRun(hangman).perf;
+    expect(done.pending).toBeUndefined();
+  });
+
   it('replays a stuck step that a human retried with a hint and a tier', () => {
     const score = compileScore(hangman, { goal: 'g', generatedAt: 't' });
     let r = createEngine(score, { startedAt: 't' });

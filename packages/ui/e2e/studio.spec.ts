@@ -7,6 +7,14 @@ async function open(page: Page, pattern: string) {
   await expect(page.getByText(/Valid: every path is bounded/)).toBeVisible()
 }
 
+/** "Running now" starts closed: open it (it then stays open, remembered). */
+async function runningNow(page: Page) {
+  const live = page.getByTestId('live-runs')
+  const toggle = live.getByRole('button', { name: /Running now/ })
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
+  return live
+}
+
 async function guess(page: Page, letter: string) {
   const card = page.getByTestId('approval-card')
   const pauseId = await card.getAttribute('data-pause-id')
@@ -217,7 +225,7 @@ test('several runs play at once on one server; the studio switches between them'
   await page.getByLabel('step mode').check()
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('gate-card')).toContainText('Paused before “baseline”')
-  const live = page.getByTestId('live-runs')
+  const live = await runningNow(page)
   await expect(live.getByRole('button', { name: /fix/ }).first()).toContainText('on screen')
   // Newest first: the first hangman is the one started above, still waiting for a guess.
   await live.getByRole('button', { name: /hangman/ }).first().click()
@@ -274,7 +282,7 @@ test('a lost server says so and reconnects; request errors close with ✕ and cl
   await page.route('**/api/runs', (r) => (r.request().method() === 'POST' ? r.abort() : r.continue()))
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(alert).toBeVisible()
-  await page.getByTestId('live-runs').getByRole('button', { name: /hangman/ }).first().click()
+  await (await runningNow(page)).getByRole('button', { name: /hangman/ }).first().click()
   await expect(page.locator('.tb-title')).toContainText('hangman')
   await expect(alert).toBeHidden()
 })
@@ -416,6 +424,26 @@ test('the sub-agents of a fanned-out step show as nodes beside it, each with its
   await expect(page.getByRole('button', { name: 'AI output', exact: true })).toHaveClass(/\bon\b/)
   await page.screenshot({ path: 'test-results/subagents.png' })
   await gate.getByRole('button', { name: '⏹ Stop' }).click()
+})
+
+test('both sidebars fold to a rail and open again, and stay as you left them', async ({ page }) => {
+  await open(page, 'hangman')
+  const library = page.locator('.library')
+  const inspector = page.locator('.inspector')
+  const canvas = page.locator('.canvas')
+  const wide = (await canvas.boundingBox())!.width
+  await page.getByTestId('toggle-left').click()
+  await page.getByTestId('toggle-right').click()
+  await expect(library.getByText('Home')).toBeHidden()
+  await expect(inspector.getByRole('button', { name: 'Pattern' })).toBeHidden()
+  expect((await library.boundingBox())!.width).toBeLessThan(40)
+  expect((await canvas.boundingBox())!.width).toBeGreaterThan(wide + 500)
+  await page.reload()
+  await expect(page.getByTestId('toggle-left')).toHaveAttribute('aria-expanded', 'false')
+  await page.getByTestId('toggle-left').click()
+  await page.getByTestId('toggle-right').click()
+  await expect(library.getByText('Home')).toBeVisible()
+  await expect(inspector.getByRole('button', { name: 'Pattern' })).toBeVisible()
 })
 
 test('library sections fold away, and a feature switch reaches the run it starts', async ({ page }) => {

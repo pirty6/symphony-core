@@ -8,6 +8,8 @@ import { ApprovalCard, GateCard, NodeEditor, RecoveryCard, StateView } from './I
 import { newNode } from '../lib/model'
 import { PatternPanel } from './PatternPanel'
 import { Library } from './Library'
+import { SideToggle } from './SideToggle'
+import { useSidebar } from '../lib/sidebar'
 import { describeEvent } from '../lib/events'
 import { Timeline } from './Timeline'
 import { Toolbar } from './Toolbar'
@@ -298,18 +300,37 @@ describe('Library saved runs', () => {
     ]
     render(<Library {...props} saved={[]} live={live} liveId="a" onOpenLive={(id) => opened.push(id)} />)
     const section = screen.getByTestId('live-runs')
+    // Closed by default: the title says how many, and how many wait for you.
+    expect(section).toHaveTextContent('Running now · 2')
+    expect(screen.getByTestId('live-waiting')).toHaveTextContent('✋ 1')
+    expect(screen.getByTitle(/1 waiting for you/)).toBeInTheDocument()
+    expect(screen.queryByTitle('the bug')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Running now/ }))
     expect(section).toHaveTextContent('investigate')
     expect(section).toHaveTextContent('on screen')
     expect(section).not.toHaveTextContent('review')
     fireEvent.click(screen.getByTitle('the bug'))
     fireEvent.click(screen.getByTitle('why?'))
     expect(opened).toEqual(['b'])
+    localStorage.clear()
+  })
+
+  it('remembers the running section open once you open it', () => {
+    const live = [{ id: 'a', pattern: 'investigate', goal: 'why?', status: 'running' }]
+    const { unmount } = render(<Library {...props} saved={[]} live={live} />)
+    expect(screen.queryByTestId('live-waiting')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Running now · 1/ }))
+    unmount()
+    render(<Library {...props} saved={[]} live={live} />)
+    expect(screen.getByTitle('why?')).toBeInTheDocument()
+    localStorage.clear()
   })
 
   it("marks a run a chat plays, and opens it like the studio's own", () => {
     const opened: string[] = []
     const live = [{ id: 'v', pattern: 'investigate', goal: 'from chat', status: 'running', source: 'chat', workspace: '/repo' }]
     render(<Library {...props} saved={[]} live={live} onOpenLive={(id) => opened.push(id)} />)
+    fireEvent.click(screen.getByRole('button', { name: /Running now/ }))
     expect(screen.getByTestId('from-chat')).toHaveTextContent('chat')
     fireEvent.click(screen.getByTitle(/Played by a chat session in \/repo/))
     expect(opened).toEqual(['v'])
@@ -407,5 +428,34 @@ describe('PromptBox', () => {
     expect((screen.getByLabelText('context issue') as HTMLTextAreaElement).value).toBe(value)
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('sidebar toggles', () => {
+  function Side({ side }: { side: 'left' | 'right' }) {
+    const [open, toggle] = useSidebar(side)
+    return <SideToggle side={side} open={open} name={side === 'left' ? 'library' : 'inspector'} onToggle={toggle} />
+  }
+
+  it('fold and open each side, name what they do, and are remembered', () => {
+    localStorage.clear()
+    const { unmount } = render(
+      <>
+        <Side side="left" />
+        <Side side="right" />
+      </>,
+    )
+    const left = screen.getByTestId('toggle-left')
+    expect(left).toHaveAccessibleName('Hide the library')
+    expect(left).toHaveTextContent('«')
+    expect(screen.getByTestId('toggle-right')).toHaveTextContent('»')
+    fireEvent.click(left)
+    expect(left).toHaveAccessibleName('Show the library')
+    expect(left).toHaveAttribute('aria-expanded', 'false')
+    expect(left).toHaveTextContent('»')
+    unmount()
+    render(<Side side="left" />)
+    expect(screen.getByTestId('toggle-left')).toHaveAccessibleName('Show the library')
+    localStorage.clear()
   })
 })

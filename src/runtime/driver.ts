@@ -8,6 +8,7 @@
  * user can look at the node input and the AI's proposed output before the
  * engine applies it. stop() aborts the live AI call and cancels the run.
  */
+import { scrubValue } from '../core/scrub.js';
 import { itemOf } from '../core/items.js';
 import { stepTimeLimitMs } from './limits.js';
 import { KEEP_ANSWER } from './provider.js';
@@ -146,6 +147,8 @@ export interface RunOptions {
    * deletes it when the run ends (see store.ts runScratch).
    */
   readonly scratch?: { readonly dir: string; readonly remove: () => Promise<void> };
+  /** Removed when the run ends, like scratch (e.g. the worktree of the PR it reviewed). */
+  readonly cleanup?: () => Promise<void>;
   /**
    * The run plays in its own worktree (worktree.ts); `finish` brings its edits back
    * to the workspace (or saves a patch) when the run ends.
@@ -236,6 +239,11 @@ export class Run {
     this.breakpoints = new Set(opts.breakpoints ?? []);
     this.engine = undefined as unknown as EngineState;
   }
+
+  /** Off only with SYMPHONY_SCRUB=off (e.g. to debug a repair against the raw text). */
+  private readonly scrubbing =
+    (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+      ?.SYMPHONY_SCRUB !== 'off';
 
   private now(): string {
     return this.opts.clock?.() ?? new Date().toISOString();
@@ -895,7 +903,8 @@ export class Run {
         );
         break;
       }
-      this.apply(advance(this.score, this.engine, res));
+      // What the engine records is what gets saved: secrets go before it sees them (core/scrub).
+      this.apply(advance(this.score, this.engine, this.scrubbing ? scrubValue(res) : res));
       // Every AI answer and decision is saved at once; a tool result at most every
       // CHECKPOINT_EVERY_MS (the whole run is rewritten each time), since it runs again on
       // resume. Except before an executor: once it edits, the tool would see another workspace
@@ -928,6 +937,7 @@ export class Run {
     }
     // Clean up what the run no longer needs; a failed removal never fails the run.
     await this.opts.scratch?.remove().catch(() => undefined);
+    await this.opts.cleanup?.().catch(() => undefined);
     const status: RunStatus =
       this.engine.kind === 'failed'
         ? 'failed'

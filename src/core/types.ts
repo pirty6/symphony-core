@@ -27,6 +27,18 @@ export interface AcceptanceCheck {
 }
 export type FieldType = 'string' | 'number' | 'boolean' | 'string[]' | 'number[]' | 'object';
 
+/** What a run knows about the PR it plays on (ToolContext.pr). */
+export type PrInfo =
+  | {
+      readonly number: number;
+      /** The target branch's commit the PR merges into: `git diff <base> HEAD` is the PR. */
+      readonly base: string;
+      readonly head: string;
+      /** `git diff --name-status <base> HEAD`, one line per changed file. */
+      readonly files: readonly string[];
+    }
+  | { readonly number: number; readonly error: string };
+
 /** A model's reasoning effort, lowest first. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh';
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh'];
@@ -316,6 +328,11 @@ export interface Pattern extends PatternGraph {
    * When set, the goal is that input's value and no separate goal is asked for.
    */
   readonly goalFrom?: string;
+  /**
+   * A string input that may name a pull request (a link or "PR 123"): the runtime checks the
+   * PR's merge out in a worktree and the run plays there, on the PR's own code (review).
+   */
+  readonly checkout?: string;
   readonly demo?: DemoScript;
 }
 

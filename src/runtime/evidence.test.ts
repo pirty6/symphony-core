@@ -31,6 +31,21 @@ describe('checkCitations', () => {
     expect(r.checked).toBe(2);
   });
 
+  it('a quote of a line that holds a secret, scrubbed in the record, still matches the file', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'ev-secret-'));
+    const token = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
+    writeFileSync(
+      join(d, 'cfg.js'),
+      `const a = 1;\nconst client = connect({ token: "${token}" });\n`,
+    );
+    const f = 'cfg.js:2 — the token is hard-coded `connect({ token: "[REDACTED:github-token]" })`';
+    const leaked = 'cfg.js:2 — the token is hard-coded `connect({ token: "ghp_wrong" })`';
+    const r = await checkCitations(d, [f, leaked]);
+    expect(r.valid).toEqual([f]);
+    expect(r.invalid.map((i) => i.finding)).toEqual([leaked]);
+    rmSync(d, { recursive: true, force: true });
+  });
+
   it('rejects a missing file, a line past the end, and a quote that is not there', async () => {
     const r = await checkCitations(ws, [
       'src/server.js:4 — listens on config.port',

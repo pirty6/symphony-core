@@ -50,6 +50,7 @@ import {
   saveRun,
 } from '../runtime/store.js';
 import { editsFiles, isolate } from '../runtime/worktree.js';
+import { prForRun } from '../runtime/pr.js';
 
 const DRAFTS_DIR = 'src/patterns/drafts';
 
@@ -355,7 +356,14 @@ export class RunManager {
       providerName === 'copilot' && this.opts.editsAllowed && editsFiles(score)
         ? await isolate(workspace, score.pattern, this.opts.env)
         : undefined;
-    const dir = isolation?.dir ?? workspace;
+    // A run that reads a PR plays on the PR's own code, checked out apart (runtime/pr.ts).
+    const pr = isolation
+      ? undefined
+      : await prForRun(pattern, score.context, workspace, {
+          provider: providerName,
+          env: this.opts.env,
+        });
+    const dir = isolation?.dir ?? pr?.dir ?? workspace;
     const base = makeProvider({
       provider: providerName,
       pattern,
@@ -379,34 +387,44 @@ export class RunManager {
     const next =
       concertNext({ maestroScore: score, start: handOff }) ??
       chainNext({ chain, score, library: () => this.library(), start: handOff });
-    const run = new Run({
-      score,
-      provider,
-      tools: extras.tools,
-      toolContext: {
-        ...(isolation
-          ? { ...extras.toolContext, workspace: dir, memoryRoot: extras.toolContext.workspace }
-          : extras.toolContext),
-        // Remote callers read only: no command (tests, lint) runs on this machine for them.
-        ...(this.opts.editsAllowed ? {} : { runsCode: false }),
-      },
-      ...(pattern.demo ? { demo: pattern.demo } : {}),
-      ...(playsFromRepertoire(score.improvisation)
-        ? { repertoire: await loadRepertoire(runsDir, score.id) }
-        : {}),
-      autoApprove: req.autoApprove === true,
-      ...(providerName === 'copilot'
-        ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
-        : {}),
-      ...(isolation ? { isolation } : {}),
-      checkpoint: true,
-      onSave: async (r, how) => {
-        const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true });
-        if (managed) managed.savedTo = file;
-        return file;
-      },
-      ...(next ? { next } : {}),
-    });
+    // Until the run owns the PR checkout (cleanup), a failure here must remove it.
+    let run: Run;
+    try {
+      run = new Run({
+        score,
+        provider,
+        tools: extras.tools,
+        toolContext: {
+          ...extras.toolContext,
+          ...(dir !== workspace
+            ? { workspace: dir, memoryRoot: extras.toolContext.workspace }
+            : {}),
+          ...(pr ? { pr: pr.info } : {}),
+          // Remote callers read only: no command (tests, lint) runs on this machine for them.
+          ...(this.opts.editsAllowed ? {} : { runsCode: false }),
+        },
+        ...(pattern.demo ? { demo: pattern.demo } : {}),
+        ...(playsFromRepertoire(score.improvisation)
+          ? { repertoire: await loadRepertoire(runsDir, score.id) }
+          : {}),
+        autoApprove: req.autoApprove === true,
+        ...(providerName === 'copilot'
+          ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
+          : {}),
+        ...(isolation ? { isolation } : {}),
+        ...(pr ? { cleanup: pr.finish } : {}),
+        checkpoint: true,
+        onSave: async (r, how) => {
+          const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true });
+          if (managed) managed.savedTo = file;
+          return file;
+        },
+        ...(next ? { next } : {}),
+      });
+    } catch (e) {
+      await pr?.finish();
+      throw e;
+    }
     managed = { run, pattern };
     this.runs.set(run.id, managed);
     // The studio shows the chat's runs live and can steer them (src/runtime/live.ts).

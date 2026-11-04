@@ -4,6 +4,7 @@
  * Same inputs always give the same id (generatedAt is excluded from the
  * hash). The result is deep-frozen: a Score is a read-only plan.
  */
+import { scrubText, scrubValue } from './scrub.js';
 import { hashOf } from './hash.js';
 import { checkFieldValue, zeroValue } from './schema.js';
 import { isImprovisation } from './jazz.js';
@@ -65,7 +66,9 @@ export function scoreId(score: Hashable): string {
 
 export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableScore {
   const issues: Issue[] = [...validatePattern(pattern).errors];
-  const context = { ...args.context };
+  // What you type in (an issue with a pasted log, a question) is recorded in every saved run and
+  // in memory: credentials in it are scrubbed here, once (core/scrub).
+  const context = scrubValue({ ...args.context });
   const fields = new Map(pattern.state.map((f) => [f.name, f]));
 
   for (const key of pattern.requiredContext) {
@@ -85,7 +88,7 @@ export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableSco
   }
   const fromInput = pattern.goalFrom ? context[pattern.goalFrom] : undefined;
   const goal = (
-    pattern.goalFrom ? (typeof fromInput === 'string' ? fromInput : '') : (args.goal ?? '')
+    pattern.goalFrom ? (typeof fromInput === 'string' ? fromInput : '') : scrubText(args.goal ?? '')
   ).trim();
   // A missing goal input is already reported as missing required context.
   if (!goal && !pattern.goalFrom) issues.push({ message: 'goal is required' });

@@ -161,3 +161,90 @@ describe('review', () => {
     expect(review.nodes.find((n) => n.id === 'collect')).toMatchObject({ fresh: true });
   });
 });
+
+describe('review of a pull request', () => {
+  const pr = {
+    number: 7,
+    base: 'abc123',
+    files: ['M\tsrc/a.ts', 'D\tsrc/old.ts'],
+    paths: ['src/a.ts', 'src/old.ts'],
+    error: '',
+  };
+
+  it('reads the PR the engine checked out, and accounts for each of its files', () => {
+    const { ran, state } = play({
+      tools: { prInfo: () => pr },
+      agents: { collect: collecting(['src/a.ts'], ['src/old.ts — deleted']) },
+    });
+    expect(ran.slice(0, 4)).toEqual(['start', 'prInfo', 'prFetched', 'collect']);
+    expect(state).toMatchObject({ prNumber: 7, prBase: 'abc123', prPaths: pr.paths });
+    expect(ran).toContain('analyze');
+    expect(review.nodes.find((n) => n.id === 'collect')).toMatchObject({
+      reads: expect.arrayContaining(['prBase', 'prFiles']),
+    });
+  });
+
+  it('a file the PR does not change, or one left unaccounted, is sent back by name', () => {
+    let calls = 0;
+    const { r } = play({
+      tools: { prInfo: () => pr },
+      agents: {
+        collect: (s) =>
+          [
+            collecting(['src/a.ts', 'src/other.ts']),
+            // The deleted file forgotten.
+            collecting(['src/a.ts']),
+            collecting(['src/a.ts'], ['src/old.ts — deleted']),
+          ][calls++]!(s, 0),
+      },
+    });
+    const collect = r.state.steps.find((s) => s.nodeId === 'collect')!;
+    const [outside, forgotten] = collect.attempts!.map((a) => a.errors.join(' '));
+    expect(outside).toMatch(/Not allowed: "src\/other\.ts"/);
+    expect(outside).not.toMatch(/Account for every file/);
+    expect(forgotten).toMatch(/Account for every file the PR changes/);
+    expect(calls).toBe(3);
+    expect(r.state.steps.map((x) => x.nodeId)).toContain('analyze');
+  });
+
+  it('a PR that could not be fetched ends "Could not review" with why, before any AI step', () => {
+    const { r, state, end, ran } = play({
+      tools: {
+        prInfo: () => ({
+          ...pr,
+          base: '',
+          files: [],
+          paths: [],
+          error: "could not fetch refs/pull/7/merge from 'origin' (Authentication failed)",
+        }),
+      },
+    });
+    expect(end).toBe('notReviewed');
+    expect(r.state.outcome).toBe('failed');
+    expect(ran).not.toContain('collect');
+    expect(state.report).toBe(
+      "Could not review: could not fetch refs/pull/7/merge from 'origin' (Authentication failed).",
+    );
+  });
+
+  it('no diff says why in the report, not an empty one', () => {
+    const { state, end } = play({
+      agents: {
+        collect: () => ({
+          updates: {
+            diffSummary: 'Could not retrieve the diff for PR 5952552: no access.',
+            claims: '',
+            files: [],
+            skipped: [],
+            agents: 1,
+          },
+          verdict: v,
+        }),
+      },
+    });
+    expect(end).toBe('noDiff');
+    expect(state.report).toBe(
+      'Could not review: Could not retrieve the diff for PR 5952552: no access.',
+    );
+  });
+});

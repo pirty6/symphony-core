@@ -408,6 +408,24 @@ cannot be committed or pushed. A workspace's older `.symphony` folder is moved t
 `SYMPHONY_STATE=workspace` keeps the old layout, inside the workspace; `SYMPHONY_RUNS_DIR` moves
 only the runs. The test suites use temporary folders, so their runs never reach your lists.
 
+**No secrets in what Symphony saves.** Every AI answer, tool result and transcript is scrubbed
+before the engine records it, so saved runs, checkpoints, memory and eval reports never hold a
+credential. Each one is replaced by `[REDACTED:<kind>]`. The kinds are:
+- GitHub, AWS, Slack and Google tokens or keys;
+- JWTs and private-key blocks;
+- storage keys, SAS signatures and bearer tokens;
+- a password in a URL;
+- a quoted value assigned to a name like `password` or `apiKey`;
+- a `.env` line such as `DB_PASSWORD=…`.
+
+What you type in (the goal, an issue with a pasted log, a question) is scrubbed the same way
+when the run is compiled, so the AI does not get a pasted credential either. Ordinary code, hashes and prose are left as they are. Because the record is what the engine saw,
+a scrubbed run still replays and verifies exactly. A citation that quotes a line with a secret
+still checks, against the scrubbed line. The live feed the studio reads (`~/.symphony/live`) is
+scrubbed as it streams, even a secret split across pieces. The AI itself still reads your files
+as they are; only what is recorded is scrubbed. `SYMPHONY_SCRUB=off` turns this off, for
+example to debug a repair against the raw text.
+
 ### Several runs at once
 
 One server (the studio, or the MCP server behind `/maestrov2` and Copilot Studio) plays any number
