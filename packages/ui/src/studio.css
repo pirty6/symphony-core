@@ -1297,6 +1297,17 @@ pre {
   text-transform: inherit;
   letter-spacing: inherit;
 }
+.collapse-toggle .waiting {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  color: #0b0e1d;
+  background: var(--approval);
+  white-space: nowrap;
+}
+.collapse-toggle .nowrap {
+  white-space: nowrap;
+}
 .collapse-toggle:hover {
   color: var(--text);
 }

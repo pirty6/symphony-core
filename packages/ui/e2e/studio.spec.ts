@@ -7,6 +7,14 @@ async function open(page: Page, pattern: string) {
   await expect(page.getByText(/Valid: every path is bounded/)).toBeVisible()
 }
 
+/** "Running now" starts closed: open it (it then stays open, remembered). */
+async function runningNow(page: Page) {
+  const live = page.getByTestId('live-runs')
+  const toggle = live.getByRole('button', { name: /Running now/ })
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
+  return live
+}
+
 async function guess(page: Page, letter: string) {
   const card = page.getByTestId('approval-card')
   const pauseId = await card.getAttribute('data-pause-id')
@@ -217,7 +225,7 @@ test('several runs play at once on one server; the studio switches between them'
   await page.getByLabel('step mode').check()
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('gate-card')).toContainText('Paused before “baseline”')
-  const live = page.getByTestId('live-runs')
+  const live = await runningNow(page)
   await expect(live.getByRole('button', { name: /fix/ }).first()).toContainText('on screen')
   // Newest first: the first hangman is the one started above, still waiting for a guess.
   await live.getByRole('button', { name: /hangman/ }).first().click()
@@ -274,7 +282,7 @@ test('a lost server says so and reconnects; request errors close with ✕ and cl
   await page.route('**/api/runs', (r) => (r.request().method() === 'POST' ? r.abort() : r.continue()))
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(alert).toBeVisible()
-  await page.getByTestId('live-runs').getByRole('button', { name: /hangman/ }).first().click()
+  await (await runningNow(page)).getByRole('button', { name: /hangman/ }).first().click()
   await expect(page.locator('.tb-title')).toContainText('hangman')
   await expect(alert).toBeHidden()
 })

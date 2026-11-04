@@ -58,6 +58,8 @@ export function Library(p: Props) {
   const demoCount = p.saved.filter((r) => r.demo).length
   const saved = showDemo ? p.saved : p.saved.filter((r) => !r.demo)
   const running = (p.live ?? []).filter((r) => !TERMINAL.has(r.status))
+  // An approval, a stuck step or a step-mode pause: the run waits for a person.
+  const waiting = running.filter((r) => r.status === 'awaiting-approval' || r.status === 'paused').length
   const onDragStart = (e: DragEvent, kind: PaletteKind) => {
     e.dataTransfer.setData('application/symphony-node', kind)
     e.dataTransfer.effectAllowed = 'move'
@@ -173,28 +175,43 @@ export function Library(p: Props) {
       )}
 
       {running.length > 0 && (
-        <section data-testid="live-runs">
-          <h2>Running now</h2>
-          {running.map((r) => (
-            <button
-              type="button"
-              key={r.id}
-              className={`lib-item saved${r.id === p.liveId ? ' active' : ''}`}
-              onClick={() => p.onOpenLive?.(r.id)}
-              title={r.source ? `${r.goal}\n\nPlayed by a chat session${r.workspace ? ` in ${r.workspace}` : ''}: you can watch it and answer it here.` : r.goal}
-              disabled={r.id === p.liveId}
-            >
-              <b>{r.pattern}</b> <span className={`tag status-${r.status}`}>{r.status}</span>
-              {r.source === 'chat' && (
-                <span className="tag" data-testid="from-chat">
-                  chat
-                </span>
-              )}
-              {r.id === p.liveId && <span className="tag">on screen</span>}
-              <small>{r.goal}</small>
-            </button>
-          ))}
-        </section>
+        <div data-testid="live-runs">
+          <Collapsible
+            id="running"
+            // Closed by default; the title still says how many, and how many wait for you.
+            defaultOpen={false}
+            title={
+              <>
+                <span className="nowrap">Running now · {running.length}</span>
+                {waiting > 0 && (
+                  <span className="waiting" data-testid="live-waiting" title={`${waiting} waiting for you: an approval, a stuck step or a pause`}>
+                    ✋ {waiting}
+                  </span>
+                )}
+              </>
+            }
+          >
+            {running.map((r) => (
+              <button
+                type="button"
+                key={r.id}
+                className={`lib-item saved${r.id === p.liveId ? ' active' : ''}`}
+                onClick={() => p.onOpenLive?.(r.id)}
+                title={r.source ? `${r.goal}\n\nPlayed by a chat session${r.workspace ? ` in ${r.workspace}` : ''}: you can watch it and answer it here.` : r.goal}
+                disabled={r.id === p.liveId}
+              >
+                <b>{r.pattern}</b> <span className={`tag status-${r.status}`}>{r.status}</span>
+                {r.source === 'chat' && (
+                  <span className="tag" data-testid="from-chat">
+                    chat
+                  </span>
+                )}
+                {r.id === p.liveId && <span className="tag">on screen</span>}
+                <small>{r.goal}</small>
+              </button>
+            ))}
+          </Collapsible>
+        </div>
       )}
       <Collapsible
         id="saved"
