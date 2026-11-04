@@ -4,6 +4,7 @@
  * provider shares: the prompt, result extraction and the role policy.
  */
 import { preloadSection, type PreloadedFile } from './preload-prompt.js';
+import { codeStandardSection } from '../core/standards.js';
 import type { AgentPause, AiTranscript, Role } from '../core/types.js';
 
 export type ProviderEvent =
@@ -148,6 +149,7 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
       `- Write each \`${pause.cites}\` entry from the workspace as "path:line — fact \`exact text from that line\`" (a short verbatim quote in backticks). The file, the line and the quote are checked, and entries that fail are sent back or dropped. Entries from other sources: "source | location — fact".`,
     );
   }
+  if (pause.codeStandard) lines.push('', ...codeStandardSection(pause.codeStandard));
   if (pause.choices) {
     lines.push(
       '',

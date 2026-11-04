@@ -49,7 +49,7 @@ const v = (reason: string) => ({
 });
 
 /** A finding: "path:line — [CATEGORY] [SEVERITY] problem `exact quote`". */
-const CATEGORIES = 'BUG|SECURITY|PERF|TEST|FLAKY|REDUNDANT|DESIGN|CLAIM';
+const CATEGORIES = 'BUG|SECURITY|PERF|TEST|FLAKY|REDUNDANT|DESIGN|CLEAN|CLAIM';
 const FINDING_FORMAT = `^.+:[0-9]+(-[0-9]+)? — [[](${CATEGORIES})] [[](HIGH|MEDIUM|LOW)] `;
 
 /**
@@ -265,7 +265,8 @@ export const review: Pattern = {
       kind: 'agent',
       role: 'assessor',
       label: 'Find issues',
-      directive: `Review the changes to the files in \`files\` (yours only) for \`target\`: each file is given to you whole at the end of this prompt; read its diff hunks (git diff) against it, and the code it calls and is called by where an issue depends on it. Look for, ignoring style:
+      reviewsCode: true,
+      directive: `Review the changes to the files in \`files\` (yours only) for \`target\`: each file is given to you whole at the end of this prompt; read its diff hunks (git diff) against it, and the code it calls and is called by where an issue depends on it. Look for, ignoring formatting:
 - BUG: wrong behaviour, missed cases, broken error handling, a logic error;
 - SECURITY: injection, secrets, unsafe input, missing checks;
 - PERF: needless work on a hot path, repeated I/O or queries in a loop, unbounded growth;
@@ -273,6 +274,7 @@ export const review: Pattern = {
 - FLAKY: tests that depend on timing, the real clock, order, shared state, randomness, the network or parallel workers;
 - REDUNDANT: code that duplicates an existing helper or another part of the change;
 - DESIGN: a change against the codebase's structure or rules (layering, module boundaries, conventions in AGENTS.md or the docs);
+- CLEAN: code the change adds or edits that breaks the Clean Code standard below (name the rule);
 - CLAIM: the change does not do what \`claims\` says.
 \`testOutput\` and \`lintOutput\` are the engine's runs on this code: a failure there that your files cause is a finding at its cause. Write one issue per \`newFindings\` entry as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", only for issues you can point to. List in \`reviewed\` every file of \`files\` you read. An empty \`newFindings\` is right when the changes are sound. If you could not read the changes at all, say so with verdict outcome "failed" (\`reviewed\` may then be empty).`,
       reads: [

@@ -17,3 +17,4 @@ export * from './compare.js';
 export * from './migrate.js';
 export * from './chain.js';
 export * from './usage.js';
+export * from './standards.js';
