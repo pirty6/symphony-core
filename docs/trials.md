@@ -223,9 +223,10 @@ It also prints:
 ## 13. Maestro under five minutes: closing calls and the debate's effort
 
 Composing at tier 3 already fits in five minutes, review included. At tier 4, model time alone
-was 325–408 s. Two levers remain, and each needs an A/B before it becomes a default.
+was 325–408 s. Two levers remained. Both are now defaults, after the results below.
 
-**End the session at the answer** (`SYMPHONY_END_ON_SUBMIT=1`, off by default). The session ends
+**End the session at the answer** (`SYMPHONY_END_ON_SUBMIT`, on by default since this trial;
+`=0` turns it off). The session ends
 when the model turn that made a valid `submit_result` ends. Without the setting, the model
 answers "stop now" with one more call (4–6 s per step). Parallel submissions in that turn still
 count. A revision in a later turn is lost, and saved runs show the AI does revise after an
@@ -270,6 +271,11 @@ input tokens. Wall time drops only on short runs, because long ones are dominate
 skeptic's and the pragmatist's reasoning. Lowering the debate's effort cuts the tier-4
 composition by ~39% (≈246 s → 150 s). Both results come from small fixtures, so confirm them on a
 real request before relying on them.
+
+Both are now on by default. `SYMPHONY_END_ON_SUBMIT=0` turns the first off. The maestro's
+propose, skeptic and pragmatist set `maxEffort: 'high'`, and `SYMPHONY_EFFORT_CAPS=0` plays each
+tier's own effort again. To re-run the trial against the new defaults, the baseline is now the
+run with those switches at `=0`.
 
 Read: solved on the planted concern (it must not drop), time per run, and `model time by call`
 for the debate steps. Recorded replays are keyed on model and effort, so they will not match
