@@ -17,11 +17,12 @@ import { dirname, join, relative } from 'node:path';
 import type { EditsResult, Pattern, PerformanceOutcome } from '../core/types.js';
 import { stateDir } from './state.js';
 
-/** True when a pattern changes the workspace to do its job (the engine diffs and runs the tests). */
+/**
+ * True when a pattern changes the workspace to do its job: the engine captures its edits
+ * (git.diff). Running the tests alone (review) does not make one.
+ */
 export function editsFiles(p: Pick<Pattern, 'nodes'>): boolean {
-  return p.nodes.some(
-    (n) => n.kind === 'tool' && (n.tool === 'git.diff' || n.tool === 'tests.run'),
-  );
+  return p.nodes.some((n) => n.kind === 'tool' && n.tool === 'git.diff');
 }
 
 export interface Isolation {

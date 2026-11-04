@@ -14,6 +14,8 @@ export interface RecordedTake {
   readonly transcript?: AiTranscript;
   /** Saved run the notes come from. */
   readonly file: string;
+  /** The workspace fingerprint when it was recorded (after the step; an assessor changes none). */
+  readonly envHash?: string;
 }
 
 export interface Repertoire {
@@ -61,6 +63,7 @@ export function repertoireFrom(runs: readonly { run: SavedRun; file: string }[])
         },
         transcript: s.transcript,
         file,
+        ...(s.envHash !== undefined ? { envHash: s.envHash } : {}),
       });
     }
   }

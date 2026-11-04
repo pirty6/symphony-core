@@ -113,6 +113,19 @@ setInterval(() => {}, 1000);`,
   it('needs a command it can find, and never takes one from elsewhere than its input', async () => {
     const d = dir();
     await expect(tool('tests.run').run({}, ctx(d))).rejects.toThrow(/no test command/);
+    // For a remote caller nothing runs, and it says so.
+    expect(
+      await tool('tests.run').run(
+        { command: 'node -e "process.exit(1)"' },
+        { ...ctx(d), runsCode: false },
+      ),
+    ).toMatchObject({ passed: true, output: expect.stringMatching(/^not run: remote callers/) });
+    // A step that runs the tests only if there are any (review): not run, not a failure.
+    expect(await tool('tests.run').run({ optional: true }, ctx(d))).toEqual({
+      passed: true,
+      output: expect.stringMatching(/^not run: no test command/),
+      command: '',
+    });
     expect(
       await tool('tests.run').run({ command: 'node -e "process.exit(0)"' }, ctx(d)),
     ).toMatchObject({

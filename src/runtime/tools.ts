@@ -13,10 +13,12 @@ export interface ToolContext {
   /** The run calling the tool (memory caps what one run may add). */
   readonly runId?: string;
   /**
-   * Where memory (.symphony/memory.json) lives when it is not `workspace`: a run in its
+   * Whose memory (src/runtime/state.ts) a run uses when it is not `workspace`: a run in its
    * own worktree reads and adds to your workspace's memory, not a copy that is deleted.
    */
   readonly memoryRoot?: string;
+  /** false for a remote caller: commands (tests, lint) are not run, and say so. */
+  readonly runsCode?: boolean;
 }
 
 export interface ToolSpec {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { hashOf } from '../core/hash.js';
 import { replayPerformance, restoreEngine, RestoreError } from '../core/replay.js';
-import type { AgentPause, Pattern, SavedRun } from '../core/types.js';
+import type { AgentPause, Pattern, Performance, SavedRun } from '../core/types.js';
 import { fix, hangman, implement } from '../patterns/index.js';
 import { performScore, readsPages, Run, type RunMessage, type RunStatus } from './driver.js';
 import { KEEP_ANSWER, type AgentRequest, type AgentResponse, type Provider } from './provider.js';
@@ -498,6 +498,59 @@ describe('Run', () => {
       repertoire: jazzRep,
     }).start();
     expect(asked).toEqual(['pick', 'pick']);
+  });
+
+  it('classical replays only on the same workspace (a moved HEAD plays again), never a fresh step', async () => {
+    let asked = 0;
+    const ai: Provider = {
+      name: 'ai',
+      runAgent: async () => {
+        asked += 1;
+        return {
+          result: {
+            updates: { word: `w${asked}x` },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+          },
+          transcript: { provider: 'ai', prompt: '', output: '', toolCalls: [] },
+        };
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const play = (score: ReturnType<typeof compileScore>, workspace: string, from?: Performance) =>
+      new Run({
+        score,
+        provider: ai,
+        demo: hangman.demo,
+        autoApprove: true,
+        clock,
+        envHash: async () => workspace,
+        ...(from
+          ? {
+              repertoire: repertoireFrom([
+                { run: { schemaVersion: 3, score, performance: from }, file: 'f.json' },
+              ]),
+            }
+          : {}),
+      }).start();
+    const score = compileScore(hangman, { goal: 'g', improvisation: 0, generatedAt: 't' });
+    const first = await play(score, 'head-A');
+    expect(asked).toBe(1);
+    await play(score, 'head-A', first);
+    expect(asked).toBe(1);
+    // The workspace moved on (another HEAD): the first step's key alone cannot tell, its record can.
+    await play(score, 'head-B', first);
+    expect(asked).toBe(2);
+    // A step marked fresh reads what the fingerprint does not see (a PR on GitHub): always asked.
+    const fresh = compileScore(
+      {
+        ...hangman,
+        nodes: hangman.nodes.map((n) => (n.id === 'pick' ? { ...n, fresh: true } : n)),
+      },
+      { goal: 'g', improvisation: 0, generatedAt: 't' },
+    );
+    const recorded = await play(fresh, 'head-A');
+    await play(fresh, 'head-A', recorded);
+    expect(asked).toBe(4);
   });
 
   it('classical replays only answers recorded with the model settings the step asks for now', async () => {
