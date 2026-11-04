@@ -85,6 +85,11 @@ export interface AgentNode extends NodeBase {
   /** Deterministic acceptance rules; an answer failing any is rejected and re-asked. */
   readonly checks?: readonly AcceptanceCheck[];
   readonly capabilities?: readonly Capability[];
+  /**
+   * Never replayed from recorded answers: what it reads can change outside the workspace (a PR
+   * on GitHub), which the workspace fingerprint does not see.
+   */
+  readonly fresh?: boolean;
   /** Fixed model tier for this node; otherwise state.complexity, then the score's. */
   readonly complexity?: Complexity;
   /**
@@ -460,6 +465,8 @@ export interface AgentPause {
   readonly input: Readonly<Record<string, unknown>>;
   readonly outputSchema: readonly StateField[];
   readonly capabilities: readonly Capability[];
+  /** The node's `fresh`: never replayed. */
+  readonly fresh?: boolean;
   readonly complexity: Complexity;
   readonly improvisation: Improvisation;
   readonly isolated: boolean;

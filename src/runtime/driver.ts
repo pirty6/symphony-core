@@ -479,7 +479,7 @@ export class Run {
     if (!this.opts.repertoire) return undefined;
     // The replay key holds the workspace's state, not a web page's: a step that reads pages
     // is played again, since what the page says today may differ.
-    if (readsPages(pause)) return undefined;
+    if (readsPages(pause) || pause.fresh) return undefined;
     // Only answers recorded with the model settings this step asks for now.
     const settings = (await this.opts.provider.requested?.(pause)) ?? '';
     const take = this.opts.repertoire.find(
@@ -489,6 +489,11 @@ export class Run {
       settings,
     );
     if (!take) return undefined;
+    // The first steps' replay key has no fingerprint yet (none is taken before an AI step): the
+    // workspace must still be what it was when the answer was recorded (e.g. HEAD not moved).
+    if (take.envHash !== undefined && this.opts.envHash) {
+      if ((await this.opts.envHash()) !== take.envHash) return undefined;
+    }
     const emit = this.emitFor(pause);
     emit({
       type: 'info',
