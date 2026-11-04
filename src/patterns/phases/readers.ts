@@ -45,8 +45,18 @@ export const PLAIN_SECTIONS = [
   '## How we checked',
 ] as const;
 
-/** What the AI is told for the people's version: the rules of ASD-STE100, and its sections. */
-export function plainDirective(about: string, sources: readonly string[]): string {
+/** A `path:line` (or `path:a-b`) location, anywhere in an entry: the first one is its target. */
+const LOCATION = '[^ `]+:[0-9]+(-[0-9]+)?';
+
+/**
+ * What the AI is told for the people's version: the rules of ASD-STE100, and its sections.
+ * With `locations`, each finding in that list keeps its `path:line`, so a reader can find it.
+ */
+export function plainDirective(
+  about: string,
+  sources: readonly string[],
+  locations?: string,
+): string {
   return [
     `Write \`summary\`: ${about}, for a reader with no prior knowledge of the project. Use only what ${sources.map((s) => `\`${s}\``).join(', ')} say. Add nothing, and leave out nothing that changes the conclusion. Keep every number exact.`,
     'Write in Simplified Technical English (ASD-STE100):',
@@ -54,10 +64,14 @@ export function plainDirective(about: string, sources: readonly string[]): strin
     '- Use the active voice and simple tenses. Write instructions as commands ("Run the tests.").',
     '- Use common words, and use one word for one thing (do not change between "run", "execution" and "job").',
     '- The first time you use a technical term, explain it in a few plain words. Do not use abbreviations without explaining them.',
-    '- Do not use citation ids ([F12]), file paths with line numbers, or hypothesis ids (H1). The AI version keeps them.',
+    locations
+      ? `- Do not use citation ids ([F12]) or hypothesis ids (H1). The AI version keeps them.`
+      : '- Do not use citation ids ([F12]), file paths with line numbers, or hypothesis ids (H1). The AI version keeps them.',
     'Use these Markdown sections, in this order:',
     '## In short: the result in 2 or 3 sentences.',
-    '## What we found: a list of the main facts, each one sentence.',
+    locations
+      ? `## What we found: one bullet for each entry of \`${locations}\`, in its order. Start the bullet with the entry's location in backticks, exactly as written there, then a dash and one sentence: "- \`src/app.ts:42\` — The timer is never stopped." The reader uses the location to find the line. Write "Nothing to fix." when \`${locations}\` is empty.`
+      : '## What we found: a list of the main facts, each one sentence.',
     '## What to do: numbered steps, one command each, only if there are actions for the reader. Leave this section out if there are none.',
     '## What is not certain: a list of what is still open or unsure, each one sentence; "Nothing." if all is settled.',
     '## How we checked: 1 to 3 sentences on what was examined (code, history, web pages, tests).',
@@ -80,6 +94,14 @@ export const PLAIN_CHECKS: readonly AcceptanceCheck[] = [
       'Use the sections ## In short, ## What we found, ## What is not certain and ## How we checked (and ## What to do when there are actions).',
   },
 ];
+
+/** The people's version names the location of every entry of `field` (a string[] of "path:line — …"). */
+export function locationCheck(field: string): AcceptanceCheck {
+  return {
+    expr: `len(without(without(heads(${field}, "${LOCATION}"), [""]), heads(lines(summary), "${LOCATION}"))) == 0`,
+    message: `In ## What we found, start the bullet for each entry of ${field} with its location (path:line) exactly as written there.`,
+  };
+}
 
 /** The step that marks an end, before the readers run. */
 const mark = (end: string) => `mark_${end}`;
@@ -105,6 +127,8 @@ export function readers(o: {
   readonly ends: readonly { readonly id: string; readonly label: string }[];
   /** State field that holds the end reached. */
   readonly status: string;
+  /** A string[] source of "path:line — …" entries: the people's version keeps each location. */
+  readonly locations?: string;
 }): Readers {
   const ends = o.ends;
   const nodes: ScoreNode[] = [
@@ -132,11 +156,11 @@ export function readers(o: {
       label: 'Write the version for people',
       // Rewording what is already decided: a cheaper tier does it well.
       complexityShift: -1,
-      directive: plainDirective(o.about, o.sources),
+      directive: plainDirective(o.about, o.sources, o.locations),
       reads: [...o.sources],
       writes: ['summary'],
       retries: 2,
-      checks: [...PLAIN_CHECKS],
+      checks: [...PLAIN_CHECKS, ...(o.locations ? [locationCheck(o.locations)] : [])],
     },
     ...ends.slice(0, -1).map(
       (e): ScoreNode => ({
