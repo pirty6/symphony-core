@@ -318,10 +318,12 @@ describe('feature switches', () => {
       'pragmatistFrom',
       'gapsPerChase',
       'maxExpandRounds',
+      'plainSummary',
       'narrowRead',
       'gapAimed',
     ])
     expect(rows[0]).toMatchObject({ value: 'true', default: 'true' })
+    expect(rows.find((r) => r.feature.field === 'plainSummary')).toMatchObject({ value: 'true', default: 'true' })
     expect(rows[1]).toMatchObject({ value: 'shadow', default: 'off' })
     expect(rows.find((r) => r.feature.field === 'maxExpandRounds')).toMatchObject({ value: '2', default: '2' })
     expect(rows.find((r) => r.feature.field === 'narrowRead')).toMatchObject({ value: 'false', default: 'false' })
@@ -333,7 +335,7 @@ describe('feature switches', () => {
       'hypothesesPerResearch',
     ])
     expect(featureRows(hangman, PATTERNS, {})).toEqual([])
-    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(13)
+    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(14)
     expect(featureRows(maestro, PATTERNS, {})[5]!.patterns).toEqual(['investigate', 'fix', 'implement'])
   })
 

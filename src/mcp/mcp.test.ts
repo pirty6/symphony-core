@@ -98,7 +98,8 @@ describe('Symphony MCP server', () => {
     expect(started.body.run_id).toMatch(/^run-/);
     const view = await settle(client, started.body.run_id);
     expect(view).toMatchObject({ pattern: 'investigate', outcome: 'success' });
-    expect(view.result).toContain('### answer');
+    expect(view.result).toMatch(/^### summary\n\n## In short/);
+    expect(view.result).toContain('### handoff');
     // Saved on this machine, outside the workspace: never in its git status.
     expect(view.savedTo).toContain(join(home, 'workspaces'));
     expect(

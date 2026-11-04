@@ -88,6 +88,27 @@ experiments, git history, GitHub, dependencies, MCP servers.
    it cited and a lesson built from its checked sub-answers (only when it names a workspace
    file, so the lesson goes stale with the code). Anything else ends `partial`, with the
    reasons in `doubts`, and teaches nothing.
+11. **Two versions of the result, one for each reader.**
+    - **For people (`summary`).** It comes first, written by the AI from the cited answer in
+      Simplified Technical English (ASD-STE100). It has short sentences, one idea in each,
+      common words, the active voice and terms explained, and no citation ids. Its sections are
+      *In short*, *What we found*, *What to do* (only when the answer recommends actions), *What
+      is not certain* and *How we checked*. The engine sends it back when a sentence has more than
+      25 words (naming each one), when it holds a citation id, or when a section is missing. The
+      `plainSummary` switch (on by default) turns it off, which saves one model call.
+    - **For an AI agent (`handoff`).** The engine writes it from the record, so it is complete
+      and the same every time. In order, most important first:
+      - the task;
+      - the status (settled, or why not) and the confidence;
+      - instructions for the next agent;
+      - what is still open;
+      - every sub-answer and ruling;
+      - the cited evidence;
+      - the findings not to rely on;
+      - the full answer with its coverage.
+
+      A chained run (fix, refactor…) gets this brief with the whole handoff budget (30,000
+      characters); the people's version is not handed on.
 
 <!-- flow:investigate -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
@@ -104,6 +125,9 @@ flowchart TD
   n_attachParts["Finish the answer"]
   n_settled{"Settled?"}
   n_noteDoubts["Say why it is unsettled"]
+  n_handoffDoc["Write the AI version"]
+  n_wantPlain{"Plain summary?"}
+  n_explain["🤖 Write the version for people"]
   n_learnAnswer[/"🔧 Remember the outcome"/]
   n_rememberCited[/"🔧 Remember cited facts"/]
   n_done(["Answered · success"])
@@ -141,12 +165,16 @@ flowchart TD
   n_challengePhase --> n_attachParts
   n_challengePhase -.-> n_gapPhase
   n_attachParts --> n_judgePhase
-  n_judgePhase --> n_settled
+  n_judgePhase --> n_noteDoubts
+  n_noteDoubts --> n_handoffDoc
+  n_handoffDoc --> n_wantPlain
+  n_wantPlain -->|"yes"| n_explain
+  n_wantPlain -->|"no"| n_settled
+  n_explain --> n_settled
   n_settled -->|"yes"| n_learnAnswer
-  n_settled -->|"no"| n_noteDoubts
+  n_settled -->|"no"| n_doubts
   n_learnAnswer --> n_rememberCited
   n_rememberCited --> n_done
-  n_noteDoubts --> n_doubts
 ```
 
 | Phase | What it does | Steps |
