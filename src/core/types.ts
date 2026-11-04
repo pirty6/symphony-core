@@ -435,6 +435,7 @@ export interface Musician {
   readonly tier: Complexity;
   /** Model the tier (or MODEL) resolved to; the provider's default when absent. */
   readonly requestedModel?: string;
+  /** The effort asked for with requestedModel (the pair replay looks answers up by). */
   readonly effort?: string;
   /** Account the provider used, e.g. 'token' or 'signed-in user'. */
   readonly account?: string;
@@ -444,6 +445,8 @@ export interface Musician {
   readonly sampling: string;
   /** Models whose content filter blocked this answer before another model gave it. */
   readonly blockedOn?: readonly string[];
+  /** After a block: the effort sent with the model that answered ('default' when none was). */
+  readonly answeredEffort?: string;
   /** Times a rate limit (HTTP 429) stopped the session before it began, and it waited to retry. */
   readonly rateLimitWaits?: number;
 }

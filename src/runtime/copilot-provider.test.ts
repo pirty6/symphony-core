@@ -223,14 +223,20 @@ describe('CopilotProvider', () => {
         }
         emit('session.idle');
       });
-    const tiers = { 1: { model: 'c' }, 2: { model: 'b' }, 3: { model: 'a' }, 4: { model: 'a' } };
+    const tiers = {
+      1: { model: 'c', effort: 'low' as const },
+      2: { model: 'b' },
+      3: { model: 'a', effort: 'high' as const },
+      4: { model: 'a' },
+    };
     const run = async (blocking: string[]) => {
       const { client, sessions } = play(blocking);
       const events: string[] = [];
       const p = new CopilotProvider({
         clientFactory: () => ({
           ...client,
-          listModels: async () => ['a', 'b', 'c'].map((id) => ({ id })),
+          listModels: async () =>
+            ['a', 'b', 'c'].map((id) => ({ id, supportedReasoningEfforts: ['low', 'high'] })),
         }),
         tiers,
       });
@@ -251,6 +257,9 @@ describe('CopilotProvider', () => {
     expect(healed.res.transcript.musician).toMatchObject({
       requestedModel: 'a',
       blockedOn: ['a', 'b'],
+      // The effort asked with the requested model (replay's key), and the one that answered.
+      effort: 'high',
+      answeredEffort: 'low',
     });
     // The blocked calls answered nothing: tagged, so their time is not the answer's.
     expect(healed.res.transcript.calls!.map((c) => c.blocked ?? false)).toEqual([

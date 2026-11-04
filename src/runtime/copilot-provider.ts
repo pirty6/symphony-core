@@ -1123,9 +1123,11 @@ export class CopilotProvider implements Provider {
         musician: {
           tier: pause.complexity,
           ...(tier.model ? { requestedModel: tier.model } : {}),
-          // The effort sent with the model that answered (another one after a content block).
-          ...(played.effort ? { effort: played.effort } : {}),
+          ...(tier.effort ? { effort: tier.effort } : {}),
           ...(blockedOn.length ? { blockedOn } : {}),
+          ...(blockedOn.length && played.effort !== tier.effort
+            ? { answeredEffort: played.effort ?? 'default' }
+            : {}),
           ...(out.rateLimitWaits ? { rateLimitWaits: out.rateLimitWaits } : {}),
           account: this.usingSignedInUser ? 'signed-in user' : 'token',
           ...(SDK ? { sdk: SDK } : {}),
