@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -130,7 +130,16 @@ describe('Symphony MCP server', () => {
       'plan',
     ]);
     await call(client, 'answer_approval', { run_id: body.run_id, approved: true });
-    expect(await settle(client, body.run_id)).toMatchObject({ outcome: 'success' });
+    const done = await settle(client, body.run_id);
+    expect(done).toMatchObject({ outcome: 'success' });
+    // The gate's wait splits where the chat first got the question: asked → shown → answered.
+    const saved = JSON.parse(readFileSync(done.savedTo!, 'utf8')) as {
+      performance: { steps: { kind: string; at?: string; approval?: Record<string, string> }[] };
+    };
+    const gate = saved.performance.steps.find((st) => st.kind === 'approval')!;
+    expect(gate.approval).toMatchObject({ by: 'mcp' });
+    const { askedAt, shownAt } = gate.approval!;
+    expect(askedAt! <= shownAt! && shownAt! <= gate.at!).toBe(true);
     const again = await call(client, 'answer_approval', { run_id: body.run_id, approved: true });
     expect(again.isError).toBe(true);
     expect(again.body).toMatch(/no approval is pending/);

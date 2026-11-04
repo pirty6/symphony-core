@@ -184,6 +184,8 @@ export interface HumanAnswer {
   readonly approved: boolean;
   readonly updates?: Readonly<Record<string, unknown>>;
   readonly by?: string;
+  /** When the asker first showed the question (MCP: the first get_run that returned it). */
+  readonly shownAt?: string;
   /** Use the pattern's demo answer instead. */
   readonly scripted?: boolean;
 }
@@ -793,6 +795,7 @@ export class Run {
     const answered = new Promise<HumanAnswer | undefined>((resolve) => {
       this.approvalWaiter = resolve;
     });
+    const askedAt = this.now();
     this.setStatus('awaiting-approval', { nodeId: pause.nodeId });
     const answer = await answered;
     this.approvalWaiter = undefined;
@@ -805,6 +808,8 @@ export class Run {
       approved: answer.approved,
       ...(answer.updates ? { updates: answer.updates } : {}),
       by: answer.by ?? 'user',
+      askedAt,
+      ...(answer.shownAt ? { shownAt: answer.shownAt } : {}),
       at: this.now(),
     };
   }

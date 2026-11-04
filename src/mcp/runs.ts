@@ -125,6 +125,8 @@ interface Managed {
   /** Why a hand-off did not start (e.g. the composed score edits files over HTTP). */
   blocked?: string;
   savedTo?: string;
+  /** The approval a get_run first returned, and when: the gate wait splits there. */
+  shown?: { readonly pauseId: string; readonly at: string };
 }
 
 export type Waiting =
@@ -507,7 +509,12 @@ export class RunManager {
         }
       });
     }
-    return this.view(runId);
+    const v = this.view(runId);
+    const { managed } = this.latest(runId);
+    const pause = managed.run.engine?.pause;
+    if (v.waitingFor?.kind === 'approval' && pause && managed.shown?.pauseId !== pause.pauseId)
+      managed.shown = { pauseId: pause.pauseId, at: new Date().toISOString() };
+    return v;
   }
 
   answerApproval(
@@ -523,10 +530,12 @@ export class RunManager {
             pause.outputSchema.map((f) => [f.name, answer.updates?.[f.name] ?? zeroValue(f.type)]),
           )
         : answer.updates;
+    const shownAt = managed.shown?.pauseId === pause?.pauseId ? managed.shown?.at : undefined;
     const error = managed.run.answerApproval({
       approved: answer.approved,
       ...(updates ? { updates } : {}),
       by: 'mcp',
+      ...(shownAt ? { shownAt } : {}),
     });
     if (error) throw new Error(error);
     return this.view(id);
