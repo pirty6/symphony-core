@@ -36,6 +36,7 @@ export type RunLike = Pick<
   | 'stop'
   | 'setBreakpoints'
   | 'setStepMode'
+  | 'setAutoApprove'
   | 'answerOvertime'
   | 'answerRecovery'
   | 'answerApproval'
@@ -57,6 +58,7 @@ export type LiveCommand =
   | { readonly action: 'pause' | 'resume' | 'step' | 'stop' | 'keepWaiting' | 'stopStep' }
   | { readonly action: 'breakpoints'; readonly breakpoints: readonly string[] }
   | { readonly action: 'stepMode'; readonly on: boolean }
+  | { readonly action: 'autoApprove'; readonly on: boolean }
   | { readonly action: 'approval'; readonly answer: HumanAnswer }
   | { readonly action: 'recovery'; readonly answer: RecoveryAnswer };
 
@@ -129,6 +131,8 @@ function apply(run: Run, c: LiveCommand): void {
       return run.setBreakpoints(c.breakpoints.map(String));
     case 'stepMode':
       return run.setStepMode(c.on === true);
+    case 'autoApprove':
+      return run.setAutoApprove(c.on === true);
     case 'keepWaiting':
     case 'stopStep':
       run.answerOvertime(c.action === 'stopStep' ? 'stop' : 'wait');
@@ -347,6 +351,9 @@ export class LiveRun implements RunLike {
   }
   setStepMode(on: boolean): void {
     this.send({ action: 'stepMode', on });
+  }
+  setAutoApprove(on: boolean): void {
+    this.send({ action: 'autoApprove', on });
   }
   answerOvertime(action: 'wait' | 'stop'): string | undefined {
     return this.send({ action: action === 'stop' ? 'stopStep' : 'keepWaiting' });
