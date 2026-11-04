@@ -426,6 +426,19 @@ scrubbed as it streams, even a secret split across pieces. The AI itself still r
 as they are; only what is recorded is scrubbed. `SYMPHONY_SCRUB=off` turns this off, for
 example to debug a repair against the raw text.
 
+Saved runs, memory and eval reports are scrubbed once more where they are written. That catches
+what reaches a file without passing the engine: a tool that writes memory itself, an error's
+text, an eval report's `--with` values.
+
+Known limits (found by an investigation of this feature):
+- Only the listed credential shapes are caught. There is no detection of random-looking strings,
+  and a value is not judged by the name of the field that holds it.
+- A pattern's own text (its directives and initial values) is saved as written. It is the plan,
+  and its id is its hash.
+- A patch Symphony could not apply holds your code's diff as it is.
+- The studio's own stream to the browser, on this machine, is not scrubbed; only what is written
+  to disk is.
+
 ### Several runs at once
 
 One server (the studio, or the MCP server behind `/maestrov2` and Copilot Studio) plays any number

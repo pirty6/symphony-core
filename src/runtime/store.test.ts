@@ -450,3 +450,25 @@ describe('retention: saved runs do not pile up', () => {
     expect((await listRuns(dir)).length).toBe(4);
   });
 });
+
+describe('saved runs keep no credentials', () => {
+  it("the record is scrubbed where it is written (an error's text); the score and its checks stay as they were", async () => {
+    const dir = join(root, 'runs-scrub');
+    const token = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
+    const score = compileScore(fix, { goal: 'g', context: fix.demo!.context!, generatedAt: 't' });
+    const performance = toPerformance(
+      runScripted(score, fix.demo, { at: '2026-01-01T00:00:00Z' }).state,
+    );
+    const file = await saveRun(dir, {
+      schemaVersion: 3,
+      score,
+      performance: { ...performance, reason: `provider error: bad credentials ${token}` },
+    });
+    const text = readFileSync(file, 'utf8');
+    expect(text).not.toContain(token);
+    expect(text).toContain('provider error: bad credentials [REDACTED:github-token]');
+    const { run, issues } = await loadRun(file);
+    expect(issues).toEqual([]);
+    expect(run.score.id).toBe(score.id);
+  });
+});

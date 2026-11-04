@@ -18,6 +18,7 @@
  * Recall ranks by the words shared with the question, rarer words weighing more;
  * nothing here decides an answer: steps still have to find and cite their own evidence.
  */
+import { scrubbingOn, scrubValue } from '../core/scrub.js';
 import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -149,7 +150,8 @@ async function save(workspace: string, m: MemoryFile): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
   // Write then rename, so parallel runs never leave a half-written file.
   const tmp = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(m, null, 1)}\n`);
+  // A last scrub where it is written: a tool (memory.lesson) writes before the engine scrubs its result.
+  await writeFile(tmp, `${JSON.stringify(scrubbingOn() ? scrubValue(m) : m, null, 1)}\n`);
   await rename(tmp, file);
 }
 

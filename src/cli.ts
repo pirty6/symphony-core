@@ -12,6 +12,7 @@
  *   resume <run.json> | fork <run.json> --at N   continue from a checkpoint
  *   runs                                   saved runs
  */
+import { scrubbingOn, scrubValue } from './core/scrub.js';
 import { type Adaptation, summarizeComposed } from './core/draft.js';
 import 'dotenv/config';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -689,7 +690,11 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
   const dir = join(stateDir(cwd), 'evals');
   await mkdir(dir, { recursive: true });
   const file = join(dir, `${report.startedAt.replace(/[:.]/g, '-')}.json`);
-  await writeFile(file, `${JSON.stringify(report, null, 2)}\n`);
+  // Its settings hold --with values as typed: scrubbed where it is written.
+  await writeFile(
+    file,
+    `${JSON.stringify(scrubbingOn() ? scrubValue(report) : report, null, 2)}\n`,
+  );
   console.log(`\n${formatReport(report, baseline)}\n${c.dim(`saved ${file}`)}`);
   return baseline && reportRegressions(report, baseline).length > 0 ? 2 : 0;
 }
