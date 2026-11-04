@@ -122,6 +122,13 @@ describe('validatePattern', () => {
     );
   });
 
+  it('checkout must name a string state field', () => {
+    expect(validatePattern({ ...base, checkout: 'topic' }).errors).toEqual([]);
+    expect(validatePattern({ ...base, checkout: 'notes' }).errors.map((e) => e.message)).toContain(
+      "checkout 'notes' must be a string state field",
+    );
+  });
+
   it('allows guards on verdict', () => {
     const edges: ScoreEdge[] = [
       base.edges[0]!,

@@ -316,6 +316,11 @@ export interface Pattern extends PatternGraph {
    * When set, the goal is that input's value and no separate goal is asked for.
    */
   readonly goalFrom?: string;
+  /**
+   * A string input that may name a pull request (a link or "PR 123"): the runtime checks the
+   * PR's merge out in a worktree and the run plays there, on the PR's own code (review).
+   */
+  readonly checkout?: string;
   readonly demo?: DemoScript;
 }
 
