@@ -21,6 +21,7 @@ import { modelSettings } from './repertoire.js';
 import type {
   AgentPause,
   CallUsage,
+  SubmitOutcome,
   Complexity,
   ContextSplit,
   Role,
@@ -153,6 +154,12 @@ export interface CopilotProviderOptions {
   readonly deltaRepair?: boolean;
   /** The step's fixed instructions go in the system message, the input in the prompt. */
   readonly headerInSystem?: boolean;
+  /**
+   * End the session when the model turn that made a valid submit_result ends, instead of
+   * letting the model answer "stop now" with one more call. Parallel submissions in that
+   * turn still count (the last valid one wins); a revision in a later turn is given up.
+   */
+  readonly endOnSubmit?: boolean;
   readonly workingDirectory?: string;
   /** MCP servers connected to nodes with the 'mcp' capability. */
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
@@ -184,6 +191,10 @@ interface SessionRun {
   readonly complexity?: Complexity;
   readonly signal: AbortSignal;
   readonly onEvent: (e: ProviderEvent) => void;
+  /** The submit_result outcomes since the last model call; each call is tagged with them. */
+  readonly takeSubmits?: () => SubmitOutcome[];
+  /** Asked when a model turn ends: true ends the session there (endOnSubmit). */
+  readonly endAfterTurn?: () => boolean;
 }
 
 /** '@github/copilot-sdk@x.y.z', read once from the installed package. */
@@ -356,6 +367,18 @@ interface SessionOutput {
   readonly calls?: readonly CallUsage[];
   readonly context?: ContextSplit;
   readonly rateLimitWaits?: number;
+}
+
+const submitsOf = (o: SubmitOutcome[] | undefined): { submits?: SubmitOutcome[] } =>
+  o?.length ? { submits: o } : {};
+
+/** Update fields the earlier answer filled that the next one empties. */
+export function emptiedFields(earlier: unknown, next: unknown): string[] {
+  const a = isRecord(earlier) && isRecord(earlier.updates) ? earlier.updates : {};
+  const b = isRecord(next) && isRecord(next.updates) ? next.updates : {};
+  return Object.keys(b).filter(
+    (k) => hasContent({ updates: { [k]: a[k] } }) && !hasContent({ updates: { [k]: b[k] } }),
+  );
 }
 
 function withoutZeros(u: TokenUsage): TokenUsage {
@@ -581,6 +604,7 @@ export class CopilotProvider implements Provider {
     const names = new Map<string, string>();
     const calls: CallUsage[] = [];
     let context: ContextSplit | undefined;
+    let ended = false;
     let settle!: () => void;
     const idle = new Promise<void>((resolve) => {
       settle = resolve;
@@ -645,10 +669,23 @@ export class CopilotProvider implements Provider {
               n('cacheWriteTokens') ? { cacheWriteTokens: n('cacheWriteTokens') } : {},
               n('duration') ? { ms: n('duration') } : {},
               aiu ? { nanoAiu: aiu } : {},
+              // The SDK runs a call's tools before it reports the call's usage.
+              submitsOf(run.takeSubmits?.()),
             ),
           );
           break;
         }
+        case 'assistant.turn_end':
+          if (!ended && run.endAfterTurn?.()) {
+            ended = true;
+            run.onEvent({
+              type: 'info',
+              text: 'answer recorded: ending the session without a closing call',
+            });
+            void session.abort().catch(() => {});
+            settle();
+          }
+          break;
         case 'session.usage_info': {
           // The first split only: what the session started with (later ones grow with the talk).
           if (context) break;
@@ -667,6 +704,8 @@ export class CopilotProvider implements Provider {
           run.onEvent({ type: 'info', text: 'the conversation was compacted to fit the context' });
           break;
         case 'session.error':
+          // Ending the session on purpose (endOnSubmit) is not a failure.
+          if (ended) break;
           failure = String(d.message ?? 'session error');
           run.onEvent({ type: 'info', text: `error: ${failure}` });
           settle();
@@ -909,6 +948,12 @@ export class CopilotProvider implements Provider {
     let invalid: unknown;
     const submitted = () => valid ?? invalid;
     let corrections = 0;
+    let emptyingConfirmed = false;
+    let outcomes: SubmitOutcome[] = [];
+    const note = (o: SubmitOutcome) => {
+      outcomes.push(o);
+      return o;
+    };
     const tool = defineTool(SUBMIT_TOOL, {
       description: `Submit the result of step '${pause.label}'. Call exactly once when done.`,
       // With delta repair a correction sends only what changes: the schema must not refuse it
@@ -937,21 +982,46 @@ export class CopilotProvider implements Provider {
           // Last valid wins, except that an empty answer never replaces one with content:
           // a skeptic's 8 real defects were lost to an empty second call that way.
           if (valid !== undefined && hasContent(valid) && !hasContent(args)) {
+            note('kept');
             req.onEvent({
               type: 'info',
               text: 'kept the earlier answer: the later valid one was empty and would have discarded its content',
             });
             return 'Not recorded: this result is empty, and your earlier result with content is kept. If that earlier result was wrong, submit the corrected content instead. Your step is complete: stop now.';
           }
+          // A correction that empties what the rejected answer found loses it (a skeptic's
+          // 7 failure modes went that way): ask once whether that is meant.
+          const emptied =
+            valid === undefined && invalid !== undefined && !emptyingConfirmed
+              ? emptiedFields(invalid, args)
+              : [];
+          if (emptied.length > 0) {
+            emptyingConfirmed = true;
+            note('kept');
+            req.onEvent({
+              type: 'info',
+              text: `not recorded yet: the correction empties ${emptied.join(', ')}, which the rejected answer had filled; asked to confirm`,
+            });
+            return [
+              `Not recorded: this result empties ${emptied.join(', ')}, which your rejected result had filled. That content would be lost.`,
+              this.opts.deltaRepair
+                ? `To keep it, call ${SUBMIT_TOOL} again with only the verdict (and any field you really change); fields you leave out keep the rejected result's values.`
+                : `To keep it, call ${SUBMIT_TOOL} again with those fields as you had them, and the verdict.`,
+              'If they really should be empty, send this same result again.',
+            ].join('\n');
+          }
           valid = args;
+          note('recorded');
           return 'Result recorded. Your step is complete: stop now.';
         }
         invalid = args;
         if (corrections >= MAX_SUBMIT_CORRECTIONS) {
+          note(valid === undefined ? 'recorded' : 'kept');
           return valid === undefined
             ? 'Result recorded. Your step is complete: stop now.'
             : 'Not recorded: your earlier valid result is kept. Your step is complete: stop now.';
         }
+        note('rejected');
         corrections += 1;
         req.onEvent({
           type: 'info',
@@ -985,6 +1055,12 @@ export class CopilotProvider implements Provider {
         complexity: pause.complexity,
         signal: req.signal,
         onEvent: req.onEvent,
+        takeSubmits: () => {
+          const taken = outcomes;
+          outcomes = [];
+          return taken;
+        },
+        ...(this.opts.endOnSubmit ? { endAfterTurn: () => valid !== undefined } : {}),
       });
     let out = await play(tier);
     let played: { model?: string } = tier;
@@ -996,6 +1072,12 @@ export class CopilotProvider implements Provider {
     if (submitted() === undefined && isProviderBlock(out.output)) {
       for (const alt of await this.otherModels(pause.complexity, tier.model)) {
         blockedOn.push(out.model ?? played.model ?? 'default model');
+        // Those calls answered nothing: say so, so their time is not counted as the answer's.
+        calls.splice(
+          calls.length - (out.calls?.length ?? 0),
+          out.calls?.length ?? 0,
+          ...(out.calls ?? []).map((c) => Object.assign({}, c, { blocked: true as const })),
+        );
         req.onEvent({
           type: 'info',
           text: `${blockedOn.at(-1)} blocked the response (content filtering); trying ${alt.model}`,

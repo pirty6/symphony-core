@@ -11,6 +11,7 @@ import {
   CopilotProvider,
   ISOLATED_SYSTEM,
   SIGN_IN_HELP,
+  emptiedFields,
   hasContent,
   normalizeSubmission,
   retryAfterMs,
@@ -176,6 +177,8 @@ describe('CopilotProvider', () => {
         cacheReadTokens: 900,
         cacheWriteTokens: 300,
         ms: 1500,
+        // The call that submitted is tagged; the closing one after it is not.
+        submits: ['recorded'],
       },
       { inputTokens: 300, outputTokens: 20, cacheReadTokens: 0 },
     ]);
@@ -247,6 +250,12 @@ describe('CopilotProvider', () => {
       requestedModel: 'a',
       blockedOn: ['a', 'b'],
     });
+    // The blocked calls answered nothing: tagged, so their time is not the answer's.
+    expect(healed.res.transcript.calls!.map((c) => c.blocked ?? false)).toEqual([
+      true,
+      true,
+      false,
+    ]);
     expect(healed.res.transcript.usage).toMatchObject({
       calls: 3,
       inputTokens: 300,
@@ -649,6 +658,137 @@ describe('CopilotProvider', () => {
     expect((await play([normalizeSubmission(first), revised])).result).toEqual(revised);
     expect(hasContent({ updates: { a: [], b: '  ', c: {}, d: 0, e: false } })).toBe(false);
     expect(hasContent({ updates: { a: ['x'] } })).toBe(true);
+  });
+
+  describe('a correction that would empty what the rejected answer found', () => {
+    const verdict = { outcome: 'applied', confidence: 0.6, shouldTerminate: false, reason: 'r' };
+    const skeptic: AgentPause = {
+      ...pause,
+      nodeId: 'skeptic',
+      outputSchema: [
+        { name: 'failureModes', type: 'string[]' },
+        { name: 'contested', type: 'string[]' },
+        { name: 'edits', type: 'string[]' },
+      ],
+    };
+    const play = async (calls: unknown[], deltaRepair = true) => {
+      const replies: string[] = [];
+      const { client } = fakeClient(async (cfg, emit) => {
+        for (const c of calls) {
+          replies.push(String(await callTool(cfg, 'submit_result', c)));
+          emit('assistant.usage', { inputTokens: 10, outputTokens: 5 });
+        }
+        emit('session.idle');
+      });
+      const res = await new CopilotProvider({ clientFactory: () => client, deltaRepair }).runAgent({
+        pause: skeptic,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      });
+      return { result: res.result, replies, calls: res.transcript.calls ?? [] };
+    };
+    // As recorded (2026-11-04T05-01-07): the findings as text with no verdict, then empty lists and a verdict.
+    const rejected = {
+      updates: '{"failureModes":["Nothing measures a run after the change"]}',
+      contested: ['Assumption 1: maestro is in this workspace'],
+      edits: ['Check first whether maestro is in the workspace'],
+    };
+    const emptied = { updates: { failureModes: [], contested: [], edits: [] }, verdict };
+    const found = {
+      failureModes: ['Nothing measures a run after the change'],
+      contested: ['Assumption 1: maestro is in this workspace'],
+      edits: ['Check first whether maestro is in the workspace'],
+    };
+
+    it('is refused once, so the AI can keep the content by sending only the verdict', async () => {
+      const r = await play([rejected, emptied, { verdict }]);
+      expect(r.replies[0]).toMatch(/^REJECTED/);
+      expect(r.replies[1]).toMatch(
+        /^Not recorded: this result empties contested, edits, failureModes,/,
+      );
+      expect(r.replies[1]).toMatch(/only the verdict/);
+      expect(r.replies[2]).toMatch(/^Result recorded/);
+      expect(r.result).toEqual({ updates: found, verdict });
+      expect(r.calls.map((c) => c.submits)).toEqual([['rejected'], ['kept'], ['recorded']]);
+    });
+
+    it('is recorded when the AI sends it again: emptying can be meant', async () => {
+      const r = await play([rejected, emptied, emptied]);
+      expect(r.replies[2]).toMatch(/^Result recorded/);
+      expect(r.result).toEqual(emptied);
+      // Without delta repair it asks for the fields as they were.
+      const full = await play([rejected, emptied], false);
+      expect(full.replies[1]).toMatch(/with those fields as you had them/);
+    });
+
+    it('a correction that keeps or changes the content is recorded at once', async () => {
+      const changed = { updates: { ...found, edits: ['Another edit'] }, verdict };
+      expect((await play([rejected, changed])).replies[1]).toMatch(/^Result recorded/);
+      expect(
+        emptiedFields({ updates: { a: ['x'], b: [] } }, { updates: { a: [], b: [] } }),
+      ).toEqual(['a']);
+      expect(emptiedFields({ updates: { a: ['x'] } }, { updates: { b: [] } })).toEqual([]);
+    });
+  });
+
+  describe('endOnSubmit', () => {
+    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+    const play = async (endOnSubmit: boolean, turns: unknown[][]) => {
+      const events: string[] = [];
+      const { client, sessions } = fakeClient(async (cfg, emit, s) => {
+        for (const turn of turns) {
+          for (const c of turn) await callTool(cfg, 'submit_result', c);
+          emit('assistant.usage', {
+            inputTokens: 100,
+            outputTokens: turn.length ? 50 : 3,
+            duration: 900,
+          });
+          emit('assistant.turn_end');
+          if (s.aborted) {
+            emit('session.error', { message: 'aborted' });
+            return;
+          }
+        }
+        emit('assistant.message', { content: 'Done.' });
+        emit('session.idle');
+      });
+      const res = await new CopilotProvider({ clientFactory: () => client, endOnSubmit }).runAgent({
+        pause,
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: (e) => e.type === 'info' && events.push(e.text),
+      });
+      return { res, session: sessions[0]!, events };
+    };
+    const good = { updates: { word: 'cat' }, verdict };
+    const better = { updates: { word: 'dog' }, verdict };
+
+    it('ends the session after the turn with a valid answer: no closing call', async () => {
+      const on = await play(true, [[good], []]);
+      expect(on.session.aborted).toBe(true);
+      expect(on.res.result).toEqual(good);
+      expect(on.res.transcript.calls).toHaveLength(1);
+      expect(on.res.transcript.output).toBe('');
+      expect(on.events).toContain('answer recorded: ending the session without a closing call');
+      const off = await play(false, [[good], []]);
+      expect(off.session.aborted).toBe(false);
+      expect(off.res.transcript.calls!.map((c) => c.submits ?? [])).toEqual([['recorded'], []]);
+    });
+
+    it('keeps every submission of that turn, and waits through rejected ones', async () => {
+      // Parallel calls in one turn: the last valid one wins, as without the setting.
+      expect((await play(true, [[good, better]])).res.result).toEqual(better);
+      // A rejected answer does not end the session: the correction comes in the next turn.
+      const fixed = await play(true, [[{ updates: {} }], [good], []]);
+      expect(fixed.res.result).toEqual(good);
+      expect(fixed.res.transcript.calls!.map((c) => c.submits)).toEqual([
+        ['rejected'],
+        ['recorded'],
+      ]);
+    });
   });
 
   it('repairs updates sent as text in every shape recorded from Claude models, deterministically', () => {

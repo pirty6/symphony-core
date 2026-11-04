@@ -378,7 +378,14 @@ export interface CallUsage {
   readonly ms?: number;
   /** What Copilot billed for this call, in nano AI units. */
   readonly nanoAiu?: number;
+  /** submit_result calls this model call made, and what became of each. */
+  readonly submits?: readonly SubmitOutcome[];
+  /** Made on a model that blocked the response (content filtering); another one answered. */
+  readonly blocked?: true;
 }
+
+/** recorded: the step's answer now; rejected: sent back for a correction; kept: refused, an earlier answer stays. */
+export type SubmitOutcome = 'recorded' | 'rejected' | 'kept';
 
 export interface ContextSplit {
   readonly systemTokens?: number;
