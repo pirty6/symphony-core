@@ -8,7 +8,7 @@
  * user can look at the node input and the AI's proposed output before the
  * engine applies it. stop() aborts the live AI call and cancels the run.
  */
-import { scrubValue } from '../core/scrub.js';
+import { scrubbingOn, scrubValue } from '../core/scrub.js';
 import { itemOf } from '../core/items.js';
 import { stepTimeLimitMs } from './limits.js';
 import { KEEP_ANSWER } from './provider.js';
@@ -223,6 +223,7 @@ export class Run {
   private stopRequested: string | undefined;
   private release: (() => void) | undefined;
   private approvalWaiter: ((a: HumanAnswer | undefined) => void) | undefined;
+  private autoApproving: boolean;
   private recoveryWaiter: ((a: RecoveryAnswer | undefined) => void) | undefined;
   private abort: AbortController | undefined;
   private overtimeWaiter: ((a: 'wait' | 'stop') => void) | undefined;
@@ -237,13 +238,12 @@ export class Run {
     this.score = opts.score;
     this.stepMode = opts.stepMode ?? false;
     this.breakpoints = new Set(opts.breakpoints ?? []);
+    this.autoApproving = opts.autoApprove === true;
     this.engine = undefined as unknown as EngineState;
   }
 
   /** Off only with SYMPHONY_SCRUB=off (e.g. to debug a repair against the raw text). */
-  private readonly scrubbing =
-    (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
-      ?.SYMPHONY_SCRUB !== 'off';
+  private readonly scrubbing = scrubbingOn();
 
   private now(): string {
     return this.opts.clock?.() ?? new Date().toISOString();
@@ -293,6 +293,30 @@ export class Run {
 
   setStepMode(on: boolean): void {
     this.stepMode = on;
+  }
+
+  /**
+   * Answer approvals by themselves from now on (each with its unattended answer), the one
+   * waiting included; or ask again. Stuck steps still ask a person unless the run started
+   * unattended: a step that failed its attempts is not something to approve blindly.
+   */
+  setAutoApprove(on: boolean): void {
+    if (this.autoApproving === on) return;
+    this.autoApproving = on;
+    const waiting = this.engine?.pause?.kind === 'approval' ? this.engine.pause.nodeId : undefined;
+    if (waiting)
+      this.emitInfo(
+        waiting,
+        on
+          ? 'auto-approve on: this approval and the next ones answer themselves'
+          : 'auto-approve off',
+      );
+    if (on) this.approvalWaiter?.({ approved: true, scripted: true });
+  }
+
+  /** Whether approvals answer themselves now (set at the start, changeable mid-run). */
+  get autoApproves(): boolean {
+    return this.autoApproving;
   }
 
   setBreakpoints(ids: readonly string[]): void {
@@ -803,7 +827,7 @@ export class Run {
   private async runApproval(pause: ApprovalPause): Promise<Resolution | undefined> {
     await this.gate(pause.nodeId, 'before');
     if (this.stopRequested) return undefined;
-    if (this.opts.autoApprove)
+    if (this.autoApproving)
       return scriptedResolution(this.opts.demo, pause, this.engine, this.now());
     const answered = new Promise<HumanAnswer | undefined>((resolve) => {
       this.approvalWaiter = resolve;

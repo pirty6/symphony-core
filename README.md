@@ -69,7 +69,7 @@ commands only).
 | Area | What it shows |
 |------|---------------|
 | Canvas | The pattern graph. Patterns with **phases** open collapsed, one node per phase showing the step running inside it; click ⊕ to open a phase or **Open all phases**. Nodes light up as they run (active, waiting, done, failed) with a visit counter. Edges show their guard, the state keys they carry, a moving **data packet** on the edge just taken, and the actual values that travelled on it. Loops route around the side. |
-| Toolbar | AI provider, **complexity** (auto or 1-4; hover for the model per tier), the **improvisation knob** (🎻 Classical … 🥁 Free), auto-approve, **step mode**, Run / Pause / Step / Resume / Stop. |
+| Toolbar | AI provider, **complexity** (auto or 1-4; hover for the model per tier), the **improvisation knob** (🎻 Classical … 🥁 Free), **auto-approve** (also mid-run: the approval waiting now and the next ones answer themselves, in the runs it hands on to as well; a stuck step still asks you; over MCP, `set_auto_approve`), **step mode**, Run / Pause / Step / Resume / Stop. |
 | Inspector | **Gate card** when paused: before a node runs, or *after the AI answered but before the engine applies it* (shows the proposed JSON). **Approval card** for human nodes; at the maestro's go-gate it shows the composed score, the debate notes and the inputs. **AI output** streams the agent's text, model and tier, tool calls, permission denials and submitted result; in jazz, each take and the bandleader's merge. **State** shows every key with what just changed. |
 | Result | When a run ends, its result (the last data carried toward the end, e.g. `answer` and `openQuestions`) appears formatted at the top of the inspector. **Read full result** opens a wide reader with Copy and Download .md; long results open it automatically. Esc closes it. |
 | Timeline | Every engine event. Scrub back and forth; the canvas and inspector follow. |
@@ -425,6 +425,19 @@ still checks, against the scrubbed line. The live feed the studio reads (`~/.sym
 scrubbed as it streams, even a secret split across pieces. The AI itself still reads your files
 as they are; only what is recorded is scrubbed. `SYMPHONY_SCRUB=off` turns this off, for
 example to debug a repair against the raw text.
+
+Saved runs, memory and eval reports are scrubbed once more where they are written. That catches
+what reaches a file without passing the engine: a tool that writes memory itself, an error's
+text, an eval report's `--with` values.
+
+Known limits (found by an investigation of this feature):
+- Only the listed credential shapes are caught. There is no detection of random-looking strings,
+  and a value is not judged by the name of the field that holds it.
+- A pattern's own text (its directives and initial values) is saved as written. It is the plan,
+  and its id is its hash.
+- A patch Symphony could not apply holds your code's diff as it is.
+- The studio's own stream to the browser, on this machine, is not scrubbed; only what is written
+  to disk is.
 
 ### Several runs at once
 

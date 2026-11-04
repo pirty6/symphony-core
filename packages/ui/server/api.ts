@@ -10,7 +10,7 @@
  *   POST /api/runs            {pattern, goal, context, provider, ...} -> { runId, score }
  *   GET  /api/runs                         runs started by this server, newest first
  *   GET  /api/runs/:id/events              SSE: engine + provider + status messages
- *   POST /api/runs/:id/control {action}    pause | resume | step | stop | breakpoints | stepMode
+ *   POST /api/runs/:id/control {action}    pause | resume | step | stop | breakpoints | stepMode | autoApprove
  *   POST /api/runs/:id/approval {approved, updates, scripted}
  *   POST /api/runs {…, chain: [pattern…]}: patterns to play after it with its result
  *   POST /api/runs/:id/recovery {action: retry|stop, hint?, complexity?}  (a stuck AI step)
@@ -229,7 +229,8 @@ export function createApi(opts: ApiOptions) {
     const next = concertNext({
       maestroScore: score,
       // The composed score plays with the same settings, starting fresh (no breakpoints).
-      start: async (s, p, chain) => (await launch(s, p, { ...settings, breakpoints: [], chain })).id,
+      start: async (s, p, chain) =>
+        (await launch(s, p, { ...settings, autoApprove: run.autoApproves, breakpoints: [], chain })).id,
       ...(settings.features ? { features: settings.features } : {}),
     }) ?? chainNext({
       chain: settings.chain ?? [],
@@ -237,7 +238,8 @@ export function createApi(opts: ApiOptions) {
       library: async () => (await library()).map((l) => l.pattern),
       improvisation: score.improvisation,
       ...(settings.features ? { features: settings.features } : {}),
-      start: async (s, p, rest) => (await launch(s, p, { ...settings, breakpoints: [], chain: rest })).id,
+      start: async (s, p, rest) =>
+        (await launch(s, p, { ...settings, autoApprove: run.autoApproves, breakpoints: [], chain: rest })).id,
     })
     // Until the run owns the PR checkout (cleanup), a failure here must remove it.
     let run: Run
@@ -532,6 +534,10 @@ export function createApi(opts: ApiOptions) {
               break
             case 'stepMode':
               run.setStepMode(body.on === true)
+              break
+            case 'autoApprove':
+              // From now on (the approval waiting now included), and in the runs it hands on to.
+              run.setAutoApprove(body.on === true)
               break
             case 'keepWaiting':
             case 'stopStep': {

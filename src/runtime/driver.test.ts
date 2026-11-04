@@ -1154,3 +1154,51 @@ describe('secrets never reach the record', () => {
     expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
   });
 });
+
+describe('auto-approve mid-run', () => {
+  it('answers the approval waiting now and every later one, and says so in the record', async () => {
+    const run = new Run({
+      score: fixScore,
+      provider: ScriptedProvider.forPattern(fix),
+      demo: fix.demo,
+      clock,
+    });
+    const done = run.start();
+    await waitFor(run, (m) => m.type === 'status' && m.status === 'awaiting-approval');
+    expect(run.engine.pause).toMatchObject({ kind: 'approval' });
+    expect(run.autoApproves).toBe(false);
+    run.setAutoApprove(true);
+    const perf = await done;
+    expect(perf.outcome).toBe('success');
+    expect(run.autoApproves).toBe(true);
+    const approvals = perf.steps.filter((s) => s.kind === 'approval');
+    expect(approvals.length).toBeGreaterThan(0);
+    // Not a person: the record says the run answered them itself.
+    expect(approvals.every((s) => s.approval?.by === 'scripted')).toBe(true);
+    expect(
+      run.messages.some(
+        (m) =>
+          m.type === 'provider' && m.event.type === 'info' && /auto-approve on/.test(m.event.text),
+      ),
+    ).toBe(true);
+    expect(replayPerformance(fixScore, perf).divergence.reproduced).toBe(true);
+  });
+
+  it('a stuck step still asks a person', async () => {
+    const failing: Provider = {
+      name: 'failing',
+      runAgent: async () => ({
+        result: 'nope',
+        transcript: { provider: 'failing', prompt: '', output: 'nope', toolCalls: [] },
+      }),
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const run = new Run({ score: hangmanScore, provider: failing, clock });
+    const done = run.start();
+    run.setAutoApprove(true);
+    await waitFor(run, (m) => m.type === 'status' && m.status === 'awaiting-approval');
+    expect(run.engine.pause).toMatchObject({ kind: 'stuck' });
+    run.stop();
+    await done;
+  });
+});

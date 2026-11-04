@@ -58,6 +58,13 @@ const RULES: readonly Rule[] = [
 
 export const REDACTED = /\[REDACTED:[a-z-]+\]/;
 
+/** On unless SYMPHONY_SCRUB=off (read where a process exists; always on in a browser). */
+export function scrubbingOn(): boolean {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+    ?.env;
+  return env?.SYMPHONY_SCRUB !== 'off';
+}
+
 /** Where any rule matches in the text, as [start, end) spans. */
 function matchSpans(text: string): [number, number][] {
   const spans: [number, number][] = [];
