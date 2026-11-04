@@ -257,6 +257,20 @@ SYMPHONY_NODE_MODELS=propose=claude-opus-5.5:high,skeptic=claude-opus-5.5:high,p
   npm run cli -- eval --task maestro-planted-concern -n 3 --compare <evals>/<baseline>.json
 ```
 
+**Results (2026-11-04, live, n=3 per task).**
+
+| | `maestro-requirements` | `maestro-planted-concern` (tier 4) | Whole report |
+|---|---|---|---|
+| Baseline | 3/3 solved, 33–41 s, 46–52k in | 3/3, 240–259 s, 99–106k in, 24–26k out | 82 premium requests. Closing calls: 39 of 82 calls, 140 s (17% of model time). 1 revision (cover) in 39 steps |
+| `SYMPHONY_END_ON_SUBMIT=1` | 3/3, 23–30 s, 21–29k in | 3/3, 230–250 s, 44–61k in, 23–25k out | 45 premium requests (−45%), input −51%, no closing calls, 3 in-session corrections |
+| Debate on `opus:high` (propose, skeptic, pragmatist) | — | 3/3, 146–155 s, 86–89k in, 14–15k out | Still has closing calls: 107 s (25% of model time) |
+
+The planted concern was caught in every run. Ending at the answer saves premium requests and
+input tokens. Wall time drops only on short runs, because long ones are dominated by the
+skeptic's and the pragmatist's reasoning. Lowering the debate's effort cuts the tier-4
+composition by ~39% (≈246 s → 150 s). Both results come from small fixtures, so confirm them on a
+real request before relying on them.
+
 Read: solved on the planted concern (it must not drop), time per run, and `model time by call`
 for the debate steps. Recorded replays are keyed on model and effort, so they will not match
 across the two runs. Do not use `--complexity 3` or `complexityShift` for this trial: they also
