@@ -58,6 +58,7 @@ import { libraryPatterns, maestro, maestroThen } from './patterns/index.js';
 import { concertNext } from './runtime/concert.js';
 import { loadRepertoire, runsDirFor } from './runtime/store.js';
 import { editsFiles, isolate } from './runtime/worktree.js';
+import { prForRun } from './runtime/pr.js';
 import { IMPROVISATION_LEVELS, isImprovisation, playsFromRepertoire } from './core/jazz.js';
 import { Run, type NextPerformance, type RunMessage, type RunOptions } from './runtime/driver.js';
 import { draftPattern } from './runtime/drafting.js';
@@ -250,14 +251,21 @@ async function play(
     o.providerName === 'copilot' && editsFiles(score)
       ? await isolate(cwd, score.pattern)
       : undefined;
-  const dir = isolation?.dir ?? cwd;
-  if (isolation) console.log(c.dim(`playing in its own worktree: ${dir}`));
+  // A run that reads a PR plays on the PR's own code, checked out apart (runtime/pr.ts).
+  const pr = isolation
+    ? undefined
+    : await prForRun(pattern, score.context, cwd, { provider: o.providerName });
+  if (pr && 'error' in pr.info) console.log(c.yellow(`PR ${pr.info.number}: ${pr.info.error}`));
+  const dir = isolation?.dir ?? pr?.dir ?? cwd;
+  if (dir !== cwd) console.log(c.dim(`playing in its own worktree: ${dir}`));
   const run = new Run({
     score,
     tools: extras.tools,
-    toolContext: isolation
-      ? { ...extras.toolContext, workspace: dir, memoryRoot: extras.toolContext.workspace }
-      : extras.toolContext,
+    toolContext: {
+      ...extras.toolContext,
+      ...(dir !== cwd ? { workspace: dir, memoryRoot: extras.toolContext.workspace } : {}),
+      ...(pr ? { pr: pr.info } : {}),
+    },
     provider: makeProvider({
       provider: o.providerName,
       pattern: demo ? { ...pattern, demo } : pattern,
@@ -277,6 +285,7 @@ async function play(
       ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(cwd) }
       : {}),
     ...(isolation ? { isolation } : {}),
+    ...(pr ? { cleanup: pr.finish } : {}),
     ...(o.save
       ? {
           onSave: (r, how) => saveRun(runsDir, r, { compact: how?.checkpoint === true }),

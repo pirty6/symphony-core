@@ -48,6 +48,7 @@ import {
   type RuntimeExtras,
 } from '../../../src/runtime/factory.js'
 import { isolate, editsFiles } from '../../../src/runtime/worktree.js'
+import { prForRun } from '../../../src/runtime/pr.js'
 import { autoPrune, cachedReplayCheck, checkReplay, deleteRun, type ReplayCheck, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
 import { stateDir } from '../../../src/runtime/state.js'
 
@@ -212,9 +213,17 @@ export function createApi(opts: ApiOptions) {
     // A real AI editing files plays in its own worktree, so runs can play at once.
     const isolation =
       settings.provider === 'copilot' && editsFiles(score) ? await isolate(workspace, score.pattern, env) : undefined
-    const dir = isolation?.dir ?? workspace
+    // A run that reads a PR plays on the PR's own code, checked out apart (runtime/pr.ts).
+    const pr = isolation
+      ? undefined
+      : await prForRun(pattern, score.context, workspace, { provider: String(settings.provider ?? 'scripted'), env })
+    const dir = isolation?.dir ?? pr?.dir ?? workspace
     // In a worktree, memory stays in your workspace: what the run learns outlives the worktree.
-    const toolContext = isolation ? { ...shared, workspace: dir, memoryRoot: shared.workspace } : shared
+    const toolContext = {
+      ...shared,
+      ...(dir !== workspace ? { workspace: dir, memoryRoot: shared.workspace } : {}),
+      ...(pr ? { pr: pr.info } : {}),
+    }
     const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir)
     const id = `run-${Date.now().toString(36)}-${(counter++).toString(36)}`
     const next = concertNext({
@@ -245,6 +254,7 @@ export function createApi(opts: ApiOptions) {
         ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
         : {}),
       ...(isolation ? { isolation } : {}),
+      ...(pr ? { cleanup: pr.finish } : {}),
       onSave: async (r, how) => {
         const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true })
         savedFiles.set(id, file)
