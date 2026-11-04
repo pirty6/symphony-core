@@ -52,7 +52,9 @@ function filesOf(entry: string, all: readonly string[], set: ReadonlySet<string>
   if (!clean) return [];
   if (isGlob(clean)) {
     const re = globRegExp(clean);
-    return all.filter((f) => re.test(f));
+    const matched = all.filter((f) => re.test(f));
+    // "app/[id]/" is a folder whose name has brackets (Next.js, SvelteKit), not a character class.
+    if (matched.length > 0) return matched;
   }
   const folder = clean.replace(/\/+$/, '');
   if (folder === '' || folder === '.') return [];

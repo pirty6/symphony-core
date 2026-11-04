@@ -48,6 +48,15 @@ describe('resolvePaths', () => {
     expect(r.over).toEqual(['src/core/engine.ts', 'src/core/engine.test.ts']);
   });
 
+  it('a folder whose name has brackets is a folder, not a character class', () => {
+    const app = ['app/[id]/page.tsx', 'app/[id]/layout.tsx', 'app/i/x.tsx'];
+    expect(resolvePaths(['app/[id]/'], [], app, 10).files).toEqual([
+      'app/[id]/page.tsx',
+      'app/[id]/layout.tsx',
+    ]);
+    expect(resolvePaths(['app/[id]'], [], app, 10).unmatched).toEqual([]);
+  });
+
   it('single-character and bracket globs stay within one folder', () => {
     expect(resolvePaths(['src/?.ts'], [], repo, 10).files).toEqual(['src/a.ts']);
     expect(resolvePaths(['src/[ab]*.ts'], [], repo, 10).files).toEqual(['src/a.ts', 'src/b c.ts']);
