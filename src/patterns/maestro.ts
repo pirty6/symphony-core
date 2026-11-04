@@ -338,6 +338,9 @@ export const maestro: Pattern = {
       kind: 'agent',
       role: 'assessor',
       isolated: true,
+      // Trial 13: on tier 4, 'high' instead of 'xhigh' composed 39% faster and still caught
+      // the planted concern (SYMPHONY_EFFORT_CAPS=0 plays the tier's effort).
+      maxEffort: 'high',
       label: 'Proposer',
       directive: `You are the PROPOSER: compose the score (an executable workflow pattern) for \`request\`. Every debate responds to your proposal.
 - If \`chosen\` is a library pattern (its steps are in \`outline\`, its settings in \`settings\`), it is tested: do NOT rewrite it. Tailor it in \`adaptation\` = { "directives": { "<agent step id>": "guidance for this request" }, "initial": { "<setting>": value } }: guidance is appended to that step's directive (what to look at first, which files, PRs, tests or errors the request names, what to ignore); initial values change settings (loop bounds, batch sizes, flags such as exhaustive); a setting marked "(at least N)", "(at most N)" or "(N to M)" must stay in that range. Steps run with real tools: assessors read and run read-only commands, executors edit and run commands, and experiments run commands in the workspace after the user approves them. Never turn a capability off (a bound set to 0) because you assume it cannot run. Only steps that need something specific; {} is fine. Leave \`draft\` as {}. Only if the request truly needs a different shape (steps added, removed or reordered) write the whole pattern in \`draft\` instead, and say why in \`assumptions\`.
@@ -384,6 +387,7 @@ ${SCORE_FORMAT}${HOW_RUNS_PLAY}`,
       kind: 'agent',
       role: 'assessor',
       isolated: true,
+      maxEffort: 'high',
       label: 'Skeptic',
       directive:
         "You are the SKEPTIC: hunt for CONCRETE failure modes of the score applied to `request`: `draft` when it is not empty, otherwise the library pattern in `outline` tailored by `adaptation`. You are not a contrarian. Each `failureModes` entry must name a specific scenario where this score produces a wrong result (bad: 'step 3 might miss cases'; good: 'diagnose assumes the bug is deterministic; on a race it passes verification without fixing it'). `contested`: which of `assumptions` are most likely false for this request. `edits`: concrete Add/Remove/Reword/Reorder edits, one reason each. Empty lists are fine and better than invented concerns. No style comments, no full alternative algorithm. If the shape is wrong, say 'template mismatch' in one entry. Any entry of `requirements` the score does not meet is a failure mode." +
@@ -419,6 +423,7 @@ ${SCORE_FORMAT}${HOW_RUNS_PLAY}`,
       kind: 'agent',
       role: 'assessor',
       isolated: true,
+      maxEffort: 'high',
       label: 'Pragmatist',
       directive:
         "You are the PRAGMATIST: enforce the minimum viable score. For EVERY entry of `failureModes` write one `triage` entry, in the same order: '<concern, abbreviated>: REAL | THEORETICAL | WRONG TEMPLATE — <one-sentence reason>'. REAL means the score must change; THEORETICAL means addressing it costs more than ignoring it; WRONG TEMPLATE means the problem does not fit the pattern's shape. `cuts`: steps that add cost without reducing risk here (empty if every step earns its keep; user attention is a cost); for a library pattern (`outline`), cut by lowering its loop bounds in `adaptation.initial`, not by removing steps. `leaner`: a full leaner pattern ONLY if `draft` is a full pattern and it meaningfully tightens it, else {}. You never add steps.",

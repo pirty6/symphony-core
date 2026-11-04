@@ -27,6 +27,10 @@ export interface AcceptanceCheck {
 }
 export type FieldType = 'string' | 'number' | 'boolean' | 'string[]' | 'number[]' | 'object';
 
+/** A model's reasoning effort, lowest first. */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh';
+export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh'];
+
 export const FIELD_TYPES: readonly FieldType[] = [
   'string',
   'number',
@@ -154,6 +158,12 @@ export interface AgentNode extends NodeBase {
   readonly verifyBelow?: number;
   /** Play on a different model family than the tier's (an independent second opinion). */
   readonly otherModel?: boolean;
+  /**
+   * The highest reasoning effort this step asks for, whatever its tier: the tier's model with
+   * at most this effort (e.g. the maestro's tier-4 debate on 'high': 39% faster, the planted
+   * concern still caught in trial 13).
+   */
+  readonly maxEffort?: Effort;
   /**
    * Solo point: from Swing (improvisation >= 2) the AI chooses which labelled
    * out edge to take. Below that the first edge (the written melody) is played.
@@ -477,6 +487,8 @@ export interface AgentPause {
   readonly cites?: string;
   /** AgentNode.otherModel: a different model family than the tier's. */
   readonly otherModel?: boolean;
+  /** AgentNode.maxEffort: the tier's effort, capped at this. */
+  readonly maxEffort?: Effort;
   /** The step's acceptance checks, so a provider can apply them while the AI still has its context. */
   readonly checks?: readonly AcceptanceCheck[];
   /**

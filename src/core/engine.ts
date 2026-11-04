@@ -457,6 +457,7 @@ function makePause(
       ...(node.cites ? { cites: node.cites } : {}),
       ...(node.checks?.length ? { checks: node.checks } : {}),
       ...(node.otherModel ? { otherModel: true } : {}),
+      ...(node.maxEffort ? { maxEffort: node.maxEffort } : {}),
       ...(node.preload ? { preload: node.preload } : {}),
       ...partsOf(node, ctx.state),
       // Parallel parts already multiply the calls: a fanned-out step plays one take.
