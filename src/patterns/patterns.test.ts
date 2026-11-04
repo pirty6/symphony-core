@@ -215,7 +215,9 @@ describe('pattern library', () => {
       },
     });
     expect(sound.state).toMatchObject({ cursor: 'clean', outcome: 'success' });
-    expect(sound.state.state.report).toBe('No real issues found. Reviewed: src/core/engine.ts');
+    expect(sound.state.state.report).toBe(
+      'No real issues found. Reviewed: src/core/engine.ts\nTests and lint not run here (verify is off: CI runs them)',
+    );
   });
 
   it('maestro prompts avoid wording that provider content filters blocked', () => {

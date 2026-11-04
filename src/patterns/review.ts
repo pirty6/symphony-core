@@ -17,7 +17,7 @@ const REVIEW_HANDOFF = [
   '"# Code review brief for an AI agent\n\nRead all of it before you act. Each finding cites the code as path:line with a quote, and has an id like F3. The most important comes first.\n\n## Task\n\nReview of: " + target',
   'if(empty(hint), "", "\nFocus asked for: " + hint)',
   '"\n\n## Status\n\n" + if(reviewStatus == "issues", "Issues found: see Findings.", if(reviewStatus == "notVerified", "Not verified: the findings\' quotes are not in this checkout, so nothing could be confirmed.", if(reviewStatus == "partlyReviewed", "Reviewed in part: see Coverage for what was not reviewed or not checked.", "Looks good: every changed file was reviewed, every finding checked, and no issue found.")))',
-  '"\nTests: " + if(!verify, "not run (verify is off)", if(testsPassed, "passed", "FAILED")) + if(empty(lintCommand), "", "; lint: " + if(lintPassed, "passed", "FAILED"))',
+  '"\nTests: " + if(!verify, "not run here (verify is off: CI runs them)", if(testsPassed, "passed", "FAILED")) + if(empty(lintCommand), "", "; lint: " + if(lintPassed, "passed", "FAILED"))',
   '"\n\n## Instructions for the next agent\n\n- Fix the findings HIGH first. Before you change a line, read it again: the code may have changed since this review.\n- Run the tests after each change; a failing test the review reported must pass.\n- Use the Do not rely on entries only as leads to check.\n- Files the coverage lists as not reviewed are not known to be good: review them before you rely on them."',
   `"\n\n## Findings (checked against the code)\n\n" + ${bullets('findings')}`,
   `"\n\n## Do not rely on: findings that could not be verified\n\n" + ${bullets('unverified')}`,
@@ -39,6 +39,7 @@ const READERS = readers({
     { id: 'clean', label: 'Looks good' },
   ],
   status: 'reviewStatus',
+  locations: 'findings',
 });
 
 const v = (reason: string) => ({
@@ -127,7 +128,8 @@ export const review: Pattern = {
     {
       name: 'verify',
       type: 'boolean',
-      initial: true,
+      // Off: the PR's pipeline already runs the tests and lint, and running them again here is slow.
+      initial: false,
       description: 'The engine runs the tests (and lintCommand) on the code as it is',
     },
     {
@@ -329,7 +331,7 @@ export const review: Pattern = {
             ' + if(len(partlyRead) > 0, ["Not read whole: " + join(partlyRead, ", ")], [])',
             ' + if(len(without(files, reviewed)) > 0, ["Not reviewed (the reviewer could not read them): " + join(without(files, reviewed), ", ")], [])',
             ' + if(len(unverified) > 0, ["Findings not verified (their quote is not in this checkout: is the reviewed code checked out?): " + join(unverified, "; ")], [])',
-            ' + if(!verify, ["Tests not run (verify is off)"], if(includes(testOutput, "not run: "), ["Tests " + testOutput], []))',
+            ' + if(!verify, ["Tests and lint not run here (verify is off: CI runs them)"], if(includes(testOutput, "not run: "), ["Tests " + testOutput], []))',
             ' + if(includes(lintOutput, "not run: "), ["Lint " + lintOutput], [])',
             ', "\n")',
           ].join(''),
@@ -471,25 +473,27 @@ export const review: Pattern = {
       checkReview: (s) => ({ valid: s.newFindings, invalid: [] }),
     },
     agents: {
-      explain: () => ({
+      // Each finding keeps its location, so the reader can find the line.
+      explain: (s) => ({
         updates: {
           summary: [
             '## In short',
             'The change has one serious problem. Fix it before you merge the change.',
             '',
             '## What we found',
-            '- The new retry code can run the same step more than three times.',
-            '- The tests pass, but no test checks the retry limit.',
+            ...((s.findings as string[]) ?? []).map(
+              (f) =>
+                `- \`${/[^ `]+:[0-9]+(-[0-9]+)?/.exec(f)?.[0]}\` — The retry counter never goes back to zero.`,
+            ),
             '',
             '## What to do',
-            '1. Stop the retries after the third try.',
-            '2. Add a test for the retry limit.',
+            '1. Set the retry counter to zero after each step.',
             '',
             '## What is not certain',
             'Nothing.',
             '',
             '## How we checked',
-            'We read each changed file and ran the tests.',
+            'We read each changed file. The pipeline of the change runs the tests.',
           ].join('\n'),
         },
         verdict: v('Reworded the review in plain English.'),

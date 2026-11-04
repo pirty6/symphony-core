@@ -71,19 +71,22 @@ describe('review', () => {
     expect(capped.state.report).toMatch(/Not reviewed \(over maxFiles 2\): src\/c\.ts/);
   });
 
-  it('failing tests are an issue even when no line is cited, and verify can be turned off', () => {
-    const failing = play({
-      agents: { analyze: sound },
-      tools: {
-        runTests: () => ({ passed: false, output: 'FAIL a.test.ts > adds', command: 'npm test' }),
+  it('verify is off by default (CI runs the checks); on, failing tests are an issue even when no line is cited', () => {
+    const failing = play(
+      {
+        agents: { analyze: sound },
+        tools: {
+          runTests: () => ({ passed: false, output: 'FAIL a.test.ts > adds', command: 'npm test' }),
+        },
       },
-    });
+      { verify: true },
+    );
     expect(failing.end).toBe('issues');
     expect(failing.ran).toContain('report');
-    const off = play({ agents: { analyze: sound } }, { verify: false });
+    const off = play({ agents: { analyze: sound } });
     expect(off.ran).not.toContain('runTests');
     expect(off.end).toBe('clean');
-    expect(off.state.report).toMatch(/Tests not run \(verify is off\)/);
+    expect(off.state.report).toMatch(/Tests and lint not run here \(verify is off: CI runs them\)/);
   });
 
   it('a part that could not read its files does not throw away the others', () => {
@@ -125,7 +128,7 @@ describe('review', () => {
         agents: { analyze: sound, collect: collecting(['src/a.ts'], ['src/old.ts — deleted']) },
         tools: { runTests: () => notRun, runLint: () => notRun },
       },
-      { testCommand: 'pnpm test', lintCommand: 'tsc --noEmit' },
+      { verify: true, testCommand: 'pnpm test', lintCommand: 'tsc --noEmit' },
     );
     expect(state.testCommand).toBe('pnpm test');
     expect(state.coverage).toMatch(/Tests not run: remote callers/);
@@ -283,5 +286,38 @@ describe('review: a version for people and a brief for an AI agent', () => {
     const off = play({}, { plainSummary: false });
     expect(off.ran).not.toContain('explain');
     expect(off.end).toBe('issues');
+  });
+
+  it("people's version starts each finding with its path:line, so the reader can find it", () => {
+    const { r, state } = play();
+    expect(String(state.summary)).toContain('- `src/core/engine.ts:120` — ');
+    const explain = r.state.steps.find((s) => s.nodeId === 'explain')!;
+    expect(explain.attempts ?? []).toEqual([]);
+    const unplaced: Agent = () => ({
+      updates: {
+        summary:
+          '## In short\nOne problem.\n\n## What we found\n- The retry counter never goes back to zero.\n\n## What is not certain\nNothing.\n\n## How we checked\nWe read the files.',
+      },
+      verdict: v,
+    });
+    const sent = play({ agents: { explain: unplaced } });
+    const back = sent.r.state.steps.find((s) => s.nodeId === 'explain')!.attempts![0]!;
+    expect(back.errors.join(' ')).toMatch(
+      /start the bullet for each entry of findings with its location/,
+    );
+    expect(back.errors.join(' ')).toContain('src/core/engine.ts:120');
+    const nothing = play({
+      agents: {
+        analyze: sound,
+        explain: () => ({
+          updates: {
+            summary:
+              '## In short\nNo problems.\n\n## What we found\nNothing to fix.\n\n## What is not certain\nNothing.\n\n## How we checked\nWe read the files.',
+          },
+          verdict: v,
+        }),
+      },
+    });
+    expect(nothing.r.state.steps.find((s) => s.nodeId === 'explain')!.attempts ?? []).toEqual([]);
   });
 });

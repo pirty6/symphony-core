@@ -622,8 +622,9 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    changes ends `failed` with why in the report ("Could not review: …"), never an empty report
    and never "looks good".
 2. **Cap.** At most `maxFiles` (60) files are reviewed; the rest are named as not reviewed.
-3. **Run the checks** (`verify`, on by default; a Features switch): the engine runs the tests,
-   and `lintCommand` if set, on the code as it is. A project with no test command says "not run",
+3. **Run the checks** (`verify`, off by default because the PR's CI pipeline already runs them; a
+   Features switch): when on, the engine runs the tests, and `lintCommand` if set, on the code as
+   it is. When off, the coverage says the tests and lint were not run here. A project with no test command says "not run",
    and so does a run for a remote caller (Copilot Studio): no code runs on this machine for them.
 4. **Find issues** in parallel parts. Each issue is
    `path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`quote\``, checked by the engine:
@@ -653,7 +654,9 @@ Known limits:
 for people in Simplified Technical English (`summary`, checked by the engine; the `plainSummary`
 switch turns it off), then a brief for an AI agent written by the engine from the record
 (`handoff`): the status, instructions (fix HIGH first, re-read each line, run the tests), the checked findings, what not to rely on, what the change says it does, the coverage, failing test or lint output, and the review as written. The run marks which end it reached, writes both, then ends there; a chained
-run gets the brief whole.
+run gets the brief whole. The people's version starts each finding with its location
+(`` `src/app.ts:42` — … ``), so you can find the line. The engine sends the summary back when a
+finding's location is missing.
 
 <!-- flow:review -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
