@@ -81,6 +81,12 @@ import {
   saveRun,
 } from './runtime/store.js';
 import { stateDir } from './runtime/state.js';
+import {
+  readBaseline,
+  rejectionReport,
+  savedRejections,
+  writeBaseline,
+} from './runtime/rejections.js';
 
 export const RUNS_DIR = '.symphony/runs';
 export const DRAFTS_DIR = 'src/patterns/drafts';
@@ -1040,6 +1046,34 @@ async function cmdCost(files: string[]): Promise<number> {
   return 0;
 }
 
+/**
+ * Rejected answers of the saved runs, played again through today's repairs. The first run keeps
+ * what passes as a baseline (on this machine); later runs fail when one of those fails again.
+ */
+async function cmdRejections(cwd: string, rest: string[]): Promise<number> {
+  const all = await savedRejections(runsDirFor(cwd));
+  const folder = stateDir(cwd);
+  const baseline = await readBaseline(folder);
+  const r = rejectionReport(all, baseline);
+  console.log(
+    `${r.total} rejected answers: ${r.byKind.shape} shape, ${r.byKind.check} a step's check, ${r.byKind.other} other`,
+  );
+  console.log(
+    `shape, with the answer kept: ${r.passing} of ${r.replayable} pass with today's repairs`,
+  );
+  for (const w of r.stillFailing.slice(0, 10)) console.log(c.dim(`  ${w.count}× ${w.why}`));
+  if (r.regressions.length > 0) {
+    console.log(c.red(`${r.regressions.length} answer(s) passed before and fail now:`));
+    for (const x of r.regressions) console.log(c.red(`  ${x.key} (${x.nodeId}): ${x.why}`));
+    return 1;
+  }
+  if (!baseline || rest.includes('--save')) {
+    await writeBaseline(folder, all);
+    console.log(c.dim(`baseline saved: ${r.passing} passing answers (${folder})`));
+  }
+  return 0;
+}
+
 const CAUSE_TEXT = {
   plan: 'the plan: the two scores differ',
   environment: 'the environment: a tool, the workspace or a failure outside the score',
@@ -1113,6 +1147,8 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       return cmdVerify(rest[0]);
     case 'cost':
       return cmdCost(rest);
+    case 'rejections':
+      return cmdRejections(cwd, rest);
     case 'compare':
       return cmdCompare(rest);
     case 'rehearse':
@@ -1176,6 +1212,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   draft "<request>"            AI drafts a pattern (--provider copilot, --save)
   verify <run.json>            integrity + deterministic replay check
   cost <run.json>...           each step's share of input tokens and AI time (parts, retries included)
+  rejections [--save]          replay the saved runs' rejected answers through today's repairs; fails if one that passed fails now
   compare <a.json> <b.json>    where two runs diverge and why (plan, environment, AI, human, engine)
   rehearse <pattern> -n 3      play the same score N times with fresh answers; per-node agreement
       --fields a,b               compare only these fields (maestro: --fields chosen,complexity)
