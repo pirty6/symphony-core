@@ -139,6 +139,12 @@ export function parseTiers(spec: string | undefined): Partial<Record<Complexity,
   return out;
 }
 
+/** "claude-opus-5.5:high" → the model and its effort; no effort keeps the tier's. */
+export function splitModelEffort(spec: string): Tier {
+  const m = /^(.+):(low|medium|high|xhigh)$/.exec(spec.trim());
+  return m ? { model: m[1]!, effort: m[2] as ReasoningEffort } : { model: spec.trim() };
+}
+
 export interface CopilotProviderOptions {
   /** Forces one model for every tier (overrides `tiers`). */
   readonly model?: string;
@@ -146,7 +152,10 @@ export interface CopilotProviderOptions {
   readonly tiers?: Partial<Record<Complexity, Tier>>;
   /** For steps that want another model family (otherModel); default gpt-6.1-sol. */
   readonly alternateModel?: string;
-  /** Per step id, the model to use instead of the tier's (a trial: one step on another model). */
+  /**
+   * Per step id, the model to use instead of the tier's, as "model" or "model:effort" (a trial:
+   * one step on another model or effort). Without an effort the step keeps its tier's.
+   */
   readonly nodeModels?: Readonly<Record<string, string>>;
   /** Waits before retrying a session a rate limit stopped (default 10 s, 30 s, 60 s). */
   readonly rateLimitDelaysMs?: readonly number[];
@@ -825,15 +834,24 @@ export class CopilotProvider implements Provider {
   private async tierFor(
     pause: AgentPause,
   ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
-    const own = this.opts.nodeModels?.[pause.nodeId];
-    if (own) {
+    const spec = this.opts.nodeModels?.[pause.nodeId];
+    if (spec) {
+      const own = splitModelEffort(spec);
       const available = await this.availableModels();
-      if (!available || available.has(own))
-        return { model: own, note: `${pause.nodeId} on ${own} (nodeModels)` };
       const tier = await this.modelFor(pause.complexity);
+      if (!available || available.has(own.model)) {
+        const want = own.effort ?? tier.effort;
+        const efforts = available?.get(own.model);
+        const effort = want && (!efforts || efforts.includes(want)) ? want : undefined;
+        return {
+          model: own.model,
+          ...(effort ? { effort } : {}),
+          note: `${pause.nodeId} on ${own.model}${effort ? ` (${effort})` : ''} (nodeModels)${want && !effort ? `; ${own.model} has no '${want}' effort, so its default is used` : ''}`,
+        };
+      }
       return {
         ...tier,
-        note: `model '${own}' for ${pause.nodeId} (nodeModels) is not available to you; using ${tier.model ?? 'the default model'}`,
+        note: `model '${own.model}' for ${pause.nodeId} (nodeModels) is not available to you; using ${tier.model ?? 'the default model'}`,
       };
     }
     return pause.otherModel ? this.otherFamily(pause.complexity) : this.modelFor(pause.complexity);
@@ -1063,7 +1081,7 @@ export class CopilotProvider implements Provider {
         ...(this.opts.endOnSubmit ? { endAfterTurn: () => valid !== undefined } : {}),
       });
     let out = await play(tier);
-    let played: { model?: string } = tier;
+    let played: { model?: string; effort?: ReasoningEffort } = tier;
     let usage = out.usage;
     const calls = [...(out.calls ?? [])];
     const blockedOn: string[] = [];
@@ -1105,7 +1123,8 @@ export class CopilotProvider implements Provider {
         musician: {
           tier: pause.complexity,
           ...(tier.model ? { requestedModel: tier.model } : {}),
-          ...(tier.effort ? { effort: tier.effort } : {}),
+          // The effort sent with the model that answered (another one after a content block).
+          ...(played.effort ? { effort: played.effort } : {}),
           ...(blockedOn.length ? { blockedOn } : {}),
           ...(out.rateLimitWaits ? { rateLimitWaits: out.rateLimitWaits } : {}),
           account: this.usingSignedInUser ? 'signed-in user' : 'token',

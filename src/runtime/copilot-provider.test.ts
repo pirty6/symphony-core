@@ -17,11 +17,13 @@ import {
   retryAfterMs,
   withoutTokenVars,
   parseTiers,
+  splitModelEffort,
   type ClientLike,
   type SessionLike,
 } from './copilot-provider.js';
 import type { ProviderEvent } from './provider.js';
 import { Run } from './driver.js';
+import { modelSettings } from './repertoire.js';
 
 const pause: AgentPause = {
   kind: 'agent',
@@ -475,7 +477,10 @@ describe('CopilotProvider', () => {
       opts: Partial<ConstructorParameters<typeof CopilotProvider>[0]>,
       calls: unknown[],
       over: Partial<AgentPause> = {},
-      models = ['claude-sonnet-5', 'claude-opus-5.5'],
+      models: (string | { id: string; supportedReasoningEfforts: string[] })[] = [
+        'claude-sonnet-5',
+        'claude-opus-5.5',
+      ],
     ) => {
       const replies: string[] = [];
       const { client, sessions } = fakeClient(async (cfg, emit) => {
@@ -483,7 +488,10 @@ describe('CopilotProvider', () => {
         emit('session.idle');
       });
       const provider = new CopilotProvider({
-        clientFactory: () => ({ ...client, listModels: async () => models.map((id) => ({ id })) }),
+        clientFactory: () => ({
+          ...client,
+          listModels: async () => models.map((m) => (typeof m === 'string' ? { id: m } : m)),
+        }),
         tiers: { 2: { model: 'claude-sonnet-5' } },
         ...opts,
       });
@@ -566,6 +574,40 @@ describe('CopilotProvider', () => {
       expect(other.session.cfg.model).toBe('claude-sonnet-5');
       const missing = await play({ nodeModels: { pick: 'nope-1' } }, [call]);
       expect(missing.session.cfg.model).toBe('claude-sonnet-5');
+    });
+
+    it('node models: "model:effort" sets the effort; without one the step keeps its tier\'s', async () => {
+      const call = { updates: { word: 'cat' }, verdict };
+      const tiers = { 2: { model: 'claude-sonnet-5', effort: 'medium' as const } };
+      const efforts = ['low', 'medium', 'high', 'xhigh'];
+      const models = [
+        { id: 'claude-sonnet-5', supportedReasoningEfforts: efforts },
+        { id: 'claude-opus-5.5', supportedReasoningEfforts: efforts },
+      ];
+      const high = await play(
+        { tiers, nodeModels: { pick: 'claude-opus-5.5:high' } },
+        [call],
+        {},
+        models,
+      );
+      expect(high.session.cfg.model).toBe('claude-opus-5.5');
+      expect(high.session.cfg.reasoningEffort).toBe('high');
+      expect(high.requested).toBe(modelSettings('claude-opus-5.5', 'high'));
+      // The effort recorded is the one sent.
+      expect(high.res.transcript.musician).toMatchObject({ effort: 'high' });
+      const kept = await play(
+        { tiers, nodeModels: { pick: 'claude-opus-5.5' } },
+        [call],
+        {},
+        models,
+      );
+      expect(kept.session.cfg.reasoningEffort).toBe('medium');
+      expect(kept.res.transcript.musician).toMatchObject({ effort: 'medium' });
+      expect(splitModelEffort('gpt-6.1-sol:xhigh')).toEqual({
+        model: 'gpt-6.1-sol',
+        effort: 'xhigh',
+      });
+      expect(splitModelEffort('a:b')).toEqual({ model: 'a:b' });
     });
   });
 

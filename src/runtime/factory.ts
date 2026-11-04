@@ -92,7 +92,7 @@ export function envConfig(env: NodeJS.ProcessEnv): {
 
 const off = (v: string | undefined) => v !== undefined && /^(0|false|off|no)$/i.test(v.trim());
 
-/** "deepRead=claude-opus-4.5,triage=gpt-5-mini": a model per step id. */
+/** "deepRead=claude-opus-4.5,skeptic=claude-opus-5.5:high": a model (and effort) per step id. */
 export function parseNodeModels(text: string): Record<string, string> | undefined {
   const pairs = text
     .split(',')
