@@ -41,6 +41,11 @@ describe('scrubText', () => {
       'const config = { password: "[REDACTED:secret-value]", apiKey: \'[REDACTED:secret-value]\' }',
     ],
     [
+      'a .env line quoted in prose',
+      'deploy.sh:2 — hard-coded `export DB_PASSWORD=abcdefgh123`',
+      'deploy.sh:2 — hard-coded `export DB_PASSWORD=[REDACTED:secret-env]`',
+    ],
+    [
       'a .env line',
       'PORT=3000\nDB_PASSWORD=supersecret99\nexport GITHUB_TOKEN_X=abcdefgh12',
       'PORT=3000\nDB_PASSWORD=[REDACTED:secret-env]\nexport GITHUB_TOKEN_X=[REDACTED:secret-env]',
@@ -89,6 +94,66 @@ describe('scrubValue', () => {
 });
 
 describe('StreamScrubber', () => {
+  const stream = (text: string, size: number) => {
+    const sc = new StreamScrubber();
+    let out = '';
+    for (let i = 0; i < text.length; i += size) out += sc.push(text.slice(i, i + size));
+    return out + sc.end();
+  };
+
+  it('streamed in random pieces, always equals scrubbing the whole text (seeded fuzz)', () => {
+    let seed = 42;
+    const rnd = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return seed % n;
+    };
+    const secrets = [
+      gh,
+      pat,
+      aws,
+      jwt,
+      key,
+      'Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789',
+      '"apiKey": "supersecretvalue123"',
+      'password = "Tr0ub4dor&3x"',
+      'https://me:hunter2secret@host/x',
+      'AccountKey=abcdEFGH1234+/==;',
+      '\nexport DB_PASSWORD=abcdefgh123\n',
+    ];
+    const filler = ['word ', 'x'.repeat(rnd(900) + 1), '\n', '{"a": "', '", ', ' '];
+    for (let round = 0; round < 200; round += 1) {
+      let text = '';
+      for (let k = 0; k < 12; k += 1)
+        text += rnd(3) === 0 ? secrets[rnd(secrets.length)] : filler[rnd(filler.length)];
+      const size = rnd(60) + 1;
+      expect(stream(text, size)).toBe(scrubText(text));
+    }
+  });
+
+  it('a private key longer than what is held back, in any piece size', () => {
+    const body = Array.from(
+      { length: 25 },
+      (_, i) => `MIIEow${String(i).padStart(2, '0')}${'Q'.repeat(56)}`,
+    );
+    const long = `before\n-----BEGIN RSA PRIVATE KEY-----\n${body.join('\n')}\n-----END RSA PRIVATE KEY-----\nafter`;
+    for (const size of [5, 40, 2000]) {
+      const out = stream(long, size);
+      expect(out).toBe('before\n[REDACTED:private-key]\nafter');
+    }
+  });
+
+  it('a secret with a space in it, inside a line longer than what is held back', () => {
+    const pad = 'word '.repeat(160);
+    for (const text of [
+      `${pad}Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789 ${pad}`,
+      `{"a": "${'x'.repeat(700)}", "apiKey": "supersecretvalue123", "b": "${'y'.repeat(700)}"}`,
+    ]) {
+      const out = stream(text, 3);
+      expect(out).toBe(scrubText(text));
+      expect(out).not.toMatch(/abcdefghij|supersecret/);
+    }
+  });
+
   it('catches a secret split across pieces, wherever the stream is cut', () => {
     const text = `${'some streamed text '.repeat(40)}\nAuthorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789\npassword = "Tr0ub4dor&3x"\n${key}\nend ${gh}`;
     for (const size of [1, 3, 7, 50, 333]) {

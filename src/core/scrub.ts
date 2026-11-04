@@ -50,12 +50,21 @@ const RULES: readonly Rule[] = [
   {
     // KEY=value lines (.env files, shell): an unquoted value of a variable named as a secret.
     name: 'secret-env',
-    re: /^(\s*(?:export\s+)?[A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*)([^\s'"#$[]{8,})/gm,
-    before: 1,
+    // At a line start, or quoted in prose (`DB_PASSWORD=…`): a finding scrubs as its file does.
+    re: /(^|[\s`'"(])((?:export\s+)?[A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*)([^\s'"`#$[]{8,})/gm,
+    before: 2,
   },
 ];
 
 export const REDACTED = /\[REDACTED:[a-z-]+\]/;
+
+/** Where any rule matches in the text, as [start, end) spans. */
+function matchSpans(text: string): [number, number][] {
+  const spans: [number, number][] = [];
+  for (const r of RULES)
+    for (const m of text.matchAll(r.re)) spans.push([m.index, m.index + m[0].length]);
+  return spans;
+}
 
 /** The text with every secret replaced by "[REDACTED:<kind>]". */
 export function scrubText(text: string): string {
@@ -108,18 +117,28 @@ export class StreamScrubber {
   private held = '';
 
   push(piece: string): string {
-    this.held += piece;
-    const begin = this.held.lastIndexOf('-----BEGIN ');
-    const open = begin >= 0 && !this.held.includes('-----END ', begin);
-    const cut = open ? begin : Math.max(0, this.held.length - StreamScrubber.HOLD);
-    // Cut at a line break (a secret and its name share a line), else at a space in a long line,
-    // so nothing that could be one is split between what goes out and what is held.
-    const line = cut === 0 ? -1 : this.held.lastIndexOf('\n', cut - 1);
-    const at = cut === 0 ? 0 : line >= 0 ? line + 1 : this.held.lastIndexOf(' ', cut - 1) + 1;
-    const ready = this.held.slice(0, at);
-    const scrubbed = scrubText(ready);
-    this.held = this.held.slice(at);
-    return scrubbed;
+    const raw = this.held + piece;
+    const begin = raw.lastIndexOf('-----BEGIN ');
+    // A key block is open until its whole END line has arrived.
+    const open = begin >= 0 && !/-----END [A-Z0-9 ]*PRIVATE KEY-----/.test(raw.slice(begin));
+    const spans = matchSpans(raw);
+    const crossing = (at: number) => spans.find(([from, to]) => from < at && at < to);
+    let cut = open ? begin : Math.max(0, raw.length - StreamScrubber.HOLD);
+    let at = 0;
+    // Never cut through something a rule matches. A secret still arriving lies within the last
+    // HOLD characters, held back until it is whole.
+    for (;;) {
+      const inside = crossing(cut);
+      if (inside) cut = inside[0];
+      // At a line break, else a space, so what goes out never ends inside a word.
+      const line = cut === 0 ? -1 : raw.lastIndexOf('\n', cut - 1);
+      at = cut === 0 ? 0 : line >= 0 ? line + 1 : raw.lastIndexOf(' ', cut - 1) + 1;
+      const still = crossing(at);
+      if (!still) break;
+      cut = still[0];
+    }
+    this.held = raw.slice(at);
+    return scrubText(raw.slice(0, at));
   }
 
   end(): string {
