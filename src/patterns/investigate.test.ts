@@ -142,7 +142,7 @@ describe('investigate adapts its evidence to the question', () => {
     expect(triaged(all.r)).toHaveLength(403);
   });
 
-  it('a located file must be a real file of the repository', () => {
+  it('located paths are resolved by the engine, never sent back: folders, globs, the cap, what is no file', () => {
     const many = Array.from({ length: 400 }, (_, i) => `src/gen/file${i}.ts`);
     let n = 0;
     const { r } = runWith(['workspace'], demo.approvals, {
@@ -150,17 +150,36 @@ describe('investigate adapts its evidence to the question', () => {
       agents: {
         locate: () => ({
           updates: {
-            scopeFiles: ++n === 1 ? ['src/gen/', 'src/invented.ts'] : ['src/gen/file1.ts'],
-            scopeReasons: n === 1 ? ['folder', 'guess'] : ['git grep found it'],
+            scopeFiles: (n++, ['./src/gen/file7.ts', 'src/invented.ts', 'src/gen/']),
+            scopeReasons: ['git grep found it', 'guess'],
             scopeQueries: ['git grep thing'],
           },
           verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
         }),
       },
+      context: { maxTriageFiles: 5 },
     });
     const located = r.state.steps.find((s) => s.nodeId === 'locate')!;
-    expect(JSON.stringify(located.attempts)).toMatch(/exactly as `git ls-files` prints them/);
-    expect(r.state.state.scopeFiles).toEqual(['src/gen/file1.ts']);
+    // One answer: nothing about paths is sent back.
+    expect(n).toBe(1);
+    expect(located.attempts ?? []).toEqual([]);
+    // The AI is told so up front.
+    const locate = investigate.nodes.find((x) => x.id === 'locate') as { directive: string };
+    expect(locate.directive).toMatch(/names no file of this repository is dropped/);
+    const s = r.state.state;
+    // The file, in the repository's spelling; then the folder's files; at most maxTriageFiles.
+    expect(s.scopeFiles).toEqual([
+      'src/gen/file7.ts',
+      'src/gen/file0.ts',
+      'src/gen/file1.ts',
+      'src/gen/file2.ts',
+      'src/gen/file3.ts',
+    ]);
+    expect((s.scopeReasons as string[])[0]).toBe('git grep found it');
+    expect(s.scopeUnmatched).toEqual(['src/invented.ts — not a file of this repository']);
+    expect(String(s.answer)).toMatch(
+      /- Named by Locate but not in this repository: src\/invented\.ts — not a file/,
+    );
   });
 
   it('performance question: designs experiments and runs them after approval', () => {

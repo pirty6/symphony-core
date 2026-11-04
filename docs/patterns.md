@@ -96,6 +96,7 @@ experiments, git history, GitHub, dependencies, MCP servers.
 flowchart TD
   n_start(["Start"])
   n_recall[/"🔧 Recall earlier runs"/]
+  n_resolveScope[/"🔧 Resolve located paths"/]
   n_multiPart{"Several parts?"}
   n_answerParts["🤖 Answer each part ×N"]
   n_answer["🤖 Write answer"]
@@ -122,6 +123,8 @@ flowchart TD
   n_recall -.-> n_planPhase
   n_planPhase --> n_hypothesesPhase
   n_hypothesesPhase --> n_listPhase
+  n_listPhase --> n_resolveScope
+  n_resolveScope -.-> n_listPhase
   n_listPhase --> n_triagePhase
   n_triagePhase --> n_deepPhase
   n_deepPhase --> n_gapPhase
