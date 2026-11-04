@@ -526,13 +526,37 @@ flowchart TD
 
 ## review
 
-Review a branch or PR for bugs and risks, read-only. Only real issues are reported.
+Review a branch or PR. Only real issues are reported, each cited and checked.
 
-1. **Collect the diff.** No changes ends `failed` ("no changes found"), not "looks good".
-2. **Find issues** in parallel parts (as many sub-agents as the collector chose). Each issue
-   cites the code; the citations are checked before an issue counts.
-3. **Report**, or **Looks good** when nothing held up. A review that could not run ends
-   `failed`.
+1. **Collect the diff** (never replayed: a PR can change on GitHub): the files to review, the
+   files left out and why (lockfiles, generated, binary), and what the change claims to do. No
+   changes ends `failed` ("no changes found"), not "looks good".
+2. **Cap.** At most `maxFiles` (60) files are reviewed; the rest are named as not reviewed.
+3. **Run the checks** (`verify`, on by default; a Features switch): the engine runs the tests,
+   and `lintCommand` if set, on the code as it is. A project with no test command says "not run",
+   and so does a run for a remote caller (Copilot Studio): no code runs on this machine for them.
+4. **Find issues** in parallel parts. Each issue is
+   `path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`quote\``, checked by the engine:
+   - BUG and SECURITY;
+   - PERF;
+   - TEST (changed behaviour no test covers, weakened tests);
+   - FLAKY;
+   - REDUNDANT;
+   - DESIGN (against the codebase's rules);
+   - CLAIM (it does not do what it says).
+
+   An honest "could not read it" ends `failed`.
+5. **Report** (issues, or failing tests or lint), and what was not reviewed or not checked. With
+   nothing found, it ends:
+   - **Could not verify** (partial) when every finding's quote is missing from this checkout:
+     the reviewed code must be checked out here;
+   - **Reviewed in part** (partial) when files were over the cap or not read whole;
+   - **Looks good** (success) only otherwise.
+
+Known limits:
+- Citations to URLs or PR numbers are not checked.
+- Files are given to the model whole by the engine, so a file your organisation's Copilot content
+  exclusion covers is not held back here: review such repositories with that in mind.
 
 <!-- flow:review -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
@@ -542,29 +566,53 @@ flowchart TD
   n_start(["Start"])
   n_collect["🤖 Collect diff"]
   n_hasDiff{"Anything changed?"}
+  n_capFiles["Files to review"]
+  n_verifyOn{"Run the checks?"}
+  n_runTests[/"🔧 Run tests"/]
+  n_hasLint{"Lint?"}
+  n_runLint[/"🔧 Run lint"/]
   n_analyze["🤖 Find issues ×N"]
   n_analyzed{"Reviewed?"}
   n_checkReview[/"🔧 Check citations"/]
   n_mergeReview["Record issues"]
   n_hasIssues{"Issues?"}
   n_report["🤖 Write report"]
+  n_anyUnverified{"Findings unverified?"}
+  n_unverifiedReport["Not verified"]
+  n_anyGaps{"Reviewed in part?"}
+  n_partReport["Reviewed in part"]
   n_cleanReport["Nothing found"]
   n_issues(["Issues reported · success"])
   n_clean(["Looks good · success"])
+  n_notVerified(["Could not verify · partial"])
+  n_partlyReviewed(["Reviewed in part · partial"])
   n_noDiff(["No changes found · failed"])
   n_notReviewed(["Could not review · failed"])
   n_start --> n_collect
   n_collect --> n_hasDiff
-  n_hasDiff -->|"yes"| n_analyze
+  n_hasDiff -->|"yes"| n_capFiles
   n_hasDiff -->|"no"| n_noDiff
+  n_capFiles --> n_verifyOn
+  n_verifyOn -->|"yes"| n_runTests
+  n_verifyOn -->|"no"| n_analyze
+  n_runTests --> n_hasLint
+  n_hasLint -->|"yes"| n_runLint
+  n_hasLint -->|"no"| n_analyze
+  n_runLint --> n_analyze
   n_analyze --> n_analyzed
   n_analyzed -->|"yes"| n_checkReview
   n_analyzed -->|"no"| n_notReviewed
   n_checkReview --> n_mergeReview
   n_mergeReview --> n_hasIssues
   n_hasIssues -->|"yes"| n_report
-  n_hasIssues -->|"no"| n_cleanReport
+  n_hasIssues -->|"no"| n_anyUnverified
   n_report --> n_issues
+  n_anyUnverified -->|"yes"| n_unverifiedReport
+  n_anyUnverified -->|"no"| n_anyGaps
+  n_unverifiedReport --> n_notVerified
+  n_anyGaps -->|"yes"| n_partReport
+  n_anyGaps -->|"no"| n_cleanReport
+  n_partReport --> n_partlyReviewed
   n_cleanReport --> n_clean
 ```
 

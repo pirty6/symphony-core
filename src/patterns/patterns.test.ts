@@ -157,14 +157,15 @@ describe('pattern library', () => {
     const ok = runScripted(score, p.demo);
     expect(ok.state).toMatchObject({ cursor: 'issues', outcome: 'success' });
     expect(ok.state.state.findings).toEqual([
-      'F1 src/core/engine.ts:120 — retry counter never resets `attempts += 1`',
+      'F1 src/core/engine.ts:120 — [BUG] [HIGH] retry counter never resets `attempts += 1`',
     ]);
     const blind = runScripted(score, {
       ...p.demo!,
       agents: {
         ...p.demo!.agents,
-        analyze: (s) => ({
-          updates: { newFindings: [], reviewed: (s.files as string[]) ?? [] },
+        analyze: () => ({
+          // An honest failure lists nothing as read, and still ends as not reviewed.
+          updates: { newFindings: [], reviewed: [] },
           verdict: {
             outcome: 'failed',
             confidence: 0.2,
