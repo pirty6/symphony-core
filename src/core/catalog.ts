@@ -152,7 +152,7 @@ export const FEATURES: readonly Feature[] = [
     field: 'verify',
     label: 'Run the tests (review)',
     description:
-      'The engine runs the tests (and the lint command, if set) on the reviewed code; failing tests are an issue. Off: the review only reads.',
+      "Off by default: the PR's CI pipeline already runs the tests and lint. On: the engine runs the tests (and the lint command, if set) on the reviewed code, and failing tests are an issue.",
   },
   {
     field: 'narrowRead',
