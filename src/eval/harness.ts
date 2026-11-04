@@ -3,6 +3,7 @@
  * change to Symphony: solved or not, citations valid or not, tokens, time, models.
  * A change ships only if it keeps the solved count and the citation validity.
  */
+import { scrubbingOn, scrubValue } from '../core/scrub.js';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -146,7 +147,10 @@ async function runTask(
       await mkdir(o.runsDir, { recursive: true });
       saved = join(o.runsDir, `${task.id}-${take}.json`);
       const record: SavedRun = { schemaVersion: RUN_SCHEMA_VERSION, score, performance: perf };
-      await writeFile(saved, `${JSON.stringify(record, null, 2)}\n`);
+      const clean = scrubbingOn()
+        ? { ...record, performance: scrubValue(record.performance) }
+        : record;
+      await writeFile(saved, `${JSON.stringify(clean, null, 2)}\n`);
     }
     const verdict = await task.check({ workspace, outcome: perf.outcome, state });
     const findings = Array.isArray(state.findings)

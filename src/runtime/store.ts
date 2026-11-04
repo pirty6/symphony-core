@@ -3,6 +3,7 @@
  * user pattern files. Kept out of the pure core on purpose.
  */
 // Every Node surface (CLI, MCP, studio server) loads the store: hash natively there.
+import { scrubbingOn, scrubValue } from '../core/scrub.js';
 import './native-hash.js';
 import { performanceUsage } from '../core/usage.js';
 import { execFile } from 'node:child_process';
@@ -107,9 +108,12 @@ const safe = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, '-');
 
 export async function saveRun(
   dir: string,
-  run: SavedRun,
+  given: SavedRun,
   opts: { readonly compact?: boolean } = {},
 ): Promise<string> {
+  // A last scrub of the record where it is written (an error's text, a reason): the engine's
+  // state is clean already, so its hashes still hold. The score is not touched: its id is its hash.
+  const run = scrubbingOn() ? { ...given, performance: scrubValue(given.performance) } : given;
   const folder = join(dir, safe(run.score.pattern));
   await mkdir(folder, { recursive: true });
   const stamp = safe(run.performance.startedAt || new Date().toISOString());

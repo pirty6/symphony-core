@@ -284,3 +284,21 @@ describe('remembered compositions', () => {
     });
   });
 });
+
+describe('memory keeps no credentials', () => {
+  it('a lesson whose text holds a token is written scrubbed, though its tool runs before the engine scrubs', async () => {
+    const ws = workspace();
+    // Built at run time: no literal a secret scanner would flag.
+    const token = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
+    writeFileSync(join(ws, 'src', 'auth.ts'), 'export {};\n');
+    await rememberLesson(
+      ws,
+      `Fixed "login fails": the CI had GITHUB_TOKEN=${token}`,
+      ['src/auth.ts'],
+      day(1),
+    );
+    const text = readFileSync(memoryPath(ws), 'utf8');
+    expect(text).not.toContain(token);
+    expect(text).toContain('[REDACTED:github-token]');
+  });
+});

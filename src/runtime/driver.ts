@@ -8,7 +8,7 @@
  * user can look at the node input and the AI's proposed output before the
  * engine applies it. stop() aborts the live AI call and cancels the run.
  */
-import { scrubValue } from '../core/scrub.js';
+import { scrubbingOn, scrubValue } from '../core/scrub.js';
 import { itemOf } from '../core/items.js';
 import { stepTimeLimitMs } from './limits.js';
 import { KEEP_ANSWER } from './provider.js';
@@ -243,9 +243,7 @@ export class Run {
   }
 
   /** Off only with SYMPHONY_SCRUB=off (e.g. to debug a repair against the raw text). */
-  private readonly scrubbing =
-    (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
-      ?.SYMPHONY_SCRUB !== 'off';
+  private readonly scrubbing = scrubbingOn();
 
   private now(): string {
     return this.opts.clock?.() ?? new Date().toISOString();
