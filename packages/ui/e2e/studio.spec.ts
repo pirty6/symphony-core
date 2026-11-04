@@ -132,11 +132,13 @@ test('the result opens in a reader when a run ends', async ({ page }) => {
   const reader = page.getByTestId('result-reader')
   await expect(reader).toBeVisible()
   await expect(reader.getByRole('heading', { level: 2 })).toContainText('offline demo (canned answers)')
-  await expect(reader.getByTestId('result-answer')).toContainText(/\S/)
+  // People's version first, then the brief for an AI agent.
+  await expect(reader.getByTestId('result-summary')).toContainText('In short')
+  await expect(reader.getByTestId('result-handoff')).toContainText('Instructions for the next agent')
   await expect(reader.getByRole('dialog')).toHaveAttribute('aria-label', 'run result')
   await page.keyboard.press('Escape')
   await expect(reader).toHaveCount(0)
-  await expect(page.getByTestId('result-preview')).toContainText('answer')
+  await expect(page.getByTestId('result-preview')).toContainText('summary')
   await page.getByRole('button', { name: '⤢ Read full result' }).click()
   await expect(reader).toBeVisible()
   await reader.getByRole('button', { name: 'close result' }).click()
@@ -388,11 +390,22 @@ test('during a run, nodes and closed phases can be moved, but nothing can be con
   // Bring every node into view first (the window may be small).
   await page.locator('.react-flow__controls-fitview').click()
   const phase = page.locator('.react-flow__node[data-id="planPhase"]')
+  // Fit view animates: wait until the node stops moving before taking hold of it.
+  let last = ''
+  await expect
+    .poll(async () => {
+      const now = JSON.stringify(await phase.boundingBox())
+      const still = now === last
+      last = now
+      return still
+    })
+    .toBe(true)
   const before = await phase.evaluate((el) => (el as HTMLElement).style.transform)
   const box = (await phase.boundingBox())!
-  await page.mouse.move(box.x + box.width / 2, box.y + 10)
+  // Its centre: fitted to a tall graph, a node may be only a few pixels high.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   await page.mouse.down()
-  await page.mouse.move(box.x + box.width / 2 + 200, box.y + 40, { steps: 8 })
+  await page.mouse.move(box.x + box.width / 2 + 200, box.y + box.height / 2 + 30, { steps: 8 })
   await page.mouse.up()
   await expect.poll(() => phase.evaluate((el) => (el as HTMLElement).style.transform)).not.toBe(before)
   // Connections stay as the pattern says: no handle accepts a new edge while it plays.

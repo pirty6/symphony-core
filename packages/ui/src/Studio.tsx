@@ -857,7 +857,9 @@ export default function Studio() {
           nodesConnectable={editable && !display.collapsed}
           deleteKeyCode={editable ? ['Backspace', 'Delete'] : null}
           fitView
-          minZoom={0.2}
+          // Low enough that "fit view" shows all of a tall pattern (investigate); a big flow still
+          // opens at a readable zoom, at its start.
+          minZoom={0.05}
         >
           {phaseIds.length > 0 && (
             <Panel position="top-left">
