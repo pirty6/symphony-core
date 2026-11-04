@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { fix } from '../patterns/index.js';
-import { Run } from './driver.js';
+import { Run, type RunMessage } from './driver.js';
 import { liveRoot, LiveRuns, publishLive, pruneLive } from './live.js';
 import { ScriptedProvider } from './scripted-provider.js';
 
@@ -35,7 +35,58 @@ const fixRun = () =>
     clock: () => 't',
   });
 
+const streamedText = (m: RunMessage) =>
+  m.type === 'provider' && (m.event.type === 'delta' || m.event.type === 'reasoning');
+const text = (ms: readonly RunMessage[]) =>
+  ms
+    .flatMap((m) => (m.type === 'provider' && m.event.type === 'delta' ? [m.event.text] : []))
+    .join('');
+
 describe('live runs: a run another process plays, in the studio', () => {
+  it('never writes a secret, even one streamed in pieces', async () => {
+    const dir = root();
+    // Built at run time: no literal a secret scanner would flag.
+    const token = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
+    const scripted = ScriptedProvider.forPattern(fix);
+    const run = new Run({
+      score: compileScore(fix, { context: fix.demo!.context!, generatedAt: 't' }),
+      provider: {
+        name: 'leaky',
+        runAgent: async (req) => {
+          for (const piece of ['the key is gh', token.slice(2, 20), token.slice(20), ' ok\n'])
+            req.onEvent({ type: 'delta', text: piece });
+          req.onEvent({
+            type: 'tool-start',
+            id: '1',
+            name: 'bash',
+            args: { command: `echo ${token}` },
+          });
+          return scripted.runAgent(req);
+        },
+        draft: () => Promise.reject(new Error('n/a')),
+      },
+      demo: fix.demo,
+      autoApprove: true,
+      clock: () => 't',
+    });
+    const stop = await publishLive(run, { source: 'chat', workspace: '/w' }, dir);
+    await run.start();
+    stop();
+    await new Promise((r) => setTimeout(r, 300));
+    const [seen] = await new LiveRuns(dir).list();
+    await seen!.poll();
+    const file = JSON.stringify(seen!.messages);
+    // Read as anyone reading the file would: the streamed pieces joined up.
+    const streamed = seen!.messages
+      .flatMap((m) => (m.type === 'provider' && m.event.type === 'delta' ? [m.event.text] : []))
+      .join('');
+    expect(streamed).toContain('the key is [REDACTED:github-token] ok');
+    expect(`${file}${streamed}`).not.toContain(token.slice(4, 24));
+    expect(file).toContain('echo [REDACTED:github-token]');
+    // In memory the run still has what the AI said (it is only kept out of files).
+    expect(JSON.stringify(run.messages)).toContain(token.slice(4));
+  });
+
   it('shows it as it plays, takes an approval from the studio, and follows it to the end', async () => {
     const dir = root();
     const run = fixRun();
@@ -56,7 +107,13 @@ describe('live runs: a run another process plays, in the studio', () => {
     await done;
     expect(run.status).toBe('done');
     await until(async () => (await seen!.poll(), seen!.status === 'done'));
-    expect(seen!.messages.map((m) => m.seq)).toEqual(run.messages.map((m) => m.seq));
+    // The file numbers what it holds; streamed text may come in fewer, larger pieces (it is
+    // scrubbed across them), everything else is there, in order.
+    expect(seen!.messages.map((m) => m.seq)).toEqual(seen!.messages.map((_, i) => i));
+    const kinds = (ms: readonly RunMessage[]) =>
+      ms.filter((m) => !streamedText(m)).map((m) => (m.type === 'engine' ? m.event.type : m.type));
+    expect(kinds(seen!.messages)).toEqual(kinds(run.messages));
+    expect(text(seen!.messages)).toBe(text(run.messages));
     expect(streamed.length).toBeGreaterThan(0);
     expect(seen!.answerApproval({ approved: true })).toBe('the run has ended');
     stop();
