@@ -578,6 +578,8 @@ export default function Studio() {
 
   const changeSettings = (s: RunSettings) => {
     if (s.stepMode !== settings.stepMode && runActive) control('stepMode', { on: s.stepMode })
+    // Mid-run too: the approval waiting now answers itself, and so do the next ones.
+    if (s.autoApprove !== settings.autoApprove && runActive) control('autoApprove', { on: s.autoApprove })
     setSettings(s)
   }
 
