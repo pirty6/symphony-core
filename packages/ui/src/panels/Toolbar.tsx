@@ -111,8 +111,13 @@ export function Toolbar(p: Props) {
           />
           <span className="knob-name">{level.name}</span>
         </label>
-        <label title="Answer approval nodes with the pattern's scripted answers">
-          <input type="checkbox" checked={p.settings.autoApprove} disabled={active} onChange={(e) => set({ autoApprove: e.target.checked })} />
+        <label title="Approvals answer themselves, each with its unattended answer. During a run too: the one waiting now and the next ones, also in the runs it hands on to. A stuck step still asks you.">
+          <input
+            type="checkbox"
+            checked={p.settings.autoApprove}
+            aria-label="auto-approve"
+            onChange={(e) => set({ autoApprove: e.target.checked })}
+          />
           auto-approve
         </label>
         <label title="Pause before every node and after every AI answer">

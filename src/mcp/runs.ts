@@ -234,6 +234,8 @@ export interface RunView {
   readonly step: number;
   readonly activeStep?: string;
   readonly waitingFor?: Waiting;
+  /** Approvals answer themselves (set at the start, or turned on mid-run). */
+  readonly autoApprove?: true;
   /** The last engine events, one line each. */
   readonly recent: readonly string[];
   readonly outcome?: string;
@@ -380,7 +382,13 @@ export class RunManager {
         if (managed) managed.blocked = refused;
         throw new Error(refused);
       }
-      const id = await this.launch(s, p, req, rest);
+      // It plays with auto-approve as it is now: turned on mid-run, the next run keeps it.
+      const id = await this.launch(
+        s,
+        p,
+        { ...req, autoApprove: managed?.run.autoApproves ?? req.autoApprove === true },
+        rest,
+      );
       if (managed) managed.next = id;
       return id;
     };
@@ -499,6 +507,7 @@ export class RunManager {
       step: engine?.step ?? 0,
       ...(active && ACTIVE.has(run.status) ? { activeStep: active } : {}),
       ...(waitingFor ? { waitingFor } : {}),
+      ...(run.autoApproves ? { autoApprove: true } : {}),
       recent,
       ...(ended ? { outcome: engine.outcome } : {}),
       ...(ended && engine.reason ? { reason: engine.reason } : {}),
@@ -593,6 +602,16 @@ export class RunManager {
    * `waitMs` for its current step to wind down: answering "running" right after
    * a stop made callers think it had not stopped. Still ending: 'stopping'.
    */
+  /**
+   * Approvals answer themselves from now on (the one waiting included), in this run and the
+   * runs it hands on to; or ask again. Stuck steps still ask. Any run id of a chain works.
+   */
+  setAutoApprove(runId: string, on: boolean): RunView {
+    const { managed, id } = this.latest(runId);
+    managed.run.setAutoApprove(on);
+    return this.view(id);
+  }
+
   async stop(runId: string, waitMs = STOP_WAIT_MS): Promise<RunView> {
     const { managed, id } = this.latest(runId);
     managed.run.stop('stopped from chat');

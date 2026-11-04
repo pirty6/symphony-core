@@ -126,6 +126,17 @@ test('phases collapse into one node, light up while running and open into their 
   await expect(page.locator('.phase-frame')).toHaveCount(investigate.groups!.length)
 })
 
+test('auto-approve can be turned on mid-run: the waiting approval answers itself', async ({ page }) => {
+  await open(page, 'fix')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  // fix plays its diagnosis first: the plan's approval comes a little later.
+  await expect(page.getByTestId('approval-card')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByLabel('auto-approve')).toBeEnabled()
+  await page.getByLabel('auto-approve').check()
+  await expect(page.getByTestId('approval-card')).toHaveCount(0)
+  await expect(page.getByTestId('run-status')).toHaveText('done', { timeout: 20_000 })
+})
+
 test('the result opens in a reader when a run ends', async ({ page }) => {
   await open(page, 'investigate')
   await page.getByRole('button', { name: '▶ Run' }).click()
