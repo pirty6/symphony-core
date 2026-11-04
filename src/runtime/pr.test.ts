@@ -98,10 +98,11 @@ describe('checkoutPr', () => {
       files: ['M\ta.js', 'A\tb.js'],
     });
     expect(pr!.dir!.startsWith(root)).toBe(true);
-    expect(readFileSync(join(pr!.dir!, 'a.js'), 'utf8')).toBe('export const a = 2;\n');
+    // Line endings as git checks them out (CRLF on Windows).
+    expect(readFileSync(join(pr!.dir!, 'a.js'), 'utf8').trimEnd()).toBe('export const a = 2;');
     // The workspace is untouched: same branch, same files, no new branch or ref.
     expect(git(ws, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('elsewhere');
-    expect(readFileSync(join(ws, 'a.js'), 'utf8')).toBe('export const a = 1;\n');
+    expect(readFileSync(join(ws, 'a.js'), 'utf8').trimEnd()).toBe('export const a = 1;');
     // No ref is left behind, and FETCH_HEAD (shared with any other fetch) is not used.
     expect(git(ws, 'for-each-ref', '--format=%(refname)')).not.toMatch(/pull|symphony/);
     expect(existsSync(join(ws, '.git', 'FETCH_HEAD'))).toBe(false);
