@@ -86,6 +86,61 @@ describe('review', () => {
     expect(off.state.report).toMatch(/Tests not run \(verify is off\)/);
   });
 
+  it('a part that could not read its files does not throw away the others', () => {
+    const { r, state, end } = play(
+      {
+        agents: {
+          collect: collecting(['src/a.ts', 'src/b.ts']),
+          analyze: (s) =>
+            (s.files as string[])[0] === 'src/b.ts'
+              ? {
+                  updates: { newFindings: [], reviewed: [] },
+                  verdict: { ...v, outcome: 'failed', reason: 'could not read it' },
+                }
+              : {
+                  updates: {
+                    newFindings: ['src/a.ts:3 — [BUG] [HIGH] off by one `i < n`'],
+                    reviewed: ['src/a.ts'],
+                  },
+                  verdict: v,
+                },
+        },
+      },
+      { filesPerAgent: 1 },
+    );
+    expect(end).toBe('issues');
+    expect(state.findings).toEqual(['F1 src/a.ts:3 — [BUG] [HIGH] off by one `i < n`']);
+    expect(state.coverage).toMatch(/Not reviewed \(the reviewer could not read them\): src\/b\.ts/);
+    expect(r.state.outcome).toBe('success');
+  });
+
+  it('checks that did not run say why, and keep the command you gave', () => {
+    const notRun = {
+      passed: true,
+      output: 'not run: remote callers do not run commands here',
+      command: '',
+    };
+    const { state, end } = play(
+      {
+        agents: { analyze: sound, collect: collecting(['src/a.ts'], ['src/old.ts — deleted']) },
+        tools: { runTests: () => notRun, runLint: () => notRun },
+      },
+      { testCommand: 'pnpm test', lintCommand: 'tsc --noEmit' },
+    );
+    expect(state.testCommand).toBe('pnpm test');
+    expect(state.coverage).toMatch(/Tests not run: remote callers/);
+    expect(state.coverage).toMatch(/Lint not run: remote callers/);
+    expect(state.coverage).toMatch(/Left out: src\/old\.ts — deleted/);
+    expect(end).toBe('clean');
+  });
+
+  it('runs the tests afresh each time, never from a cached run', () => {
+    const node = review.nodes.find((n) => n.id === 'runTests') as {
+      args?: Record<string, unknown>;
+    };
+    expect(node.args).toEqual({ optional: true });
+  });
+
   it('every finding names its category and severity', () => {
     const untagged = play({
       agents: {

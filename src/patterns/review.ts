@@ -130,7 +130,7 @@ export const review: Pattern = {
       label: 'Collect diff',
       // A PR can change on GitHub, which the workspace fingerprint does not see: never replayed.
       fresh: true,
-      directive: `Read the diff for \`target\` (e.g. git diff, or gh pr diff and gh pr view for a PR; use \`hint\` if set). List every changed file to review in \`files\` (paths only). List in \`skipped\` every changed file you leave out, with why ("path — lockfile", "— generated", "— binary"): leave out only lockfiles, generated and binary files. Summarize what changed per file in \`diffSummary\`, and in \`claims\` what the change says it does (the PR description or the commit messages, quoted briefly; "" if none). Set \`agents\` to how many reviewers should read in parallel (1 to ${MAX_AGENTS}): 1 for a few small files, more for a large diff. If there is no diff, leave \`files\` empty and say why in \`diffSummary\`.`,
+      directive: `Read the diff for \`target\` (e.g. git diff, or gh pr diff and gh pr view for a PR; use \`hint\` if set). List every changed file to review in \`files\` (paths only). List in \`skipped\` every changed file you leave out, with why ("path — lockfile", "— generated", "— binary"): leave out only lockfiles, generated, binary and deleted files ("path — deleted": the reviewers see the deletion in the diff). Summarize what changed per file in \`diffSummary\`, and in \`claims\` what the change says it does (the PR description or the commit messages, quoted briefly; "" if none). Set \`agents\` to how many reviewers should read in parallel (1 to ${MAX_AGENTS}): 1 for a few small files, more for a large diff. If there is no diff, leave \`files\` empty and say why in \`diffSummary\`.`,
       reads: ['target', 'hint'],
       writes: ['diffSummary', 'claims', 'files', 'skipped', 'agents'],
       retries: 2,
@@ -168,10 +168,11 @@ export const review: Pattern = {
       kind: 'tool',
       label: 'Run tests',
       tool: 'tests.run',
-      // The same code as a moment ago gives the same answer; no test command is "not run".
-      args: { reuse: true, optional: true },
+      // Fresh every time (a cached timeout or flaky failure is no verdict); no test command
+      // is "not run".
+      args: { optional: true },
       inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' },
-      output: { passed: 'testsPassed', output: 'testOutput', command: 'testCommand' },
+      output: { passed: 'testsPassed', output: 'testOutput' },
     },
     { id: 'hasLint', kind: 'condition', label: 'Lint?', expression: '!empty(lintCommand)' },
     {
@@ -216,7 +217,8 @@ export const review: Pattern = {
       retries: 2,
       checks: [
         {
-          // An honest "could not read it" is accepted, so it can end as not reviewed.
+          // An honest "could not read it" is accepted: the files no part read are named as not
+          // reviewed, and only a review that read nothing ends as not reviewed.
           expr: 'verdict.outcome == "failed" || subset(files, reviewed)',
           message: 'Read every file in files; list each in reviewed.',
         },
@@ -230,7 +232,7 @@ export const review: Pattern = {
       id: 'analyzed',
       kind: 'condition',
       label: 'Reviewed?',
-      expression: 'verdict.outcome != "failed"',
+      expression: 'verdict.outcome != "failed" || len(reviewed) > 0',
     },
     checkFindings('checkReview'),
     {
@@ -246,8 +248,10 @@ export const review: Pattern = {
             'if(len(skipped) > 0, ["Left out: " + join(skipped, "; ")], [])',
             ' + if(len(overflow) > 0, ["Not reviewed (over maxFiles " + text(maxFiles) + "): " + join(overflow, ", ")], [])',
             ' + if(len(partlyRead) > 0, ["Not read whole: " + join(partlyRead, ", ")], [])',
+            ' + if(len(without(files, reviewed)) > 0, ["Not reviewed (the reviewer could not read them): " + join(without(files, reviewed), ", ")], [])',
             ' + if(len(unverified) > 0, ["Findings not verified (their quote is not in this checkout: is the reviewed code checked out?): " + join(unverified, "; ")], [])',
-            ' + if(!verify, ["Tests not run (verify is off)"], if(includes(testOutput, "not run: "), ["Tests not run: no test command"], []))',
+            ' + if(!verify, ["Tests not run (verify is off)"], if(includes(testOutput, "not run: "), ["Tests " + testOutput], []))',
+            ' + if(includes(lintOutput, "not run: "), ["Lint " + lintOutput], [])',
             ', "\n")',
           ].join(''),
         },
@@ -309,7 +313,7 @@ export const review: Pattern = {
       id: 'anyGaps',
       kind: 'condition',
       label: 'Reviewed in part?',
-      expression: 'len(overflow) > 0 || len(partlyRead) > 0',
+      expression: 'len(overflow) > 0 || len(partlyRead) > 0 || len(without(files, reviewed)) > 0',
     },
     {
       id: 'partReport',
