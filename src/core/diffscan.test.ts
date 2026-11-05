@@ -20,7 +20,7 @@ describe('scanDiff', () => {
     );
     expect(scanDiff(diff).smells).toEqual([
       'src/a.ts:11 — 4 parameters (F1)',
-      'src/a.ts:12 — debug output left in (C5)',
+      'src/a.ts:12 — debug output left in (G12)',
       'src/a.ts:13 — commented-out code (C5)',
       'src/a.ts:15 — a boolean parameter (F3)',
     ]);

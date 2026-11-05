@@ -489,10 +489,10 @@ describe('diff.scan', { timeout: 30_000 }, () => {
     commitAll(d);
     writeFileSync(join(d, 'a.js'), 'export const a = 1;\nconsole.log(a);\n');
     const working = await tool('diff.scan').run({ range: '' }, ctx(d));
-    expect(working.smells).toEqual(['a.js:2 — debug output left in (C5)']);
+    expect(working.smells).toEqual(['a.js:2 — debug output left in (G12)']);
     commitAll(d);
     const ranged = await tool('diff.scan').run({ range: 'HEAD~1..HEAD' }, ctx(d));
-    expect(ranged).toMatchObject({ error: '', smells: ['a.js:2 — debug output left in (C5)'] });
+    expect(ranged).toMatchObject({ error: '', smells: ['a.js:2 — debug output left in (G12)'] });
     expect(ranged.diff).toMatch(/\+console\.log\(a\);/);
     const option = await tool('diff.scan').run({ range: '--output=/tmp/x' }, ctx(d));
     expect(option).toMatchObject({
