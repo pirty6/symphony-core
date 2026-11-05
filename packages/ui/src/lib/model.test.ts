@@ -336,8 +336,8 @@ describe('feature switches', () => {
       'plainSummary',
     ])
     expect(featureRows(hangman, PATTERNS, {})).toEqual([])
-    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(14)
-    expect(featureRows(maestro, PATTERNS, {})[5]!.patterns).toEqual(['investigate', 'fix', 'implement'])
+    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(15)
+    expect(featureRows(maestro, PATTERNS, {})[5]!.patterns).toEqual(['investigate', 'fix', 'implement', 'review'])
   })
 
   it('keeps only choices away from the default, and remembers them between visits', () => {
