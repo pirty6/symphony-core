@@ -1222,6 +1222,23 @@ describe('auto-approve mid-run', () => {
   });
 });
 
+/** Answers; with `failFirst`, the first call breaks (the engine asks again). */
+const answering = (seen: AgentRequest[], failFirst = false): Provider => ({
+  name: 'copilot',
+  runAgent: async (req): Promise<AgentResponse> => {
+    seen.push(req);
+    if (failFirst && seen.length === 1) throw new Error('the session broke');
+    return {
+      result: {
+        updates: { note: 'ran' },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+      },
+      transcript: { provider: 'copilot', prompt: '', output: '', toolCalls: [] },
+    };
+  },
+  draft: () => Promise.reject(new Error('n/a')),
+});
+
 describe('sandbox steps', () => {
   const p: Pattern = {
     name: 'try',
@@ -1249,22 +1266,6 @@ describe('sandbox steps', () => {
     ],
   };
   const score = compileScore(p, { goal: 'g', generatedAt: 't' });
-  /** Answers; with `failFirst`, the first call breaks (the engine asks again). */
-  const answering = (seen: AgentRequest[], failFirst = false): Provider => ({
-    name: 'copilot',
-    runAgent: async (req): Promise<AgentResponse> => {
-      seen.push(req);
-      if (failFirst && seen.length === 1) throw new Error('the session broke');
-      return {
-        result: {
-          updates: { note: 'ran' },
-          verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
-        },
-        transcript: { provider: 'copilot', prompt: '', output: '', toolCalls: [] },
-      };
-    },
-    draft: () => Promise.reject(new Error('n/a')),
-  });
 
   it('plays in its own throwaway copy, discarded after the call, even when it fails', async () => {
     const seen: AgentRequest[] = [];

@@ -45,12 +45,13 @@ interface KustoTable {
   readonly Rows?: readonly (readonly unknown[])[];
 }
 
+const cell = (v: unknown) =>
+  (typeof v === 'string' ? v : JSON.stringify(v ?? '')).replace(/[\t\n]/g, ' ');
+
 /** The first table of a v1 response as tab-separated text, cut to what an agent can read. */
 export function formatTable(json: { readonly Tables?: readonly KustoTable[] }): string {
   const t = json.Tables?.[0];
   if (!t?.Columns) return 'No table in the answer.';
-  const cell = (v: unknown) =>
-    (typeof v === 'string' ? v : JSON.stringify(v ?? '')).replace(/[\t\n]/g, ' ');
   const rows = t.Rows ?? [];
   const lines = [t.Columns.map((c) => c.ColumnName).join('\t')];
   let size = lines[0]!.length;
