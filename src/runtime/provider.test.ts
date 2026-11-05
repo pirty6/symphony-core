@@ -221,6 +221,16 @@ describe('isReadOnlyCommand', () => {
     'n=$(git rev-list --count HEAD); echo "$n commits"',
     'echo "$(git log -1 --format=%s) on $(git branch --show-current)"',
     "echo '$(rm -rf x) is just text in single quotes'",
+    // Azure DevOps and Azure, read-only.
+    'az repos policy list --repository-id abc --branch master -o table',
+    'az pipelines runs list --top 20 --output json | jq ".[].result"',
+    'az pipelines runs show --id 42',
+    'az repos pr show --id 7',
+    'az devops invoke --area build --resource timeline --route-parameters project=OC buildId=42',
+    'az devops invoke --area build --resource builds --http-method GET',
+    'az rest --url https://dev.azure.com/o/_apis/projects',
+    'az account show --query name -o tsv',
+    'az graph query -q "Resources | take 5"',
   ])('allows %s', (cmd) => {
     expect(isReadOnlyCommand(cmd)).toBe(true);
   });
@@ -275,6 +285,17 @@ describe('isReadOnlyCommand', () => {
     'PAGER=./evil git log',
     'x=$(ls) git log',
     'LD_PRELOAD=./evil.so ls',
+    // az: anything that writes, runs, prints a credential or saves a file.
+    'az pipelines run --name ci',
+    'az repos policy create --config p.json',
+    'az repos pr update --id 7 --status abandoned',
+    'az account get-access-token --resource https://x.kusto.windows.net',
+    'az devops invoke --area build --resource builds --http-method POST',
+    'az devops invoke --area build --resource builds --in-file body.json',
+    'az rest --method post --url https://x --body {}',
+    'az pipelines runs artifact download --run-id 1 --path out',
+    'az login',
+    'az extension add --name kusto',
   ])('refuses %s', (cmd) => {
     expect(isReadOnlyCommand(cmd)).toBe(false);
   });

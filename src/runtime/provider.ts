@@ -106,7 +106,7 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
     pause.isolated
       ? '- Only the input below. You have no workspace or shell tools for this step: reason from what you were given.'
       : pause.role === 'assessor'
-        ? "- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff/ls-files/check-ignore, gh issue/pr/run/search view|list, gh api GETs, ls, cat, find, jq). No interpreters (python, node, bash -c…): they can write files, so they are refused. Read JSON with jq, e.g. `jq '.results[] | {task, pass}' file.json`. A command line runs only if every part is allowed; a refusal names the part, so run the rest again without it."
+        ? "- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff/ls-files/check-ignore, gh issue/pr/run/search view|list, gh api GETs, az list/show/get/query commands and az devops invoke or az rest GETs for Azure DevOps and Azure, ls, cat, find, jq). No interpreters (python, node, bash -c…): they can write files, so they are refused. Read JSON with jq, e.g. `jq '.results[] | {task, pass}' file.json`. A command line runs only if every part is allowed; a refusal names the part, so run the rest again without it."
         : `- Workspace: read, edit and run commands as this step needs. Put scripts, notes and other temporary files only in ${sources.scratchDir ? `the run's scratch folder \`${sources.scratchDir}\` (deleted when the run ends)` : 'the system temp folder'}, never in the project.`,
     ...(pause.capabilities.includes('web')
       ? [
@@ -251,6 +251,7 @@ export interface PolicyDecision {
 // Commands with no side effects. Anything not listed is treated as a write.
 const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'gh',
+  'az',
   'sed',
   'cd',
   'pwd',
@@ -379,6 +380,43 @@ function ghIsReadOnly(args: readonly string[]): boolean {
   return Boolean(group && action && GH_READ[group]?.has(action));
 }
 
+/** az verbs that only read: `az repos policy list`, `az pipelines runs show`, `az graph query`. */
+const AZ_READ_VERB = /^(list|show|get|query)(-[a-z-]+)?$/;
+/** az commands that print a credential or write a file, whatever their verb says. */
+const AZ_NEVER = /^(get-access-token|download|export)$/;
+/** Flags that make az write a file (its --output only formats what it prints). */
+const AZ_WRITES = /^--(out-file|output-file|file-path|dest|destination|path)(=|$)/;
+
+/**
+ * az reads when its last command word is a read verb (list, show, get…, query), or for
+ * `az devops invoke` and `az rest` when the request is a GET with no body. Anything that
+ * prints a token or writes a file is refused.
+ */
+function azRefusal(args: readonly string[]): string | undefined {
+  const words: string[] = [];
+  for (const a of args) {
+    if (a.startsWith('-')) break;
+    words.push(a);
+  }
+  const said = `\`az ${words.join(' ')}\``;
+  const writes = args.find((a) => AZ_WRITES.test(a));
+  if (writes) return `${said} ${writes} (writes a file)`;
+  const verb = words.at(-1) ?? '';
+  if (AZ_NEVER.test(verb)) return `${said} (prints a credential or writes a file)`;
+  const flag = (names: readonly string[]) => {
+    const i = args.findIndex((a) => names.some((n) => a === n || a.startsWith(`${n}=`)));
+    if (i < 0) return undefined;
+    const a = args[i]!;
+    return (a.includes('=') ? a.split('=')[1] : args[i + 1])?.toLowerCase();
+  };
+  if ((words[0] === 'devops' && verb === 'invoke') || words[0] === 'rest') {
+    const method = flag(['--http-method', '--method', '-m']) ?? 'get';
+    const body = args.some((a) => /^--(body|in-file)(=|$)|^-b$/.test(a));
+    return method === 'get' && !body ? undefined : `${said} (only GET requests with no body)`;
+  }
+  return AZ_READ_VERB.test(verb) ? undefined : `${said} (only list, show, get and query commands)`;
+}
+
 /** Shell words that only shape control flow: the command after them is what runs. */
 const LEADING_KEYWORDS: ReadonlySet<string> = new Set([
   'do',
@@ -479,6 +517,8 @@ function segmentRefusal(segment: string): string | undefined {
   if (INTERPRETERS.has(cmd)) return `\`${cmd}\` (interpreters can run any code, including writes)`;
   if (!READ_ONLY_COMMANDS.has(cmd)) return `\`${cmd}\` (not on the read-only list)`;
   const args = t.slice(1);
+  // az's --output (-o) chooses a format for what it prints; az's own file flags are checked below.
+  if (cmd === 'az') return azRefusal(args);
   if (args.some((a) => a.startsWith('--output'))) return `\`${cmd} --output\` (writes a file)`;
   if (AWKS.has(cmd)) return awkRefusal(cmd, args);
   if (cmd === 'sort')
