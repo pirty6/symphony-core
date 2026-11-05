@@ -468,29 +468,29 @@ describe('git.pr', () => {
   });
 });
 
-describe('diff.scan', { timeout: 30_000 }, () => {
-  const commit = (d: string) =>
-    execFileSync('git', [
-      '-C',
-      d,
-      '-c',
-      'user.email=a@b',
-      '-c',
-      'user.name=a',
-      'commit',
-      '-qam',
-      'x',
-    ]);
+const commitAll = (d: string) =>
+  execFileSync('git', [
+    '-C',
+    d,
+    '-c',
+    'user.email=a@b',
+    '-c',
+    'user.name=a',
+    'commit',
+    '-qam',
+    'x',
+  ]);
 
+describe('diff.scan', { timeout: 30_000 }, () => {
   it('scans a range, or the uncommitted changes, and refuses anything that is not a range', async () => {
     const d = dir();
     writeFileSync(join(d, 'a.js'), 'export const a = 1;\n');
     execFileSync('git', ['-C', d, 'add', '.']);
-    commit(d);
+    commitAll(d);
     writeFileSync(join(d, 'a.js'), 'export const a = 1;\nconsole.log(a);\n');
     const working = await tool('diff.scan').run({ range: '' }, ctx(d));
     expect(working.smells).toEqual(['a.js:2 — debug output left in (C5)']);
-    commit(d);
+    commitAll(d);
     const ranged = await tool('diff.scan').run({ range: 'HEAD~1..HEAD' }, ctx(d));
     expect(ranged).toMatchObject({ error: '', smells: ['a.js:2 — debug output left in (C5)'] });
     expect(ranged.diff).toMatch(/\+console\.log\(a\);/);

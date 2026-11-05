@@ -73,6 +73,9 @@ const READERS = readers({
   locations: 'findings',
 });
 
+/** The id an inventory or verdict entry starts with: "B1 …" is B1. */
+const idOf = (entry: string) => entry.split(' ')[0]!;
+
 const v = (reason: string) => ({
   outcome: 'applied' as const,
   confidence: 0.9,
@@ -1101,7 +1104,6 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       }),
       wholeChange: (s) => {
         const behaviours = (s.behaviours as string[]) ?? [];
-        const id = (e: string) => e.split(' ')[0]!;
         return {
           updates: {
             wholeFindings: behaviours.map(
@@ -1109,11 +1111,14 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
                 `${b.split(' ')[1]} — [TEST] [MEDIUM] no test checks the retry limit \`attempts += 1\``,
             ),
             claimVerdicts: ((s.claimList as string[]) ?? []).map(
-              (c) => `${id(c)} MET — src/core/engine.ts:120 — it retries; F1 is about the counter`,
+              (c) =>
+                `${idOf(c)} MET — src/core/engine.ts:120 — it retries; F1 is about the counter`,
             ),
-            testVerdicts: behaviours.map((b) => `${id(b)} UNTESTED — no test runs the retry path`),
+            testVerdicts: behaviours.map(
+              (b) => `${idOf(b)} UNTESTED — no test runs the retry path`,
+            ),
             obligationVerdicts: ((s.obligations as string[]) ?? []).map(
-              (o) => `${id(o)} FOUND — it is in the change`,
+              (o) => `${idOf(o)} FOUND — it is in the change`,
             ),
             related: (s.files as string[]) ?? [],
             unrelated: [],

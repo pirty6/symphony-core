@@ -675,12 +675,12 @@ describe('review: required checks and intent', () => {
   });
 
   it('intent and the engine scan reach the steps that judge', () => {
-    for (const id of ['gatherContext', 'analyze', 'wholeChange'])
-      expect(review.nodes.find((n) => n.id === id)).toMatchObject({
+    for (const step of ['gatherContext', 'analyze', 'wholeChange'])
+      expect(review.nodes.find((n) => n.id === step)).toMatchObject({
         reads: expect.arrayContaining(['intent']),
       });
-    for (const id of ['analyze', 'wholeChange'])
-      expect(review.nodes.find((n) => n.id === id)).toMatchObject({
+    for (const step of ['analyze', 'wholeChange'])
+      expect(review.nodes.find((n) => n.id === step)).toMatchObject({
         reads: expect.arrayContaining(['smellHints', 'maskingFlags', 'context']),
       });
     const { state } = play(
