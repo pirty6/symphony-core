@@ -179,9 +179,17 @@ export interface CatalogOptions {
   /** Pattern library for maestro tools; defaults to the built-in patterns. */
   readonly library?: () => Promise<readonly Pattern[]>;
   readonly mcp?: Omit<McpOptions, 'workspace'>;
-  /** Skip probing GitHub (`gh`), e.g. in tests. */
+  /** Skip probing GitHub (`gh`), e.g. in tests; Azure (`az`) too, unless probeAzure says. */
   readonly probeGitHub?: boolean;
+  readonly probeAzure?: boolean;
+  /** The Azure account `az` is signed in to (undefined: none); probed with `az account show`. */
+  readonly azureAccount?: (cwd: string, signal: AbortSignal) => Promise<string | undefined>;
 }
+
+/** The account `az` is signed in to, or undefined when az is missing or signed out. */
+const azAccount = async (cwd: string, signal: AbortSignal) =>
+  (await run('az', ['account', 'show', '--query', 'user.name', '-o', 'tsv'], cwd, signal)).trim() ||
+  undefined;
 
 export async function sourceCatalog(
   ctx: ToolContext,
@@ -223,6 +231,15 @@ export async function sourceCatalog(
       }
     } catch {
       // gh missing, not signed in, or no GitHub remote
+    }
+  }
+  if (opts.probeAzure ?? opts.probeGitHub !== false) {
+    const account = await (opts.azureAccount ?? azAccount)(ws, ctx.signal).catch(() => undefined);
+    if (account) {
+      entries.push([
+        'azure',
+        `Azure DevOps and Azure data, read-only, signed in as ${account}: az list/show/query commands (e.g. az repos policy list, az pipelines runs list/show, az devops invoke GETs for build timelines and test runs) and kusto_query(cluster, database, query) for Kusto tables (e.g. test health)`,
+      ]);
     }
   }
   const manifests = [
