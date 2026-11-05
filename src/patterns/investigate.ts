@@ -802,6 +802,13 @@ export const investigate: Pattern = {
         description:
           'How to settle each open question, in order: "V1 READ|QUERY|RUN — the exact files, query or command — what it would show"',
       },
+      {
+        name: 'followOpen',
+        type: 'boolean',
+        initial: false,
+        description:
+          'An investigation that leaves questions open hands them, each with how to verify it, to a follow-up investigation that plays next',
+      },
     ],
     hypotheses,
     challenge,

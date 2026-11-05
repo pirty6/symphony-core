@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { followUps, HANDOFF_CHARS, handoffContext, handsOnQueue, resultText } from './chain.js';
+import {
+  followUps,
+  HANDOFF_CHARS,
+  handoffContext,
+  handsOnQueue,
+  resultText,
+  stepContext,
+} from './chain.js';
 import { compileScore } from './compile.js';
 import { toPerformance } from './engine.js';
 import { runScripted } from './scripted.js';
+import type { DemoScript } from './types.js';
 import { fix, investigate, refactor, review } from '../patterns/index.js';
 
 const score = compileScore(investigate, { context: investigate.demo!.context!, generatedAt: 't' });
@@ -125,5 +133,64 @@ describe('a review hands what it could not settle to investigate', () => {
     const settled = toPerformance(runScripted(clean, review.demo, { at: 't' }).state);
     expect(settled.finalState.reviewStatus).toBe('issues');
     expect(followUps(clean, settled)).toEqual([]);
+  });
+});
+
+const leftOpen = ['What is the real flake rate per package?', 'Which branch policies apply?'];
+const leavingOpen: DemoScript = {
+  ...investigate.demo!,
+  agents: {
+    ...investigate.demo!.agents,
+    answer: (s, i) => {
+      const base = investigate.demo!.agents!.answer!(s, i) as {
+        updates: Record<string, unknown>;
+      };
+      return {
+        updates: { ...base.updates, openQuestions: leftOpen },
+        verdict: { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'r' },
+      };
+    },
+  },
+};
+const investigated = (followOpen: boolean, script: DemoScript = leavingOpen) => {
+  const s = compileScore(investigate, {
+    context: { ...investigate.demo!.context!, followOpen },
+    generatedAt: 't',
+  });
+  return { score: s, performance: toPerformance(runScripted(s, script, { at: 't' }).state) };
+};
+
+describe('an investigation follows up what it left open (followOpen)', () => {
+  it('only when asked, with each open item and its check, and never a follow-up of its own', () => {
+    const off = investigated(false);
+    expect(handsOnQueue(off.score)).toBe(false);
+    expect(followUps(off.score, off.performance)).toEqual([]);
+    const on = investigated(true);
+    expect(handsOnQueue(on.score)).toBe(true);
+    const checks = on.performance.finalState.verification as string[];
+    expect(checks).toHaveLength(2);
+    const steps = followUps(on.score, on.performance);
+    expect(steps).toHaveLength(1);
+    const step = steps[0] as { pattern: string; goal: string; context: Record<string, unknown> };
+    expect(step.pattern).toBe('investigate');
+    expect(step.goal).toMatch(
+      /^Settle what an investigation of ".+" left open:\n- What is the real flake rate/,
+    );
+    expect(step.goal).toContain(`- ${leftOpen[0]}\n  How to verify: ${checks[0]}`);
+    expect(step.goal).toContain(`- ${leftOpen[1]}\n  How to verify: ${checks[1]}`);
+    expect(step.goal).toContain('## The investigation, as handed on');
+    expect(String(step.context.hint)).toMatch(/targeted experiment/);
+    // The follow-up does not loop: it is not asked to follow itself up.
+    expect(step.context.followOpen).toBe(false);
+    const { goal, context } = stepContext(investigate, step, on);
+    const next = compileScore(investigate, { goal, context });
+    expect(next.initialState.question).toBe(step.goal);
+    expect(handsOnQueue(next)).toBe(false);
+  });
+
+  it('nothing open: nothing handed on', () => {
+    const settled = investigated(true, investigate.demo!);
+    expect(settled.performance.finalState.openQuestions).toEqual([]);
+    expect(followUps(settled.score, settled.performance)).toEqual([]);
   });
 });
