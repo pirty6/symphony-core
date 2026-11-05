@@ -333,7 +333,8 @@ export function summarizeComposed(
   return { kind, name, steps, aiSteps, guided, settings, headline };
 }
 
-const MAX_GUIDANCE = 2000;
+/** Guidance per step: longer is refused (named back to shorten), never cut silently. */
+export const MAX_GUIDANCE = 2000;
 
 /** Apply an adaptation; any part that does not fit the pattern is an error, nothing is guessed. */
 export function adaptPattern(
@@ -364,10 +365,13 @@ export function adaptPattern(
       errors.push(`adaptation.directives.${n.id}: guidance must be non-empty text`);
       return n;
     }
-    return {
-      ...n,
-      directive: `${n.directive}\n\nFor this request: ${text.trim().slice(0, MAX_GUIDANCE)}`,
-    };
+    if (text.trim().length > MAX_GUIDANCE) {
+      errors.push(
+        `adaptation.directives.${n.id}: guidance is ${text.trim().length} characters, over ${MAX_GUIDANCE}: shorten it (keep what the step must do differently for this request)`,
+      );
+      return n;
+    }
+    return { ...n, directive: `${n.directive}\n\nFor this request: ${text.trim()}` };
   });
   for (const id of Object.keys(directives)) {
     if (!pattern.nodes.some((n) => n.id === id))

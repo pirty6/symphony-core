@@ -8,6 +8,7 @@ import { CompileError, compileScore } from './compile.js';
 import { validatePattern } from './validate.js';
 import {
   adaptPattern,
+  MAX_GUIDANCE,
   camelName,
   draftInstructions,
   genericDraft,
@@ -128,6 +129,15 @@ describe('adaptPattern', () => {
       expect.stringMatching(/must be an object/),
     ]);
     expect(adaptPattern(p, {}).errors).toEqual([]);
+    // Too long is refused by name, never cut silently.
+    const long = 'x'.repeat(MAX_GUIDANCE + 1);
+    expect(adaptPattern(p, { directives: { [agent.id]: long } }).errors).toEqual([
+      `adaptation.directives.${agent.id}: guidance is ${MAX_GUIDANCE + 1} characters, over ${MAX_GUIDANCE}: shorten it (keep what the step must do differently for this request)`,
+    ]);
+    const fits = adaptPattern(p, { directives: { [agent.id]: 'y'.repeat(MAX_GUIDANCE) } });
+    expect(fits.pattern.nodes.find((n) => n.id === agent.id)).toMatchObject({
+      directive: expect.stringMatching(new RegExp(`y{${MAX_GUIDANCE}}$`)),
+    });
   });
 
   it('a setting may not go below its declared minimum: experiments cannot be tailored off', () => {
