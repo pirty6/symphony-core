@@ -200,6 +200,8 @@ interface SessionRun {
   readonly role: Role;
   readonly tools: readonly ReturnType<typeof defineTool>[];
   readonly onlyCustomTools: boolean;
+  /** Where the session works instead of the workspace (a sandbox step's throwaway copy). */
+  readonly cwd?: string;
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
   readonly model?: string;
   readonly effort?: ReasoningEffort;
@@ -561,7 +563,9 @@ export class CopilotProvider implements Provider {
     const config: SessionConfig = {
       ...(run.model ? { model: run.model } : {}),
       ...(run.effort ? { reasoningEffort: run.effort } : {}),
-      ...(this.opts.workingDirectory ? { workingDirectory: this.opts.workingDirectory } : {}),
+      ...((run.cwd ?? this.opts.workingDirectory)
+        ? { workingDirectory: run.cwd ?? this.opts.workingDirectory }
+        : {}),
       tools: [...run.tools],
       ...(run.onlyCustomTools
         ? {
@@ -1143,6 +1147,7 @@ export class CopilotProvider implements Provider {
         tools,
         mcpServers,
         onlyCustomTools: isolated,
+        ...(req.cwd ? { cwd: req.cwd } : {}),
         ...(m.model ? { model: m.model } : {}),
         ...(m.effort ? { effort: m.effort } : {}),
         complexity: pause.complexity,

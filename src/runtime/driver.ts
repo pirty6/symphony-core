@@ -150,6 +150,13 @@ export interface RunOptions {
   /** Removed when the run ends, like scratch (e.g. the worktree of the PR it reviewed). */
   readonly cleanup?: () => Promise<void>;
   /**
+   * A throwaway copy of the workspace for a sandbox step (runtime/worktree sandboxFor),
+   * discarded after the call; undefined when none can be made.
+   */
+  readonly sandbox?: (
+    label: string,
+  ) => Promise<{ readonly dir: string; readonly discard: () => Promise<void> } | undefined>;
+  /**
    * The run plays in its own worktree (worktree.ts); `finish` brings its edits back
    * to the workspace (or saves a patch) when the run ends.
    */
@@ -435,16 +442,32 @@ export class Run {
   ): Promise<{ result: unknown; transcript: AiTranscript }> {
     const onEvent = this.emitFor(pause, extra.integrate ? 0 : extra.take);
     const files = await this.preload(pause, onEvent);
-    const played = await this.opts.provider.runAgent({
-      pause,
-      state: this.engine.state,
-      visit: (this.engine.visits[pause.nodeId] ?? 1) - 1,
-      signal,
-      onEvent,
-      ...(this.opts.scratch ? { scratchDir: this.opts.scratch.dir } : {}),
-      ...(files.length ? { files } : {}),
-      ...extra,
-    });
+    // A sandbox step works in its own throwaway copy, whatever it changes there.
+    const box =
+      pause.sandbox && this.opts.sandbox
+        ? await this.opts.sandbox(pause.nodeId).catch(() => undefined)
+        : undefined;
+    if (pause.sandbox && !box)
+      onEvent({
+        type: 'info',
+        text: 'No throwaway copy of the workspace could be made: this step runs in the workspace, scratch files only.',
+      });
+    let played: Awaited<ReturnType<Provider['runAgent']>>;
+    try {
+      played = await this.opts.provider.runAgent({
+        pause: box ? pause : { ...pause, sandbox: false },
+        state: this.engine.state,
+        visit: (this.engine.visits[pause.nodeId] ?? 1) - 1,
+        signal,
+        onEvent,
+        ...(this.opts.scratch ? { scratchDir: this.opts.scratch.dir } : {}),
+        ...(files.length ? { files } : {}),
+        ...(box ? { cwd: box.dir } : {}),
+        ...extra,
+      });
+    } finally {
+      await box?.discard().catch(() => undefined);
+    }
     if (files.length === 0) return played;
     // The record says what the engine put in the prompt, without the text itself.
     const preloaded = files.map((f) => {
