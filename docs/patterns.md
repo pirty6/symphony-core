@@ -631,12 +631,8 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    with its Clean Code id) and test changes that may hide a failure (a test skipped or focused,
    assertions removed, a retry or wait added, a test file deleted). These are leads for the
    reviewers, never findings by themselves.
-3. **Run the checks** (`verify`, off by default because the PR's CI pipeline already runs them; a
-   Features switch): when on, the engine runs the tests, and `lintCommand` if set, on the code as
-   it is. When off, the coverage says the tests and lint were not run here. A project with no
-   test command says "not run", and so does a run for a remote caller (Copilot Studio): no code
-   runs on this machine for them. With `requireChecks` on, a review whose tests did not run here
-   cannot end "Looks good" (changes to documentation only are exempt).
+3. **No tests or lint.** A review never runs them: the change's CI pipeline does. The brief says
+   so. Changed tests are still read, and judged like any code.
 4. **Gather context**, once, over the whole change, before anyone judges it:
    - `claimList`: what `claims` says and `intent` (an optional input: the linked issue or its
      acceptance criteria) asks for, one claim each (`C1 …`);
@@ -698,11 +694,24 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    not settled instead of researched again.
 9. **Memory.** What earlier runs found true and that still matches the files (`knownFacts`) is
    recalled at the start; every judging step reads it as leads to check, never as evidence.
-10. **Report** (issues, or failing tests or lint), what is not settled, and what was not reviewed
-   or not checked. It ends:
+10. **Review comments** (when there are issues): one per finding, in order, in parts of three,
+   each checked to have every part, so that someone new to the code can understand it and act on
+   it:
+   - **What is wrong**, in plain words, at path:line;
+   - **Example**: for a pattern, regex, parser, boundary or logic bug, 2 or 3 inputs with what
+     the code gives today and what it should give; for a missing test, the test as code; for a
+     design, Clean Code or naming issue, the current code and the suggested code;
+   - **Why it matters**: who or what breaks, when, and how badly;
+   - **How to fix**: the smallest correct change (a snippet when it is short) and the test that
+     would catch it.
+
+   Examples are worked out from the code, not run: a review step has no interpreter and no
+   browser, so it shows no screenshots.
+11. **Report**: a short summary citing the findings by id (the comments hold the detail), what is
+   not settled, and what was not reviewed or not checked. It ends:
    - **Issues reported** (success), or **Issues reported, not all settled** (partial) when
      something is open: an UNCLEAR claim, a context citation that failed, a step that failed (the
-     skeptic or the whole-change step), or tests required and not run;
+     skeptic or the whole-change step), or an objection the debate could not settle;
    - with nothing found: **Could not verify** (partial) when findings' quotes are missing from this
      checkout; **Reviewed in part** (partial) when files were over the cap or not read whole;
      **Not settled** (partial) when something is open, or the skeptic dropped every finding;
@@ -724,7 +733,6 @@ Known limits:
   whole-change step cannot leave one out.
 - The Clean Code rules and the 66 rule ids of ch. 17 are checked against the book; their glosses
   are our own words.
-- `requireChecks` counts only the tests run here: the PR's CI status is not read.
 
 **Measuring it.** `npm run cli -- eval --task review-…` runs the seeded review tasks. Each plants
 one defect: a fix in the wrong place, an untested behaviour, a loosened assertion, a copied helper
@@ -735,7 +743,7 @@ category and the false flags (`review-clean` is the false-flag control).
 **Two versions of the result.** As in investigate (step 11), the result starts with a short version
 for people in Simplified Technical English (`summary`, checked by the engine; the `plainSummary`
 switch turns it off), then a brief for an AI agent written by the engine from the record
-(`handoff`): the status, instructions (fix HIGH first, re-read each line, run the tests), the checked findings, what is not settled, what the skeptic dismissed, what not to rely on, what the change says it does, the verdicts per claim, behaviour and required change, the engine's scan, what each reviewer examined, the coverage, failing test or lint output, and the review as written. The run marks which end it reached, writes both, then ends there; a chained
+(`handoff`): the status, instructions (fix HIGH first, re-read each line, run the tests), the checked findings, what is not settled, what the skeptic dismissed, what not to rely on, what the change says it does, the verdicts per claim, behaviour and required change, the engine's scan, what each reviewer examined, the review comments in full, the coverage, and the review as written. The run marks which end it reached, writes both, then ends there; a chained
 run gets the brief whole. The people's version starts each finding with its location
 (`` `src/app.ts:42` — … ``), so you can find the line. The engine sends the summary back when a
 finding's location is missing.
@@ -754,10 +762,6 @@ flowchart TD
   n_capFiles["Files to review"]
   n_recall[/"🔧 Recall earlier runs"/]
   n_scanDiff[/"🔧 Scan the diff"/]
-  n_verifyOn{"Run the checks?"}
-  n_runTests[/"🔧 Run tests"/]
-  n_hasLint{"Lint?"}
-  n_runLint[/"🔧 Run lint"/]
   n_gatherContext["🤖 Gather context"]
   n_contextOk{"Context gathered?"}
   n_noteContextFailed["Note it"]
@@ -777,6 +781,7 @@ flowchart TD
   n_mergeWhole["Record its issues"]
   n_summarize["What is settled"]
   n_hasIssues{"Issues?"}
+  n_comment["🤖 Write review comments ×N"]
   n_report["🤖 Write report"]
   n_issuesSettled{"All settled?"}
   n_anyUnverified{"Findings unverified?"}
@@ -822,13 +827,7 @@ flowchart TD
   n_noDiffReport --> n_noDiff
   n_capFiles --> n_recall
   n_recall --> n_scanDiff
-  n_scanDiff --> n_verifyOn
-  n_verifyOn -->|"yes"| n_runTests
-  n_verifyOn -->|"no"| n_gatherContext
-  n_runTests --> n_hasLint
-  n_hasLint -->|"yes"| n_runLint
-  n_hasLint -->|"no"| n_gatherContext
-  n_runLint --> n_gatherContext
+  n_scanDiff --> n_gatherContext
   n_gatherContext --> n_contextOk
   n_contextOk -->|"yes"| n_checkContext
   n_contextOk -->|"no"| n_noteContextFailed
@@ -855,7 +854,8 @@ flowchart TD
   n_debatePhase --> n_summarize
   n_debatePhase -.-> n_chasePhase
   n_summarize --> n_hasIssues
-  n_hasIssues -->|"yes"| n_report
+  n_hasIssues -->|"yes"| n_comment
+  n_comment --> n_report
   n_hasIssues -->|"no"| n_anyUnverified
   n_report --> n_issuesSettled
   n_issuesSettled -->|"yes"| n_mark_issues
