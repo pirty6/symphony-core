@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { codeStandardFor, codeStandardSection, CLEAN_CODE_RULES } from './standards.js';
+import {
+  CLEAN_CODE_IDS,
+  CLEAN_CODE_RULES,
+  codeStandardFor,
+  codeStandardSection,
+} from './standards.js';
 import type { AgentNode } from './types.js';
 
 const node = (over: Partial<AgentNode>): AgentNode => ({
@@ -34,5 +39,14 @@ describe('codeStandardSection', () => {
     const lines = codeStandardSection('write');
     expect(lines[0]).toBe('## Code standard: Clean Code (Robert C. Martin)');
     expect(lines.slice(2)).toEqual(CLEAN_CODE_RULES.map((r) => `- ${r}`));
+  });
+
+  it('gives reviewers the rule ids, whole, and writers only the rules', () => {
+    const review = codeStandardSection('review');
+    const [lastId, lastGloss] = CLEAN_CODE_IDS.at(-1)!;
+    expect(review.at(-1)).toBe(`- ${lastId}: ${lastGloss}`);
+    for (const [id] of CLEAN_CODE_IDS)
+      expect(review).toContainEqual(expect.stringMatching(`^- ${id}: `));
+    expect(codeStandardSection('write').join('\n')).not.toContain('G5');
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CLEAN_CODE_IDS } from '../core/standards.js';
 import type { AgentPause } from '../core/types.js';
 import {
   buildAgentPrompt,
@@ -116,6 +117,10 @@ describe('buildAgentPrompt', () => {
     expect(writing.indexOf(heading)).toBeLessThan(writing.indexOf('## Input'));
     const reviewing = buildAgentPrompt({ ...pause, codeStandard: 'review' });
     expect(reviewing).toContain('Judge the code under review against these practices');
+    // The whole catalogue arrives: its last line is in the prompt, before the changing part.
+    const [id, gloss] = CLEAN_CODE_IDS.at(-1)!;
+    expect(reviewing.indexOf(`- ${id}: ${gloss}`)).toBeGreaterThan(0);
+    expect(reviewing.indexOf(`- ${id}: ${gloss}`)).toBeLessThan(reviewing.indexOf('## Input'));
   });
 });
 
