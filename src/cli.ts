@@ -15,6 +15,8 @@
 import { type Adaptation, summarizeComposed } from './core/draft.js';
 import 'dotenv/config';
 import { readFile } from 'node:fs/promises';
+import { scrubbingOn, StreamScrubber } from './core/scrub.js';
+import { scrubbedFeed } from './runtime/live.js';
 import { createInterface } from 'node:readline/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -319,8 +321,10 @@ async function play(
     `${c.bold(pattern.name)} ${c.dim(`score ${score.id.slice(0, 12)} · provider ${o.providerName} · complexity ${score.complexity} · ${level.icon} ${level.name}`)}`,
   );
   const rl = o.rl;
+  // The terminal is often a CI log: what the AI says is scrubbed as the live feed is.
+  const print = scrubbedFeed((m) => printMessage(m, (s) => process.stdout.write(s)));
   run.subscribe(async (m) => {
-    if (!o.quiet) printMessage(m, (s) => process.stdout.write(s));
+    if (!o.quiet) print(m);
     if (m.type === 'status' && m.status === 'paused') {
       if (!rl) return run.resume();
       await rl.question(c.yellow('  enter = continue '));
@@ -972,9 +976,12 @@ async function cmdDraft(argv: string[], cwd: string): Promise<number> {
     ...envConfig(process.env),
     ...(values.model ? { model: values.model } : {}),
   });
+  const stream = scrubbingOn() ? new StreamScrubber() : undefined;
   const out = await draftPattern(provider, request, {
-    onEvent: (e) => e.type === 'delta' && process.stdout.write(c.dim(e.text)),
+    onEvent: (e) =>
+      e.type === 'delta' && process.stdout.write(c.dim(stream ? stream.push(e.text) : e.text)),
   });
+  if (stream) process.stdout.write(c.dim(stream.end()));
   await provider.dispose?.();
   for (const r of out.rounds)
     if (r.errors.length) console.log(c.red(`\nround ${r.round}: ${r.errors.join('; ')}`));
