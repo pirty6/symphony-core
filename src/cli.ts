@@ -12,16 +12,21 @@
  *   resume <run.json> | fork <run.json> --at N   continue from a checkpoint
  *   runs                                   saved runs
  */
-import { scrubbingOn, scrubValue } from './core/scrub.js';
 import { type Adaptation, summarizeComposed } from './core/draft.js';
 import 'dotenv/config';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compileScore, CompileError } from './core/compile.js';
-import { formatReport, reportRegressions, runEval, type EvalReport } from './eval/harness.js';
+import {
+  formatReport,
+  reportRegressions,
+  runEval,
+  saveReport,
+  type EvalReport,
+} from './eval/harness.js';
 import { EVAL_TASKS, ROUTING_TASKS } from './eval/tasks.js';
 import {
   type ChainStep,
@@ -687,14 +692,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     onResult: (r) =>
       console.log(c.dim(`  ${r.pass ? '✔' : '✘'} ${r.task} ${(r.ms / 1000).toFixed(0)}s`)),
   });
-  const dir = join(stateDir(cwd), 'evals');
-  await mkdir(dir, { recursive: true });
-  const file = join(dir, `${report.startedAt.replace(/[:.]/g, '-')}.json`);
-  // Its settings hold --with values as typed: scrubbed where it is written.
-  await writeFile(
-    file,
-    `${JSON.stringify(scrubbingOn() ? scrubValue(report) : report, null, 2)}\n`,
-  );
+  const file = await saveReport(join(stateDir(cwd), 'evals'), report);
   console.log(`\n${formatReport(report, baseline)}\n${c.dim(`saved ${file}`)}`);
   return baseline && reportRegressions(report, baseline).length > 0 ? 2 : 0;
 }
