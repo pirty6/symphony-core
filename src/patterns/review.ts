@@ -476,7 +476,7 @@ export const review: Pattern = {
 - \`claimList\`: what \`claims\` says the change does and what \`intent\` asks for, split into separate claims, one per entry: "C1 …", "C2 …" (empty only when both are empty).
 - \`context\`: for each file of \`files\`, 1 to 3 entries of what a reviewer should compare it with: "path:line — [CONVENTION|SIMILAR|CALLER] why \`exact quote\`". The kind goes in square brackets, e.g. "src/api.ts:40 — [SIMILAR] fetchUser already retries this way \`await retry(() => get(url))\`". CONVENTION: a rule in AGENTS.md, the docs or a linter config; SIMILAR: existing code that does similar work (how the codebase already does it); CALLER: code that calls what changed. For each file of \`deleted\`, give the CALLER entries that still use what it deleted (none when nothing does).
 - \`behaviours\`: each behaviour the change adds or changes: "B1 path:line — the behaviour \`exact quote\`", path:line at the changed line.
-- \`obligations\`: each other change this one requires for it to be complete: "O1 [CALLER|MIGRATION|CONFIG|DOCS|ERRPATH] path:line — what must exist \`exact quote\`". e.g. "O1 [CALLER] src/greet.js:1 — greet.js must import the new name \`import { fullName }\`". path:line is the changed line (or a line that still uses deleted code) that creates the need; name what must exist in words, without a line number (it may not exist).
+- \`obligations\`: each other change this codebase requires for this one to be complete, and only those: one a rule asks for (AGENTS.md, the docs, a linter), one every similar change includes (cite such a change), or one without which code breaks (a caller of a renamed or removed name). Not what would merely be nice: a new function nobody calls yet, docs or tooling the project does not have. Write each as "O1 [CALLER|MIGRATION|CONFIG|DOCS|ERRPATH] path:line — what must exist \`exact quote\`". e.g. "O1 [CALLER] src/greet.js:1 — greet.js must import the new name \`import { fullName }\`". path:line is the changed line (or a line that still uses deleted code) that creates the need; name what must exist in words, without a line number (it may not exist).
 Every path:line must be a real line in this workspace with its quote: code the change deletes is not here, so cite the line that still uses it.`,
       reads: [
         'target',
@@ -491,6 +491,8 @@ Every path:line must be a real line in this workspace with its quote: code the c
       ],
       writes: ['claimList', 'context', 'behaviours', 'obligations'],
       cites: 'context',
+      // Checked while the AI has the files open: a wrong one is fixed, not lost.
+      citesAlso: ['behaviours', 'obligations'],
       retries: 2,
       checks: [
         orFailed({
@@ -737,7 +739,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       label: 'Challenge findings',
       // Another model family than the reviewers': its blind spots are less likely the same.
       otherModel: true,
-      directive: `Challenge each finding in \`findings\` as a skeptical second reviewer: read the code it cites, and the code around it, in the workspace (read-only). Write one \`dispositions\` entry per finding, in the order of \`findings\`: "F<n> KEEP — why it holds", "F<n> DOWNGRADE MEDIUM — why it is less severe" (or DOWNGRADE LOW), "F<n> DROP — why it is wrong, with the code that shows it \`exact quote\`", or "F<n> DROP — duplicates F<m>" when an earlier finding already says the same problem (keep the clearest one). Drop a finding only when the code refutes it or it repeats another; when unsure, KEEP.`,
+      directive: `Challenge each finding in \`findings\` as a skeptical second reviewer: read the code it cites, and the code around it, in the workspace (read-only). Write one \`dispositions\` entry per finding, in the order of \`findings\`: "F<n> KEEP — why it holds", "F<n> DOWNGRADE MEDIUM — why it is less severe" (or DOWNGRADE LOW), "F<n> DROP — why it is wrong, with the code that shows it \`exact quote\`", or "F<n> DROP — duplicates F<m>" when an earlier finding already says the same problem (keep the clearest one). Also DROP a finding that asks for something nothing in the codebase requires (no rule, no similar change, no code that breaks without it), quoting the code or rule it misreads. Drop a finding only when the code refutes it, it repeats another, or nothing requires what it asks; when unsure, KEEP.`,
       reads: ['target', 'claims', 'intent', 'findings', 'context', 'diffRange'],
       writes: ['dispositions'],
       retries: 2,
