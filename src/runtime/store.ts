@@ -5,7 +5,7 @@
 // Every Node surface (CLI, MCP, studio server) loads the store: hash natively there.
 import { scrubbingOn, scrubValue } from '../core/scrub.js';
 import './native-hash.js';
-import { performanceUsage } from '../core/usage.js';
+import { humanWaits, performanceUsage } from '../core/usage.js';
 import { execFile } from 'node:child_process';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -61,6 +61,13 @@ export interface RunSummary {
     readonly calls: number;
     readonly premiumRequests?: number;
   };
+  /**
+   * Start to end, in ms; null when it cannot be told (no end yet, or it continued another
+   * run). Absent in summaries written before it was recorded.
+   */
+  readonly durationMs?: number | null;
+  /** Of that, the time it waited for a person to answer an approval. */
+  readonly waitMs?: number;
 }
 
 /**
@@ -159,7 +166,18 @@ function summaryOf(run: SavedRun): Omit<RunSummary, 'file'> {
     steps: run.performance.steps.length,
     demo: isDemoRun(run.performance),
     ...usageSummary(run),
+    ...timing(run.performance),
   };
+}
+
+function timing(perf: SavedRun['performance']): Pick<RunSummary, 'durationMs' | 'waitMs'> {
+  const start = Date.parse(perf.startedAt);
+  const end = Date.parse(perf.completedAt ?? '');
+  // A continued run started long before it was continued: its span says nothing.
+  if (perf.basedOn || !Number.isFinite(start) || !Number.isFinite(end) || end < start)
+    return { durationMs: null };
+  const waitMs = humanWaits(perf).reduce((n, w) => n + w.ms, 0);
+  return { durationMs: end - start, ...(waitMs ? { waitMs } : {}) };
 }
 
 function usageSummary(run: SavedRun): Pick<RunSummary, 'usage'> {
@@ -226,6 +244,9 @@ export async function checkReplay(file: string, run: SavedRun): Promise<ReplayCh
   return check;
 }
 
+/** Larger runs are not parsed just to add a duration to their summary. */
+const BACKFILL_MAX_BYTES = 32 * 1024 * 1024;
+
 export async function listRuns(dir: string): Promise<RunSummary[]> {
   const out: RunSummary[] = [];
   let folders: string[] = [];
@@ -245,7 +266,15 @@ export async function listRuns(dir: string): Promise<RunSummary[]> {
       const file = join(dir, folder, f);
       const name = relative(resolve(dir), file);
       const known = await readSummary(file);
-      if (known) {
+      // Summaries written before durations were recorded get them once, unless the run is huge.
+      const backfill =
+        known && !('durationMs' in known)
+          ? await stat(file).then(
+              (s) => s.size <= BACKFILL_MAX_BYTES,
+              () => false,
+            )
+          : !known;
+      if (known && !backfill) {
         const { check: _check, ...summary } = known;
         out.push({ file: name, ...summary });
         continue;
@@ -254,9 +283,14 @@ export async function listRuns(dir: string): Promise<RunSummary[]> {
         // Older runs (or ones rewritten since): read once, and keep the summary for next time.
         const summary = summaryOf(JSON.parse(await readFile(file, 'utf8')) as SavedRun);
         out.push({ file: name, ...summary });
-        await writeFile(summaryFile(file), JSON.stringify(summary)).catch(() => undefined);
+        const stored = known?.check ? { ...summary, check: known.check } : summary;
+        await writeFile(summaryFile(file), JSON.stringify(stored)).catch(() => undefined);
       } catch {
-        // skip unreadable files
+        // An unreadable run is listed from its summary, if it has one.
+        if (known) {
+          const { check: _check, ...summary } = known;
+          out.push({ file: name, ...summary });
+        }
       }
     }
   }

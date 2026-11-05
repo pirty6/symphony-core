@@ -38,6 +38,26 @@ test('plays hangman live: AI picks, human guesses, engine scores', async ({ page
   await expect(page.getByTestId('state-won')).toContainText('true')
 })
 
+test('a running run shows how long it has taken, ticking, in the sidebar and the top bar', async ({ page }) => {
+  await open(page, 'hangman')
+  await page.getByRole('button', { name: '▶ Run' }).click()
+  await expect(page.getByTestId('approval-card')).toBeVisible()
+  // The estimate, when there is one, comes from earlier hangman runs (the test above).
+  const time = /^⏱ \d+s( · (~\d+s left|taking longer than usual))?$/
+  const top = page.locator('.tb-title').getByTestId('run-timer')
+  await expect(top).toHaveText(time)
+  const live = await runningNow(page)
+  // Newest first: the run just started.
+  const timer = live.getByRole('button', { name: /hangman/ }).first().getByTestId('run-timer')
+  await expect(timer).toHaveText(time)
+  const before = /^⏱ (\S+)/.exec((await timer.textContent()) ?? '')![1]
+  // It ticks: a second later it says another time.
+  await expect(timer).not.toHaveText(new RegExp(`^⏱ ${before}( |$)`), { timeout: 5_000 })
+  await page.locator('header.toolbar').getByRole('button', { name: '⏹ Stop' }).click()
+  await expect(page.getByTestId('run-status')).toHaveText('cancelled')
+  await expect(top).toHaveCount(0)
+})
+
 test('step mode halts before and after the AI; the proposed result is visible before it is applied', async ({ page }) => {
   await open(page, 'fix')
   await page.getByText('auto-approve').click()

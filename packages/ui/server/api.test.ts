@@ -85,8 +85,10 @@ describe('studio api', () => {
     const types = new Set(msgs.map((m) => m.type))
     expect(types).toEqual(new Set(['status', 'engine', 'provider', 'performance']))
     expect(msgs.at(-1)).toMatchObject({ type: 'status', status: 'done' })
-    const saved = (await (await fetch(`${base}/api/saved`)).json()) as { file: string }[]
+    const saved = (await (await fetch(`${base}/api/saved`)).json()) as { file: string; durationMs: number }[]
     expect(saved).toHaveLength(1)
+    // Timed, for the studio's estimate of the next run of this pattern.
+    expect(saved[0]!.durationMs).toBeGreaterThanOrEqual(0)
     const path = encodeURIComponent(saved[0]!.file)
     const open = async () => (await (await fetch(`${base}/api/saved/file?path=${path}`)).json()) as { reproduced: boolean | null; issues: string[] }
     // Opening answers at once; the replay verdict is in already (checked when the run ended) or on its way.
@@ -136,8 +138,12 @@ describe('studio api', () => {
     const settings = { provider: 'scripted', autoApprove: false, stepMode: false, breakpoints: [] }
     const again = (await (await post('/api/runs/continue', { file: playing.file, kind: 'resumed', ...settings })).json()) as { runId: string }
     expect(again.runId).toBe(start.runId)
-    const live = (await (await fetch(`${base}/api/runs`)).json()) as { id: string; pattern: string; status: string }[]
+    const live = (await (await fetch(`${base}/api/runs`)).json()) as { id: string; pattern: string; status: string; startedAt: string; waitingSince?: string }[]
     expect(live.filter((r) => r.pattern === 'hangman' && !['done', 'failed', 'cancelled'].includes(r.status))).toHaveLength(1)
+    // Timed from when it started here; the wait for the guess is told apart.
+    const mine = live.find((r) => r.id === start.runId)!
+    expect(mine).toMatchObject({ status: 'awaiting-approval', demo: true, waitMs: 0 })
+    expect(Date.parse(mine.waitingSince!)).toBeGreaterThanOrEqual(Date.parse(mine.startedAt))
     const busy = await post('/api/saved/delete', { path: playing.file })
     expect(busy.status).toBe(409)
     expect(((await busy.json()) as { error: string }).error).toMatch(/still playing/)

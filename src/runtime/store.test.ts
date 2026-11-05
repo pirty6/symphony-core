@@ -234,6 +234,48 @@ describe('run store', () => {
     expect(existsSync(summaryFile(file))).toBe(false);
   });
 
+  it('records how long a run took, and how long of that it waited for a person', async () => {
+    const dir = join(root, 'timing');
+    const score = compileScore(review, {
+      goal: 'g',
+      context: review.demo!.context!,
+      generatedAt: 't',
+    });
+    const played = toPerformance(runScripted(score, review.demo, { at: 't' }).state);
+    const gate = {
+      step: played.steps.length,
+      nodeId: 'gate',
+      kind: 'approval',
+      result: null,
+      approval: { approved: true, askedAt: '2026-01-01T00:01:00Z' },
+      at: '2026-01-01T00:02:30Z',
+    } as unknown as (typeof played.steps)[number];
+    const performance = {
+      ...played,
+      startedAt: '2026-01-01T00:00:00Z',
+      completedAt: '2026-01-01T00:05:00Z',
+      steps: [...played.steps, gate],
+    };
+    const file = await saveRun(dir, { schemaVersion: 3, score, performance });
+    expect((await listRuns(dir))[0]).toMatchObject({ durationMs: 300_000, waitMs: 90_000 });
+    // A continued run's span is not its duration.
+    const continued = {
+      ...performance,
+      basedOn: { kind: 'resumed' as const, from: 'x', throughStep: 1 },
+    };
+    await saveRun(join(root, 'timing2'), { schemaVersion: 3, score, performance: continued });
+    expect((await listRuns(join(root, 'timing2')))[0]!.durationMs).toBeNull();
+    // Summaries written before durations were recorded get them on the next listing.
+    const {
+      durationMs: _d,
+      waitMs: _w,
+      ...old
+    } = JSON.parse(readFileSync(summaryFile(file), 'utf8'));
+    writeFileSync(summaryFile(file), JSON.stringify(old));
+    expect((await listRuns(dir))[0]!.durationMs).toBe(300_000);
+    expect(JSON.parse(readFileSync(summaryFile(file), 'utf8')).durationMs).toBe(300_000);
+  });
+
   it('checks that a run replays once, and again only after the run file changes', async () => {
     const dir = join(root, 'checks');
     const score = compileScore(review, {

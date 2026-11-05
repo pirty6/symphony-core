@@ -8,7 +8,7 @@
  *   POST /api/patterns        {pattern}    save as src/patterns/drafts/<name>.ts
  *   POST /api/draft           {request}    AI drafts a pattern (SSE stream)
  *   POST /api/runs            {pattern, goal, context, provider, ...} -> { runId, score }
- *   GET  /api/runs                         runs started by this server, newest first
+ *   GET  /api/runs                         runs started by this server, newest first (with startedAt, waitMs)
  *   GET  /api/runs/:id/events              SSE: engine + provider + status messages
  *   POST /api/runs/:id/control {action}    pause | resume | step | stop | breakpoints | stepMode | autoApprove
  *   POST /api/runs/:id/approval {approved, updates, scripted}
@@ -132,6 +132,34 @@ function asPattern(raw: unknown): Pattern {
 
 export function createApi(opts: ApiOptions) {
   const runs = opts.runs ?? new Map<string, Run>()
+  /**
+   * When each run started here, and how long it has waited for a person (an approval, a stuck
+   * step or a pause), so the studio can time it and leave the waits out of its estimate.
+   */
+  const clocks = new Map<string, { readonly startedAt: number; readonly demo: boolean; waitMs: number; waitingSince: number | undefined }>()
+  function clock(run: Run, demo: boolean): void {
+    const c = { startedAt: Date.now(), demo, waitMs: 0, waitingSince: undefined as number | undefined }
+    clocks.set(run.id, c)
+    run.subscribe((m) => {
+      if (m.type !== 'status') return
+      const waiting = m.status === 'awaiting-approval' || m.status === 'paused'
+      if (waiting && c.waitingSince === undefined) c.waitingSince = Date.now()
+      if (!waiting && c.waitingSince !== undefined) {
+        c.waitMs += Date.now() - c.waitingSince
+        c.waitingSince = undefined
+      }
+    })
+  }
+  const timing = (id: string) => {
+    const c = clocks.get(id)
+    if (!c) return {}
+    return {
+      startedAt: new Date(c.startedAt).toISOString(),
+      waitMs: c.waitMs,
+      ...(c.waitingSince !== undefined ? { waitingSince: new Date(c.waitingSince).toISOString() } : {}),
+      demo: c.demo,
+    }
+  }
   /** The file each run saves its checkpoints to, so a run still playing is not deleted. */
   const savedFiles = new Map<string, string>()
   /** Replay checks in progress, by run file: opening a run twice checks it once. */
@@ -276,6 +304,7 @@ export function createApi(opts: ApiOptions) {
       throw e
     }
     runs.set(run.id, run)
+    clock(run, provider.name === 'scripted')
     void run.start().finally(() => {
       provider.dispose?.()
       // Check the finished run replays now, so opening it later is instant.
@@ -470,12 +499,12 @@ export function createApi(opts: ApiOptions) {
       }
       if (method === 'GET' && path === '/api/runs') {
         // Newest first; every run this server started, so the studio can switch between them.
-        const mine = [...runs.values()].toReversed().map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, status: r.status }))
+        const mine = [...runs.values()].toReversed().map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, status: r.status, ...timing(r.id) }))
         // And the runs a chat plays in another process, marked so.
         const theirs = (await shared?.list())?.filter((r) => !runs.has(r.id)) ?? []
         send(res, 200, [
           ...mine,
-          ...theirs.map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, status: r.status, source: r.source, workspace: r.workspace })),
+          ...theirs.map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, status: r.status, source: r.source, workspace: r.workspace, startedAt: r.startedAt })),
         ])
         return true
       }

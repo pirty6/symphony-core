@@ -71,6 +71,7 @@ import { ResultPreview, ResultReader } from './panels/Result'
 import { PatternPanel } from './panels/PatternPanel'
 import { Timeline } from './panels/Timeline'
 import { Toolbar, type RunSettings, type Tiers } from './panels/Toolbar'
+import { RunTimer } from './panels/RunTimer'
 
 const nodeTypes = { start: FlowNode, agent: FlowNode, compute: FlowNode, condition: FlowNode, approval: FlowNode, tool: FlowNode, end: FlowNode, phase: PhaseNode, frame: FrameNode, subagent: SubAgentNode }
 const edgeTypes = { data: DataEdge }
@@ -724,6 +725,7 @@ export default function Studio() {
         {result && <ResultPreview result={result} onOpen={() => setReading(true)} />}
       </div>
     ) : null
+  const onScreen = view.mode === 'live' ? live.find((r) => r.id === view.runId) : undefined
 
   return (
     <div className={`studio${home ? ' at-home' : ''}${leftOpen ? '' : ' no-left'}${rightOpen ? '' : ' no-right'}`}>
@@ -754,6 +756,7 @@ export default function Studio() {
           setView(IDLE_VIEW)
           setTab('node')
         }}
+        timer={onScreen && <RunTimer run={onScreen} history={saved} />}
       />
       <Library
         toggle={<SideToggle side="left" open={leftOpen} name="library" onToggle={toggleLeft} />}
