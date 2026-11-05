@@ -1,6 +1,7 @@
 import { IMPROVISATION_LEVELS } from '@core/jazz'
 import { TIER_NAMES } from '@core/catalog'
 import type { Complexity, Improvisation } from '@core/types'
+import type { ReactNode } from 'react'
 import type { RunStatus } from '../lib/model'
 
 function tierHint(tiers?: Tiers): string {
@@ -38,6 +39,8 @@ interface Props {
   tiers?: Tiers
   /** The opening screen: the AI settings stay (the maestro uses them), nothing to run. */
   home?: boolean
+  /** How long the run on screen has played (and its ETA), while it plays. */
+  timer?: ReactNode
 }
 
 const ACTIVE = new Set<RunStatus>(['running', 'paused', 'awaiting-approval'])
@@ -55,6 +58,7 @@ export function Toolbar(p: Props) {
             {p.mode === 'replay' ? `replay · ${p.status}` : p.status}
           </span>
         )}
+        {!p.home && active && p.timer}
       </div>
       <div className="tb-group">
         <label title="Who answers agent nodes">
