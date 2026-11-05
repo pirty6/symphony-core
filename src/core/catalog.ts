@@ -156,6 +156,12 @@ export const FEATURES: readonly Feature[] = [
       "Off by default: the PR's CI pipeline already runs the tests and lint. On: the engine runs the tests (and the lint command, if set) on the reviewed code, and failing tests are an issue.",
   },
   {
+    field: 'investigateOpen',
+    label: 'Investigate what a review leaves open',
+    description:
+      'Off by default (an investigation costs more than the review): a review that ends with something not settled hands those points, with its brief, to investigate, which plays next.',
+  },
+  {
     field: 'narrowRead',
     label: 'Narrowed read (opt-in)',
     description:
