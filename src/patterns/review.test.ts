@@ -774,6 +774,20 @@ describe('review reuses investigate: the chase, the debate and memory', () => {
     expect(none.end).toBe('openQuestions');
   });
 
+  it('at the default complexity, a drop gets a pragmatist; with nothing to change, none plays', () => {
+    const dropping: Agent = (s) => ({
+      updates: {
+        proposedDispositions: ((s.findings as string[]) ?? []).map(
+          (f) => `${f.split(' ')[0]} DROP — maybe wrong \`attempts += 1\``,
+        ),
+        objections: [],
+      },
+      verdict: v,
+    });
+    expect(play({ agents: { skeptic: dropping } }).ran).toContain('pragmatist');
+    expect(play().ran).not.toContain('pragmatist');
+  });
+
   it('from pragmatistFrom, a theoretical drop is kept; it may never drop on its own', () => {
     const dropsAll: Agent = (s) => ({
       updates: {

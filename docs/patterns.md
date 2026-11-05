@@ -685,8 +685,10 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
      mistake) proposes one disposition per finding (`KEEP`, `DOWNGRADE MEDIUM|LOW`, `DROP` with
      the code that refutes it, or `DROP — duplicates F<m>`) and at most 5 objections, each naming a
      verdict (C2, B1, O3) or a missed issue's `path:line`;
-   - the **pragmatist** (from `pragmatistFrom`, 3) keeps a drop or downgrade it finds theoretical,
-     and triages each objection REAL or THEORETICAL; it can never drop on its own (checked).
+   - the **pragmatist** (from `pragmatistFrom`, 2 in review; only when the skeptic would drop,
+     downgrade or object) keeps a drop or downgrade it finds theoretical, and triages each
+     objection REAL or THEORETICAL; it can never drop on its own (checked). Seen live: an unchecked
+     skeptic dropped the one real finding of a review.
 
    The engine applies the dispositions: dropped findings are kept apart under "Dismissed",
    downgrades change the severity. REAL objections go back to research and the whole change is

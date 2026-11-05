@@ -387,7 +387,9 @@ export const review: Pattern = {
     {
       name: 'pragmatistFrom',
       type: 'number',
-      initial: 3,
+      // 2, not investigate's 3: seen live, an unchecked skeptic dropped the one real finding of a
+      // review. It plays only when the skeptic would drop, downgrade or object, and has no tools.
+      initial: 2,
       description: 'The complexity from which a pragmatist triages what the skeptic would change',
     },
     {
@@ -990,7 +992,8 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       label: 'Pragmatist? (≥pragmatistFrom)',
       // Only when the skeptic would change something: a drop, a downgrade or an objection.
       expression:
-        'complexity >= pragmatistFrom && (len(objections) > 0 || count(proposedDispositions, "^F[0-9]+ (DROP|DOWNGRADE) ") > 0)',
+        // complexity 0 is "auto": the run's default tier, 2.
+        'if(complexity == 0, 2, complexity) >= pragmatistFrom && (len(objections) > 0 || count(proposedDispositions, "^F[0-9]+ (DROP|DOWNGRADE) ") > 0)',
     },
     {
       id: 'pragmatist',
