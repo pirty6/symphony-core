@@ -20,6 +20,14 @@ export interface LiveRun {
   /** 'chat' for a run a VS Code chat plays (the MCP server); absent for this studio's own. */
   source?: string
   workspace?: string
+  /** When it started playing (ISO); absent from older servers. */
+  startedAt?: string
+  /** How long it has waited for a person so far (answers it has had), in ms. */
+  waitMs?: number
+  /** Waiting for a person now (an approval, a stuck step or a pause), since then. */
+  waitingSince?: string
+  /** Played by the offline demo. */
+  demo?: boolean
 }
 
 export interface SavedSummary {
@@ -34,6 +42,9 @@ export interface SavedSummary {
   readonly demo?: boolean
   /** What the run cost, when the provider reported it. */
   readonly usage?: { readonly inputTokens: number; readonly outputTokens: number; readonly calls: number; readonly premiumRequests?: number }
+  /** Start to end in ms (null: unknown, e.g. a continued run); and, of that, the wait for a person. */
+  readonly durationMs?: number | null
+  readonly waitMs?: number
 }
 
 export interface ContinueRunRequest {
