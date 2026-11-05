@@ -177,8 +177,9 @@ outline and writes only an adaptation:
 A setting can declare a minimum (`min` on its state field, shown in the outline as "(at least
 N)"). An adaptation below it is refused, and the conductor is sent the error to fix. Run inputs
 are checked the same way at compile. investigate's `maxExperiments` is at least 1, so a
-tailoring cannot switch experiments off: the plan decides whether this question needs them, and
-you approve them before they run.
+tailoring cannot switch experiments off: they are bounded (targeted tests, never the whole
+suite) and you approve them before they run. Guidance that rules out experiments or web research
+is refused as well.
 
 A full draft is written only for `new`, or when the shape truly has to change and the
 proposer says why.

@@ -342,9 +342,11 @@ the listing adapts to the question: "is this on the internet?", "does this work 
 "why is oxlint slower than eslint?" each list different evidence. The engine owns every work queue:
 
 1. **Plan research**: a tool lists the sources available here (the workspace with its file count,
-   git history, GitHub if `gh` is signed in, installed dependencies, the web, experiments, each MCP
-   server, earlier Symphony runs). The AI splits the question into sub-questions and decides which
-   sources apply. Every source must be used or skipped with a reason, or the plan is rejected.
+   git history, GitHub if `gh` is signed in, Azure DevOps if `az` is signed in, installed
+   dependencies, the web, experiments, each MCP server, earlier Symphony runs). The AI splits the
+   question into sub-questions and decides which sources apply. Every source must be used or
+   skipped with a reason, or the plan is rejected; the web and experiments, when on offer, are
+   always used.
    **Competing hypotheses**: before any evidence is read, an isolated proposer lists at least 3
    distinct explanations (including "none of these"), each with what would confirm or refute it.
    Every later research step looks for evidence for *and against* each one.
@@ -355,14 +357,15 @@ the listing adapts to the question: "is this on the internet?", "does this work 
    PRs it mentions, then imports, callers and tests one level out) and lists at most 300 files, each
    with why; the engine rejects any path that is not a real file of the repository. Only those are
    triaged, and the coverage says the rest were not. Pass `-c exhaustive=true` to triage every file. *Web* has the AI search and list
-   the pages worth reading. *Experiment* has the AI design the commands to run (benchmarks, timing,
-   profiling).
+   the pages worth reading. *Experiment* has the AI design the commands to run (targeted tests,
+   benchmarks, timing, profiling; never the whole test suite).
 3. **Triage files** (loop): every listed file, in batches of `batchSize` (10). An answer that leaves
    out a file is rejected.
 4. **Deep read** (loop): every relevant file *and* every listed page, read completely,
    `deepBatchSize` (4) at a time.
 5. **Run experiments**: you approve the commands (the approval card shows them), then each one runs
-   with scratch files only and its measurements become findings. Rejecting skips the phase.
+   in a throwaway copy of the workspace (a git worktree, discarded after it) and its measurements
+   become findings. Rejecting skips the phase.
 6. **Search sources** (loop): each remaining source (git, GitHub, dependencies, MCP…) searched as
    fits; every query is recorded.
 7. **Close gaps** (loop): unanswered sub-questions get targeted research (up to `maxGapRounds`),
@@ -388,8 +391,12 @@ the listing adapts to the question: "is this on the internet?", "does this work 
    | ≥3 | Pragmatist (isolated) | keeps only the REAL objections; theoretical ones don't cost a research round |
    | 4 | Second investigator | answers from scratch without seeing the first answer; a reconciler merges both and lists disagreements |
 
-   Real objections go back to "Close gaps" as research targets, at most `maxDebateRounds` (2)
-   times, so the debate always ends.
+   Real objections go back to "Close gaps" as research targets, at most `maxDebateRounds` (3)
+   times, so the debate always ends. After the first round, another plays only when the last
+   one's research found new evidence.
+10. **How to verify**: each question still open gets the exact read, query or targeted run that
+   would settle it. With `followOpen` (a Features switch, off by default), a follow-up
+   investigation limited to those items plays next.
 
 The debate is a shared building block (`src/patterns/phases/debate.ts`): `hypothesesPhase` and
 `challengePhase` return state, nodes, edges and a phase that any pattern can wire in, the same
