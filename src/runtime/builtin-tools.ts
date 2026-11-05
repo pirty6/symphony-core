@@ -261,7 +261,7 @@ export async function sourceCatalog(
   ]);
   entries.push([
     'experiment',
-    'run commands in the workspace to reproduce behaviour or measure performance (benchmarks, timing, profiling); needs your approval; scratch files only',
+    'run targeted commands to test a hypothesis, reproduce behaviour or measure performance (one test file or test name, repeated, retries off; never the whole suite); each in a throwaway copy of the workspace, after your approval',
   ]);
   const mcp = await discoverMcpServers({ ...opts.mcp, workspace: ws });
   for (const name of Object.keys(mcp.servers).toSorted()) {

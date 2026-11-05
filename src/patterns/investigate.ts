@@ -169,6 +169,13 @@ export function assessFor(
   };
 }
 
+/** A test runner invoked with flags only, as the whole command of an experiment: the whole suite. */
+const WHOLE_SUITE =
+  '^([^—]*(&&|;) *)?(npx |pnpm |yarn )?(npm (run )?test|pnpm (run )?test|yarn (run )?test|jest|vitest( run)?|playwright test|lage test)( +-[^ —]+)* +— ';
+/** A flag that narrows a run to some tests. */
+const TARGETED_RUN =
+  '(^| )(-t|--testNamePattern|--testPathPattern|--grep|-g|--project|--filter)[ =]';
+
 const AGAINST =
   ' Look for evidence for AND against every entry of `leadHypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]". `leadStatus` counts those tags so far: look hardest at the hypotheses it marks untested or challenged. If `leadHypotheses` is empty, gather evidence on the question and sub-questions alone and do not tag findings.';
 
@@ -975,7 +982,7 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'assessor',
       label: 'Plan research',
-      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; questions about the outside world (libraries, standards, other projects) need \`web\`; questions about behaviour or performance (does it work, why is it slow, which is faster) need \`experiment\` to reproduce or measure; why-questions about code usually need \`git-history\`. Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side; the overall answer then writes what holds across them, so never add a part for that (a synthesis, summary, overview or conclusion). Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): ${MAX_AGENTS} unless the question is narrow, 1-3 for one about a few files; parallel calls finish sooner at the same total reading, and an idle slot only costs time.`,
+      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; why-questions about code usually need \`git-history\`. Always use \`web\` (docs and write-ups check what the code suggests) and \`experiment\` (try the hypotheses with targeted runs: a test file or test name, repeated with retries off, never the whole suite). Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side; the overall answer then writes what holds across them, so never add a part for that (a synthesis, summary, overview or conclusion). Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): ${MAX_AGENTS} unless the question is narrow, 1-3 for one about a few files; parallel calls finish sooner at the same total reading, and an idle slot only costs time.`,
       reads: ['question', 'hint', 'sourceNames', 'sourceInfo'],
       writes: [
         'subQuestions',
@@ -1011,6 +1018,18 @@ export const investigate: Pattern = {
             'Give exactly one reason in skipReasons per entry in skipSources, in the same order.',
         },
         { expr: 'len(useSources) > 0', message: 'Use at least one source.' },
+        {
+          // Web research and experiments always play when they are on offer: a finding read in
+          // the code is checked against what the docs say, and a hypothesis is tried, not argued.
+          expr: '!includes(sourceNames, "web") || includes(useSources, "web")',
+          message:
+            'Always use web: official docs, issues and write-ups check what the code and history suggest.',
+        },
+        {
+          expr: '!includes(sourceNames, "experiment") || includes(useSources, "experiment")',
+          message:
+            'Always use experiment: test the hypotheses with small, targeted runs (one test file or test name, repeated, retries off, with a timeout), never the whole test suite. You are asked before any runs.',
+        },
         {
           expr: `len(parts) != 1 && len(parts) <= ${MAX_PARTS}`,
           message: `List 2 to ${MAX_PARTS} independent subjects in parts, or none.`,
@@ -1206,7 +1225,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Design experiments',
       directive:
-        'Design the experiments that would answer the behaviour or performance parts of `question`: each entry of `experiments` is one experiment as "command(s) to run — what it measures or reproduces — how to read the result". Make them fair and repeatable (same inputs, warm-up, at least 3 timed repetitions for performance). Never anything that edits tracked files, installs globally, or needs secrets. At most `maxExperiments`, the most telling first. Copy into `timedExperiments`, verbatim, every experiment that measures time or speed: those run one at a time, since timings taken side by side skew each other; the rest run in parallel.',
+        'Design the experiments that test the hypotheses and the behaviour or performance parts of `question`: each entry of `experiments` is one experiment as "command(s) to run — what it measures or reproduces — how to read the result". Make each one targeted: run one test file or one test by name, never a whole test suite or package (it times out and proves little). To test whether a test is flaky, run it alone, repeated, with retries off and a time limit, and count passes and failures, e.g. "npx playwright test path/to/a.spec.ts --repeat-each=30 --retries=0 --timeout=60000" or "for i in $(seq 30); do npx jest path/to/a.test.ts -t \'name\' || echo FAIL; done". An experiment may add a temporary test or config: each runs in a throwaway copy of the workspace. Make them fair and repeatable (same inputs, warm-up, at least 3 timed repetitions for performance). Never anything that installs globally, pushes, or needs secrets. At most `maxExperiments`, the most telling first. Copy into `timedExperiments`, verbatim, every experiment that measures time or speed: those run one at a time, since timings taken side by side skew each other; the rest run in parallel.',
       reads: ['question', 'hint', 'subQuestions', 'sourceInfo', 'maxExperiments'],
       writes: ['experiments', 'timedExperiments'],
       retries: 2,
@@ -1219,6 +1238,12 @@ export const investigate: Pattern = {
         {
           expr: 'subset(timedExperiments, experiments)',
           message: 'timedExperiments must be copied verbatim from experiments.',
+        },
+        {
+          // A test runner given only flags runs everything: it times out and proves little.
+          expr: `len(without(positions(experiments, "${WHOLE_SUITE}"), positions(experiments, "${TARGETED_RUN}"))) == 0`,
+          message:
+            'Run one test file or test name in each experiment, never the whole suite: name the file, or filter with -t, --grep or --testPathPattern.',
         },
       ],
     },
@@ -1399,7 +1424,7 @@ export const investigate: Pattern = {
       kind: 'approval',
       label: 'Allow experiments?',
       message:
-        'These experiments run commands in your workspace (scratch files only). Approve to run them, or reject to skip them.',
+        'These experiments run commands in a throwaway copy of your workspace (nothing comes back to it), each on its own targeted tests. Approve to run them, or reject to skip them.',
       writes: [],
       shows: ['experiments'],
     },
@@ -2288,9 +2313,7 @@ export const investigate: Pattern = {
       }),
       plan: (s) => {
         const names = (s.sourceNames as string[]) ?? [];
-        const skip = names.filter(
-          (n) => n === 'prior-runs' || n === 'experiment' || n.startsWith('mcp:'),
-        );
+        const skip = names.filter((n) => n === 'prior-runs' || n.startsWith('mcp:'));
         return {
           updates: {
             subQuestions: [
