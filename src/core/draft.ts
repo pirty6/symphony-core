@@ -82,6 +82,9 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(raw.isolated === true ? { isolated: true } : {}),
         ...(raw.reviewsCode === true ? { reviewsCode: true } : {}),
         ...(typeof raw.cites === 'string' && raw.cites ? { cites: raw.cites } : {}),
+        ...(Array.isArray(raw.citesAlso) && raw.citesAlso.every((f) => typeof f === 'string')
+          ? { citesAlso: raw.citesAlso as string[] }
+          : {}),
         ...(typeof raw.preload === 'string' && raw.preload ? { preload: raw.preload } : {}),
         ...preloadReportOf(raw.preloadReport),
         ...(typeof raw.verifyBelow === 'number' ? { verifyBelow: raw.verifyBelow } : {}),
