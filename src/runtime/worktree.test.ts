@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -103,6 +104,8 @@ describe('editing runs play in their own worktree', { timeout: 30_000 }, () => {
     expect(r1).toMatchObject({ kind: 'patch', files: ['b.txt'], reason: 'the run ended failed' });
     expect(read(join(ws, 'b.txt'), 'utf8')).toBe('b\n');
     expect(read(r1.patch!, 'utf8')).toMatch(/\+half done/);
+    // The edit exactly as made, so it can still apply: readable by you alone (not on Windows).
+    if (process.platform !== 'win32') expect(statSync(r1.patch!).mode & 0o777).toBe(0o600);
 
     const clash = (await isolateRun(ws, { label: 'fix', env, root }))!;
     writeFileSync(join(clash.dir, 'b.txt'), 'from the run\n');
