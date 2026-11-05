@@ -21,6 +21,16 @@ export interface EvalContext {
 export interface EvalCheck {
   readonly pass: boolean;
   readonly notes: readonly string[];
+  /** A review task's score: the seeded defect found (per category), and findings that were not it. */
+  readonly review?: ReviewScore;
+}
+
+export interface ReviewScore {
+  /** The category the seeded defect is filed under ("" for a clean control). */
+  readonly category: string;
+  readonly hit: boolean;
+  /** Findings that are not the seeded defect. */
+  readonly falseFlags: number;
 }
 
 export interface EvalTask {
@@ -356,6 +366,308 @@ function flakyTasks(): EvalTask[] {
     },
   ];
 }
+
+// ── review: seeded defects, one per dimension (scored per category, with false flags) ──
+
+const REVIEW_TARGET = 'the uncommitted changes in the working tree (git diff)';
+/** "F3 src/a.js:12-14 — [BUG] …": where a finding points, and its category. */
+const FINDING_AT = /^(?:F\d+ )?(\S+?):(\d+)(?:-(\d+))? — \[([A-Z]+)\]/;
+
+/** The 1-based line of the first line of `text` holding `near`. */
+const lineOf = (text: string, near: string) =>
+  text.split('\n').findIndex((l) => l.includes(near)) + 1;
+
+interface Seed {
+  /** What the report files it under (recall is counted per this). */
+  readonly category: string;
+  /** Categories a reviewer may fairly file it under. */
+  readonly accept: readonly string[];
+  /** Where it may be cited: a file, and text on the line (a finding within 3 lines counts). */
+  readonly at: readonly { readonly file: string; readonly text: string; readonly near: string }[];
+}
+
+/** Scored by code: a finding of an accepted category within 3 lines of a seeded place. */
+function seededReview(seed: Seed): EvalTask['check'] {
+  return async ({ outcome, state }) => {
+    const findings = ((state.findings as string[] | undefined) ?? []).flatMap((f) => {
+      const m = FINDING_AT.exec(f);
+      return m
+        ? [{ file: m[1]!, from: Number(m[2]), to: Number(m[3] ?? m[2]), category: m[4]! }]
+        : [];
+    });
+    const places = seed.at.map((p) => ({ file: p.file, line: lineOf(p.text, p.near) }));
+    const hits = findings.filter(
+      (f) =>
+        seed.accept.includes(f.category) &&
+        places.some((p) => p.file === f.file && f.from - 3 <= p.line && p.line <= f.to + 3),
+    );
+    const hit = hits.length > 0;
+    return {
+      // Recall counts the hit whatever the end; a solved task also ended as it should.
+      pass: hit && outcome === 'success',
+      review: { category: seed.category, hit, falseFlags: findings.length - hits.length },
+      notes: [
+        `outcome ${outcome}`,
+        hit
+          ? `found the seeded ${seed.category} (${hits.map((h) => `${h.file}:${h.from} ${h.category}`).join(', ')})`
+          : `missed the seeded ${seed.category} at ${places.map((p) => `${p.file}:${p.line}`).join(' or ')}`,
+      ],
+    };
+  };
+}
+
+const DATE_JS =
+  '/** Parse "YYYY-MM-DD": month is 1 to 12. */\nexport function parseDate(text) {\n  const [year, month, day] = text.split(\'-\').map(Number);\n  return { year, month: month - 1, day };\n}\n';
+const REPORT_JS =
+  "import { parseDate } from './date.js';\n\nexport const reportLine = (text) => {\n  const d = parseDate(text);\n  return `${d.day}/${d.month}/${d.year}`;\n};\n";
+const REPORT_FIXED = REPORT_JS.replace('${d.month}', '${d.month + 1}');
+const INVOICE_DATE_JS =
+  "import { parseDate } from './date.js';\n\nexport const dueMonth = (text) => parseDate(text).month;\n";
+
+const CART_JS =
+  'export function total(items) {\n  let sum = 0;\n  for (const item of items) sum += item.price * item.qty;\n  return sum;\n}\n';
+const CART_DISCOUNT = CART_JS.replace(
+  '  return sum;',
+  '  if (sum > 100) sum = sum * 0.9;\n  return sum;',
+);
+
+const FORMAT_JS =
+  '/** Cents as dollars: 1999 -> "$19.99". */\nexport const formatMoney = (cents) => `$${(cents / 100).toFixed(2)}`;\n';
+const LINE_ITEM_JS =
+  'export function lineItem(name, cents, withSymbol) {\n  const amount = (cents / 100).toFixed(2);\n  return withSymbol ? `${name}: $${amount}` : `${name}: ${amount}`;\n}\n';
+
+const USER_JS = 'export const fullName = (u) => `${u.first} ${u.last}`;\n';
+const USER_RENAMED = 'export const displayName = (u) => `${u.first} ${u.last}`;\n';
+const GREET_USER_JS =
+  "import { fullName } from './user.js';\n\nexport const hello = (u) => `Hello, ${fullName(u)}!`;\n";
+
+const MIGRATION_AGENTS =
+  '# Notes for contributors\n\n- Every change to db/schema.sql needs a new numbered migration in migrations/ (e.g. migrations/002_add_x.sql).\n';
+const SCHEMA_SQL = 'CREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL\n);\n';
+const SCHEMA_VERIFIED = SCHEMA_SQL.replace(
+  '  email TEXT NOT NULL\n',
+  '  email TEXT NOT NULL,\n  email_verified INTEGER NOT NULL DEFAULT 0\n',
+);
+const USERS_QUERY_JS =
+  "export const verifiedUsers = (db) => db.all('SELECT id, email FROM users WHERE email_verified = 1');\n";
+const MIGRATION_FILES = {
+  'package.json': PKG,
+  '.gitignore': IGNORE,
+  'AGENTS.md': MIGRATION_AGENTS,
+  'db/schema.sql': SCHEMA_SQL,
+  'migrations/001_init.sql': SCHEMA_SQL,
+};
+
+const LOOKUP_JS =
+  'export function nameOf(users, id) {\n  return users.find((u) => u.id === id)?.name ?? "unknown";\n}\n';
+const LOOKUP_UNCHECKED =
+  'export function nameOf(users, id) {\n  const user = users.find((u) => u.id === id);\n  return user.name.trim();\n}\n';
+
+const FS_AGENTS =
+  '# Notes for contributors\n\n- Read files only through src/fsx.js (it adds retries and logging); never import node:fs anywhere else.\n';
+const FSX_JS =
+  "import { readFile } from 'node:fs/promises';\n\n/** Read a text file, retried once. */\nexport const readText = (path) => readFile(path, 'utf8').catch(() => readFile(path, 'utf8'));\n";
+const LOAD_JS =
+  "import { readFileSync } from 'node:fs';\n\nexport const loadConfig = (path) => JSON.parse(readFileSync(path, 'utf8'));\n";
+
+const GREET_JS = 'export const greet = (name) => `Hello, ${name}!`;\n';
+const GREET_LOUD = 'export const greet = (name) => `HELLO, ${name.toUpperCase()}!!!`;\n';
+
+/** Seeded review tasks: each plants one defect a reviewer should find, cited near its line. */
+const SEEDED_REVIEWS: readonly EvalTask[] = [
+  {
+    // (a) The symptom fixed in one caller; the cause (parseDate) and its other caller left wrong.
+    id: 'review-wrong-place',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET, intent: 'The report shows the wrong month: fix it.' },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/date.js': DATE_JS,
+      'src/report.js': REPORT_JS,
+      'src/invoice.js': INVOICE_DATE_JS,
+      'test/report.test.js': `${TEST_HEAD}import { reportLine } from '../src/report.js';\ntest('formats', () => assert.match(reportLine('2024-03-09'), /9\\//));\n`,
+    },
+    changes: { 'src/report.js': REPORT_FIXED },
+    check: seededReview({
+      category: 'BUG',
+      accept: ['BUG', 'DESIGN', 'CLAIM', 'MISSING'],
+      at: [
+        { file: 'src/report.js', text: REPORT_FIXED, near: 'd.month + 1' },
+        { file: 'src/date.js', text: DATE_JS, near: 'month - 1' },
+        { file: 'src/invoice.js', text: INVOICE_DATE_JS, near: '.month' },
+      ],
+    }),
+  },
+  {
+    // (b) New behaviour (a discount) and no test for it.
+    id: 'review-untested',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/cart.js': CART_JS,
+      'test/cart.test.js': `${TEST_HEAD}import { total } from '../src/cart.js';\ntest('sums', () => assert.equal(total([{ price: 2, qty: 3 }]), 6));\n`,
+    },
+    changes: { 'src/cart.js': CART_DISCOUNT },
+    check: seededReview({
+      category: 'TEST',
+      accept: ['TEST'],
+      at: [{ file: 'src/cart.js', text: CART_DISCOUNT, near: 'sum > 100' }],
+    }),
+  },
+  {
+    // (c) An exact assertion loosened until it cannot fail.
+    id: 'review-weakened-test',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/sum.js': SUM_RIGHT,
+      'test/sum.test.js': `${TEST_HEAD}import { sumTo } from '../src/sum.js';\ntest('sums 1..n', () => assert.equal(sumTo(4), 10));\n`,
+    },
+    changes: {
+      'test/sum.test.js': `${TEST_HEAD}import { sumTo } from '../src/sum.js';\ntest('sums 1..n', () => assert.ok(sumTo(4) >= 0));\n`,
+    },
+    check: seededReview({
+      category: 'TEST',
+      accept: ['TEST', 'CLEAN'],
+      at: [
+        {
+          file: 'test/sum.test.js',
+          text: `${TEST_HEAD}import { sumTo } from '../src/sum.js';\ntest('sums 1..n', () => assert.ok(sumTo(4) >= 0));\n`,
+          near: 'assert.ok',
+        },
+      ],
+    }),
+  },
+  {
+    // (d) A helper copied instead of reused, with a boolean flag argument.
+    id: 'review-duplicate-flag',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: { 'package.json': PKG, '.gitignore': IGNORE, 'src/format.js': FORMAT_JS },
+    changes: { 'src/lineItem.js': LINE_ITEM_JS },
+    check: seededReview({
+      category: 'REDUNDANT',
+      accept: ['REDUNDANT', 'CLEAN'],
+      at: [{ file: 'src/lineItem.js', text: LINE_ITEM_JS, near: 'withSymbol' }],
+    }),
+  },
+  {
+    // (e) An export renamed; a caller still imports the old name.
+    id: 'review-caller-not-updated',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/user.js': USER_JS,
+      'src/greet.js': GREET_USER_JS,
+    },
+    changes: { 'src/user.js': USER_RENAMED },
+    check: seededReview({
+      category: 'MISSING',
+      accept: ['MISSING', 'BUG', 'COMPAT'],
+      at: [
+        { file: 'src/greet.js', text: GREET_USER_JS, near: 'fullName' },
+        { file: 'src/user.js', text: USER_RENAMED, near: 'displayName' },
+      ],
+    }),
+  },
+  {
+    // (f) A schema change with no migration, against the project's own rule.
+    id: 'review-missing-migration',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: MIGRATION_FILES,
+    changes: { 'db/schema.sql': SCHEMA_VERIFIED, 'src/users.js': USERS_QUERY_JS },
+    check: seededReview({
+      category: 'MISSING',
+      accept: ['MISSING', 'DESIGN'],
+      at: [
+        { file: 'db/schema.sql', text: SCHEMA_VERIFIED, near: 'email_verified' },
+        { file: 'src/users.js', text: USERS_QUERY_JS, near: 'email_verified' },
+      ],
+    }),
+  },
+  {
+    // (f, control) The same change with its migration: nothing MISSING.
+    id: 'review-migration-present',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: MIGRATION_FILES,
+    changes: {
+      'db/schema.sql': SCHEMA_VERIFIED,
+      'src/users.js': USERS_QUERY_JS,
+      'migrations/002_email_verified.sql':
+        'ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0;\n',
+    },
+    check: async ({ outcome, state }) => {
+      const findings = (state.findings as string[] | undefined) ?? [];
+      const missing = findings.filter((f) => f.includes('[MISSING]'));
+      return {
+        pass: outcome === 'success' && missing.length === 0,
+        review: { category: '', hit: false, falseFlags: findings.length },
+        notes: [
+          `outcome ${outcome}`,
+          missing.length ? `false MISSING: ${missing.join('; ')}` : 'no false MISSING',
+        ],
+      };
+    },
+  },
+  {
+    // (g) A lookup that can find nothing, now dereferenced unchecked.
+    id: 'review-unchecked-null',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: { 'package.json': PKG, '.gitignore': IGNORE, 'src/lookup.js': LOOKUP_JS },
+    changes: { 'src/lookup.js': LOOKUP_UNCHECKED },
+    check: seededReview({
+      category: 'ERRPATH',
+      accept: ['ERRPATH', 'BUG'],
+      at: [{ file: 'src/lookup.js', text: LOOKUP_UNCHECKED, near: 'user.name' }],
+    }),
+  },
+  {
+    // (h) The project's AGENTS.md rule broken by new code.
+    id: 'review-convention',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'AGENTS.md': FS_AGENTS,
+      'src/fsx.js': FSX_JS,
+    },
+    changes: { 'src/load.js': LOAD_JS },
+    check: seededReview({
+      category: 'DESIGN',
+      accept: ['DESIGN', 'CLEAN', 'REDUNDANT'],
+      at: [{ file: 'src/load.js', text: LOAD_JS, near: 'node:fs' }],
+    }),
+  },
+  {
+    // (i) A fix with an unrelated edit riding along.
+    id: 'review-unrelated-hunk',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET, intent: 'Fix the off-by-one in sumTo.' },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/sum.js': SUM_RIGHT.replace('i <= n', 'i < n'),
+      'src/greet.js': GREET_JS,
+    },
+    changes: { 'src/sum.js': SUM_RIGHT, 'src/greet.js': GREET_LOUD },
+    check: seededReview({
+      category: 'SCOPE',
+      accept: ['SCOPE'],
+      at: [{ file: 'src/greet.js', text: GREET_LOUD, near: 'HELLO' }],
+    }),
+  },
+];
 
 export const EVAL_TASKS: readonly EvalTask[] = [
   withHiddenTest(
@@ -773,6 +1085,11 @@ export const EVAL_TASKS: readonly EvalTask[] = [
       const hit = /src\/sum\.js:\d+/.test(findings);
       return {
         pass: outcome === 'success' && hit,
+        review: {
+          category: 'BUG',
+          hit,
+          falseFlags: findings.split('\n').filter((f) => f && !f.includes('src/sum.js')).length,
+        },
         notes: [
           `outcome ${outcome}`,
           hit ? 'found the bug in src/sum.js' : 'missing: no finding cites src/sum.js',
@@ -802,6 +1119,7 @@ export const EVAL_TASKS: readonly EvalTask[] = [
       const findings = (state.findings as string[] | undefined) ?? [];
       return {
         pass: outcome === 'success' && findings.length === 0,
+        review: { category: '', hit: false, falseFlags: findings.length },
         notes: [
           `outcome ${outcome}`,
           findings.length === 0 ? 'no false flags' : `false flags: ${findings.join('; ')}`,
@@ -809,6 +1127,7 @@ export const EVAL_TASKS: readonly EvalTask[] = [
       };
     },
   },
+  ...SEEDED_REVIEWS,
   {
     // An analysis judged on its answer and on citing the numbers it rests on.
     id: 'analyze-top-region',
