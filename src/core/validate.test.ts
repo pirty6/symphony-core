@@ -69,6 +69,13 @@ describe('validatePattern', () => {
     expect(m).toMatch(/reads unknown state field 'nope'/);
   });
 
+  it('sandbox is for executors: an assessor changes nothing to throw away', () => {
+    const nodes = base.nodes.map((n) =>
+      n.id === 'gather' ? { ...n, sandbox: true } : n,
+    ) as ScoreNode[];
+    expect(messages(withNodes(nodes))).toMatch(/sandbox is for executors/);
+  });
+
   it('a cited field must be one the step writes (cites and citesAlso)', () => {
     const nodes = base.nodes.map((n) =>
       n.id === 'gather' ? { ...n, citesAlso: ['nope'] } : n,

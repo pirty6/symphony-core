@@ -80,6 +80,7 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(raw.fresh === true ? { fresh: true } : {}),
         ...(isComplexity(raw.complexity) ? { complexity: raw.complexity } : {}),
         ...(raw.isolated === true ? { isolated: true } : {}),
+        ...(raw.sandbox === true ? { sandbox: true } : {}),
         ...(raw.reviewsCode === true ? { reviewsCode: true } : {}),
         ...(typeof raw.cites === 'string' && raw.cites ? { cites: raw.cites } : {}),
         ...(Array.isArray(raw.citesAlso) && raw.citesAlso.every((f) => typeof f === 'string')
