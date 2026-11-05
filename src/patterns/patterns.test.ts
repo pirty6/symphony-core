@@ -6,6 +6,7 @@ import { codeStandardFor } from '../core/standards.js';
 import { runScripted } from '../core/scripted.js';
 import { validatePattern } from '../core/validate.js';
 import { findPattern, PATTERNS, routePrompt } from './index.js';
+import { attest } from './phases/reviewRules.js';
 
 describe('pattern library', () => {
   it('holds every step that edits or reviews code to Clean Code', () => {
@@ -186,6 +187,7 @@ describe('pattern library', () => {
     expect(ok.state).toMatchObject({ cursor: 'issues', outcome: 'success' });
     expect(ok.state.state.findings).toEqual([
       'F1 src/core/engine.ts:120 — [BUG] [HIGH] retry counter never resets `attempts += 1`',
+      'F2 src/core/engine.ts:120 — [TEST] [MEDIUM] no test checks the retry limit `attempts += 1`',
     ]);
     const blind = runScripted(score, {
       ...p.demo!,
@@ -209,7 +211,22 @@ describe('pattern library', () => {
       agents: {
         ...p.demo!.agents,
         analyze: (s) => ({
-          updates: { newFindings: [], reviewed: (s.files as string[]) ?? [] },
+          updates: {
+            newFindings: [],
+            reviewed: (s.files as string[]) ?? [],
+            attestations: attest(),
+          },
+          verdict: { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'ok' },
+        }),
+        wholeChange: (s) => ({
+          updates: {
+            wholeFindings: [],
+            claimVerdicts: ['C1 MET — src/core/engine.ts:120 — it retries'],
+            testVerdicts: ['B1 TESTED — src/core/engine.test.ts:40'],
+            obligationVerdicts: [],
+            related: (s.files as string[]) ?? [],
+            unrelated: [],
+          },
           verdict: { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'ok' },
         }),
       },
