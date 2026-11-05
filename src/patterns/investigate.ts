@@ -508,7 +508,7 @@ export const investigate: Pattern = {
         type: 'boolean',
         initial: true,
         description:
-          'At most one debate round, single-pass triage, gap-aimed research, unchallenged sub-answers kept, one sub-agent per gap, and the AI-rated complexity capped at 3 (a chosen one stays). Off: each as set on its own',
+          'Single-pass triage, gap-aimed research, unchallenged sub-answers kept, one sub-agent per gap, and the AI-rated complexity capped at 3 (a chosen one stays). Off: each as set on its own',
       },
       {
         name: 'complexityChosen',
@@ -938,7 +938,6 @@ export const investigate: Pattern = {
       // One switch for the settings measured to cut time and tokens together; off restores each.
       assign: [
         { field: 'complexityChosen', expr: 'complexity > 0 && !complexityRated' },
-        { field: 'maxDebateRounds', expr: 'if(lean && maxDebateRounds > 1, 1, maxDebateRounds)' },
         { field: 'singlePass', expr: 'singlePass || lean' },
         { field: 'gapAimed', expr: 'gapAimed || lean' },
         { field: 'keepUnchallenged', expr: 'keepUnchallenged || lean' },
@@ -2029,7 +2028,7 @@ export const investigate: Pattern = {
       assign: [
         {
           field: 'doubts',
-          expr: `doubts + if(len(unresolvedObjections) > 0, ["Objections were still open when the debate reached its cap (maxDebateRounds): see unresolvedObjections"], []) + if(len(${OPEN_ENTRIES('subAnswers')}) > 0, ["Sub-questions the findings do not answer: " + join(${OPEN_ENTRIES('subAnswers')}, "; ")], []) + if(len(${OPEN_ENTRIES('objectionResolutions')}) > 0, ["Objections the answer could not settle: " + join(${OPEN_ENTRIES('objectionResolutions')}, "; ")], []) + if(confidence < 0.5, ["Confidence that the findings answer the question stayed below 0.5"], [])`,
+          expr: `doubts + if(len(unresolvedObjections) > 0, ["Objections were still open when the debate stopped (see debateLog for why): see unresolvedObjections"], []) + if(len(${OPEN_ENTRIES('subAnswers')}) > 0, ["Sub-questions the findings do not answer: " + join(${OPEN_ENTRIES('subAnswers')}, "; ")], []) + if(len(${OPEN_ENTRIES('objectionResolutions')}) > 0, ["Objections the answer could not settle: " + join(${OPEN_ENTRIES('objectionResolutions')}, "; ")], []) + if(confidence < 0.5, ["Confidence that the findings answer the question stayed below 0.5"], [])`,
         },
       ],
     },

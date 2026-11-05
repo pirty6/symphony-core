@@ -13,6 +13,14 @@ const demo = investigate.demo!;
 const compileInvestigate = (opts: Parameters<typeof compileScore>[1] = {}) =>
   compileScore(investigate, { ...opts, context: { lean: false, ...opts.context } });
 const agents = demo.agents!;
+/** Research that finds something new each round: the debate goes on until its cap. */
+const finding: NonNullable<DemoScript['agents']>[string] = (s, v) => ({
+  ...agents.chase!(s, v),
+  updates: {
+    queries: [`git log -S x (round ${v})`],
+    newFindings: [`git-history | commit c${v} — round ${v} found something new`],
+  },
+});
 
 function play(complexity: Complexity, script: DemoScript = demo) {
   const score = compileInvestigate({ context: demo.context!, complexity, generatedAt: 't' });
@@ -98,6 +106,7 @@ describe('debate phases in investigate', () => {
       ...demo,
       agents: {
         ...agents,
+        chase: finding,
         challenge: (s, v) => ({
           ...agents.challenge!(s, v),
           updates: { objections: [`S1: F1 objection ${v}`] },
@@ -125,6 +134,7 @@ describe('debate phases in investigate', () => {
       ...demo,
       agents: {
         ...agents,
+        chase: finding,
         challenge: (s, v) => ({
           ...agents.challenge!(s, v),
           updates: { objections: [`S1: F1 objection ${v}`, `S0: F1 nit ${v}`] },
@@ -323,6 +333,7 @@ describe('the debate remembers its earlier rounds', () => {
     ...demo,
     agents: {
       ...agents,
+      chase: finding,
       challenge: (s, v) => {
         inputs.push({ ...s });
         return { ...agents.challenge!(s, v), updates: { objections: rounds[v] ?? [] } };
@@ -368,6 +379,33 @@ describe('the debate remembers its earlier rounds', () => {
     expect(state.debateRounds).toBe(2);
   });
 
+  it('another round only when the last one found something new; the log says why it stopped', () => {
+    const rounds = [
+      ['S1: x was never read (F1)'],
+      ['S1: nobody read x (F1)'],
+      ['S1: x is unread (F1)'],
+    ];
+    const barren: DemoScript = {
+      ...demo,
+      agents: {
+        ...agents,
+        // Research that finds the same thing every time: nothing new after the first round.
+        challenge: (s, v) => ({
+          ...agents.challenge!(s, v),
+          updates: { objections: rounds[v] ?? [] },
+        }),
+      },
+    };
+    const { r, state } = play(3, barren);
+    expect(state.debateRounds).toBe(1);
+    expect(state.debateRounds).toBeLessThan(state.maxDebateRounds as number);
+    expect(state.debateLog).toEqual([
+      expect.stringMatching(/^Round 1: /),
+      "Stopped after 1 round(s): the last round's research found nothing new; 1 objection(s) reported as open",
+    ]);
+    expect(r.state.outcome).toBe('partial');
+  });
+
   it('a reworded repeat still runs to the cap', () => {
     const { r, state } = play(
       3,
@@ -375,6 +413,7 @@ describe('the debate remembers its earlier rounds', () => {
         ['S1: x was never read (F1)'],
         ['S1: nobody read x (F1)'],
         ['S1: x is unread (F1)'],
+        ['S1: x stays unread (F1)'],
       ]),
     );
     expect(rejections(r, 'challenge')).toEqual([]);
