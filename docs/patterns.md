@@ -20,10 +20,12 @@ Shared building blocks (in [`src/patterns/phases/`](../src/patterns/phases)):
 | PR review | fix, refactor, implement | A reviewer reads the diff, with review's categories and Clean Code ids; each comment cites its line with a quote, and each BLOCKING one names what it bears on (the goal, what it is checked against, tests or Clean Code). Blocking comments go back to editing, bounded; you can accept despite the review. |
 
 **Code standard.** Every step that writes or reviews code is held to the practices of *Clean
-Code* (Robert C. Martin), summarized in [`src/core/standards.ts`](../src/core/standards.ts):
-names that reveal intent, small functions that do one thing, no hidden side effects, no
-duplication, errors that are not swallowed, comments that say why, one reason to change, clean
-tests, and the code you touch left a little cleaner. The codebase's own conventions come first.
+Code* (Robert C. Martin), summarized in our own words in
+[`src/core/standards.ts`](../src/core/standards.ts), one rule per chapter: names, functions,
+duplication, errors, comments, formatting, objects and data, boundaries, classes, systems, simple
+design, concurrency, tests (F.I.R.S.T.), and the code you touch left a little cleaner. The
+codebase's own conventions come first. Reviewers also get the 66 smells and heuristics of ch. 17
+by id (C1 to T9) and the F.I.R.S.T. test qualities, and name one in each CLEAN finding.
 - Executors with workspace tools always get it in their prompt.
 - Steps marked `reviewsCode` (review's *Find issues*, the PR review phase) judge against it:
   - review reports a break as a `CLEAN` finding;
@@ -693,8 +695,8 @@ Known limits:
   exclusion covers is not held back here: review such repositories with that in mind.
 - The claim list is written by the context step: a claim it leaves out gets no verdict. The
   whole-change step cannot leave one out.
-- Rule ids follow public transcriptions of Clean Code ch. 17; the book's own pages were not
-  checked.
+- The Clean Code rules and the 66 rule ids of ch. 17 are checked against the book; their glosses
+  are our own words.
 - `requireChecks` counts only the tests run here: the PR's CI status is not read.
 
 **Measuring it.** `npm run cli -- eval --task review-…` runs the seeded review tasks. Each plants
