@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -26,6 +34,11 @@ const ctx = (workspace: string) => ({
   repoRoot: workspace,
   signal: new AbortController().signal,
 });
+/** Every file under a folder (the memory file's place is the store's business). */
+const readdirSyncDeep = (d: string): string[] =>
+  readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.name === '.git' ? [] : e.isDirectory() ? readdirSyncDeep(join(d, e.name)) : [join(d, e.name)],
+  );
 const tool = (name: string) => workspaceTools().find((t) => t.name === name)!;
 
 describe('normalizeOutput', () => {
@@ -265,6 +278,20 @@ describe('memory.lesson', () => {
       ctx(d),
     );
     expect(out).toEqual({ saved: false });
+  });
+
+  it('a token in a static problem argument (no requireFiles) never reaches the memory file', async () => {
+    const d = dir();
+    const token = `ghp_${'p1Q2r3S4t5'.repeat(4)}`;
+    await tool('memory.lesson').run(
+      { kind: 'fixed', problem: `CI login fails with ${token}`, cause: 'an expired token' },
+      ctx(d),
+    );
+    const stored = readdirSyncDeep(d)
+      .map((f) => readFileSync(f, 'utf8'))
+      .join('\n');
+    expect(stored).toContain('[REDACTED:github-token]');
+    expect(stored).not.toContain(token);
   });
 
   it('keeps checked entries whole, at the commit it was learned, and replaces an older lesson on the same problem', async () => {
