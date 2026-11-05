@@ -416,28 +416,33 @@ credential. Each one is replaced by `[REDACTED:<kind>]`. The kinds are:
 - storage keys, SAS signatures and bearer tokens;
 - a password in a URL;
 - a quoted value assigned to a name like `password` or `apiKey`;
-- a `.env` line such as `DB_PASSWORD=…`.
+- a `.env` line such as `DB_PASSWORD=…`;
+- any value of a field named as a secret (`password`, `token`, `apiKey`, `client_secret`…), whatever
+  its shape.
 
-What you type in (the goal, an issue with a pasted log, a question) is scrubbed the same way
-when the run is compiled, so the AI does not get a pasted credential either. Ordinary code, hashes and prose are left as they are. Because the record is what the engine saw,
+What you type in (the goal, an issue with a pasted log, a question) and the pattern itself (a
+drafted directive or default) are scrubbed the same way when the run is compiled, so the AI does
+not get a pasted credential either. Ordinary code, hashes and prose are left as they are. Because the record is what the engine saw,
 a scrubbed run still replays and verifies exactly. A citation that quotes a line with a secret
-still checks, against the scrubbed line. The live feed the studio reads (`~/.symphony/live`) is
-scrubbed as it streams, even a secret split across pieces. The AI itself still reads your files
+still checks, against the scrubbed line. The live feed the studio reads (`~/.symphony/live`) and the
+studio's own stream to the browser are scrubbed as they stream, even a secret split across pieces
+or a long quoted secret. The AI itself still reads your files
 as they are; only what is recorded is scrubbed. `SYMPHONY_SCRUB=off` turns this off, for
 example to debug a repair against the raw text.
 
 Saved runs, memory and eval reports are scrubbed once more where they are written. That catches
 what reaches a file without passing the engine: a tool that writes memory itself, an error's
-text, an eval report's `--with` values.
+text (a provider's reply quoted in why a run stopped is scrubbed before it is the run's reason
+too), an eval report's `--with` values and notes.
 
-Known limits (found by an investigation of this feature):
-- Only the listed credential shapes are caught. There is no detection of random-looking strings,
-  and a value is not judged by the name of the field that holds it.
-- A pattern's own text (its directives and initial values) is saved as written. It is the plan,
-  and its id is its hash.
-- A patch Symphony could not apply holds your code's diff as it is.
-- The studio's own stream to the browser, on this machine, is not scrubbed; only what is written
-  to disk is.
+Known limits (found by two investigations of this feature; each limit they traced has a test):
+- Only the listed shapes and field names are caught. There is no detection of random-looking
+  strings: a bare secret in prose, under no telling name, is kept.
+- A patch Symphony could not apply holds your code's edit exactly, so it can still apply: a
+  credential the edit added or removed is in it. It is readable by you alone.
+- While a run plays, the process keeps what the AI said as it said it, in memory. Everything that
+  leaves the process is scrubbed: files, the studio's stream, the chat's view of a run, and what
+  the CLI prints.
 
 ### Several runs at once
 
