@@ -451,6 +451,8 @@ const SCHEMA_VERIFIED = SCHEMA_SQL.replace(
 );
 const USERS_QUERY_JS =
   "export const verifiedUsers = (db) => db.all('SELECT id, email FROM users WHERE email_verified = 1');\n";
+/** The new query is tested in both migration tasks: the migration is the only thing that differs. */
+const USERS_QUERY_TEST = `${TEST_HEAD}import { verifiedUsers } from '../src/users.js';\ntest('selects verified users only', () => {\n  const db = { all: (sql) => sql };\n  assert.match(verifiedUsers(db), /WHERE email_verified = 1/);\n});\n`;
 const MIGRATION_FILES = {
   'package.json': PKG,
   '.gitignore': IGNORE,
@@ -588,7 +590,11 @@ const SEEDED_REVIEWS: readonly EvalTask[] = [
     pattern: 'review',
     inputs: { target: REVIEW_TARGET },
     files: MIGRATION_FILES,
-    changes: { 'db/schema.sql': SCHEMA_VERIFIED, 'src/users.js': USERS_QUERY_JS },
+    changes: {
+      'db/schema.sql': SCHEMA_VERIFIED,
+      'src/users.js': USERS_QUERY_JS,
+      'test/users.test.js': USERS_QUERY_TEST,
+    },
     check: seededReview({
       category: 'MISSING',
       accept: ['MISSING', 'DESIGN'],
@@ -607,6 +613,7 @@ const SEEDED_REVIEWS: readonly EvalTask[] = [
     changes: {
       'db/schema.sql': SCHEMA_VERIFIED,
       'src/users.js': USERS_QUERY_JS,
+      'test/users.test.js': USERS_QUERY_TEST,
       'migrations/002_email_verified.sql':
         'ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0;\n',
     },
