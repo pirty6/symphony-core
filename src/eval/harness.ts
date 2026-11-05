@@ -29,6 +29,7 @@ import { Run } from '../runtime/driver.js';
 import { checkCitations } from '../runtime/evidence.js';
 import { runtimeExtras } from '../runtime/factory.js';
 import type { Provider } from '../runtime/provider.js';
+import { sandboxFor } from '../runtime/worktree.js';
 import { buildFixture, finalFiles, writeFiles, type EvalTask, type ReviewScore } from './tasks.js';
 import { stateDir } from '../runtime/state.js';
 
@@ -139,6 +140,8 @@ async function runTask(
       tools: extras.tools,
       toolContext: extras.toolContext,
       autoApprove: true,
+      // Experiments try things in a throwaway copy of the fixture, as in a real run.
+      sandbox: sandboxFor(workspace),
     });
     onRun(run);
     const perf = await run.start();
