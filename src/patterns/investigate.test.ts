@@ -50,10 +50,20 @@ function runWith(
     parallel?: number;
   } = {},
 ) {
+  // web and experiment always play when on offer: a test that does not use them describes a
+  // machine that does not offer them.
+  const offered = (s: Readonly<Record<string, unknown>>) => {
+    const all = demo.tools!.catalog!(s) as { names: string[]; descriptions: string[] };
+    const keep = all.names.map((n) => !['web', 'experiment'].includes(n) || use.includes(n));
+    return {
+      names: all.names.filter((_, i) => keep[i]),
+      descriptions: all.descriptions.filter((_, i) => keep[i]),
+    };
+  };
   const script: DemoScript = {
     ...demo,
     ...(approvals ? { approvals } : {}),
-    tools: { ...demo.tools, ...over.tools },
+    tools: { ...demo.tools, catalog: offered, ...over.tools },
     agents: {
       ...demo.agents,
       ...over.agents,
@@ -1013,6 +1023,79 @@ describe('investigate asks for a hint once', () => {
       expect(
         (investigate.nodes.find((n) => n.id === id) as unknown as { reads: string[] }).reads,
       ).toContain('hint');
+  });
+});
+
+describe('investigate always tries: the web and targeted experiments', () => {
+  /** The demo, with the plan's skips and the experiments it designs replaced. */
+  const play = (skip: string[], experiments?: string[][]) => {
+    let designs = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        plan: (st) => {
+          const base = demo.agents!.plan!(st, 0) as { updates: Record<string, unknown> };
+          const names = (st.sourceNames as string[]) ?? [];
+          return {
+            updates: {
+              ...base.updates,
+              useSources: names.filter((n) => !skip.includes(n)),
+              skipSources: skip,
+              skipReasons: skip.map(() => 'not needed'),
+            },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+          };
+        },
+        ...(experiments
+          ? {
+              designExperiments: () => ({
+                updates: {
+                  experiments: experiments[Math.min(designs++, experiments.length - 1)]!,
+                  timedExperiments: [],
+                },
+                verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+              }),
+            }
+          : {}),
+      },
+    };
+    return runScripted(compileInvestigate({ goal: 'g', context: { question: 'q' } }), script);
+  };
+  const rejections = (r: ReturnType<typeof play>, node: string) =>
+    (r.state.steps.find((x) => x.nodeId === node)?.attempts ?? []).map((a) => a.errors.join(' '));
+
+  it('skipping the web or experiments when they are on offer is sent back', () => {
+    const noWeb = play(['web', 'prior-runs']);
+    expect(rejections(noWeb, 'plan')[0]).toMatch(/Always use web/);
+    const noTries = play(['experiment', 'prior-runs']);
+    expect(rejections(noTries, 'plan')[0]).toMatch(
+      /Always use experiment: test the hypotheses with small, targeted runs/,
+    );
+  });
+
+  it('an experiment that runs the whole suite is sent back; one test, repeated, is not', () => {
+    const r = play(
+      ['prior-runs'],
+      [
+        ['npm test — whether it is flaky — count failures'],
+        ['cd packages/ui && npx playwright test --retries=0 — flaky? — count'],
+        [
+          'npx playwright test e2e/drag.spec.ts --repeat-each=30 --retries=0 — whether the drag test is flaky — failures out of 30',
+          'npx jest --testPathPattern=lookup -t "returns unknown" — the fallback — passes',
+        ],
+      ],
+    );
+    const [suite, flagsOnly] = rejections(r, 'designExperiments');
+    expect(suite).toMatch(/never the whole suite/);
+    expect(flagsOnly).toMatch(/never the whole suite/);
+    expect(rejections(r, 'designExperiments')).toHaveLength(2);
+    expect(r.state.steps.some((x) => x.nodeId === 'parallelExperiment')).toBe(true);
+  });
+
+  it('experiments play in a throwaway copy of the workspace', () => {
+    for (const id of ['experiment', 'parallelExperiment'])
+      expect(investigate.nodes.find((n) => n.id === id)).toMatchObject({ sandbox: true });
   });
 });
 

@@ -95,7 +95,11 @@ describe('pattern library', () => {
     ]);
     expect(r.state.state.expandedFiles).toEqual(['src/cli.ts']);
     expect(r.state.state.consulted).toEqual(['git-history']);
-    expect(r.state.state.skipSources).toEqual(['experiment', 'prior-runs']);
+    // web and experiment always play when on offer; prior runs are skipped.
+    expect(r.state.state.skipSources).toEqual(['prior-runs']);
+    expect(steps.some((s) => s.nodeId === 'experiment' || s.nodeId === 'parallelExperiment')).toBe(
+      true,
+    );
     // One expansion, one gap round, then one round for the skeptic's objection.
     expect(steps.filter((s) => s.nodeId === 'rankGaps')).toHaveLength(2);
     expect(steps.filter((s) => s.nodeId === 'chase')).toHaveLength(2);
