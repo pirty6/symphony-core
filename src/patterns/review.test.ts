@@ -700,3 +700,42 @@ describe('review: required checks and intent', () => {
     expect(String(state.handoff)).toContain('What the change is for: Closes #12');
   });
 });
+
+describe('review: what live runs taught', () => {
+  it('a whole-change finding at the same place and category as one already found is not repeated', () => {
+    const { state } = play({
+      agents: {
+        wholeChange: (s) => {
+          const ok = soundWhole(s, 0) as { updates: Record<string, unknown> };
+          return {
+            updates: {
+              ...ok.updates,
+              wholeFindings: [
+                'src/core/engine.ts:120 — [BUG] [HIGH] the counter is never set back `attempts += 1`',
+                'src/core/engine.ts:120 — [PERF] [LOW] counted on every visit `attempts += 1`',
+              ],
+            },
+            verdict: v,
+          };
+        },
+      },
+    });
+    expect(state.findings).toEqual([
+      'F1 src/core/engine.ts:120 — [BUG] [HIGH] retry counter never resets `attempts += 1`',
+      'F2 src/core/engine.ts:120 — [PERF] [LOW] counted on every visit `attempts += 1`',
+    ]);
+  });
+
+  it('the skeptic may drop a finding as a duplicate of another, without a quote', () => {
+    const { r, state } = play({
+      agents: {
+        skeptic: () => ({
+          updates: { dispositions: ['F1 KEEP — holds', 'F2 DROP — duplicates F1'] },
+          verdict: v,
+        }),
+      },
+    });
+    expect(rejections(r, 'skeptic')).toEqual([]);
+    expect(state.dismissals).toEqual(['F2 DROP — duplicates F1']);
+  });
+});

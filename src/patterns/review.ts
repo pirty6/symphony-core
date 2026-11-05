@@ -83,6 +83,8 @@ const v = (reason: string) => ({
   reason,
 });
 
+/** A finding's place and category: "src/a.ts:3 — [BUG]". */
+const PLACE = '^[^ ]+:[0-9]+(-[0-9]+)? — [[][A-Z]+]';
 /** A finding's severity tag, for the skeptic's downgrades. */
 const SEVERITY = '[[](HIGH|MEDIUM|LOW)]';
 /** Files that are only documentation: no test needs to run for them. */
@@ -707,6 +709,12 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       kind: 'compute',
       label: 'Record its issues',
       assign: [
+        // Seen live: the whole-change step repeats a per-file finding in other words. One at the
+        // same place, of the same category, is the same finding.
+        {
+          field: 'wholeFindings',
+          expr: `pick(wholeFindings, outside(heads(wholeFindings, "${PLACE}"), heads(unnumbered(findings), "${PLACE}")))`,
+        },
         {
           field: 'findings',
           expr: 'findings + numbered(without(unique(wholeFindings), unnumbered(findings)), len(findings) + 1)',
@@ -729,7 +737,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       label: 'Challenge findings',
       // Another model family than the reviewers': its blind spots are less likely the same.
       otherModel: true,
-      directive: `Challenge each finding in \`findings\` as a skeptical second reviewer: read the code it cites, and the code around it, in the workspace (read-only). Write one \`dispositions\` entry per finding, in the order of \`findings\`: "F<n> KEEP — why it holds", "F<n> DOWNGRADE MEDIUM — why it is less severe" (or DOWNGRADE LOW), or "F<n> DROP — why it is wrong, with the code that shows it \`exact quote\`". Drop a finding only when the code refutes it; when unsure, KEEP.`,
+      directive: `Challenge each finding in \`findings\` as a skeptical second reviewer: read the code it cites, and the code around it, in the workspace (read-only). Write one \`dispositions\` entry per finding, in the order of \`findings\`: "F<n> KEEP — why it holds", "F<n> DOWNGRADE MEDIUM — why it is less severe" (or DOWNGRADE LOW), "F<n> DROP — why it is wrong, with the code that shows it \`exact quote\`", or "F<n> DROP — duplicates F<m>" when an earlier finding already says the same problem (keep the clearest one). Drop a finding only when the code refutes it or it repeats another; when unsure, KEEP.`,
       reads: ['target', 'claims', 'intent', 'findings', 'context', 'diffRange'],
       writes: ['dispositions'],
       retries: 2,
@@ -745,8 +753,9 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
             'Write each disposition as "F<n> KEEP|DOWNGRADE MEDIUM|DOWNGRADE LOW|DROP — why".',
         }),
         orFailed({
-          expr: 'len(unmatched(pick(dispositions, positions(dispositions, "^F[0-9]+ DROP ")), "`[^`]+`")) == 0',
-          message: 'Quote the code that refutes each finding you DROP, in backticks.',
+          expr: 'len(unmatched(pick(dispositions, positions(dispositions, "^F[0-9]+ DROP ")), "`[^`]+`|^F[0-9]+ DROP — duplicates F[0-9]+")) == 0',
+          message:
+            'Quote the code that refutes each finding you DROP, in backticks, or write "F<n> DROP — duplicates F<m>".',
         }),
       ],
     },

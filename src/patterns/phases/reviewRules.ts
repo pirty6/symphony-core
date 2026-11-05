@@ -25,7 +25,7 @@ export const REVIEW_CATEGORIES: readonly (readonly [name: string, covers: string
   ],
   [
     'TEST',
-    'changed behaviour no test covers, tests removed, skipped or loosened, assertions that would pass without the change',
+    'changed behaviour no test covers (cite the changed line), tests removed, skipped or loosened, assertions that would pass without the change; a missing test is TEST, not MISSING',
   ],
   [
     'FLAKY',
@@ -33,7 +33,7 @@ export const REVIEW_CATEGORIES: readonly (readonly [name: string, covers: string
   ],
   [
     'MISSING',
-    'a change the diff needs but does not contain (a caller not updated, a migration, config, docs, an error path): cite the changed line that creates the need, and name what is missing in words, without a line number (it does not exist)',
+    'a change the diff needs but does not contain, other than tests (a caller not updated, a migration, config, docs, an error path): cite the changed line that creates the need, and name what is missing in words, without a line number (it does not exist)',
   ],
   ['REDUNDANT', 'code that duplicates an existing helper or another part of the change'],
   [
