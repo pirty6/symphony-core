@@ -38,7 +38,7 @@ import { libraryPatterns, PATTERNS } from '../../../src/patterns/index.js'
 import { enabledExtras } from '../../../src/patterns/extras/index.js'
 import { draftPattern } from '../../../src/runtime/drafting.js'
 import { Run, type RunOptions } from '../../../src/runtime/driver.js'
-import { liveRoot, LiveRuns, type RunLike } from '../../../src/runtime/live.js'
+import { liveRoot, LiveRuns, scrubbedFeed, type RunLike } from '../../../src/runtime/live.js'
 import {
   effectiveTiers,
   envConfig,
@@ -392,14 +392,19 @@ export function createApi(opts: ApiOptions) {
     sseHeaders(res)
     const lastId = Number(req.headers['last-event-id'] ?? -1)
     let closed = false
-    const write = (m: (typeof run.messages)[number]) => {
-      if (closed || m.seq <= lastId) return
-      sse(res, m, m.seq)
+    // What leaves the process is scrubbed as the live file is (in memory the run keeps the raw
+    // text). Each connection replays the run through its own feed, so the numbers it gives are
+    // the same every time and a reconnect resumes after the last one it saw.
+    let seq = 0
+    const write = scrubbedFeed((m) => {
+      const id = seq++
+      if (closed || id <= lastId) return
+      sse(res, { ...m, seq: id }, id)
       if (m.type === 'status' && TERMINAL.has(m.status)) {
         closed = true
         res.end()
       }
-    }
+    })
     for (const m of [...run.messages]) write(m)
     if (closed) return
     const off = run.subscribe(write)
