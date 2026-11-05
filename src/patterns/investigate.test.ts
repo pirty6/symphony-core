@@ -727,6 +727,17 @@ describe('investigate always ends: research rounds are bounded', () => {
           updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 0.2 },
           verdict: v,
         }),
+        // Research always finds something new, so the debate runs to its cap.
+        chase: (s, visit) => {
+          const r = demo.agents!.chase!(s, visit);
+          return {
+            ...r,
+            updates: {
+              ...r.updates,
+              newFindings: [`git-history | commit c${visit} — found on visit ${visit}`],
+            },
+          };
+        },
         challenge: (_s, visit) => ({
           updates: { objections: [`S1: src/x.ts was never read (F1, round ${visit})`] },
           verdict: v,
@@ -1026,6 +1037,9 @@ describe('investigate asks for a hint once', () => {
   });
 });
 
+const rejections = (r: ReturnType<typeof runScripted>, node: string) =>
+  (r.state.steps.find((x) => x.nodeId === node)?.attempts ?? []).map((a) => a.errors.join(' '));
+
 describe('investigate always tries: the web and targeted experiments', () => {
   /** The demo, with the plan's skips and the experiments it designs replaced. */
   const play = (skip: string[], experiments?: string[][]) => {
@@ -1062,8 +1076,6 @@ describe('investigate always tries: the web and targeted experiments', () => {
     };
     return runScripted(compileInvestigate({ goal: 'g', context: { question: 'q' } }), script);
   };
-  const rejections = (r: ReturnType<typeof play>, node: string) =>
-    (r.state.steps.find((x) => x.nodeId === node)?.attempts ?? []).map((a) => a.errors.join(' '));
 
   it('skipping the web or experiments when they are on offer is sent back', () => {
     const noWeb = play(['web', 'prior-runs']);
@@ -1099,6 +1111,14 @@ describe('investigate always tries: the web and targeted experiments', () => {
   });
 });
 
+/** A verification line per open item: a query each. */
+const right = (st: Readonly<Record<string, unknown>>) =>
+  ((st.openQuestions as string[]) ?? []).map((q, i) =>
+    i === 0
+      ? `V${i + 1} QUERY — kusto_query cluster bohemiahealth, database Health: TestHealthV2 | where Timestamp > ago(30d) | summarize retried=countif(Retried) by Package — the flake rate per package`
+      : `V${i + 1} QUERY — az repos policy list --branch master -o table — which policies apply`,
+  );
+
 describe('investigate says how to verify what is still open', () => {
   /** The demo, its answer leaving two questions open, and the verification answers given in turn. */
   const play = (...answers: ((s: Readonly<Record<string, unknown>>) => string[])[]) => {
@@ -1128,12 +1148,6 @@ describe('investigate says how to verify what is still open', () => {
     };
     return runScripted(compileInvestigate({ goal: 'g', context: { question: 'q' } }), script);
   };
-  const right = (st: Readonly<Record<string, unknown>>) =>
-    ((st.openQuestions as string[]) ?? []).map((q, i) =>
-      i === 0
-        ? `V${i + 1} QUERY — kusto_query cluster bohemiahealth, database Health: TestHealthV2 | where Timestamp > ago(30d) | summarize retried=countif(Retried) by Package — the flake rate per package`
-        : `V${i + 1} QUERY — az repos policy list --branch master -o table — which policies apply`,
-    );
 
   it('one line per open item, in order, each a read, a query or a run, in the brief', () => {
     const r = play(right);
@@ -1879,12 +1893,12 @@ describe('lean (on by default): the settings measured to cut time and tokens, be
     return runScripted(score, script);
   };
 
-  it('on: one debate round, single-pass triage, gap-aimed research, sub-answers kept, a sub-agent per gap', () => {
+  it('on: single-pass triage, gap-aimed research, sub-answers kept, a sub-agent per gap; debate rounds left to the evidence', () => {
     const r = play();
     expect(r.state.outcome).toBe('success');
     expect(r.state.state).toMatchObject({
       lean: true,
-      maxDebateRounds: 1,
+      maxDebateRounds: 3,
       singlePass: true,
       gapAimed: true,
       keepUnchallenged: true,
@@ -1897,7 +1911,7 @@ describe('lean (on by default): the settings measured to cut time and tokens, be
     const r = play({ lean: false });
     expect(r.state.outcome).toBe('success');
     expect(r.state.state).toMatchObject({
-      maxDebateRounds: 2,
+      maxDebateRounds: 3,
       singlePass: false,
       gapAimed: false,
       keepUnchallenged: false,
