@@ -198,6 +198,9 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         }
         if (n.maxEffort !== undefined && !EFFORTS.includes(n.maxEffort))
           errors.push({ ...at, message: `maxEffort must be one of ${EFFORTS.join(', ')}` });
+        for (const f of n.citesAlso ?? [])
+          if (!n.writes.includes(f))
+            errors.push({ ...at, message: `citesAlso '${f}' must be one of the fields it writes` });
         if (n.cites !== undefined && !n.writes.includes(n.cites)) {
           errors.push({ ...at, message: `cites '${n.cites}' must be one of the fields it writes` });
         }
