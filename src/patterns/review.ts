@@ -33,9 +33,10 @@ const REVIEW_HANDOFF = [
   'if(empty(hint), "", "\nFocus asked for: " + hint)',
   'if(empty(intent), "", "\nWhat the change is for: " + intent)',
   '"\n\n## Status\n\n" + if(reviewStatus == "issues", "Issues found: see Findings.", if(reviewStatus == "issuesOpen", "Issues found, and some things are not settled: see Findings and Not settled.", if(reviewStatus == "notVerified", "Not verified: the findings\' quotes are not in this checkout, so nothing could be confirmed.", if(reviewStatus == "partlyReviewed", "Reviewed in part: see Coverage for what was not reviewed or not checked.", if(reviewStatus == "openQuestions", "No issue found, but some things are not settled: see Not settled.", "Looks good: every changed file was reviewed, every claim, behaviour and required change checked, and no issue found.")))))',
-  '"\nTests: " + if(!verify, "not run here (verify is off: CI runs them)", if(testsPassed, "passed", "FAILED")) + if(empty(lintCommand), "", "; lint: " + if(lintPassed, "passed", "FAILED"))',
+  '"\nTests and lint: not run by a review (the change\'s CI runs them)."',
   '"\n\n## Instructions for the next agent\n\n- Fix the findings HIGH first. Before you change a line, read it again: the code may have changed since this review.\n- Run the tests after each change; a failing test the review reported must pass.\n- Settle the Not settled entries before you call the change done.\n- Do not act on Dismissed or Do not rely on entries: use them only as leads to check.\n- Files the coverage lists as not reviewed are not known to be good: review them before you rely on them."',
   `"\n\n## Findings (checked against the code)\n\n" + ${bullets('findings')}`,
+  `"\n\n## Review comments: what is wrong, an example, why it matters, how to fix\n\n" + if(len(comments) == 0, "none", join(comments, "\n\n"))`,
   `"\n\n## Not settled\n\n" + ${bullets('openItems + adverseVerdicts')}`,
   `"\n\n## Dismissed by the skeptic\n\n" + ${bullets('dismissals')}`,
   `"\n\n## Do not rely on: findings that could not be verified\n\n" + ${bullets('unverified')}`,
@@ -47,8 +48,6 @@ const REVIEW_HANDOFF = [
   `"\n\n## Engine scan of the diff (leads, not findings)\n\n" + ${bullets('smellHints + maskingFlags')}`,
   `"\n\n## What the reviewers examined\n\n" + ${bullets('attestations')}`,
   '"\n\n## Coverage\n\n" + if(empty(coverage), "Every changed file was reviewed.", coverage)',
-  'if(!testsPassed, "\n\n## Test output\n\n" + testOutput, "")',
-  'if(!lintPassed, "\n\n## Lint output\n\n" + lintOutput, "")',
   '"\n\n## The review as written\n\n" + report',
 ].join(' + ');
 
@@ -58,12 +57,11 @@ const READERS = readers({
   sources: [
     'report',
     'findings',
+    'comments',
     'openItems',
     'adverseVerdicts',
     'dismissals',
     'coverage',
-    'testsPassed',
-    'lintPassed',
     'claims',
     'unverified',
   ],
@@ -97,6 +95,25 @@ const PLACE = '^[^ ]+:[0-9]+(-[0-9]+)? — [[][A-Z]+]';
 const SEVERITY = '[[](HIGH|MEDIUM|LOW)]';
 /** Files that are only documentation: no test needs to run for them. */
 const DOC_FILE = '[.](md|mdx|txt|rst|adoc)$';
+
+/** A review comment: the finding's id, then each part, in order (`[^]` spans lines). */
+const COMMENT_SHAPE =
+  '^F[0-9]+ [^]*What is wrong: [^]*Example: [^]*Why it matters: [^]*How to fix: ';
+
+/** How a comment explains a finding so that anyone can understand it and act on it. */
+const COMMENT_DIRECTIVE = `For each finding of \`findings\`, in order, write one \`comments\` entry that someone new to this codebase can understand and act on. Read the code it cites, and what calls it, first (read-only). Use this shape, with Markdown code blocks for code:
+
+F<n> <the problem in a few words>
+What is wrong: what the code does, in plain words, at path:line.
+Example: make it concrete.
+- A pattern, regex, parser, boundary or logic bug: 2 or 3 inputs, what the code gives today and what it should give, e.g. \`[0-9]+\` on "12a": matches today (it finds "12"), expected: no match, since the whole value must be a number; on "7": matches, as expected. Fix: \`^[0-9]+$\`.
+- A missing or weak test: the test that is missing, as code.
+- A design, Clean Code or naming issue: the current code, then the suggested code.
+- A missing change: what must change, and where.
+Why it matters: who or what breaks, when, and how badly (why the severity).
+How to fix: the smallest correct change (a short code snippet when it fits in a few lines), and the test that would catch it.
+
+Work each example out from the code; never claim you ran it. Plain words, short sentences; name things by their name in the code.`;
 
 /** What an objection attacks: a verdict by its id (C2, B1, O3), or a missed issue at path:line. */
 const OBJECTION_TARGET = '(^|[^A-Za-z0-9])[CBO][0-9]+([^0-9]|$)|[^ :]+:[0-9]+';
@@ -270,35 +287,6 @@ export const review: Pattern = {
     },
     { name: 'filesPerAgent', type: 'number', initial: 3 },
     {
-      name: 'verify',
-      type: 'boolean',
-      // Off: the PR's pipeline already runs the tests and lint, and running them again here is slow.
-      initial: false,
-      description: 'The engine runs the tests (and lintCommand) on the code as it is',
-    },
-    {
-      name: 'requireChecks',
-      type: 'boolean',
-      initial: false,
-      description:
-        'A review whose tests did not run here (verify off, or not run) cannot end "Looks good"; changes to documentation only are exempt',
-    },
-    {
-      name: 'testCommand',
-      type: 'string',
-      description: "Command that runs the tests (empty: the project's test script)",
-    },
-    {
-      name: 'lintCommand',
-      type: 'string',
-      description: 'Optional lint or typecheck command that must also pass',
-    },
-    { name: 'testTimeoutMs', type: 'number', initial: 600_000, min: 1000 },
-    { name: 'testsPassed', type: 'boolean', initial: true },
-    { name: 'testOutput', type: 'string', description: 'Test output, run by the engine' },
-    { name: 'lintPassed', type: 'boolean', initial: true },
-    { name: 'lintOutput', type: 'string' },
-    {
       name: 'claimList',
       type: 'string[]',
       description: 'What the change claims to do (and intent asks for), one per entry: "C1 …"',
@@ -457,6 +445,11 @@ export const review: Pattern = {
       type: 'string',
       description: 'What was not reviewed or not checked, and why',
     },
+    {
+      name: 'comments',
+      type: 'string[]',
+      description: 'One per finding: what is wrong, an example, why it matters and how to fix it',
+    },
     { name: 'report', type: 'string', description: 'The review, by severity' },
     { name: 'reviewStatus', type: 'string', description: 'The end reached (by the engine)' },
     ...READER_STATE,
@@ -577,27 +570,6 @@ export const review: Pattern = {
       inputs: { range: 'diffRange' },
       output: { diff: 'diff', smells: 'smellHints', masking: 'maskingFlags', error: 'diffError' },
     },
-    { id: 'verifyOn', kind: 'condition', label: 'Run the checks?', expression: 'verify' },
-    {
-      id: 'runTests',
-      kind: 'tool',
-      label: 'Run tests',
-      tool: 'tests.run',
-      // Fresh every time (a cached timeout or flaky failure is no verdict); no test command
-      // is "not run".
-      args: { optional: true },
-      inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' },
-      output: { passed: 'testsPassed', output: 'testOutput' },
-    },
-    { id: 'hasLint', kind: 'condition', label: 'Lint?', expression: '!empty(lintCommand)' },
-    {
-      id: 'runLint',
-      kind: 'tool',
-      label: 'Run lint',
-      tool: 'tests.run',
-      inputs: { command: 'lintCommand', timeoutMs: 'testTimeoutMs' },
-      output: { passed: 'lintPassed', output: 'lintOutput' },
-    },
     {
       id: 'gatherContext',
       kind: 'agent',
@@ -700,7 +672,7 @@ Every path:line must be a real line in this workspace with its quote: code the c
       reviewsCode: true,
       directive: `Review the changes to the files in \`files\` (yours only) for \`target\`: each file is given to you whole at the end of this prompt; read its diff hunks (git diff \`diffRange\`, or git diff HEAD when it is empty) against it, and the code it calls and is called by where an issue depends on it. \`context\` lists the conventions, similar code and callers to compare it with; \`behaviours\` and \`obligations\` what the change does and needs; \`smellHints\` and \`maskingFlags\` are leads from the engine's scan of the diff: check each, and report only real issues. Look for, ignoring formatting:
 ${categoryBullets()}
-\`testOutput\` and \`lintOutput\` are the engine's runs on this code: a failure there that your files cause is a finding at its cause. Write one issue per \`newFindings\` entry as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", only for issues you can point to. List in \`reviewed\` every file of \`files\` you read. An empty \`newFindings\` is right when the changes are sound. If you could not read the changes at all, say so with verdict outcome "failed" (\`reviewed\` may then be empty).
+Write one issue per \`newFindings\` entry as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", only for issues you can point to. List in \`reviewed\` every file of \`files\` you read. An empty \`newFindings\` is right when the changes are sound. If you could not read the changes at all, say so with verdict outcome "failed" (\`reviewed\` may then be empty).
 ${ATTESTATION_DIRECTIVE}${MEMORY_NOTE}`,
       reads: [
         'target',
@@ -711,8 +683,6 @@ ${ATTESTATION_DIRECTIVE}${MEMORY_NOTE}`,
         'claims',
         'files',
         'changedTests',
-        'testOutput',
-        'lintOutput',
         'context',
         'behaviours',
         'obligations',
@@ -782,7 +752,6 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         'changedTests',
         'smellHints',
         'maskingFlags',
-        'testOutput',
         'evidence',
         'knownFacts',
       ],
@@ -1158,7 +1127,6 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
             ' + if(len(stepsFailed) > 0, ["Steps that failed, so what they check was not checked: " + join(stepsFailed, "; ")], [])',
             ' + if(len(dismissed) > 0 && len(findings) == 0, ["The skeptic dismissed every finding: check the dismissals"], [])',
             ' + if(len(unresolvedObjections) > 0, ["Objections the debate could not settle: " + join(unresolvedObjections, "; ")], [])',
-            ` + if(requireChecks && !(verify && !includes(testOutput, "not run: ")) && (len(deleted) > 0 || count(files, "${DOC_FILE}") < len(files)), ["The tests were required (requireChecks) but did not run here"], [])`,
           ].join(''),
         },
         {
@@ -1173,8 +1141,6 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
             ' + if(len(unverified) > 0, ["Findings not verified (their quote is not in this checkout: is the reviewed code checked out?): " + join(unverified, "; ")], [])',
             ' + if(len(dismissed) > 0, ["Dismissed by the skeptic: " + join(dismissals, "; ")], [])',
             ' + if(!empty(diffError), ["The diff could not be scanned (no smell or masking leads): " + diffError], [])',
-            ' + if(!verify, ["Tests and lint not run here (verify is off: CI runs them)"], if(includes(testOutput, "not run: "), ["Tests " + testOutput], []))',
-            ' + if(includes(lintOutput, "not run: "), ["Lint " + lintOutput], [])',
             ', "\n")',
           ].join(''),
         },
@@ -1184,14 +1150,39 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       id: 'hasIssues',
       kind: 'condition',
       label: 'Issues?',
-      expression: 'len(findings) > 0 || !testsPassed || !lintPassed',
+      expression: 'len(findings) > 0',
+    },
+    {
+      id: 'comment',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Write review comments',
+      // It explains the issue and shows the fix: held to the code standard like a reviewer.
+      reviewsCode: true,
+      // A few findings per part: each comment reads the code it explains.
+      fanOut: { over: 'findings', per: 3, agents: 'agents' },
+      directive: COMMENT_DIRECTIVE,
+      reads: ['target', 'intent', 'claims', 'findings', 'context', 'evidence', 'diffRange'],
+      writes: ['comments'],
+      retries: 2,
+      checks: [
+        {
+          expr: 'heads(comments, "^F[0-9]+") == ids(findings)',
+          message: 'Write one comment per finding, starting with its id, in the order of findings.',
+        },
+        {
+          expr: `len(unmatched(comments, "${COMMENT_SHAPE}")) == 0`,
+          message:
+            'Give each comment every part, in order: "What is wrong:", "Example:", "Why it matters:", "How to fix:".',
+        },
+      ],
     },
     {
       id: 'report',
       kind: 'agent',
       role: 'assessor',
       label: 'Write report',
-      directive: `Write a short review of \`target\` from \`findings\`, ordered by severity (HIGH first), with a suggested fix for each. ${CITE_BY_ID} If \`testsPassed\` or \`lintPassed\` is false, the engine's run failed: say so first, with the failing tests or errors from \`testOutput\` or \`lintOutput\`. Then list what is not settled (\`openItems\`, \`adverseVerdicts\`) and what \`coverage\` lists as not reviewed or not checked, and end with the files reviewed.`,
+      directive: `Write a short summary of the review of \`target\`: the findings by severity (HIGH first), one line each, citing its id; the full explanation of each is in \`comments\` (do not repeat it). ${CITE_BY_ID} Then list what is not settled (\`openItems\`, \`adverseVerdicts\`) and what \`coverage\` lists as not reviewed or not checked, and end with the files reviewed.`,
       reads: [
         'target',
         'claims',
@@ -1201,20 +1192,11 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         'coverage',
         'openItems',
         'adverseVerdicts',
-        'testsPassed',
-        'testOutput',
-        'lintPassed',
-        'lintOutput',
+        'comments',
       ],
       writes: ['report'],
       retries: 2,
-      checks: [
-        {
-          // With no findings (only failing checks) there is nothing to cite.
-          expr: 'len(findings) == 0 || (len(refs(report)) > 0 && subset(refs(report), ids(findings)))',
-          message: citesFindings('report').message,
-        },
-      ],
+      checks: [citesFindings('report')],
     },
     {
       id: 'issuesSettled',
@@ -1320,13 +1302,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     { id: 'noDiffReport-end', from: 'noDiffReport', to: 'noDiff' },
     { id: 'cap-recall', from: 'capFiles', to: 'recall' },
     { id: 'recall-scan', from: 'recall', to: 'scanDiff' },
-    { id: 'scan-verifyOn', from: 'scanDiff', to: 'verifyOn' },
-    { id: 'verifyOn-tests', from: 'verifyOn', to: 'runTests', branch: 'then' },
-    { id: 'verifyOn-context', from: 'verifyOn', to: 'gatherContext', branch: 'else' },
-    { id: 'tests-hasLint', from: 'runTests', to: 'hasLint' },
-    { id: 'hasLint-lint', from: 'hasLint', to: 'runLint', branch: 'then' },
-    { id: 'hasLint-context', from: 'hasLint', to: 'gatherContext', branch: 'else' },
-    { id: 'lint-context', from: 'runLint', to: 'gatherContext' },
+    { id: 'scan-context', from: 'scanDiff', to: 'gatherContext' },
     { id: 'context-ok', from: 'gatherContext', to: 'contextOk' },
     { id: 'contextOk-check', from: 'contextOk', to: 'checkContext', branch: 'then' },
     { id: 'contextOk-note', from: 'contextOk', to: 'noteContextFailed', branch: 'else' },
@@ -1378,7 +1354,8 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     { id: 'reopen-aim', from: 'reopen', to: 'aimChase', label: 'research objections' },
     { id: 'keepOpen-summarize', from: 'keepOpen', to: 'summarize' },
     { id: 'summarize-hasIssues', from: 'summarize', to: 'hasIssues' },
-    { id: 'hasIssues-report', from: 'hasIssues', to: 'report', branch: 'then' },
+    { id: 'hasIssues-comment', from: 'hasIssues', to: 'comment', branch: 'then' },
+    { id: 'comment-report', from: 'comment', to: 'report' },
     { id: 'hasIssues-unverified', from: 'hasIssues', to: 'anyUnverified', branch: 'else' },
     { id: 'report-settled', from: 'report', to: 'issuesSettled' },
     { id: 'settled-issues', from: 'issuesSettled', to: 'issues', branch: 'then' },
@@ -1398,7 +1375,6 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     goal: 'Review the current branch',
     context: { target: 'HEAD~1..HEAD' },
     tools: {
-      runTests: () => ({ passed: true, output: 'Tests 12 passed', command: 'npm test' }),
       scanDiff: () => ({
         diff: 'diff --git a/src/core/engine.ts b/src/core/engine.ts\n@@ -119,1 +119,2 @@\n+    attempts += 1;',
         smells: [],
@@ -1533,6 +1509,21 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
           realObjections: (s.objections as string[]) ?? [],
         },
         verdict: v('triaged'),
+      }),
+      // One full comment per finding: what is wrong, an example, why it matters, how to fix.
+      comment: (s) => ({
+        updates: {
+          comments: ((s.findings as string[]) ?? []).map((f) =>
+            [
+              `${f.split(' ')[0]} The retry counter is never set back to zero`,
+              'What is wrong: `attempts` grows on every visit to the step (src/core/engine.ts:120) and is never reset when a step succeeds.',
+              'Example: a step fails twice, succeeds, then fails once more: today the third failure is "attempt 4 of 3" and the run stops; expected: "attempt 1 of 3", and it retries.',
+              'Why it matters: a run that recovered once can never recover again, so long runs stop on the first later failure.',
+              'How to fix: set `attempts = 0` when a step succeeds, and add a test that fails, succeeds, then fails again and expects a retry.',
+            ].join('\n'),
+          ),
+        },
+        verdict: v('commented'),
       }),
       report: (s) => ({
         updates: {
