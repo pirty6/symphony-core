@@ -164,7 +164,10 @@ export async function checkCitations(
     return files.get(path);
   };
   for (const finding of findings) {
-    const cites = fileCitations(finding);
+    // Seen live: a quote of a template literal comes with its backticks escaped (\`), which the
+    // file never has. Read them as backticks; the finding itself is kept as written.
+    const text = finding.replace(/\\`/g, '`');
+    const cites = fileCitations(text);
     if (cites.length === 0) {
       // Not a workspace file: it must still point at something a reader can check.
       if (OTHER_SOURCE.test(finding)) valid.push(finding);
@@ -208,7 +211,7 @@ export async function checkCitations(
     }
     const first = `${cites[0]![1]}:${cites[0]![2]}`;
     // A quote is required: without one only the line's existence could be checked.
-    const quotes = quotesOf(finding);
+    const quotes = quotesOf(text);
     if (quotes.length === 0) {
       invalid.push({
         finding,
