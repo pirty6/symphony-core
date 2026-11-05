@@ -129,6 +129,12 @@ export interface AgentNode extends NodeBase {
   /** More string[] fields it writes that cite the workspace the same way (checked in-session too). */
   readonly citesAlso?: readonly string[];
   /**
+   * An executor that runs in a throwaway copy of the workspace (a git worktree, discarded
+   * after the step): it may add or change files to try something, e.g. a temporary test, and
+   * nothing it does reaches your workspace.
+   */
+  readonly sandbox?: boolean;
+  /**
    * Split the list in `over` into chunks of `per` items (a number, or a number
    * field) and play one AI call per chunk at the same time; the answers are
    * checked one by one and merged in chunk order, so the result does not depend
@@ -523,6 +529,8 @@ export interface AgentPause {
   readonly cites?: string;
   /** AgentNode.citesAlso: more fields checked the same way. */
   readonly citesAlso?: readonly string[];
+  /** AgentNode.sandbox: the step runs in a throwaway copy of the workspace. */
+  readonly sandbox?: boolean;
   /** AgentNode.otherModel: a different model family than the tier's. */
   readonly otherModel?: boolean;
   /** AgentNode.maxEffort: the tier's effort, capped at this. */

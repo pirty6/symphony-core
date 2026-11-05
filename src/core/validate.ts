@@ -198,6 +198,8 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         }
         if (n.maxEffort !== undefined && !EFFORTS.includes(n.maxEffort))
           errors.push({ ...at, message: `maxEffort must be one of ${EFFORTS.join(', ')}` });
+        if (n.sandbox && n.role !== 'executor')
+          errors.push({ ...at, message: 'sandbox is for executors (an assessor changes nothing)' });
         for (const f of n.citesAlso ?? [])
           if (!n.writes.includes(f))
             errors.push({ ...at, message: `citesAlso '${f}' must be one of the fields it writes` });
