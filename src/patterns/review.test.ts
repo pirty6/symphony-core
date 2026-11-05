@@ -612,7 +612,8 @@ describe('review: the skeptic (S11)', () => {
     (...words: string[]): Agent =>
     (s) => ({
       updates: {
-        dispositions: ((s.findings as string[]) ?? []).map(
+        objections: [],
+        proposedDispositions: ((s.findings as string[]) ?? []).map(
           (f, i) => `${f.split(' ')[0]} ${words[i] ?? 'KEEP'} — reason \`attempts += 1\``,
         ),
       },
@@ -650,24 +651,28 @@ describe('review: the skeptic (S11)', () => {
   it('a DROP must quote the code, and every finding gets a disposition, in order', () => {
     const noQuote: Agent = (s) => ({
       updates: {
-        dispositions: ((s.findings as string[]) ?? []).map(
+        objections: [],
+        proposedDispositions: ((s.findings as string[]) ?? []).map(
           (f) => `${f.split(' ')[0]} DROP — wrong`,
         ),
       },
       verdict: v,
     });
-    const short: Agent = () => ({ updates: { dispositions: ['F1 KEEP — holds'] }, verdict: v });
+    const short: Agent = () => ({
+      updates: { proposedDispositions: ['F1 KEEP — holds'], objections: [] },
+      verdict: v,
+    });
     const { r } = play({ agents: { skeptic: inTurn(noQuote, short, disposing()) } });
     const [unquoted, missing] = rejections(r, 'skeptic');
     expect(unquoted).toMatch(/Quote the code that refutes each finding you DROP/);
-    expect(missing).toMatch(/one dispositions entry per finding/);
+    expect(missing).toMatch(/one proposedDispositions entry per finding/);
   });
 
   it('a failed skeptic leaves the findings standing, and the review is not settled', () => {
     const { state, end } = play({
       agents: {
         skeptic: () => ({
-          updates: { dispositions: [] },
+          updates: { proposedDispositions: [], objections: [] },
           verdict: { ...v, outcome: 'failed', reason: 'x' },
         }),
       },
@@ -771,12 +776,200 @@ describe('review: what live runs taught', () => {
     const { r, state } = play({
       agents: {
         skeptic: () => ({
-          updates: { dispositions: ['F1 KEEP — holds', 'F2 DROP — duplicates F1'] },
+          updates: {
+            proposedDispositions: ['F1 KEEP — holds', 'F2 DROP — duplicates F1'],
+            objections: [],
+          },
           verdict: v,
         }),
       },
     });
     expect(rejections(r, 'skeptic')).toEqual([]);
     expect(state.dismissals).toEqual(['F2 DROP — duplicates F1']);
+  });
+});
+
+describe('review reuses investigate: the chase, the debate and memory', () => {
+  /** A whole-change step that cannot settle the claim until research has found something. */
+  const unclearUntilEvidence: Agent = (s) => {
+    const ok = soundWhole(s, 0) as { updates: Record<string, unknown> };
+    const settled = ((s.evidence as string[]) ?? []).length > 0;
+    return {
+      updates: {
+        ...ok.updates,
+        claimVerdicts: [
+          settled ? 'C1 MET — src/a.ts:1 — research settled it' : 'C1 UNCLEAR — cannot tell',
+        ],
+      },
+      verdict: v,
+    };
+  };
+  const researching: Agent = () => ({
+    updates: {
+      queries: ['git diff HEAD~1..HEAD'],
+      chaseNotes: ['src/core/engine.ts:120 — the counter is bumped once per visit `attempts += 1`'],
+    },
+    verdict: v,
+  });
+
+  it('an unclear claim is researched, then judged again, before the review gives up on it', () => {
+    const { ran, state, end } = play({
+      agents: { ...quiet, wholeChange: unclearUntilEvidence, chase: researching },
+    });
+    expect(ran.filter((n) => n === 'wholeChange')).toHaveLength(2);
+    expect(ran).toContain('chase');
+    expect(state.evidence).toEqual([
+      'src/core/engine.ts:120 — the counter is bumped once per visit `attempts += 1`',
+    ]);
+    expect(state.claimVerdicts).toEqual(['C1 MET — src/a.ts:1 — research settled it']);
+    expect(end).toBe('clean');
+    // With no research round, it is said to be open.
+    const none = play(
+      { agents: { ...quiet, wholeChange: unclearUntilEvidence } },
+      { maxChaseRounds: 0 },
+    );
+    expect(none.ran).not.toContain('chase');
+    expect(none.end).toBe('openQuestions');
+  });
+
+  it('from pragmatistFrom, a theoretical drop is kept; it may never drop on its own', () => {
+    const dropsAll: Agent = (s) => ({
+      updates: {
+        proposedDispositions: ((s.findings as string[]) ?? []).map(
+          (f) => `${f.split(' ')[0]} DROP — maybe wrong \`attempts += 1\``,
+        ),
+        objections: [],
+      },
+      verdict: v,
+    });
+    const keepsF1: Agent = (s) => {
+      const proposed = (s.proposedDispositions as string[]) ?? [];
+      return {
+        updates: {
+          dispositions: proposed.map((d, i) =>
+            i === 0 ? 'F1 KEEP — the challenge is theoretical: the counter does grow' : d,
+          ),
+          objectionTriage: [],
+          realObjections: [],
+        },
+        verdict: v,
+      };
+    };
+    const { ran, state } = play(
+      { agents: { skeptic: dropsAll, pragmatist: keepsF1 } },
+      { complexity: 3 },
+    );
+    expect(ran).toContain('pragmatist');
+    expect(state.findings).toEqual([
+      'F1 src/core/engine.ts:120 — [BUG] [HIGH] retry counter never resets `attempts += 1`',
+    ]);
+    expect(state.dismissed).toHaveLength(1);
+    const inventing: Agent = (s) => ({
+      updates: {
+        dispositions: ((s.findings as string[]) ?? []).map(
+          (f) => `${f.split(' ')[0]} DROP — I think so \`x y\``,
+        ),
+        objectionTriage: [],
+        realObjections: [],
+      },
+      verdict: v,
+    });
+    const keepsAll: Agent = (s) => ({
+      updates: {
+        dispositions: ((s.findings as string[]) ?? []).map(
+          (f) => `${f.split(' ')[0]} KEEP — holds`,
+        ),
+        objectionTriage: [],
+        realObjections: [],
+      },
+      verdict: v,
+    });
+    const sent = play(
+      {
+        agents: {
+          skeptic: (s) => ({
+            updates: {
+              proposedDispositions: ((s.findings as string[]) ?? []).map(
+                (f) => `${f.split(' ')[0]} DOWNGRADE LOW — minor`,
+              ),
+              objections: [],
+            },
+            verdict: v,
+          }),
+          pragmatist: inTurn(inventing, keepsAll),
+        },
+      },
+      { complexity: 3 },
+    );
+    expect(rejections(sent.r, 'pragmatist')[0]).toMatch(/you may only turn one into KEEP/);
+  });
+
+  it("the skeptic's objections are researched in rounds, bounded; a repeat is reported, not researched again", () => {
+    const objection = 'C1 is not met: the counter never stops at three, see src/core/engine.ts:120';
+    const objecting: Agent = (s) => ({
+      updates: {
+        proposedDispositions: ((s.findings as string[]) ?? []).map(
+          (f) => `${f.split(' ')[0]} KEEP — holds`,
+        ),
+        objections: [objection],
+      },
+      verdict: v,
+    });
+    const { ran, state, end } = play({ agents: { skeptic: objecting, chase: researching } });
+    // Round 1 researches it; the skeptic repeats it word for word: reported, not reopened.
+    expect(ran.filter((n) => n === 'skeptic')).toHaveLength(2);
+    expect(ran.filter((n) => n === 'chase')).toHaveLength(1);
+    expect(state.debateLog).toEqual([
+      'Round 1: 1 of 1 objections sent to research, 2 findings standing',
+    ]);
+    expect(state.unresolvedObjections).toEqual([objection]);
+    expect(state.openItems).toContainEqual(
+      expect.stringMatching(/^Objections the debate could not settle: C1 is not met/),
+    );
+    expect(end).toBe('issuesOpen');
+    // An objection must say what it attacks.
+    const vague: Agent = () => ({
+      updates: { proposedDispositions: [], objections: ['something feels off'] },
+      verdict: v,
+    });
+    const sent = play({ agents: { ...quiet, skeptic: inTurn(vague, objecting) } });
+    expect(rejections(sent.r, 'skeptic')[0]).toMatch(/Name what each objection attacks/);
+  });
+
+  it('a second, independent reviewer plays once at complexity 4; what it finds is checked and merged', () => {
+    const second: Agent = () => ({
+      updates: {
+        newFindings: [
+          'src/core/engine.ts:120 — [BUG] [HIGH] the same issue `attempts += 1`',
+          'src/core/engine.ts:118 — [ERRPATH] [MEDIUM] a thrown step is never caught `attempts += 1`',
+        ],
+      },
+      verdict: v,
+    });
+    const at2 = play({ agents: { second } });
+    expect(at2.ran).not.toContain('second');
+    const at4 = play({ agents: { second } }, { complexity: 4 });
+    expect(at4.ran.filter((n) => n === 'second')).toHaveLength(1);
+    expect(at4.state.findings).toContainEqual(
+      expect.stringMatching(/^F3 src\/core\/engine\.ts:118 — \[ERRPATH\]/),
+    );
+    expect((at4.state.findings as string[]).filter((f) => f.includes('[BUG]'))).toHaveLength(1);
+  });
+
+  it('what earlier runs learned is recalled, and the steps that judge read it as leads', () => {
+    const { state } = play({
+      tools: {
+        recall: () => ({ facts: ['src/core/engine.ts:120 — retries are per visit'], lessons: [] }),
+      },
+    });
+    expect(state.knownFacts).toEqual(['src/core/engine.ts:120 — retries are per visit']);
+    for (const step of ['gatherContext', 'analyze', 'wholeChange', 'skeptic', 'chase', 'second']) {
+      const node = review.nodes.find((n) => n.id === step) as unknown as {
+        reads: string[];
+        directive: string;
+      };
+      expect(node.reads).toContain('knownFacts');
+      expect(node.directive).toContain('use them as leads to check, never as evidence');
+    }
   });
 });
