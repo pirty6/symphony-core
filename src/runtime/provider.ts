@@ -113,6 +113,11 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
           '- Web: web_search(query) to find pages, then web_fetch(url) to read them. Cite every URL you rely on.',
         ]
       : []),
+    ...(pause.capabilities.includes('web') || pause.capabilities.includes('mcp')
+      ? [
+          '- Data: kusto_query(cluster, database, query) runs a read-only Kusto query (or .show) with your Azure sign-in, e.g. test health or pipeline tables.',
+        ]
+      : []),
     ...(pause.capabilities.includes('mcp')
       ? [
           sources.mcpServers?.length
