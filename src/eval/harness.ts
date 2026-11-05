@@ -29,7 +29,7 @@ import { Run } from '../runtime/driver.js';
 import { checkCitations } from '../runtime/evidence.js';
 import { runtimeExtras } from '../runtime/factory.js';
 import type { Provider } from '../runtime/provider.js';
-import { buildFixture, finalFiles, writeFiles, type EvalTask } from './tasks.js';
+import { buildFixture, finalFiles, writeFiles, type EvalTask, type ReviewScore } from './tasks.js';
 import { stateDir } from '../runtime/state.js';
 
 export interface EvalResult {
@@ -62,6 +62,8 @@ export interface EvalResult {
     /** Why, by "<step>: <reason>" (values folded), and how often. */
     readonly reasons?: Readonly<Record<string, number>>;
   };
+  /** A review task's score (see ReviewScore). */
+  readonly review?: ReviewScore;
   /** What the run found: findings, and of its sub-answers how many are still open. */
   readonly evidence?: {
     readonly findings: number;
@@ -168,6 +170,7 @@ async function runTask(
       task: task.id,
       pattern: task.pattern,
       pass: verdict.pass,
+      ...(verdict.review ? { review: verdict.review } : {}),
       notes: [
         ...verdict.notes,
         ...(perf.outcome !== 'success' && perf.reason ? [perf.reason] : []),
@@ -286,6 +289,10 @@ export interface EvalSummary {
   /** Saved-run characters, and the read record's share of them. */
   readonly recordChars: number;
   readonly readRecordChars: number;
+  /** Review tasks: the seeded defect found, by category, and false flags over every review run. */
+  readonly reviewRecall: Readonly<Record<string, { readonly hit: number; readonly of: number }>>;
+  readonly reviewFalseFlags: number;
+  readonly reviewRuns: number;
   /** Composing (maestro runs) vs performing (every other pattern). */
   readonly compose: TokenUsage;
   readonly perform: TokenUsage;
@@ -314,6 +321,15 @@ export function summarize(results: readonly EvalResult[]): EvalSummary {
   return {
     runs: results.length,
     solved: results.filter((r) => r.pass).length,
+    reviewRecall: results.reduce<Record<string, { hit: number; of: number }>>((acc, r) => {
+      if (!r.review?.category) return acc;
+      const c = (acc[r.review.category] ??= { hit: 0, of: 0 });
+      c.of += 1;
+      if (r.review.hit) c.hit += 1;
+      return acc;
+    }, {}),
+    reviewFalseFlags: sum((r) => r.review?.falseFlags ?? 0),
+    reviewRuns: results.filter((r) => r.review).length,
     citationsChecked: sum((r) => r.citations.checked),
     citationsInvalid: sum((r) => r.citations.invalid),
     inputTokens: sum((r) => r.tokens.inputTokens),
@@ -508,6 +524,15 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   if (s.subQuestions > 0)
     lines.push(
       `evidence: ${s.findings} findings${delta((x) => x.findings)} · sub-questions answered ${s.answered}/${s.subQuestions}${b?.subQuestions ? ` (baseline ${b.answered}/${b.subQuestions})` : ''}`,
+    );
+  if (s.reviewRuns > 0)
+    lines.push(
+      `review recall: ${
+        Object.entries(s.reviewRecall)
+          .toSorted(([x], [y]) => x.localeCompare(y))
+          .map(([c, { hit, of }]) => `${c} ${hit}/${of}`)
+          .join(' · ') || 'no seeded defects'
+      } · false flags ${s.reviewFalseFlags} over ${s.reviewRuns} review runs`,
     );
   if (s.rateLimitedCalls || s.rateLimitedReads)
     lines.push(

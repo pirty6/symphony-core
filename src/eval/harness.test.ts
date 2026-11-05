@@ -136,6 +136,30 @@ describe('eval harness', { timeout: 30_000 }, () => {
     );
   });
 
+  it('scores review tasks per category, with false flags, and says so in the report', async () => {
+    const [r] = (await evaluate(true)).results;
+    const scored = (category: string, hit: boolean, falseFlags: number) => ({
+      ...r!,
+      review: { category, hit, falseFlags },
+    });
+    const report = {
+      startedAt: 't',
+      provider: 'fake',
+      results: [
+        scored('BUG', true, 1),
+        scored('BUG', false, 0),
+        scored('TEST', true, 0),
+        scored('', false, 2),
+      ],
+    };
+    const s = summarize(report.results);
+    expect(s.reviewRecall).toEqual({ BUG: { hit: 1, of: 2 }, TEST: { hit: 1, of: 1 } });
+    expect(s).toMatchObject({ reviewFalseFlags: 3, reviewRuns: 4 });
+    expect(formatReport(report)).toContain(
+      'review recall: BUG 1/2 · TEST 1/1 · false flags 3 over 4 review runs',
+    );
+  });
+
   it('reports failures and flags a run that is worse than its baseline', async () => {
     const baseline = await evaluate(true);
     const worse = await evaluate(false);
@@ -442,6 +466,62 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
   'maestro-planted-concern': () => ({ state: { finalPattern: SUM_SCORE } }),
   'maestro-planted-concern-tier3': () => ({ state: { finalPattern: SUM_SCORE } }),
   'review-clean': () => ({ state: { findings: [], report: 'No real issues found.' } }),
+  'review-wrong-place': () => ({
+    state: {
+      findings: [
+        'F1 src/report.js:5 — [BUG] [HIGH] fixes one caller; parseDate is wrong for all `${d.month + 1}`',
+      ],
+    },
+  }),
+  'review-untested': () => ({
+    state: {
+      findings: ['F1 src/cart.js:4 — [TEST] [MEDIUM] the discount has no test `if (sum > 100)`'],
+    },
+  }),
+  'review-weakened-test': () => ({
+    state: {
+      findings: [
+        'F1 test/sum.test.js:4 — [TEST] [HIGH] the assertion can no longer fail `assert.ok(sumTo(4) >= 0)`',
+      ],
+    },
+  }),
+  'review-duplicate-flag': () => ({
+    state: {
+      findings: ['F1 src/lineItem.js:1 — [REDUNDANT] [MEDIUM] copies formatMoney `withSymbol`'],
+    },
+  }),
+  'review-caller-not-updated': () => ({
+    state: {
+      findings: [
+        'F1 src/greet.js:1 — [MISSING] [HIGH] still imports fullName `import { fullName }`',
+      ],
+    },
+  }),
+  'review-missing-migration': () => ({
+    state: {
+      findings: [
+        'F1 db/schema.sql:4 — [MISSING] [HIGH] no migration for the new column `email_verified`',
+      ],
+    },
+  }),
+  'review-unchecked-null': () => ({
+    state: {
+      findings: [
+        'F1 src/lookup.js:3 — [ERRPATH] [HIGH] find can return undefined `user.name.trim()`',
+      ],
+    },
+  }),
+  'review-convention': () => ({
+    state: {
+      findings: [
+        "F1 src/load.js:1 — [DESIGN] [MEDIUM] imports node:fs, against AGENTS.md `from 'node:fs'`",
+      ],
+    },
+  }),
+  'review-unrelated-hunk': () => ({
+    state: { findings: ['F1 src/greet.js:1 — [SCOPE] [LOW] unrelated to the sumTo fix `HELLO`'] },
+  }),
+  'review-migration-present': () => ({ state: { findings: [] } }),
   'review-off-by-one': () => ({
     state: {
       findings: ['F1 src/sum.js:4 — the loop stops before n `for (let i = 1; i < n; i++)`'],
@@ -492,7 +572,13 @@ describe('eval tasks', () => {
           t.pattern !== 'investigate'
             ? t.id === 'review-clean'
               ? { findings: ['F1 src/sum.js:3 — [DESIGN] [LOW] the name changed `let sum = 0;`'] }
-              : {}
+              : t.id === 'review-migration-present'
+                ? {
+                    findings: [
+                      'F1 db/schema.sql:4 — [MISSING] [HIGH] no migration `email_verified`',
+                    ],
+                  }
+                : {}
             : t.id === 'investigate-false-premise'
               ? { answer: 'It retries three times because the network is flaky.' }
               : t.id === 'investigate-false-hint'
