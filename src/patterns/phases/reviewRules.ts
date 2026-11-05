@@ -100,9 +100,15 @@ export const ATTESTATION_DIRECTIVE = `For each dimension, write one \`attestatio
 ${DIMENSIONS.map(([name, what], i) => `- D${i + 1} ${name}: ${what}`).join('\n')}`;
 
 export function attestationChecks(findings: string): AcceptanceCheck[] {
+  const heads = DIMENSIONS.map(([name], i) => `D${i + 1} ${name}: `);
   return [
     {
-      expr: `len(unmatched(attestations, "^D[0-9]+ [A-Z]+: (ISSUES|NONE) — .")) == 0 && heads(attestations, "^D[0-9]+ [A-Z]+: ") == [${DIMENSIONS.map(([name], i) => JSON.stringify(`D${i + 1} ${name}: `)).join(', ')}]`,
+      // Holds for one part and for the merged answer of several (the engine checks both): each
+      // dimension, in order of first appearance, and each as often as the others.
+      expr: `len(unmatched(attestations, "^D[0-9]+ [A-Z]+: (ISSUES|NONE) — .")) == 0 && unique(heads(attestations, "^D[0-9]+ [A-Z]+: ")) == [${heads.map((h) => JSON.stringify(h)).join(', ')}] && ${heads
+        .slice(1)
+        .map((h) => `count(attestations, "^${h}") == count(attestations, "^${heads[0]}")`)
+        .join(' && ')}`,
       message: `Write one attestations entry per dimension, in order: ${DIMENSIONS.map(([n], i) => `D${i + 1} ${n}`).join(', ')}, each "D<n> NAME: ISSUES — …" or "D<n> NAME: NONE — what you checked".`,
     },
     {

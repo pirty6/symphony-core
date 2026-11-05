@@ -387,6 +387,25 @@ describe('review: every dimension, with proof it was looked at', () => {
     expect(end).toBe('clean');
   });
 
+  it('several parts each attest every dimension; the merged answer passes too (seen live)', () => {
+    const { r, end } = play(
+      { agents: { ...quiet, collect: collecting(['src/a.ts', 'src/b.ts']) } },
+      { filesPerAgent: 1 },
+    );
+    expect(rejections(r, 'analyze')).toEqual([]);
+    expect(r.state.state.attestations).toHaveLength(16);
+    expect(end).toBe('clean');
+    // A part that doubles one dimension and drops another is still sent back.
+    const doubled = attest();
+    doubled[4] = doubled[3]!;
+    const bad: Agent = (s) => ({
+      updates: { newFindings: [], reviewed: (s.files as string[]) ?? [], attestations: doubled },
+      verdict: v,
+    });
+    const sent = play({ agents: { ...quiet, analyze: inTurn(bad, sound) } });
+    expect(rejections(sent.r, 'analyze')[0]).toMatch(/one attestations entry per dimension/);
+  });
+
   it('a CLEAN finding names a rule id from the catalogue', () => {
     const cleanFinding =
       (rule: string): Agent =>
