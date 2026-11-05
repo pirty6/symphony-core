@@ -404,7 +404,7 @@ describe('review: every dimension, with proof it was looked at', () => {
       agents: { analyze: inTurn(cleanFinding(''), cleanFinding('[G99] '), cleanFinding('[F3] ')) },
     });
     const [none, unknown] = rejections(r, 'analyze');
-    expect(none).toMatch(/rule id from the Clean Code list/);
+    expect(none).toMatch(/CLEAN entry a rule id from the Clean Code list/);
     expect(unknown).toMatch(/Not allowed: "\[G99\]"/);
     expect(state.findings).toContain(
       'F1 src/core/engine.ts:120 — [CLEAN] [LOW] [F3] a flag argument `attempts += 1`',

@@ -6,6 +6,7 @@
  */
 import type { ScoreEdge, ScoreNode, StateField } from '../../core/types.js';
 import type { Fragment } from './debate.js';
+import { CATEGORIES, categoryBullets, cleanIdCheck } from './reviewRules.js';
 
 export interface PrReviewConfig {
   /** What the change is for (issue, request, target). */
@@ -23,13 +24,21 @@ export interface PrReviewConfig {
   readonly reviewReads?: readonly string[];
 }
 
+/** What a blocking comment can say the change fails: its goal, what it is checked against, or the standard. */
+const bearsOn = (cfg: PrReviewConfig): string[] => [
+  cfg.subject,
+  ...cfg.against,
+  'tests',
+  'Clean Code',
+];
+
 export const PR_REVIEW_STATE: readonly StateField[] = [
   { name: 'reviewDecision', type: 'string', description: 'APPROVE | REQUEST_CHANGES' },
   {
     name: 'reviewComments',
     type: 'string[]',
     description:
-      'One per issue: "BLOCKING | NIT path:line — what to change and why", or "RESOLVED path:line — …" for an earlier one now addressed',
+      'One per issue: "BLOCKING | NIT path:line — [CATEGORY] what to change and why (bears on: X) `quote`", or "RESOLVED path:line — how `quote`" for an earlier one now addressed',
   },
   { name: 'reviewSummary', type: 'string', description: 'The review in a few sentences' },
   { name: 'reviewRounds', type: 'number', description: 'Reviews sent back to editing' },
@@ -55,7 +64,15 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
       otherModel: true,
       maxVisits: 8,
       visitsFrom: '(maxReviewRounds + 1) * 3',
-      directive: `Review this change as you would a pull request, against \`${cfg.subject}\` and ${cfg.against.map((a) => `\`${a}\``).join(', ')}. Read \`diff\` and the code around it in the workspace (read-only). Look for: wrong behaviour or missed cases, a fix of the symptom instead of the cause, missing or weak tests (a test that would pass without the change), tests removed, skipped or loosened, a change to \`checkFiles\` (how the tests or lint run) that weakens or narrows the checks, broken conventions of the codebase, needless complexity, code the change adds or edits that breaks the Clean Code standard below (name the rule), and leftover debug code. Write each issue in \`reviewComments\` as "BLOCKING path:line — what to change and why" or "NIT path:line — …". Only real problems are BLOCKING: a clear break of a Clean Code rule in the new code is one (a function doing several things, a misleading name, a swallowed error, copied logic); judgment calls and style preferences are NITs. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed, and list each one that was as "RESOLVED path:line — how" (keep it BLOCKING if it was not). Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE (the engine checks that they agree), and summarize in \`reviewSummary\`.${cfg.reviewNote ?? ''}`,
+      directive: `Review this change as you would a pull request, against \`${cfg.subject}\` and ${cfg.against.map((a) => `\`${a}\``).join(', ')}. Read \`diff\` and the code around it in the workspace (read-only). Look for, ignoring formatting:
+${categoryBullets()}
+Also look for a fix of the symptom instead of the cause, a change to \`checkFiles\` (how the tests or lint run) that weakens or narrows the checks, needless complexity and leftover debug code. Write each issue in \`reviewComments\` as "BLOCKING path:line — [CATEGORY] what to change and why (bears on: X) \`exact quote of that line\`" or "NIT path:line — [CATEGORY] … \`quote\`", where X is what the problem fails: ${bearsOn(
+        cfg,
+      )
+        .map((b) => `\`${b}\``)
+        .join(
+          ', ',
+        )}. Only real problems are BLOCKING: a clear break of a Clean Code rule in the new code is one (a function doing several things, a misleading name, a swallowed error, copied logic); judgment calls and style preferences are NITs. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed, and list each one that was as "RESOLVED path:line — how \`quote\`" (keep it BLOCKING if it was not). Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE (the engine checks that they agree), and summarize in \`reviewSummary\`.${cfg.reviewNote ?? ''}`,
       reads: [
         cfg.subject,
         ...cfg.against,
@@ -67,6 +84,8 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
         ...(cfg.reviewReads ?? []),
       ],
       writes: ['reviewDecision', 'reviewComments', 'reviewSummary'],
+      // Every comment points at a real line with its quote, checked while the reviewer has it open.
+      cites: 'reviewComments',
       retries: 2,
       checks: [
         {
@@ -89,6 +108,16 @@ export function prReviewPhase(cfg: PrReviewConfig): Fragment {
           expr: 'reviewDecision == "APPROVE" || count(reviewComments, "^BLOCKING ") > 0',
           message: 'Requesting changes needs at least one BLOCKING comment saying what to change.',
         },
+        {
+          expr: `len(unmatched(pick(reviewComments, positions(reviewComments, "^(BLOCKING|NIT) ")), "^(BLOCKING|NIT) .+:[0-9]+(-[0-9]+)? — [[](${CATEGORIES})] ")) == 0`,
+          message: `Write each BLOCKING or NIT comment as "BLOCKING path:line — [CATEGORY] what and why \`quote\`", CATEGORY one of ${CATEGORIES.split('|').join(', ')}.`,
+        },
+        {
+          // A blocking comment sends the edit back: it must say which goal the change misses.
+          expr: `len(unmatched(pick(reviewComments, positions(reviewComments, "^BLOCKING ")), "[(]bears on: (${bearsOn(cfg).join('|')})[)]")) == 0`,
+          message: `End each BLOCKING comment's reason with what it bears on: (bears on: ${bearsOn(cfg).join(' | ')}).`,
+        },
+        cleanIdCheck('reviewComments', '"BLOCKING path:line — [CLEAN] [G30] …"'),
         { expr: 'len(reviewSummary) > 0', message: 'Summarize the review in reviewSummary.' },
       ],
     },

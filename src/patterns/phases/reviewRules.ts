@@ -59,6 +59,14 @@ export const categoryBullets = (): string =>
 
 const CLEAN_IDS = `[${CLEAN_CODE_IDS.map(([id]) => JSON.stringify(`[${id}]`)).join(', ')}]`;
 
+/** Each CLEAN entry of a list names a rule id from the catalogue (an unknown id is named back). */
+export function cleanIdCheck(field: string, example: string): AcceptanceCheck {
+  return {
+    expr: `subset(heads(pick(${field}, positions(${field}, " — [[]CLEAN] ")), "${CLEAN_ID_PATTERN}"), ${CLEAN_IDS})`,
+    message: `Give each CLEAN entry a rule id from the Clean Code list: ${example}.`,
+  };
+}
+
 /** The format of each finding, and a catalogue rule id on each CLEAN one. */
 export function findingChecks(field: string): AcceptanceCheck[] {
   return [
@@ -66,11 +74,7 @@ export function findingChecks(field: string): AcceptanceCheck[] {
       expr: `len(unmatched(${field}, "${FINDING_FORMAT}")) == 0`,
       message: `Write each finding as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`quote\`", CATEGORY one of ${CATEGORIES.split('|').join(', ')}.`,
     },
-    {
-      expr: `subset(heads(pick(${field}, positions(${field}, " — [[]CLEAN] ")), "${CLEAN_ID_PATTERN}"), ${CLEAN_IDS})`,
-      message:
-        'Give each CLEAN finding a rule id from the Clean Code list, after the severity: "[CLEAN] [MEDIUM] [G5] …".',
-    },
+    cleanIdCheck(field, '"[CLEAN] [MEDIUM] [G5] …", after the severity'),
   ];
 }
 
