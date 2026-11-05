@@ -171,15 +171,17 @@ describe('live runs: a run another process plays, in the studio', () => {
   });
 });
 
+/** A piece of streamed AI text. */
+const delta = (seq: number, piece: string): RunMessage => ({
+  seq,
+  type: 'provider',
+  nodeId: 'a',
+  attempt: 1,
+  event: { type: 'delta', text: piece },
+});
+
 describe('scrubbedFeed (the live file and the studio stream)', () => {
   const token = `ghp_${'Z9y8X7w6V5'.repeat(4)}`;
-  const delta = (seq: number, text: string): RunMessage => ({
-    seq,
-    type: 'provider',
-    nodeId: 'a',
-    attempt: 1,
-    event: { type: 'delta', text },
-  });
   const play = () => {
     const out: RunMessage[] = [];
     const feed = scrubbedFeed((m) => out.push(m));
@@ -191,10 +193,10 @@ describe('scrubbedFeed (the live file and the studio stream)', () => {
 
   it('scrubs a token split across streamed pieces, and gives the same messages every time', () => {
     const out = play();
-    const text = out
+    const streamed = out
       .flatMap((m) => (m.type === 'provider' && m.event.type === 'delta' ? [m.event.text] : []))
       .join('');
-    expect(text).toBe('the key is [REDACTED:github-token] and more');
+    expect(streamed).toBe('the key is [REDACTED:github-token] and more');
     expect(JSON.stringify(out)).not.toContain(token.slice(4, 20));
     // A reconnecting stream replays through a fresh feed: the same messages, in the same order.
     expect(play()).toEqual(out);

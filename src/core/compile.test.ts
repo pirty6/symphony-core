@@ -124,9 +124,12 @@ describe('inputs keep no credentials', () => {
     const leaky: Pattern = {
       ...pattern,
       state: [...pattern.state, { name: 'apiToken', type: 'string', initial: token }],
-      nodes: pattern.nodes.map((n) =>
-        n.kind === 'agent' ? { ...n, directive: `Call it with ${token}` } : n,
-      ),
+      nodes: [
+        ...pattern.nodes.filter((n) => n.kind !== 'agent'),
+        Object.assign(structuredClone(pattern.nodes.find((n) => n.kind === 'agent')!), {
+          directive: `Call it with ${token}`,
+        }),
+      ],
     };
     const s = compileScore(leaky, { goal: 'g', context: { topic: 't' }, generatedAt: 't' });
     expect(JSON.stringify(s)).not.toContain(token);
