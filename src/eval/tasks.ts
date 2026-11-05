@@ -450,9 +450,9 @@ const SCHEMA_VERIFIED = SCHEMA_SQL.replace(
   '  email TEXT NOT NULL,\n  email_verified INTEGER NOT NULL DEFAULT 0\n',
 );
 const USERS_QUERY_JS =
-  "export const verifiedUsers = (db) => db.all('SELECT id, email FROM users WHERE email_verified = 1');\n";
+  '/** The users whose email is verified (rows of the users table). */\nexport const verifiedUsers = (users) => users.filter((u) => u.email_verified === 1);\n';
 /** The new query is tested in both migration tasks: the migration is the only thing that differs. */
-const USERS_QUERY_TEST = `${TEST_HEAD}import { verifiedUsers } from '../src/users.js';\ntest('selects verified users only', () => {\n  const db = { all: (sql) => sql };\n  assert.match(verifiedUsers(db), /WHERE email_verified = 1/);\n});\n`;
+const USERS_QUERY_TEST = `${TEST_HEAD}import { verifiedUsers } from '../src/users.js';\ntest('keeps verified users only', () => {\n  const rows = [{ id: 1, email_verified: 1 }, { id: 2, email_verified: 0 }];\n  assert.deepEqual(verifiedUsers(rows), [{ id: 1, email_verified: 1 }]);\n});\ntest('no users, none verified', () => assert.deepEqual(verifiedUsers([]), []));\n`;
 const MIGRATION_FILES = {
   'package.json': PKG,
   '.gitignore': IGNORE,
