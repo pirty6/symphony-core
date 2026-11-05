@@ -335,6 +335,47 @@ describe('CopilotProvider', () => {
     });
   });
 
+  it('checks every field a step cites in-session, not only the first (citesAlso)', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'cites-also-'));
+    writeFileSync(join(ws, 'a.js'), 'const port = 8081;\n');
+    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+    const replies: string[] = [];
+    const { client } = fakeClient(async (cfg, emit) => {
+      for (const behaviours of [
+        ['B1 a.js:1 — the port `port = 9090`'],
+        ['B1 a.js:1 — the port `port = 8081`'],
+      ])
+        replies.push(
+          String(
+            await callTool(cfg, 'submit_result', {
+              updates: { context: ['a.js:1 — [SIMILAR] the port `port = 8081`'], behaviours },
+              verdict,
+            }),
+          ),
+        );
+      emit('session.idle');
+    });
+    const p = new CopilotProvider({ clientFactory: () => client, workingDirectory: ws });
+    await p.runAgent({
+      pause: {
+        ...pause,
+        outputSchema: [
+          { name: 'context', type: 'string[]' },
+          { name: 'behaviours', type: 'string[]' },
+        ],
+        cites: 'context',
+        citesAlso: ['behaviours'],
+      },
+      state: {},
+      visit: 0,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    rmSync(ws, { recursive: true, force: true });
+    expect(replies[0]).toMatch(/^REJECTED[\s\S]*behaviours: "B1 a\.js:1/);
+    expect(replies[1]).toMatch(/^Result recorded/);
+  });
+
   it("applies the step's own checks in-session, so an empty answer is sent back at once", async () => {
     const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
     const replies: string[] = [];
