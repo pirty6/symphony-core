@@ -124,6 +124,7 @@ describe('sources.catalog', () => {
       'files.read',
       'git.pr',
       'git.diff',
+      'diff.scan',
       'evidence.check',
       'evidence.context',
       'memory.facts',
