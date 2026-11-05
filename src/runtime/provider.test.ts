@@ -108,6 +108,12 @@ describe('buildAgentPrompt', () => {
     expect(buildAgentPrompt(executor)).toContain('the system temp folder');
   });
 
+  it('says the outcome is about the step, not about what it found', () => {
+    expect(buildAgentPrompt(pause)).toContain(
+      '"applied" when you did it, whatever you found (broken code, a failing build or a refuted claim is a result, not a failure)',
+    );
+  });
+
   it('holds a step that writes or reviews code to Clean Code, before the changing part', () => {
     const heading = '## Code standard: Clean Code (Robert C. Martin)';
     expect(buildAgentPrompt(pause)).not.toContain(heading);

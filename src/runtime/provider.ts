@@ -133,6 +133,8 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
       (f) => `  - ${f.name} (${f.type})${f.description ? `: ${f.description}` : ''}`,
     ),
     '- `verdict`: { outcome: "applied" | "failed" | "skipped", confidence: 0..1, shouldTerminate: boolean, reason: one sentence }.',
+    // Seen live: a reviewer that found broken code answered "failed", and its verdicts were lost.
+    '- `outcome` says whether YOU did this step: "applied" when you did it, whatever you found (broken code, a failing build or a refuted claim is a result, not a failure); "failed" only when you could not do the step (you could not read what you needed, or your tools broke).',
     '- `shouldTerminate` is almost always false: the workflow moves on to its next step by itself. Set it to true ONLY to abort the entire workflow because continuing would be impossible or harmful.',
   );
   if (pause.outputSchema.length === 0)
