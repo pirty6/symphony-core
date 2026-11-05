@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -11,6 +11,7 @@ import {
   regressions,
   reportRegressions,
   runEval,
+  saveReport,
   summarize,
   taskRegressions,
   worseThan,
@@ -134,6 +135,22 @@ describe('eval harness', { timeout: 30_000 }, () => {
     expect(formatReport(report)).toMatch(
       /costliest steps: mini work \(100% of the cost: 2k in \(800 cached\) · 100 out · 2 calls\)/,
     );
+  });
+
+  it('a saved report holds no credential from --with values or error notes', async () => {
+    const token = `ghp_${'u1V2w3X4y5'.repeat(4)}`;
+    const [r] = (await evaluate(true)).results;
+    const dir = await mkdtemp(join(tmpdir(), 'symphony-report-'));
+    const file = await saveReport(dir, {
+      startedAt: '2026-01-01T00:00:00.000Z',
+      provider: 'fake',
+      settings: [`token=${token}`],
+      results: [{ ...r!, notes: [`provider said: ${token} is invalid`] }],
+    });
+    const text = await readFile(file, 'utf8');
+    await rm(dir, { recursive: true, force: true });
+    expect(text).not.toContain(token);
+    expect(text).toContain('token=[REDACTED:github-token]');
   });
 
   it('scores review tasks per category, with false flags, and says so in the report', async () => {

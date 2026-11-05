@@ -8,7 +8,7 @@
  * user can look at the node input and the AI's proposed output before the
  * engine applies it. stop() aborts the live AI call and cancels the run.
  */
-import { scrubbingOn, scrubValue } from '../core/scrub.js';
+import { scrubbingOn, scrubText, scrubValue } from '../core/scrub.js';
 import { itemOf } from '../core/items.js';
 import { stepTimeLimitMs } from './limits.js';
 import { KEEP_ANSWER } from './provider.js';
@@ -747,8 +747,10 @@ export class Run {
       if (this.stopRequested || ((e as Error).name === 'AbortError' && !timedOut)) return undefined;
       // The provider cannot work as configured (e.g. not signed in): stop now and say why.
       if ((e as Error).name === 'SetupError') {
-        this.emitFor(pause)({ type: 'info', text: (e as Error).message });
-        this.stopRequested = (e as Error).message;
+        // Its text can quote the provider's reply: it becomes the run's reason, so scrub it.
+        const why = this.scrubbing ? scrubText((e as Error).message) : (e as Error).message;
+        this.emitFor(pause)({ type: 'info', text: why });
+        this.stopRequested = why;
         return undefined;
       }
       result = undefined;
@@ -917,14 +919,14 @@ export class Run {
               : await this.runApproval(pause);
       if (!res) {
         const current = this.engine.pause ?? pause;
-        this.apply(
-          advance(this.score, this.engine, {
-            kind: 'cancel',
-            pauseId: current.pauseId,
-            reason: `${this.stopRequested ?? 'stopped'} at '${current.nodeId}'`,
-            at: this.now(),
-          }),
-        );
+        const cancel = {
+          kind: 'cancel' as const,
+          pauseId: current.pauseId,
+          reason: `${this.stopRequested ?? 'stopped'} at '${current.nodeId}'`,
+          at: this.now(),
+        };
+        // A stop's reason is recorded like any answer: scrubbed first.
+        this.apply(advance(this.score, this.engine, this.scrubbing ? scrubValue(cancel) : cancel));
         break;
       }
       // What the engine records is what gets saved: secrets go before it sees them (core/scrub).

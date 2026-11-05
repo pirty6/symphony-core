@@ -58,6 +58,38 @@ const RULES: readonly Rule[] = [
 
 export const REDACTED = /\[REDACTED:[a-z-]+\]/;
 
+/** The shortest text any rule can match ("a://b:pwd@" is 10): shorter text is skipped cheaply. */
+const MIN_MATCH = 10;
+
+/**
+ * Field names that say their value is secret, compared lower-case without _ and -: a value under
+ * one ({ password: "hunter2" }) is no credential shape, so the rules alone would miss it.
+ */
+const SECRET_FIELDS: ReadonlySet<string> = new Set([
+  'password',
+  'passwd',
+  'pwd',
+  'secret',
+  'clientsecret',
+  'apikey',
+  'token',
+  'accesstoken',
+  'authtoken',
+  'refreshtoken',
+  'sessiontoken',
+  'privatekey',
+]);
+const isSecretField = (key: string) => SECRET_FIELDS.has(key.toLowerCase().replace(/[_-]/g, ''));
+
+/**
+ * The start of a credential whose secret part has not arrived yet ("password = \"", "Bearer ",
+ * "AccountKey=", "API_TOKEN="): a stream is not cut between it and its value.
+ */
+/** How far back a credential's start is looked for (a long variable name fits). */
+const PENDING_SPAN = 200;
+const PENDING =
+  /(?:(?:password|passwd|pwd|secret|client[_-]?secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)["']?\s*[:=]?\s*["']?|\bBearer\s*|\b(?:AccountKey|SharedAccessKey|AccessKey)=?|[A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY)[A-Z0-9_]*\s*=?\s*)$/i;
+
 /** On unless SYMPHONY_SCRUB=off (read where a process exists; always on in a browser). */
 export function scrubbingOn(): boolean {
   const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
@@ -75,8 +107,8 @@ function matchSpans(text: string): [number, number][] {
 
 /** The text with every secret replaced by "[REDACTED:<kind>]". */
 export function scrubText(text: string): string {
-  // Short strings hold no credential: most values of a run, skipped cheaply.
-  if (text.length < 16) return text;
+  // Shorter than any credential a rule matches: most values of a run, skipped cheaply.
+  if (text.length < MIN_MATCH) return text;
   let out = text;
   for (const r of RULES) {
     out = out.replace(r.re, (...m: unknown[]) => {
@@ -89,7 +121,11 @@ export function scrubText(text: string): string {
   return out;
 }
 
-/** A JSON-like value with every string scrubbed; the same object when nothing changed. */
+/**
+ * A JSON-like value with every string scrubbed, keys too, and any non-empty string under a field
+ * named as a secret (password, token, apiKey…) replaced whole; the same object when nothing
+ * changed.
+ */
 export function scrubValue<T>(value: T): T {
   if (typeof value === 'string') return scrubText(value) as T;
   if (Array.isArray(value)) {
@@ -105,9 +141,13 @@ export function scrubValue<T>(value: T): T {
     let changed = false;
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
-      const s = scrubValue(v);
-      if (s !== v) changed = true;
-      out[k] = s;
+      const key = scrubText(k);
+      const s =
+        typeof v === 'string' && v !== '' && isSecretField(k) && !REDACTED.test(v)
+          ? '[REDACTED:secret-field]'
+          : scrubValue(v);
+      if (s !== v || key !== k) changed = true;
+      out[key] = s;
     }
     return (changed ? out : value) as T;
   }
@@ -141,8 +181,12 @@ export class StreamScrubber {
       const line = cut === 0 ? -1 : raw.lastIndexOf('\n', cut - 1);
       at = cut === 0 ? 0 : line >= 0 ? line + 1 : raw.lastIndexOf(' ', cut - 1) + 1;
       const still = crossing(at);
-      if (!still) break;
-      cut = still[0];
+      // A credential's start just before the cut ("password = \"") goes out with its value, or a
+      // value longer than HOLD would be scrubbed apart from the name that marks it secret.
+      const from = Math.max(0, at - PENDING_SPAN);
+      const pending = still ? undefined : PENDING.exec(raw.slice(from, at));
+      if (!still && !pending) break;
+      cut = still ? still[0] : from + pending!.index;
     }
     this.held = raw.slice(at);
     return scrubText(raw.slice(0, at));

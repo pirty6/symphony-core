@@ -81,6 +81,13 @@ describe('scrubText', () => {
   });
 });
 
+describe('the limits an investigation found (executed, not traced)', () => {
+  it('credentials shorter than 16 characters are caught too', () => {
+    expect(scrubText('pwd="12345678"')).toBe('pwd="[REDACTED:secret-value]"');
+    expect(scrubText('x://u:abc@h.io')).toBe('x://u:[REDACTED:url-password]@h.io');
+  });
+});
+
 describe('scrubValue', () => {
   it('scrubs every string of a value, and returns the same object when nothing changed', () => {
     const clean = { a: ['x', { b: 'y' }], n: 3 };
@@ -99,6 +106,35 @@ const stream = (text: string, size: number) => {
   for (let i = 0; i < text.length; i += size) out += sc.push(text.slice(i, i + size));
   return out + sc.end();
 };
+
+describe('scrubValue reads field names', () => {
+  it('a value under a field named as a secret is redacted whatever its shape; others are not', () => {
+    const v = {
+      password: 'hunter2',
+      apiKey: 'k1',
+      client_secret: 'abc',
+      token: '',
+      name: 'password',
+      usage: { inputTokens: 5, tokens: 'many' },
+      list: [{ accessToken: 'opaque-value' }],
+    };
+    const out = scrubValue(v);
+    expect(out).toEqual({
+      password: '[REDACTED:secret-field]',
+      apiKey: '[REDACTED:secret-field]',
+      client_secret: '[REDACTED:secret-field]',
+      token: '',
+      name: 'password',
+      usage: { inputTokens: 5, tokens: 'many' },
+      list: [{ accessToken: '[REDACTED:secret-field]' }],
+    });
+    expect(scrubValue(out)).toBe(out);
+  });
+
+  it('a credential used as a key is scrubbed too', () => {
+    expect(Object.keys(scrubValue({ [gh]: 1 }))).toEqual(['[REDACTED:github-token]']);
+  });
+});
 
 describe('StreamScrubber', () => {
   it('streamed in random pieces, always equals scrubbing the whole text (seeded fuzz)', () => {
@@ -151,6 +187,21 @@ describe('StreamScrubber', () => {
       const out = stream(text, 3);
       expect(out).toBe(scrubText(text));
       expect(out).not.toMatch(/abcdefghij|supersecret/);
+    }
+  });
+
+  it.each([
+    ['a quoted secret', `config password = "${'s3cr3t'.repeat(120)}" end`],
+    ['a bearer token', `Authorization: Bearer ${'t0k3n'.repeat(130)} done`],
+    ['an env secret', `export API_TOKEN=${'v4lue'.repeat(130)}\nnext`],
+  ])('%s longer than what is held back is not split from its name', (_n, text) => {
+    for (const size of [7, 50, 333]) {
+      const s = new StreamScrubber();
+      let out = '';
+      for (let i = 0; i < text.length; i += size) out += s.push(text.slice(i, i + size));
+      out += s.end();
+      expect(out).toBe(scrubText(text));
+      expect(out).toMatch(REDACTED);
     }
   });
 

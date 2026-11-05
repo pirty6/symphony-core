@@ -118,4 +118,22 @@ describe('inputs keep no credentials', () => {
     const h = compileScore(hangman, { goal: `play with ${token}`, generatedAt: 't' });
     expect(h.goal).toBe('play with [REDACTED:github-token]');
   });
+
+  it('a token in the pattern itself (a directive, a default) is scrubbed too, and the id verifies', () => {
+    const token = `ghp_${'f6G7h8I9j0'.repeat(4)}`;
+    const leaky: Pattern = {
+      ...pattern,
+      state: [...pattern.state, { name: 'apiToken', type: 'string', initial: token }],
+      nodes: [
+        ...pattern.nodes.filter((n) => n.kind !== 'agent'),
+        Object.assign(structuredClone(pattern.nodes.find((n) => n.kind === 'agent')!), {
+          directive: `Call it with ${token}`,
+        }),
+      ],
+    };
+    const s = compileScore(leaky, { goal: 'g', context: { topic: 't' }, generatedAt: 't' });
+    expect(JSON.stringify(s)).not.toContain(token);
+    expect(s.initialState.apiToken).toBe('[REDACTED:github-token]');
+    expect(verifyScore(s)).toEqual([]);
+  });
 });

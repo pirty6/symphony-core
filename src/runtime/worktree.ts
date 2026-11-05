@@ -184,10 +184,12 @@ export async function isolateRun(
           const applied = await git(top, ['apply', '--binary', '--whitespace=nowarn'], patch);
           if (applied.code === 0) return { kind: 'applied', files };
         }
+        // The edit exactly as made (scrubbed, it would no longer apply), so it may hold what the
+        // edit added or removed, a credential too: readable by you alone.
         const dir = join(stateDir(top, env), 'patches');
-        await mkdir(dir, { recursive: true });
+        await mkdir(dir, { recursive: true, mode: 0o700 });
         const file = join(dir, `${id}.patch`);
-        await writeFile(file, patch);
+        await writeFile(file, patch, { mode: 0o600 });
         return {
           kind: 'patch',
           files,

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { compileScore } from '../core/compile.js';
 import { fix } from '../patterns/index.js';
 import { Run, type RunMessage } from './driver.js';
-import { liveRoot, LiveRuns, publishLive, pruneLive } from './live.js';
+import { liveRoot, LiveRuns, publishLive, pruneLive, scrubbedFeed } from './live.js';
 import { ScriptedProvider } from './scripted-provider.js';
 
 const roots: string[] = [];
@@ -168,5 +168,37 @@ describe('live runs: a run another process plays, in the studio', () => {
     await pruneLive(dir);
     expect(existsSync(old)).toBe(false);
     expect(existsSync(mine)).toBe(true);
+  });
+});
+
+/** A piece of streamed AI text. */
+const delta = (seq: number, piece: string): RunMessage => ({
+  seq,
+  type: 'provider',
+  nodeId: 'a',
+  attempt: 1,
+  event: { type: 'delta', text: piece },
+});
+
+describe('scrubbedFeed (the live file and the studio stream)', () => {
+  const token = `ghp_${'Z9y8X7w6V5'.repeat(4)}`;
+  const play = () => {
+    const out: RunMessage[] = [];
+    const feed = scrubbedFeed((m) => out.push(m));
+    feed(delta(0, `the key is ${token.slice(0, 12)}`));
+    feed(delta(1, `${token.slice(12)} and more`));
+    feed({ seq: 2, type: 'status', status: 'done' } as RunMessage);
+    return out;
+  };
+
+  it('scrubs a token split across streamed pieces, and gives the same messages every time', () => {
+    const out = play();
+    const streamed = out
+      .flatMap((m) => (m.type === 'provider' && m.event.type === 'delta' ? [m.event.text] : []))
+      .join('');
+    expect(streamed).toBe('the key is [REDACTED:github-token] and more');
+    expect(JSON.stringify(out)).not.toContain(token.slice(4, 20));
+    // A reconnecting stream replays through a fresh feed: the same messages, in the same order.
+    expect(play()).toEqual(out);
   });
 });

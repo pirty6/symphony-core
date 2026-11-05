@@ -112,14 +112,17 @@ export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableSco
     initialState[f.name] = structuredClone(context[f.name] ?? f.initial ?? fallback);
   }
 
+  // The pattern is recorded in every saved run, so it is scrubbed too (a drafted directive or a
+  // default with a pasted token), before the id is hashed: the id still verifies. A pattern with
+  // no credential is unchanged, so its runs replay as before.
   const body: Hashable = structuredClone({
     schemaVersion: 2 as const,
     pattern: pattern.name,
-    description: pattern.description,
+    description: scrubText(pattern.description),
     goal,
     context,
-    state: pattern.state,
-    nodes: pattern.nodes,
+    state: scrubValue(pattern.state),
+    nodes: scrubValue(pattern.nodes),
     edges: pattern.edges,
     start: pattern.start,
     maxSteps: pattern.maxSteps ?? DEFAULT_MAX_STEPS,
@@ -127,7 +130,7 @@ export function compileScore(pattern: Pattern, args: CompileArgs): ExecutableSco
     improvisation: args.improvisation ?? pattern.improvisation ?? 0,
     ...(pattern.groups ? { groups: pattern.groups } : {}),
     ...(pattern.result ? { result: pattern.result } : {}),
-    initialState,
+    initialState: scrubValue(initialState),
   });
   return deepFreeze({
     ...body,

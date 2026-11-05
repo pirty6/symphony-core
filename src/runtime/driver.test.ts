@@ -1068,6 +1068,25 @@ describe('setup errors', () => {
     expect(perf.outcome).toBe('cancelled');
     expect(perf.reason).toMatch(/^Copilot is not signed in on this machine\./);
   });
+
+  it("a setup error quoting the provider's reply is scrubbed in the reason and the feed", async () => {
+    const token = `ghp_${'k1L2m3N4o5'.repeat(4)}`;
+    const provider: Provider = {
+      name: 'copilot',
+      runAgent: async () => {
+        throw Object.assign(new Error(`Quota exceeded. The service said: token ${token} is over`), {
+          name: 'SetupError',
+        });
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const run = new Run({ score: hangmanScore, provider, clock });
+    const perf = await run.start();
+    expect(perf.outcome).toBe('cancelled');
+    expect(perf.reason).toContain('token [REDACTED:github-token] is over');
+    expect(JSON.stringify(perf)).not.toContain(token);
+    expect(JSON.stringify(run.messages)).not.toContain(token);
+  });
 });
 
 const pageStep = (input: Record<string, unknown>, capabilities: string[]) =>

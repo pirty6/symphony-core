@@ -495,6 +495,20 @@ const per = (x: EvalSummary, f: (x: EvalSummary) => number) => (x.runs ? f(x) / 
 const label = (r: EvalReport) => (r.settings?.length ? r.settings.join(' ') : 'defaults');
 
 /** One line per result, then the totals; with a baseline, the change against it. */
+/**
+ * Write a report to `dir` (named by when it started) and say where. Its settings hold --with
+ * values as typed, and its notes errors' text: scrubbed where it is written.
+ */
+export async function saveReport(dir: string, report: EvalReport): Promise<string> {
+  await mkdir(dir, { recursive: true });
+  const file = join(dir, `${report.startedAt.replace(/[:.]/g, '-')}.json`);
+  await writeFile(
+    file,
+    `${JSON.stringify(scrubbingOn() ? scrubValue(report) : report, null, 2)}\n`,
+  );
+  return file;
+}
+
 export function formatReport(report: EvalReport, baseline?: EvalReport): string {
   const lines = report.results.map(
     (r) =>

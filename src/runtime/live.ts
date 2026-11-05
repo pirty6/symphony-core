@@ -10,7 +10,7 @@
  * The process that plays the run stays its only owner: the studio never runs it, it only reads
  * and asks.
  */
-import { scrubValue, StreamScrubber } from '../core/scrub.js';
+import { scrubbingOn, scrubValue, StreamScrubber } from '../core/scrub.js';
 import { appendFile, mkdir, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,43 @@ type ProviderMessage = Extract<RunMessage, { type: 'provider' }>;
 
 /** One AI session's key: its streams are scrubbed apart from other sessions' (parts, takes). */
 const session = (m: ProviderMessage) => `${m.nodeId}|${m.attempt}|${m.take ?? ''}|`;
+
+/**
+ * A run's messages as they may leave the process (the live file, the studio's stream): streamed
+ * text is scrubbed across its pieces (a piece may be held back until its stream ends, so the
+ * caller numbers what comes out), everything else whole. Pass-through with SYMPHONY_SCRUB=off.
+ */
+export function scrubbedFeed(emit: (m: RunMessage) => void): (m: RunMessage) => void {
+  if (!scrubbingOn()) return emit;
+  const streams = new Map<string, { scrubber: StreamScrubber; like: ProviderMessage }>();
+  /** End the streams whose key starts with `prefix` ('' for all): what they held goes out. */
+  const endStreams = (prefix: string) => {
+    for (const [key, { scrubber, like }] of streams) {
+      if (!key.startsWith(prefix)) continue;
+      const text = scrubber.end();
+      if (text && (like.event.type === 'delta' || like.event.type === 'reasoning'))
+        emit({ ...like, event: { ...like.event, text } });
+      streams.delete(key);
+    }
+  };
+  return (m) => {
+    if (m.type === 'provider' && (m.event.type === 'delta' || m.event.type === 'reasoning')) {
+      const key = `${session(m)}${m.event.type}`;
+      const scrubber = streams.get(key)?.scrubber ?? new StreamScrubber();
+      streams.set(key, { scrubber, like: m });
+      const text = scrubber.push(m.event.text);
+      if (text) emit({ ...m, event: { ...m.event, text } });
+      return;
+    }
+    // The same session saying something else, its step moving on, or the run ending: the
+    // streams that are over go out first, in order. Other sessions' streams keep going.
+    if (m.type === 'provider') endStreams(session(m));
+    else if (m.type === 'engine' && 'nodeId' in m.event) endStreams(`${m.event.nodeId}|`);
+    else if (m.type === 'performance' || (m.type === 'status' && TERMINAL.has(m.status)))
+      endStreams('');
+    emit(scrubValue(m));
+  };
+}
 
 /** What the studio's routes need of a run: one played here, or one played by another process. */
 export type RunLike = Pick<
@@ -182,37 +219,10 @@ export async function publishLive(
   };
   // Secrets never reach the file (core/scrub): streamed text is scrubbed across its pieces, and
   // the file numbers what it holds itself, since a piece may be held back until its stream ends.
-  const streams = new Map<string, { scrubber: StreamScrubber; like: ProviderMessage }>();
   let seq = 0;
-  const write = (m: RunMessage) => {
-    pending.push(`${JSON.stringify({ ...m, seq: seq++ })}\n`);
-  };
-  /** End the streams whose key starts with `prefix` ('' for all): what they held goes out. */
-  const endStreams = (prefix: string) => {
-    for (const [key, { scrubber, like }] of streams) {
-      if (!key.startsWith(prefix)) continue;
-      const text = scrubber.end();
-      if (text && (like.event.type === 'delta' || like.event.type === 'reasoning'))
-        write({ ...like, event: { ...like.event, text } });
-      streams.delete(key);
-    }
-  };
+  const feed = scrubbedFeed((m) => pending.push(`${JSON.stringify({ ...m, seq: seq++ })}\n`));
   const add = (m: RunMessage) => {
-    if (m.type === 'provider' && (m.event.type === 'delta' || m.event.type === 'reasoning')) {
-      const key = `${session(m)}${m.event.type}`;
-      const scrubber = streams.get(key)?.scrubber ?? new StreamScrubber();
-      streams.set(key, { scrubber, like: m });
-      const text = scrubber.push(m.event.text);
-      if (text) write({ ...m, event: { ...m.event, text } });
-    } else {
-      // The same session saying something else, its step moving on, or the run ending: the
-      // streams that are over go out first, in order. Other sessions' streams keep going.
-      if (m.type === 'provider') endStreams(session(m));
-      else if (m.type === 'engine' && 'nodeId' in m.event) endStreams(`${m.event.nodeId}|`);
-      else if (m.type === 'performance' || (m.type === 'status' && TERMINAL.has(m.status)))
-        endStreams('');
-      write(scrubValue(m));
-    }
+    feed(m);
     if (m.type === 'status' && TERMINAL.has(m.status)) flush();
     else timer ??= setTimeout(flush, FLUSH_MS);
   };
