@@ -670,38 +670,67 @@ flowchart TD
   n_collect["🤖 Collect diff"]
   n_hasDiff{"Anything changed?"}
   n_capFiles["Files to review"]
+  n_scanDiff[/"🔧 Scan the diff"/]
   n_verifyOn{"Run the checks?"}
   n_runTests[/"🔧 Run tests"/]
   n_hasLint{"Lint?"}
   n_runLint[/"🔧 Run lint"/]
+  n_gatherContext["🤖 Gather context"]
+  n_contextOk{"Context gathered?"}
+  n_noteContextFailed["Note it"]
+  n_checkContext[/"🔧 Check context"/]
+  n_checkBehaviours[/"🔧 Check behaviours"/]
+  n_checkObligations[/"🔧 Check obligations"/]
+  n_mergeContext["Keep what failed"]
+  n_hasFiles{"Files to read?"}
   n_analyze["🤖 Find issues ×N"]
   n_analyzed{"Reviewed?"}
   n_checkReview[/"🔧 Check citations"/]
   n_mergeReview["Record issues"]
+  n_wholeChange["🤖 Judge the whole change"]
+  n_wholeOk{"Judged?"}
+  n_noteWholeFailed["Note it"]
+  n_checkWhole[/"🔧 Check citations"/]
+  n_mergeWhole["Record its issues"]
+  n_wantSkeptic{"Challenge? (≥2)"}
+  n_skeptic["🤖 Challenge findings"]
+  n_skepticOk{"Challenged?"}
+  n_noteSkepticFailed["Note it"]
+  n_applyDispositions["Apply the challenge"]
+  n_summarize["What is settled"]
   n_hasIssues{"Issues?"}
   n_report["🤖 Write report"]
+  n_issuesSettled{"All settled?"}
   n_anyUnverified{"Findings unverified?"}
   n_unverifiedReport["Not verified"]
   n_anyGaps{"Reviewed in part?"}
   n_partReport["Reviewed in part"]
+  n_anyOpen{"Anything not settled?"}
+  n_openReport["Not settled"]
   n_cleanReport["Nothing found"]
   n_issues(["Issues reported · success"])
+  n_issuesOpen(["Issues reported, not all settled · partial"])
   n_clean(["Looks good · success"])
   n_notVerified(["Could not verify · partial"])
   n_partlyReviewed(["Reviewed in part · partial"])
+  n_openQuestions(["Not settled · partial"])
   n_noDiffReport["Say why"]
   n_noDiff(["No changes found · failed"])
   n_notReviewed(["Could not review · failed"])
   n_mark_issues["Ending: Issues reported"]
+  n_mark_issuesOpen["Ending: Issues reported, not all settled"]
   n_mark_notVerified["Ending: Could not verify"]
   n_mark_partlyReviewed["Ending: Reviewed in part"]
+  n_mark_openQuestions["Ending: Not settled"]
   n_mark_clean["Ending: Looks good"]
   n_handoffDoc["Write the AI version"]
   n_wantPlain{"Plain summary?"}
   n_explain["🤖 Write the version for people"]
   n_endIs_issues{"Issues reported?"}
+  n_endIs_issuesOpen{"Issues reported, not all settled?"}
   n_endIs_notVerified{"Could not verify?"}
   n_endIs_partlyReviewed{"Reviewed in part?"}
+  n_endIs_openQuestions{"Not settled?"}
   n_start --> n_prInfo
   n_prInfo --> n_prFetched
   n_prFetched -->|"yes"| n_collect
@@ -711,42 +740,78 @@ flowchart TD
   n_hasDiff -->|"yes"| n_capFiles
   n_hasDiff -->|"no"| n_noDiffReport
   n_noDiffReport --> n_noDiff
-  n_capFiles --> n_verifyOn
+  n_capFiles --> n_scanDiff
+  n_scanDiff --> n_verifyOn
   n_verifyOn -->|"yes"| n_runTests
-  n_verifyOn -->|"no"| n_analyze
+  n_verifyOn -->|"no"| n_gatherContext
   n_runTests --> n_hasLint
   n_hasLint -->|"yes"| n_runLint
-  n_hasLint -->|"no"| n_analyze
-  n_runLint --> n_analyze
+  n_hasLint -->|"no"| n_gatherContext
+  n_runLint --> n_gatherContext
+  n_gatherContext --> n_contextOk
+  n_contextOk -->|"yes"| n_checkContext
+  n_contextOk -->|"no"| n_noteContextFailed
+  n_noteContextFailed --> n_hasFiles
+  n_checkContext --> n_checkBehaviours
+  n_checkBehaviours --> n_checkObligations
+  n_checkObligations --> n_mergeContext
+  n_mergeContext --> n_hasFiles
+  n_hasFiles -->|"yes"| n_analyze
+  n_hasFiles -->|"no"| n_wholeChange
   n_analyze --> n_analyzed
   n_analyzed -->|"yes"| n_checkReview
   n_analyzed -->|"no"| n_notReviewed
   n_checkReview --> n_mergeReview
-  n_mergeReview --> n_hasIssues
+  n_mergeReview --> n_wholeChange
+  n_wholeChange --> n_wholeOk
+  n_wholeOk -->|"yes"| n_checkWhole
+  n_wholeOk -->|"no"| n_noteWholeFailed
+  n_noteWholeFailed --> n_wantSkeptic
+  n_checkWhole --> n_mergeWhole
+  n_mergeWhole --> n_wantSkeptic
+  n_wantSkeptic -->|"yes"| n_skeptic
+  n_wantSkeptic -->|"no"| n_summarize
+  n_skeptic --> n_skepticOk
+  n_skepticOk -->|"yes"| n_applyDispositions
+  n_skepticOk -->|"no"| n_noteSkepticFailed
+  n_applyDispositions --> n_summarize
+  n_noteSkepticFailed --> n_summarize
+  n_summarize --> n_hasIssues
   n_hasIssues -->|"yes"| n_report
   n_hasIssues -->|"no"| n_anyUnverified
-  n_report --> n_mark_issues
+  n_report --> n_issuesSettled
+  n_issuesSettled -->|"yes"| n_mark_issues
+  n_issuesSettled -->|"no"| n_mark_issuesOpen
   n_anyUnverified -->|"yes"| n_unverifiedReport
   n_anyUnverified -->|"no"| n_anyGaps
   n_unverifiedReport --> n_mark_notVerified
   n_anyGaps -->|"yes"| n_partReport
-  n_anyGaps -->|"no"| n_cleanReport
+  n_anyGaps -->|"no"| n_anyOpen
   n_partReport --> n_mark_partlyReviewed
+  n_anyOpen -->|"yes"| n_openReport
+  n_anyOpen -->|"no"| n_cleanReport
+  n_openReport --> n_mark_openQuestions
   n_cleanReport --> n_mark_clean
   n_mark_issues --> n_handoffDoc
+  n_mark_issuesOpen --> n_handoffDoc
   n_mark_notVerified --> n_handoffDoc
   n_mark_partlyReviewed --> n_handoffDoc
+  n_mark_openQuestions --> n_handoffDoc
   n_mark_clean --> n_handoffDoc
   n_handoffDoc --> n_wantPlain
   n_wantPlain -->|"yes"| n_explain
   n_wantPlain -->|"no"| n_endIs_issues
   n_explain --> n_endIs_issues
   n_endIs_issues -->|"yes"| n_issues
-  n_endIs_issues -->|"no"| n_endIs_notVerified
+  n_endIs_issues -->|"no"| n_endIs_issuesOpen
+  n_endIs_issuesOpen -->|"yes"| n_issuesOpen
+  n_endIs_issuesOpen -->|"no"| n_endIs_notVerified
   n_endIs_notVerified -->|"yes"| n_notVerified
   n_endIs_notVerified -->|"no"| n_endIs_partlyReviewed
   n_endIs_partlyReviewed -->|"yes"| n_partlyReviewed
-  n_endIs_partlyReviewed -->|"no"| n_clean
+  n_endIs_partlyReviewed -->|"no"| n_endIs_openQuestions
+  n_endIs_openQuestions -->|"yes"| n_openQuestions
+  n_endIs_openQuestions -->|"no"| n_clean
 ```
 
 <!-- /flow:review -->
