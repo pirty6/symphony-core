@@ -18,7 +18,8 @@
  *   lines(text), linesWith(text, needle) (the lines containing a literal string),
  *   longSentences(text, n) (its sentences of more than n words),
  *   diffLines(diff, pathPattern) (a unified diff's lines for the files whose path matches),
- *   runsNeeded(tolerance, candidates) (clean runs that bound a failure rate, see below).
+ *   runsNeeded(tolerance, candidates) (clean runs that bound a failure rate, see below),
+ *   replace(textOrList, pattern, text) (the first match in each, replaced by the literal text).
  */
 
 export type Expr =
@@ -66,7 +67,8 @@ type FnName =
   | 'linesWith'
   | 'longSentences'
   | 'diffLines'
-  | 'runsNeeded';
+  | 'runsNeeded'
+  | 'replace';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -105,6 +107,7 @@ const FNS: Record<FnName, number> = {
   longSentences: 2,
   diffLines: 2,
   runsNeeded: 2,
+  replace: 3,
 };
 
 /**
@@ -476,6 +479,23 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           if (e.fn === 'heads') return strings(e.fn, x).map((s) => re.exec(s)?.[0] ?? '');
           const hits = strings(e.fn, x).flatMap((s, i) => (re.test(s) ? [i + 1] : []));
           return e.fn === 'count' ? hits.length : hits;
+        }
+        case 'replace': {
+          // replace(findings, "[[](HIGH|MEDIUM|LOW)]", "[LOW]"): the first match in a text, or in
+          // each entry of a list, replaced by literal text (no $ groups).
+          const by = args[2];
+          if (typeof args[1] !== 'string' || args[1].length > 200 || typeof by !== 'string')
+            throw new ExprError(
+              'replace() needs a pattern string (at most 200 characters) and a text',
+            );
+          let re: RegExp;
+          try {
+            re = new RegExp(args[1]);
+          } catch {
+            throw new ExprError(`replace(): invalid pattern ${JSON.stringify(args[1])}`);
+          }
+          const one = (s: string) => s.replace(re, () => by);
+          return typeof x === 'string' ? one(x) : strings('replace', x).map(one);
         }
         case 'unmatched': {
           // unmatched(objections, "^S[0-9]+: "): the entries that do not match the pattern.
