@@ -30,7 +30,21 @@ export interface Isolation {
   readonly dir: string;
   /** Bring the edits back (or save them) and remove the worktree. */
   readonly finish: (outcome: PerformanceOutcome) => Promise<EditsResult>;
+  /** Remove the worktree and everything done in it: nothing comes back. */
+  readonly discard: () => Promise<void>;
 }
+
+/**
+ * Throwaway copies for single steps (an experiment that adds a temporary test): each call makes
+ * a worktree of the workspace as it is now, and `discard` removes it; nothing is brought back.
+ * Undefined when no copy can be made (no repository, or SYMPHONY_WORKTREES=off).
+ */
+export const sandboxFor =
+  (workspace: string, env: NodeJS.ProcessEnv = process.env) =>
+  async (label: string): Promise<{ dir: string; discard: () => Promise<void> } | undefined> => {
+    const iso = await isolateRun(workspace, { label: `try-${label}`, env });
+    return iso && { dir: iso.dir, discard: iso.discard };
+  };
 
 /** Untracked files copied into a worktree at once. */
 const COPY_AT_ONCE = 16;
@@ -170,6 +184,7 @@ export async function isolateRun(
   };
 
   return {
+    discard: remove,
     // git reports real paths (e.g. /private/var on macOS), so compare real to real.
     dir: join(wt, relative(top, await realpath(workspace))),
     finish: async (outcome) => {
