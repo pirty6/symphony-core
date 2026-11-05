@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { PromptBox } from './PromptBox'
 import { describe, expect, it, vi } from 'vitest'
 import { EMPTY_FRAME, reduceFrame } from '@core/replay'
@@ -313,6 +313,31 @@ describe('Library saved runs', () => {
     fireEvent.click(screen.getByTitle('why?'))
     expect(opened).toEqual(['b'])
     localStorage.clear()
+  })
+
+  it('times each run playing now, with an estimate from the past runs of its pattern', () => {
+    vi.useFakeTimers({ now: Date.parse('2026-01-01T00:03:12Z') })
+    try {
+      const live = [
+        { id: 'a', pattern: 'investigate', goal: 'why?', status: 'running', startedAt: '2026-01-01T00:00:00Z' },
+        { id: 'b', pattern: 'fix', goal: 'the bug', status: 'running', startedAt: '2026-01-01T00:03:00Z' },
+      ]
+      const history = [{ ...run('x', false), pattern: 'investigate', durationMs: 420_000 }]
+      render(<Library {...props} saved={history} live={live} />)
+      fireEvent.click(screen.getByRole('button', { name: /Running now/ }))
+      const [a, b] = screen.getAllByTestId('run-timer')
+      expect(a).toHaveTextContent('⏱ 3m 12s · ~4m left')
+      // No finished fix run to go by: the time, no estimate.
+      expect(b).toHaveTextContent('⏱ 12s')
+      expect(b).not.toHaveTextContent('left')
+      act(() => void vi.advanceTimersByTime(5_000))
+      expect(a).toHaveTextContent('⏱ 3m 17s')
+      act(() => void vi.advanceTimersByTime(300_000))
+      expect(a).toHaveTextContent('taking longer than usual')
+    } finally {
+      vi.useRealTimers()
+      localStorage.clear()
+    }
   })
 
   it('remembers the running section open once you open it', () => {

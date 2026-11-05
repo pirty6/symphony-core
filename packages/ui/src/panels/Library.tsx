@@ -3,6 +3,7 @@ import { TERMINAL, type LibraryItem, type LiveRun, type SavedSummary } from '../
 import type { FeatureRow, PaletteKind } from '../lib/model'
 import { Collapsible } from './Collapsible'
 import { PromptBox } from './PromptBox'
+import { RunTimer } from './RunTimer'
 
 const PALETTE: { kind: PaletteKind; icon: string; label: string; hint: string }[] = [
   { kind: 'assessor', icon: '🔍', label: 'Assessor', hint: 'AI, read-only' },
@@ -210,6 +211,7 @@ export function Library(p: Props) {
                   </span>
                 )}
                 {r.id === p.liveId && <span className="tag">on screen</span>}
+                <RunTimer run={r} history={p.saved} />
                 <small>{r.goal}</small>
               </button>
             ))}
