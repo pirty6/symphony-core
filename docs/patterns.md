@@ -15,7 +15,8 @@ Shared building blocks (in [`src/patterns/phases/`](../src/patterns/phases)):
 |---|---|---|
 | Competing hypotheses | investigate, fix, implement | At least 3 rival explanations (2 for a routine problem), one of them "none of these" or "the premise is wrong", before any evidence is read. |
 | Evidence and citations | investigate, fix, implement, review | Every finding cites `path:line` with a quote, or a URL / named source. The engine checks file citations; failures go to `unverified`, not into the answer. |
-| Challenge (debate) | investigate, fix, implement | By complexity: a skeptic (≥2; read-only tools and another model family; at most 5 objections, each naming the finding or quoted claim it attacks; an objection repeated word for word from an earlier round is reported as unresolved instead of researched again, while a reworded one is treated as new), a pragmatist (from complexity `pragmatistFrom`, 3) who triages each one as REAL or THEORETICAL with a cited reason, a second independent investigator (4). REAL objections go back to research, bounded by `maxDebateRounds`; the next answer must resolve, rebut or mark OPEN each one by its tag; those still open are reported. |
+| Gap research (chase) | investigate, review | A research step whose every fact is cited and checked, then merged; the pattern judges again with what it found, bounded. investigate chases its gaps and the objections sent back; review chases the claims it could not settle and the objections its debate sent back. |
+| Challenge (debate) | investigate, fix, implement, review (findings-shaped) | By complexity: a skeptic (≥2; read-only tools and another model family; at most 5 objections, each naming the finding or quoted claim it attacks; an objection repeated word for word from an earlier round is reported as unresolved instead of researched again, while a reworded one is treated as new), a pragmatist (from complexity `pragmatistFrom`, 3) who triages each one as REAL or THEORETICAL with a cited reason, a second independent investigator (4). REAL objections go back to research, bounded by `maxDebateRounds`; the next answer must resolve, rebut or mark OPEN each one by its tag; those still open are reported. |
 | Edit and verify | fix, refactor, implement | An executor edits; the engine captures the diff (an edit that changed nothing is caught), runs the tests and the linter, and triages failures: environment, wrong diagnosis (back to research), or try again, bounded by `maxAttempts`. |
 | PR review | fix, refactor, implement | A reviewer reads the diff, with review's categories and Clean Code ids; each comment cites its line with a quote, and each BLOCKING one names what it bears on (the goal, what it is checked against, tests or Clean Code). Blocking comments go back to editing, bounded; you can accept despite the review. |
 
@@ -630,12 +631,8 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    with its Clean Code id) and test changes that may hide a failure (a test skipped or focused,
    assertions removed, a retry or wait added, a test file deleted). These are leads for the
    reviewers, never findings by themselves.
-3. **Run the checks** (`verify`, off by default because the PR's CI pipeline already runs them; a
-   Features switch): when on, the engine runs the tests, and `lintCommand` if set, on the code as
-   it is. When off, the coverage says the tests and lint were not run here. A project with no
-   test command says "not run", and so does a run for a remote caller (Copilot Studio): no code
-   runs on this machine for them. With `requireChecks` on, a review whose tests did not run here
-   cannot end "Looks good" (changes to documentation only are exempt).
+3. **No tests or lint.** A review never runs them: the change's CI pipeline does. The brief says
+   so. Changed tests are still read, and judged like any code.
 4. **Gather context**, once, over the whole change, before anyone judges it:
    - `claimList`: what `claims` says and `intent` (an optional input: the linked issue or its
      acceptance criteria) asks for, one claim each (`C1 …`);
@@ -678,19 +675,57 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    One verdict per entry, by id and in order: an omitted or doubled entry is sent back. Each
    adverse verdict (PARTIAL, NOT MET, WEAK, UNTESTED, ABSENT, unrelated) must also be a finding,
    which is checked and merged like the others.
-7. **Challenge the findings** (from complexity 2; another model family): one disposition per
-   finding, `KEEP`, `DOWNGRADE MEDIUM|LOW` or `DROP` (a drop quotes the code that refutes it).
-   The engine applies them: dropped findings are kept apart under "Dismissed", downgrades change
-   the severity.
-8. **Report** (issues, or failing tests or lint), what is not settled, and what was not reviewed
-   or not checked. It ends:
+7. **Settle open points** (investigate's gap research, shared): a claim the whole-change step
+   marked UNCLEAR is researched (`maxChaseRounds`, 1), every fact cited and checked into
+   `evidence`, and the whole change is judged again with it.
+8. **Challenge the review** (investigate's debate, shaped for findings):
+   - a **second reviewer** (complexity 4, once; another model family) reviews the whole change from
+     scratch; what it finds is checked and merged, a repeat of a finding left out;
+   - the **skeptic** (from complexity 2, even with no finding: a missed issue is the costliest
+     mistake) proposes one disposition per finding (`KEEP`, `DOWNGRADE MEDIUM|LOW`, `DROP` with
+     the code that refutes it, or `DROP — duplicates F<m>`) and at most 5 objections, each naming a
+     verdict (C2, B1, O3) or a missed issue's `path:line`;
+   - the **pragmatist** (from `pragmatistFrom`, 2 in review; only when the skeptic would drop,
+     downgrade or object) keeps a drop or downgrade it finds theoretical, and triages each
+     objection REAL or THEORETICAL; it can never drop on its own (checked). Seen live: an unchecked
+     skeptic dropped the one real finding of a review.
+
+   The engine applies the dispositions: dropped findings are kept apart under "Dismissed",
+   downgrades change the severity. REAL objections go back to research and the whole change is
+   judged again, bounded by `maxDebateRounds` (2); one raised again word for word is reported as
+   not settled instead of researched again.
+9. **Memory.** What earlier runs found true and that still matches the files (`knownFacts`) is
+   recalled at the start; every judging step reads it as leads to check, never as evidence.
+10. **Review comments** (when there are issues): one per finding, in order, in parts of three,
+   each checked to have every part, so that someone new to the code can understand it and act on
+   it:
+   - **What is wrong**, in plain words, at path:line;
+   - **Example**: for a pattern, regex, parser, boundary or logic bug, 2 or 3 inputs with what
+     the code gives today and what it should give; for a missing test, the test as code; for a
+     design, Clean Code or naming issue, the current code and the suggested code;
+   - **Why it matters**: who or what breaks, when, and how badly;
+   - **How to fix**: the smallest correct change (a snippet when it is short) and the test that
+     would catch it.
+
+   Examples are worked out from the code, not run: a review step has no interpreter and no
+   browser, so it shows no screenshots.
+11. **Report**: a short summary citing the findings by id (the comments hold the detail), what is
+   not settled, and what was not reviewed or not checked. It ends:
    - **Issues reported** (success), or **Issues reported, not all settled** (partial) when
      something is open: an UNCLEAR claim, a context citation that failed, a step that failed (the
-     skeptic or the whole-change step), or tests required and not run;
+     skeptic or the whole-change step), or an objection the debate could not settle;
    - with nothing found: **Could not verify** (partial) when findings' quotes are missing from this
      checkout; **Reviewed in part** (partial) when files were over the cap or not read whole;
      **Not settled** (partial) when something is open, or the skeptic dropped every finding;
-     **Looks good** (success) only otherwise.
+     **Looks good** (success) only otherwise. An objection the debate could not settle counts
+     as something open.
+
+**Hand-off to investigate** (`investigateOpen`, off by default; a Features switch, since an
+investigation costs more than the review): a review that ends with something not settled
+(**Not settled**, or **Issues reported, not all settled**) puts an investigate run in front of
+the chain. Its question lists the open points, then the review's brief. For a pull request, the
+hint says to read its change first: the investigation plays in your workspace, not in the PR's
+checkout.
 
 Known limits:
 - Citations to URLs or PR numbers are not checked.
@@ -700,7 +735,6 @@ Known limits:
   whole-change step cannot leave one out.
 - The Clean Code rules and the 66 rule ids of ch. 17 are checked against the book; their glosses
   are our own words.
-- `requireChecks` counts only the tests run here: the PR's CI status is not read.
 
 **Measuring it.** `npm run cli -- eval --task review-…` runs the seeded review tasks. Each plants
 one defect: a fix in the wrong place, an untested behaviour, a loosened assertion, a copied helper
@@ -711,7 +745,7 @@ category and the false flags (`review-clean` is the false-flag control).
 **Two versions of the result.** As in investigate (step 11), the result starts with a short version
 for people in Simplified Technical English (`summary`, checked by the engine; the `plainSummary`
 switch turns it off), then a brief for an AI agent written by the engine from the record
-(`handoff`): the status, instructions (fix HIGH first, re-read each line, run the tests), the checked findings, what is not settled, what the skeptic dismissed, what not to rely on, what the change says it does, the verdicts per claim, behaviour and required change, the engine's scan, what each reviewer examined, the coverage, failing test or lint output, and the review as written. The run marks which end it reached, writes both, then ends there; a chained
+(`handoff`): the status, instructions (fix HIGH first, re-read each line, run the tests), the checked findings, what is not settled, what the skeptic dismissed, what not to rely on, what the change says it does, the verdicts per claim, behaviour and required change, the engine's scan, what each reviewer examined, the review comments in full, the coverage, and the review as written. The run marks which end it reached, writes both, then ends there; a chained
 run gets the brief whole. The people's version starts each finding with its location
 (`` `src/app.ts:42` — … ``), so you can find the line. The engine sends the summary back when a
 finding's location is missing.
@@ -728,11 +762,8 @@ flowchart TD
   n_collect["🤖 Collect diff"]
   n_hasDiff{"Anything changed?"}
   n_capFiles["Files to review"]
+  n_recall[/"🔧 Recall earlier runs"/]
   n_scanDiff[/"🔧 Scan the diff"/]
-  n_verifyOn{"Run the checks?"}
-  n_runTests[/"🔧 Run tests"/]
-  n_hasLint{"Lint?"}
-  n_runLint[/"🔧 Run lint"/]
   n_gatherContext["🤖 Gather context"]
   n_contextOk{"Context gathered?"}
   n_noteContextFailed["Note it"]
@@ -750,13 +781,9 @@ flowchart TD
   n_noteWholeFailed["Note it"]
   n_checkWhole[/"🔧 Check citations"/]
   n_mergeWhole["Record its issues"]
-  n_wantSkeptic{"Challenge? (≥2)"}
-  n_skeptic["🤖 Challenge findings"]
-  n_skepticOk{"Challenged?"}
-  n_noteSkepticFailed["Note it"]
-  n_applyDispositions["Apply the challenge"]
   n_summarize["What is settled"]
   n_hasIssues{"Issues?"}
+  n_comment["🤖 Write review comments ×N"]
   n_report["🤖 Write report"]
   n_issuesSettled{"All settled?"}
   n_anyUnverified{"Findings unverified?"}
@@ -789,6 +816,8 @@ flowchart TD
   n_endIs_notVerified{"Could not verify?"}
   n_endIs_partlyReviewed{"Reviewed in part?"}
   n_endIs_openQuestions{"Not settled?"}
+  n_chasePhase[["Settle open points · 5 steps"]]
+  n_debatePhase[["Challenge the review · 16 steps"]]
   n_start --> n_prInfo
   n_prInfo --> n_prFetched
   n_prFetched -->|"yes"| n_collect
@@ -798,14 +827,9 @@ flowchart TD
   n_hasDiff -->|"yes"| n_capFiles
   n_hasDiff -->|"no"| n_noDiffReport
   n_noDiffReport --> n_noDiff
-  n_capFiles --> n_scanDiff
-  n_scanDiff --> n_verifyOn
-  n_verifyOn -->|"yes"| n_runTests
-  n_verifyOn -->|"no"| n_gatherContext
-  n_runTests --> n_hasLint
-  n_hasLint -->|"yes"| n_runLint
-  n_hasLint -->|"no"| n_gatherContext
-  n_runLint --> n_gatherContext
+  n_capFiles --> n_recall
+  n_recall --> n_scanDiff
+  n_scanDiff --> n_gatherContext
   n_gatherContext --> n_contextOk
   n_contextOk -->|"yes"| n_checkContext
   n_contextOk -->|"no"| n_noteContextFailed
@@ -824,18 +848,16 @@ flowchart TD
   n_wholeChange --> n_wholeOk
   n_wholeOk -->|"yes"| n_checkWhole
   n_wholeOk -->|"no"| n_noteWholeFailed
-  n_noteWholeFailed --> n_wantSkeptic
+  n_noteWholeFailed --> n_debatePhase
   n_checkWhole --> n_mergeWhole
-  n_mergeWhole --> n_wantSkeptic
-  n_wantSkeptic -->|"yes"| n_skeptic
-  n_wantSkeptic -->|"no"| n_summarize
-  n_skeptic --> n_skepticOk
-  n_skepticOk -->|"yes"| n_applyDispositions
-  n_skepticOk -->|"no"| n_noteSkepticFailed
-  n_applyDispositions --> n_summarize
-  n_noteSkepticFailed --> n_summarize
+  n_mergeWhole --> n_chasePhase
+  n_chasePhase --> n_debatePhase
+  n_chasePhase -.-> n_wholeChange
+  n_debatePhase --> n_summarize
+  n_debatePhase -.-> n_chasePhase
   n_summarize --> n_hasIssues
-  n_hasIssues -->|"yes"| n_report
+  n_hasIssues -->|"yes"| n_comment
+  n_comment --> n_report
   n_hasIssues -->|"no"| n_anyUnverified
   n_report --> n_issuesSettled
   n_issuesSettled -->|"yes"| n_mark_issues
@@ -871,6 +893,11 @@ flowchart TD
   n_endIs_openQuestions -->|"yes"| n_openQuestions
   n_endIs_openQuestions -->|"no"| n_clean
 ```
+
+| Phase | What it does | Steps |
+| --- | --- | --- |
+| Settle open points | investigate's gap research: unclear claims and objections, then judged again | What to settle → Research them? → Settle open points → Check citations → Record what was found |
+| Challenge the review | A second reviewer (4), the skeptic (≥2) and the pragmatist (≥pragmatistFrom), as in investigate | Second reviewer? (4) → Second reviewer → Check citations → Record its issues → Challenge? (≥2) → Skeptic → Challenged? → Note it → Pragmatist? (≥pragmatistFrom) → Pragmatist → Take the challenge → Apply the challenge → Real objections? → Research them? (rounds left) → Research objections → Report open objections |
 
 <!-- /flow:review -->
 

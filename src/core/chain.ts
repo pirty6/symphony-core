@@ -20,14 +20,50 @@ export type ChainStep =
 export const stepPattern = (step: ChainStep): string =>
   typeof step === 'string' ? step : step.pattern;
 
-/** Patterns whose result is a queue of runs to play next. */
-export const handsOnQueue = (score: ExecutableScore): boolean => score.pattern === 'backlog';
+/**
+ * Runs that may put runs of their own in front of the chain: a backlog (its queue), and a review
+ * asked to hand what it could not settle to investigate (`investigateOpen`).
+ */
+export const handsOnQueue = (score: ExecutableScore): boolean =>
+  score.pattern === 'backlog' ||
+  (score.pattern === 'review' && score.initialState.investigateOpen === true);
+
+/** The ends of a review that leave something not settled. */
+const REVIEW_OPEN = new Set(['openQuestions', 'issuesOpen']);
+
+/** What a review could not settle, as a question for investigate, with the review's brief. */
+function reviewFollowUp(score: ExecutableScore, performance: Performance): ChainStep[] {
+  const s = performance.finalState;
+  if (s.investigateOpen !== true || !REVIEW_OPEN.has(String(s.reviewStatus))) return [];
+  const list = (k: string) =>
+    Array.isArray(s[k])
+      ? (s[k] as unknown[]).filter((x): x is string => typeof x === 'string')
+      : [];
+  const open = [...list('openItems'), ...list('adverseVerdicts')];
+  if (open.length === 0) return [];
+  const brief = typeof s.handoff === 'string' ? s.handoff.trim() : '';
+  const goal = [
+    `Settle what a code review of ${String(s.target ?? score.goal)} left open:`,
+    ...open.map((o) => `- ${o}`),
+    ...(brief ? ['', '## The review, as handed on', '', cut(brief, HANDOFF_CHARS)] : []),
+  ].join('\n');
+  return [
+    {
+      pattern: 'investigate',
+      goal,
+      context: {
+        hint: `From a code review of ${String(s.target ?? score.goal)}: answer each open point from the code, citing it. If that is a pull request, read its change (git or gh) first: this workspace may hold other code.`,
+      },
+    },
+  ];
+}
 
 /**
  * Steps a run puts in front of the rest of its chain: a successful backlog run
  * plays `runPattern` once per entry of `queue`, each with `testCommand` if set.
  */
 export function followUps(score: ExecutableScore, performance: Performance): ChainStep[] {
+  if (score.pattern === 'review') return reviewFollowUp(score, performance);
   if (!handsOnQueue(score) || performance.outcome !== 'success') return [];
   const s = performance.finalState;
   const pattern = typeof s.runPattern === 'string' && s.runPattern.trim();

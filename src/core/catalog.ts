@@ -150,10 +150,10 @@ export const FEATURES: readonly Feature[] = [
       'On by default: the result starts with a short version for people, in Simplified Technical English (short sentences, common words, no citation ids), written from the cited answer. The full version for AI agents is always there. Off saves one model call.',
   },
   {
-    field: 'verify',
-    label: 'Run the tests (review)',
+    field: 'investigateOpen',
+    label: 'Investigate what a review leaves open',
     description:
-      "Off by default: the PR's CI pipeline already runs the tests and lint. On: the engine runs the tests (and the lint command, if set) on the reviewed code, and failing tests are an issue.",
+      'Off by default (an investigation costs more than the review): a review that ends with something not settled hands those points, with its brief, to investigate, which plays next.',
   },
   {
     field: 'narrowRead',

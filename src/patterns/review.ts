@@ -1,12 +1,16 @@
 import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
 import { TEST_PATH } from './phases/stability.js';
 import { bullets, READER_STATE, readers } from './phases/readers.js';
+import { chaseSteps } from './phases/chase.js';
+import { DEBATE_STATE, MAX_OBJECTIONS } from './phases/debate.js';
 import {
   checkFindings,
   CITE_BY_ID,
   citesFindings,
   EVIDENCE_STATE,
-  MERGE_FINDINGS,
+  MEMORY_NOTE,
+  MEMORY_STATE,
+  recallMemory,
 } from './phases/evidence.js';
 import {
   attest,
@@ -28,9 +32,10 @@ const REVIEW_HANDOFF = [
   'if(empty(hint), "", "\nFocus asked for: " + hint)',
   'if(empty(intent), "", "\nWhat the change is for: " + intent)',
   '"\n\n## Status\n\n" + if(reviewStatus == "issues", "Issues found: see Findings.", if(reviewStatus == "issuesOpen", "Issues found, and some things are not settled: see Findings and Not settled.", if(reviewStatus == "notVerified", "Not verified: the findings\' quotes are not in this checkout, so nothing could be confirmed.", if(reviewStatus == "partlyReviewed", "Reviewed in part: see Coverage for what was not reviewed or not checked.", if(reviewStatus == "openQuestions", "No issue found, but some things are not settled: see Not settled.", "Looks good: every changed file was reviewed, every claim, behaviour and required change checked, and no issue found.")))))',
-  '"\nTests: " + if(!verify, "not run here (verify is off: CI runs them)", if(testsPassed, "passed", "FAILED")) + if(empty(lintCommand), "", "; lint: " + if(lintPassed, "passed", "FAILED"))',
+  '"\nTests and lint: not run by a review (the change\'s CI runs them)."',
   '"\n\n## Instructions for the next agent\n\n- Fix the findings HIGH first. Before you change a line, read it again: the code may have changed since this review.\n- Run the tests after each change; a failing test the review reported must pass.\n- Settle the Not settled entries before you call the change done.\n- Do not act on Dismissed or Do not rely on entries: use them only as leads to check.\n- Files the coverage lists as not reviewed are not known to be good: review them before you rely on them."',
   `"\n\n## Findings (checked against the code)\n\n" + ${bullets('findings')}`,
+  `"\n\n## Review comments: what is wrong, an example, why it matters, how to fix\n\n" + if(len(comments) == 0, "none", join(comments, "\n\n"))`,
   `"\n\n## Not settled\n\n" + ${bullets('openItems + adverseVerdicts')}`,
   `"\n\n## Dismissed by the skeptic\n\n" + ${bullets('dismissals')}`,
   `"\n\n## Do not rely on: findings that could not be verified\n\n" + ${bullets('unverified')}`,
@@ -38,11 +43,10 @@ const REVIEW_HANDOFF = [
   `"\n\n## Claims, one by one\n\n" + ${bullets('claimVerdicts')}`,
   `"\n\n## Changed behaviour and its tests\n\n" + ${bullets('testVerdicts')}`,
   `"\n\n## Changes this one requires\n\n" + ${bullets('obligationVerdicts')}`,
+  `"\n\n## Facts found while settling open points\n\n" + ${bullets('evidence')}`,
   `"\n\n## Engine scan of the diff (leads, not findings)\n\n" + ${bullets('smellHints + maskingFlags')}`,
   `"\n\n## What the reviewers examined\n\n" + ${bullets('attestations')}`,
   '"\n\n## Coverage\n\n" + if(empty(coverage), "Every changed file was reviewed.", coverage)',
-  'if(!testsPassed, "\n\n## Test output\n\n" + testOutput, "")',
-  'if(!lintPassed, "\n\n## Lint output\n\n" + lintOutput, "")',
   '"\n\n## The review as written\n\n" + report',
 ].join(' + ');
 
@@ -52,12 +56,11 @@ const READERS = readers({
   sources: [
     'report',
     'findings',
+    'comments',
     'openItems',
     'adverseVerdicts',
     'dismissals',
     'coverage',
-    'testsPassed',
-    'lintPassed',
     'claims',
     'unverified',
   ],
@@ -91,6 +94,71 @@ const PLACE = '^[^ ]+:[0-9]+(-[0-9]+)? — [[][A-Z]+]';
 const SEVERITY = '[[](HIGH|MEDIUM|LOW)]';
 /** Files that are only documentation: no test needs to run for them. */
 const DOC_FILE = '[.](md|mdx|txt|rst|adoc)$';
+
+/** A review comment: the finding's id, then each part, in order (`[^]` spans lines). */
+const COMMENT_SHAPE =
+  '^F[0-9]+ [^]*What is wrong: [^]*Example: [^]*Why it matters: [^]*How to fix: ';
+
+/** How a comment explains a finding so that anyone can understand it and act on it. */
+const COMMENT_DIRECTIVE = `For each finding of \`findings\`, in order, write one \`comments\` entry that someone new to this codebase can understand and act on. Read the code it cites, and what calls it, first (read-only). Use this shape, with Markdown code blocks for code:
+
+F<n> <the problem in a few words>
+What is wrong: what the code does, in plain words, at path:line.
+Example: make it concrete.
+- A pattern, regex, parser, boundary or logic bug: 2 or 3 inputs, what the code gives today and what it should give, e.g. \`[0-9]+\` on "12a": matches today (it finds "12"), expected: no match, since the whole value must be a number; on "7": matches, as expected. Fix: \`^[0-9]+$\`.
+- A missing or weak test: the test that is missing, as code.
+- A design, Clean Code or naming issue: the current code, then the suggested code.
+- A missing change: what must change, and where.
+Why it matters: who or what breaks, when, and how badly (why the severity).
+How to fix: the smallest correct change (a short code snippet when it fits in a few lines), and the test that would catch it.
+
+Work each example out from the code; never claim you ran it. Plain words, short sentences; name things by their name in the code.`;
+
+/**
+ * Record checked issues with ids. Unlike investigate's findings, a review's can be dismissed, so
+ * ids go on from every one made (kept or dismissed: never reused), and one already dismissed is
+ * not recorded again.
+ */
+const mergeIssues = (field: string) => [
+  {
+    field: 'findings',
+    expr: `findings + numbered(without(unique(${field}), unnumbered(findings) + unnumbered(dismissed)), len(findings) + len(dismissed) + 1)`,
+  },
+  { field: 'unverified', expr: 'unverified + rejectedFindings' },
+  { field: 'findingsBrief', expr: 'brief(findings, 240)' },
+];
+
+/** What an objection attacks: a verdict by its id (C2, B1, O3), or a missed issue at path:line. */
+const OBJECTION_TARGET = '(^|[^A-Za-z0-9])[CBO][0-9]+([^0-9]|$)|[^ :]+:[0-9]+';
+
+/** Investigate's gap research (phases/chase), aimed at what the review could not settle. */
+const REVIEW_CHASE = chaseSteps({
+  ids: { chase: 'chase', check: 'checkChase', merge: 'mergeChase' },
+  label: 'Settle open points',
+  mergeLabel: 'Record what was found',
+  directive: `Settle each entry of \`chaseItems\` (a claim the review could not settle, or a reviewer's objection to the review) by reading the change (git diff \`diffRange\`, or git diff HEAD when it is empty) and the code around it: its callers, tests and docs (read-only). Record every command or read in \`queries\`, and every fact you find, for or against, as "path:line — fact \`exact quote\`" in \`chaseNotes\`. If nothing settles an entry, add a note saying where you looked.${MEMORY_NOTE}`,
+  reads: [
+    'target',
+    'intent',
+    'claims',
+    'claimList',
+    'chaseItems',
+    'diffRange',
+    'diff',
+    'findingsBrief',
+    'context',
+    'evidence',
+    'knownFacts',
+  ],
+  notes: 'chaseNotes',
+  bound: { maxVisits: 4, visitsFrom: 'maxChaseRounds + maxDebateRounds' },
+  merge: [
+    // Facts, not issues: they settle verdicts, and a fact that did not check is left out.
+    { field: 'evidence', expr: 'unique(evidence + chaseNotes)' },
+    { field: 'chaseRounds', expr: 'chaseRounds + 1' },
+    { field: 'objectionGaps', expr: '[]' },
+  ],
+});
 
 /** An evidence.check of an inventory: what fails goes to its own list, not lost. */
 const checkInventory = (id: string, field: string, rejected: string): ScoreNode => ({
@@ -232,35 +300,6 @@ export const review: Pattern = {
     },
     { name: 'filesPerAgent', type: 'number', initial: 3 },
     {
-      name: 'verify',
-      type: 'boolean',
-      // Off: the PR's pipeline already runs the tests and lint, and running them again here is slow.
-      initial: false,
-      description: 'The engine runs the tests (and lintCommand) on the code as it is',
-    },
-    {
-      name: 'requireChecks',
-      type: 'boolean',
-      initial: false,
-      description:
-        'A review whose tests did not run here (verify off, or not run) cannot end "Looks good"; changes to documentation only are exempt',
-    },
-    {
-      name: 'testCommand',
-      type: 'string',
-      description: "Command that runs the tests (empty: the project's test script)",
-    },
-    {
-      name: 'lintCommand',
-      type: 'string',
-      description: 'Optional lint or typecheck command that must also pass',
-    },
-    { name: 'testTimeoutMs', type: 'number', initial: 600_000, min: 1000 },
-    { name: 'testsPassed', type: 'boolean', initial: true },
-    { name: 'testOutput', type: 'string', description: 'Test output, run by the engine' },
-    { name: 'lintPassed', type: 'boolean', initial: true },
-    { name: 'lintOutput', type: 'string' },
-    {
       name: 'claimList',
       type: 'string[]',
       description: 'What the change claims to do (and intent asks for), one per entry: "C1 …"',
@@ -347,6 +386,65 @@ export const review: Pattern = {
       description: 'Steps that answered "failed": what they check was not checked',
     },
     ...EVIDENCE_STATE,
+    ...MEMORY_STATE,
+    ...DEBATE_STATE.filter((f) =>
+      [
+        'objections',
+        'objectionTriage',
+        'realObjections',
+        'debateRounds',
+        'maxDebateRounds',
+        'unresolvedObjections',
+      ].includes(f.name),
+    ),
+    {
+      name: 'pragmatistFrom',
+      type: 'number',
+      // 2, not investigate's 3: seen live, an unchecked skeptic dropped the one real finding of a
+      // review. It plays only when the skeptic would drop, downgrade or object, and has no tools.
+      initial: 2,
+      description: 'The complexity from which a pragmatist triages what the skeptic would change',
+    },
+    {
+      name: 'pastObjections',
+      type: 'string[]',
+      description: 'Objections raised in earlier rounds',
+    },
+    { name: 'debateLog', type: 'string[]', description: 'One line per debate round' },
+    {
+      name: 'proposedDispositions',
+      type: 'string[]',
+      description: 'What the skeptic would do with each finding, before the pragmatist',
+    },
+    {
+      name: 'chaseItems',
+      type: 'string[]',
+      description: 'What research is to settle: unclear claims, objections sent back',
+    },
+    { name: 'objectionGaps', type: 'string[]', description: 'Objections the debate sent back' },
+    { name: 'chaseNotes', type: 'string[]', description: 'Facts research found this round' },
+    {
+      name: 'evidence',
+      type: 'string[]',
+      description: 'Checked facts research found on what was unclear or objected to',
+    },
+    { name: 'queries', type: 'string[]', description: 'What research ran or read' },
+    { name: 'chaseRounds', type: 'number' },
+    {
+      name: 'maxChaseRounds',
+      type: 'number',
+      initial: 1,
+      min: 0,
+      description: 'Research rounds for unclear claims (objections bring their own)',
+    },
+    { name: 'secondReviewed', type: 'boolean' },
+    {
+      name: 'investigateOpen',
+      type: 'boolean',
+      initial: false,
+      description:
+        'A review that ends with something not settled hands it to investigate, which plays next',
+    },
     {
       name: 'adverseVerdicts',
       type: 'string[]',
@@ -362,9 +460,47 @@ export const review: Pattern = {
       type: 'string',
       description: 'What was not reviewed or not checked, and why',
     },
+    {
+      name: 'comments',
+      type: 'string[]',
+      description: 'One per finding: what is wrong, an example, why it matters and how to fix it',
+    },
     { name: 'report', type: 'string', description: 'The review, by severity' },
     { name: 'reviewStatus', type: 'string', description: 'The end reached (by the engine)' },
     ...READER_STATE,
+  ],
+  // The studio and the docs draw each as one box (open it to see its steps).
+  groups: [
+    {
+      id: 'chasePhase',
+      label: 'Settle open points',
+      description: "investigate's gap research: unclear claims and objections, then judged again",
+      nodes: ['aimChase', 'wantChase', 'chase', 'checkChase', 'mergeChase'],
+    },
+    {
+      id: 'debatePhase',
+      label: 'Challenge the review',
+      description:
+        'A second reviewer (4), the skeptic (≥2) and the pragmatist (≥pragmatistFrom), as in investigate',
+      nodes: [
+        'useSecond',
+        'second',
+        'checkSecond',
+        'mergeSecond',
+        'wantSkeptic',
+        'skeptic',
+        'skepticOk',
+        'noteSkepticFailed',
+        'usePragmatist',
+        'pragmatist',
+        'takeAll',
+        'applyDispositions',
+        'anyReal',
+        'roundsLeft',
+        'reopen',
+        'keepOpen',
+      ],
+    },
   ],
   start: 'start',
   nodes: [
@@ -440,6 +576,7 @@ export const review: Pattern = {
         { field: 'diffRange', expr: 'if(empty(prBase), diffRange, prBase + "..HEAD")' },
       ],
     },
+    recallMemory('recall', 'diffSummary'),
     {
       id: 'scanDiff',
       kind: 'tool',
@@ -447,27 +584,6 @@ export const review: Pattern = {
       tool: 'diff.scan',
       inputs: { range: 'diffRange' },
       output: { diff: 'diff', smells: 'smellHints', masking: 'maskingFlags', error: 'diffError' },
-    },
-    { id: 'verifyOn', kind: 'condition', label: 'Run the checks?', expression: 'verify' },
-    {
-      id: 'runTests',
-      kind: 'tool',
-      label: 'Run tests',
-      tool: 'tests.run',
-      // Fresh every time (a cached timeout or flaky failure is no verdict); no test command
-      // is "not run".
-      args: { optional: true },
-      inputs: { command: 'testCommand', timeoutMs: 'testTimeoutMs' },
-      output: { passed: 'testsPassed', output: 'testOutput' },
-    },
-    { id: 'hasLint', kind: 'condition', label: 'Lint?', expression: '!empty(lintCommand)' },
-    {
-      id: 'runLint',
-      kind: 'tool',
-      label: 'Run lint',
-      tool: 'tests.run',
-      inputs: { command: 'lintCommand', timeoutMs: 'testTimeoutMs' },
-      output: { passed: 'lintPassed', output: 'lintOutput' },
     },
     {
       id: 'gatherContext',
@@ -479,7 +595,7 @@ export const review: Pattern = {
 - \`context\`: for each file of \`files\`, 1 to 3 entries of what a reviewer should compare it with, each citing that code or rule (not the changed file) and naming the changed file it is for: "path:line — [CONVENTION|SIMILAR|CALLER] (for: changed path) why \`exact quote\`", e.g. "src/api.ts:40 — [SIMILAR] (for: src/client.ts) fetchUser already retries this way \`await retry(() => get(url))\`" or "AGENTS.md:3 — [CONVENTION] (for: db/schema.sql) a schema change needs a migration \`needs a new numbered migration\`". CONVENTION: a rule in AGENTS.md, the docs or a linter config; SIMILAR: existing code that does similar work (how the codebase already does it); CALLER: code that calls what changed. For each file of \`deleted\`, give the CALLER entries that still use what it deleted, "(for: the deleted path)" (none when nothing does).
 - \`behaviours\`: each behaviour the change adds or changes: "B1 path:line — the behaviour \`exact quote\`", path:line at the changed line.
 - \`obligations\`: each other change this codebase requires for this one to be complete, and only those: one a rule asks for (AGENTS.md, the docs, a linter), one every similar change includes (cite such a change), or one without which code breaks (a caller of a renamed or removed name). Not what would merely be nice: a new function nobody calls yet, docs or tooling the project does not have. Write each as "O1 [CALLER|MIGRATION|CONFIG|DOCS|ERRPATH] path:line — what must exist \`exact quote\`". e.g. "O1 [CALLER] src/greet.js:1 — greet.js must import the new name \`import { fullName }\`". path:line is the changed line (or a line that still uses deleted code) that creates the need; name what must exist in words, without a line number (it may not exist).
-Every path:line must be a real line in this workspace with its quote: code the change deletes is not here, so cite the line that still uses it.`,
+Every path:line must be a real line in this workspace with its quote: code the change deletes is not here, so cite the line that still uses it.${MEMORY_NOTE}`,
       reads: [
         'target',
         'hint',
@@ -490,6 +606,7 @@ Every path:line must be a real line in this workspace with its quote: code the c
         'diff',
         'files',
         'deleted',
+        'knownFacts',
       ],
       writes: ['claimList', 'context', 'behaviours', 'obligations'],
       cites: 'context',
@@ -570,8 +687,8 @@ Every path:line must be a real line in this workspace with its quote: code the c
       reviewsCode: true,
       directive: `Review the changes to the files in \`files\` (yours only) for \`target\`: each file is given to you whole at the end of this prompt; read its diff hunks (git diff \`diffRange\`, or git diff HEAD when it is empty) against it, and the code it calls and is called by where an issue depends on it. \`context\` lists the conventions, similar code and callers to compare it with; \`behaviours\` and \`obligations\` what the change does and needs; \`smellHints\` and \`maskingFlags\` are leads from the engine's scan of the diff: check each, and report only real issues. Look for, ignoring formatting:
 ${categoryBullets()}
-\`testOutput\` and \`lintOutput\` are the engine's runs on this code: a failure there that your files cause is a finding at its cause. Write one issue per \`newFindings\` entry as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", only for issues you can point to. List in \`reviewed\` every file of \`files\` you read. An empty \`newFindings\` is right when the changes are sound. If you could not read the changes at all, say so with verdict outcome "failed" (\`reviewed\` may then be empty).
-${ATTESTATION_DIRECTIVE}`,
+Write one issue per \`newFindings\` entry as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", only for issues you can point to. List in \`reviewed\` every file of \`files\` you read. An empty \`newFindings\` is right when the changes are sound. If you could not read the changes at all, say so with verdict outcome "failed" (\`reviewed\` may then be empty).
+${ATTESTATION_DIRECTIVE}${MEMORY_NOTE}`,
       reads: [
         'target',
         'hint',
@@ -581,13 +698,12 @@ ${ATTESTATION_DIRECTIVE}`,
         'claims',
         'files',
         'changedTests',
-        'testOutput',
-        'lintOutput',
         'context',
         'behaviours',
         'obligations',
         'smellHints',
         'maskingFlags',
+        'knownFacts',
       ],
       writes: ['newFindings', 'reviewed', 'attestations'],
       cites: 'newFindings',
@@ -614,7 +730,12 @@ ${ATTESTATION_DIRECTIVE}`,
       expression: 'verdict.outcome != "failed" || len(reviewed) > 0',
     },
     checkFindings('checkReview'),
-    { id: 'mergeReview', kind: 'compute', label: 'Record issues', assign: [...MERGE_FINDINGS] },
+    {
+      id: 'mergeReview',
+      kind: 'compute',
+      label: 'Record issues',
+      assign: mergeIssues('newFindings'),
+    },
     {
       id: 'wholeChange',
       kind: 'agent',
@@ -623,7 +744,10 @@ ${ATTESTATION_DIRECTIVE}`,
       reviewsCode: true,
       // It settles the claims and the approach: a step up from the per-file reviewers.
       complexityShift: 1,
-      directive: `You see the whole change at once (\`diff\`; read more with git diff \`diffRange\`, or git diff HEAD when it is empty, and the workspace, read-only). The per-file reviewers' checked findings are in \`findingsBrief\`: do not repeat them.
+      // Again after each research round: what was found may settle a verdict.
+      maxVisits: 4,
+      visitsFrom: 'maxChaseRounds + maxDebateRounds + 1',
+      directive: `You see the whole change at once (\`diff\`; read more with git diff \`diffRange\`, or git diff HEAD when it is empty, and the workspace, read-only). The per-file reviewers' checked findings are in \`findingsBrief\`: do not repeat them. \`evidence\` holds checked facts research found on what was unclear or objected to before: settle verdicts with them.${MEMORY_NOTE}
 1. Claims: for each entry of \`claimList\`, in order, write a \`claimVerdicts\` entry "C<n> MET|PARTIAL|NOT MET|UNCLEAR — path:line — why".
 2. Approach: is this the right place and the right approach? Compare it with the SIMILAR and CONVENTION entries of \`context\`; name one alternative and why it is worse; say which callers (CALLER entries) or behaviours could regress. A wrong approach or a likely regression is a finding (BUG or DESIGN).
 3. Tests: for each entry of \`behaviours\`, in order, write a \`testVerdicts\` entry "B<n> TESTED|WEAK|UNTESTED|NA — the test path:line that checks it, or why". WEAK: a test runs it but would pass without the change. Judge the tests' quality with the T and FIRST rules.
@@ -648,7 +772,8 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         'changedTests',
         'smellHints',
         'maskingFlags',
-        'testOutput',
+        'evidence',
+        'knownFacts',
       ],
       writes: [
         'wholeFindings',
@@ -721,47 +846,139 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
           field: 'wholeFindings',
           expr: `pick(wholeFindings, outside(heads(wholeFindings, "${PLACE}"), heads(unnumbered(findings), "${PLACE}")))`,
         },
+        ...mergeIssues('wholeFindings'),
+      ],
+    },
+    {
+      id: 'aimChase',
+      kind: 'compute',
+      label: 'What to settle',
+      // The claims the whole-change step could not settle, and the objections the debate sent back.
+      assign: [
         {
-          field: 'findings',
-          expr: 'findings + numbered(without(unique(wholeFindings), unnumbered(findings)), len(findings) + 1)',
+          field: 'chaseItems',
+          expr: 'pick(claimVerdicts, positions(claimVerdicts, "^C[0-9]+ UNCLEAR ")) + objectionGaps',
         },
-        { field: 'unverified', expr: 'unverified + rejectedFindings' },
-        { field: 'findingsBrief', expr: 'brief(findings, 240)' },
+      ],
+    },
+    {
+      id: 'wantChase',
+      kind: 'condition',
+      label: 'Research them?',
+      // Unclear claims get maxChaseRounds; objections the debate reopens bring their own round.
+      expression: 'len(chaseItems) > 0 && (chaseRounds < maxChaseRounds || len(objectionGaps) > 0)',
+    },
+    REVIEW_CHASE.chase,
+    REVIEW_CHASE.check,
+    REVIEW_CHASE.merge,
+    {
+      id: 'useSecond',
+      kind: 'condition',
+      label: 'Second reviewer? (4)',
+      expression: 'complexity >= 4 && !secondReviewed',
+    },
+    {
+      id: 'second',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Second reviewer',
+      reviewsCode: true,
+      // Another model family: its mistakes are less likely to be the first reviewers'.
+      otherModel: true,
+      complexityShift: 1,
+      directive: `You are an INDEPENDENT second reviewer. Review the whole change to \`target\` yourself, from scratch: read the diff (git diff \`diffRange\`, or git diff HEAD when it is empty) and the code around it (read-only), without the first reviewers' findings. Compare it with \`context\`. Write each issue you find in \`newFindings\` as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", CATEGORY one of ${CATEGORIES.split('|').join(', ')}. An empty list is right when the change is sound.${MEMORY_NOTE}`,
+      reads: [
+        'target',
+        'intent',
+        'claims',
+        'diffSummary',
+        'diffRange',
+        'diff',
+        'files',
+        'deleted',
+        'context',
+        'knownFacts',
+      ],
+      writes: ['newFindings'],
+      cites: 'newFindings',
+      retries: 2,
+      checks: findingChecks('newFindings').map(orFailed),
+    },
+    checkFindings('checkSecond'),
+    {
+      id: 'mergeSecond',
+      kind: 'compute',
+      label: 'Record its issues',
+      assign: [
+        // One at the same place, of the same category, is already found.
+        {
+          field: 'newFindings',
+          expr: `pick(newFindings, outside(heads(newFindings, "${PLACE}"), heads(unnumbered(findings), "${PLACE}")))`,
+        },
+        ...mergeIssues('newFindings'),
+        { field: 'secondReviewed', expr: 'true' },
       ],
     },
     {
       id: 'wantSkeptic',
       kind: 'condition',
       label: 'Challenge? (≥2)',
-      // complexity 0 is "auto": the run's default tier (2), so the skeptic plays.
-      expression: 'complexity != 1 && len(findings) > 0',
+      // complexity 0 is "auto": the run's default tier (2), so the skeptic plays. A review with
+      // no finding is challenged too: a missed issue is the costliest mistake.
+      expression: 'complexity != 1',
     },
     {
       id: 'skeptic',
       kind: 'agent',
       role: 'assessor',
-      label: 'Challenge findings',
+      label: 'Skeptic',
       // Another model family than the reviewers': its blind spots are less likely the same.
       otherModel: true,
-      directive: `Challenge each finding in \`findings\` as a skeptical second reviewer: read the code it cites, and the code around it, in the workspace (read-only). Write one \`dispositions\` entry per finding, in the order of \`findings\`: "F<n> KEEP — why it holds", "F<n> DOWNGRADE MEDIUM — why it is less severe" (or DOWNGRADE LOW), "F<n> DROP — why it is wrong, with the code that shows it \`exact quote\`", or "F<n> DROP — duplicates F<m>" when an earlier finding already says the same problem (keep the clearest one). Also DROP a finding that asks for something nothing in the codebase requires (no rule, no similar change, no code that breaks without it), quoting the code or rule it misreads. Drop a finding only when the code refutes it, it repeats another, or nothing requires what it asks; when unsure, KEEP.`,
-      reads: ['target', 'claims', 'intent', 'findings', 'context', 'diffRange'],
-      writes: ['dispositions'],
+      maxVisits: 3,
+      visitsFrom: 'maxDebateRounds + 1',
+      directive: `You are the SKEPTIC of this review of \`target\`. Read the code each finding cites, and the code around it, in the workspace (read-only).
+1. Write one \`proposedDispositions\` entry per finding, in the order of \`findings\`: "F<n> KEEP — why it holds", "F<n> DOWNGRADE MEDIUM — why it is less severe" (or DOWNGRADE LOW), "F<n> DROP — why it is wrong, with the code that shows it \`exact quote\`", or "F<n> DROP — duplicates F<m>" when an earlier finding already says the same problem. Also DROP a finding that asks for something nothing in the codebase requires (no rule, no similar change, no code that breaks without it), quoting the code or rule it misreads. When unsure, KEEP.
+2. Attack the review's conclusions in \`objections\` (at most ${MAX_OBJECTIONS}, the ones most likely to change the review first): a verdict of \`claimVerdicts\`, \`testVerdicts\` or \`obligationVerdicts\` the code does not support (name it by its id: C2, B1, O3), or an issue every reviewer missed (name the file and line, "path:line"). Each must be concrete and checkable, and say what reading would settle it. An empty list is fine and better than invented concerns. \`pastObjections\` were raised and researched before (the facts found are in \`evidence\`): raise one again only with something new.${MEMORY_NOTE}`,
+      reads: [
+        'target',
+        'claims',
+        'intent',
+        'findings',
+        'claimVerdicts',
+        'testVerdicts',
+        'obligationVerdicts',
+        'context',
+        'evidence',
+        'diffRange',
+        'pastObjections',
+        'knownFacts',
+      ],
+      writes: ['proposedDispositions', 'objections'],
       retries: 2,
       checks: [
         orFailed({
-          expr: 'heads(dispositions, "^F[0-9]+") == ids(findings)',
+          expr: 'heads(proposedDispositions, "^F[0-9]+") == ids(findings)',
           message:
-            'Write one dispositions entry per finding, with its id, in the order of findings.',
+            'Write one proposedDispositions entry per finding, with its id, in the order of findings.',
         }),
         orFailed({
-          expr: 'len(unmatched(dispositions, "^F[0-9]+ (KEEP|DOWNGRADE MEDIUM|DOWNGRADE LOW|DROP) — ")) == 0',
+          expr: 'len(unmatched(proposedDispositions, "^F[0-9]+ (KEEP|DOWNGRADE MEDIUM|DOWNGRADE LOW|DROP) — ")) == 0',
           message:
             'Write each disposition as "F<n> KEEP|DOWNGRADE MEDIUM|DOWNGRADE LOW|DROP — why".',
         }),
         orFailed({
-          expr: 'len(unmatched(pick(dispositions, positions(dispositions, "^F[0-9]+ DROP ")), "`[^`]+`|^F[0-9]+ DROP — duplicates F[0-9]+")) == 0',
+          expr: 'len(unmatched(pick(proposedDispositions, positions(proposedDispositions, "^F[0-9]+ DROP ")), "`[^`]+`|^F[0-9]+ DROP — duplicates F[0-9]+")) == 0',
           message:
             'Quote the code that refutes each finding you DROP, in backticks, or write "F<n> DROP — duplicates F<m>".',
+        }),
+        orFailed({
+          expr: `len(objections) <= ${MAX_OBJECTIONS}`,
+          message: `Give at most ${MAX_OBJECTIONS} objections: the ones most likely to change the review.`,
+        }),
+        orFailed({
+          expr: `len(unmatched(objections, "${OBJECTION_TARGET}")) == 0`,
+          message:
+            'Name what each objection attacks: a verdict by its id (C2, B1, O3), or the missed issue by path:line.',
         }),
       ],
     },
@@ -783,21 +1000,125 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       ],
     },
     {
+      id: 'usePragmatist',
+      kind: 'condition',
+      label: 'Pragmatist? (≥pragmatistFrom)',
+      // Only when the skeptic would change something: a drop, a downgrade or an objection.
+      expression:
+        // complexity 0 is "auto": the run's default tier, 2.
+        'if(complexity == 0, 2, complexity) >= pragmatistFrom && (len(objections) > 0 || count(proposedDispositions, "^F[0-9]+ (DROP|DOWNGRADE) ") > 0)',
+    },
+    {
+      id: 'pragmatist',
+      kind: 'agent',
+      role: 'assessor',
+      isolated: true,
+      label: 'Pragmatist',
+      directive: `You are the PRAGMATIST: you neither defend the review nor side with the skeptic. 1. Copy \`proposedDispositions\` into \`dispositions\`, one per finding, in order, but turn each DROP or DOWNGRADE whose reason is THEORETICAL (unlikely, or it would not change what the author must do) into "F<n> KEEP — the challenge is theoretical: why". Keep a REAL one word for word. 2. For EVERY entry of \`objections\` write one \`objectionTriage\` entry, in order: "<objection, abbreviated>: REAL | THEORETICAL — reason". REAL means it could change the review and reading the code can settle it. Copy the REAL ones, word for word, into \`realObjections\`.`,
+      reads: [
+        'target',
+        'findings',
+        'proposedDispositions',
+        'objections',
+        'claimVerdicts',
+        'testVerdicts',
+        'obligationVerdicts',
+        'evidence',
+      ],
+      writes: ['dispositions', 'objectionTriage', 'realObjections'],
+      retries: 2,
+      checks: [
+        {
+          expr: 'heads(dispositions, "^F[0-9]+") == ids(findings)',
+          message:
+            'Write one dispositions entry per finding, with its id, in the order of findings.',
+        },
+        {
+          // It may only keep what the skeptic would change, never drop or downgrade on its own.
+          expr: 'subset(pick(dispositions, positions(dispositions, "^F[0-9]+ (DROP|DOWNGRADE) ")), proposedDispositions)',
+          message:
+            'Copy each REAL DROP or DOWNGRADE from proposedDispositions word for word; you may only turn one into KEEP.',
+        },
+        {
+          expr: 'len(objectionTriage) == len(objections)',
+          message: 'Triage EVERY objection: one objectionTriage entry per objection.',
+        },
+        {
+          expr: 'subset(realObjections, objections)',
+          message: 'realObjections must be copied verbatim from objections.',
+        },
+      ],
+    },
+    {
+      id: 'takeAll',
+      kind: 'compute',
+      label: 'Take the challenge',
+      // Below pragmatistFrom, nobody triages: every drop stands and every objection is researched.
+      assign: [
+        { field: 'dispositions', expr: 'proposedDispositions' },
+        { field: 'realObjections', expr: 'objections' },
+      ],
+    },
+    {
       id: 'applyDispositions',
       kind: 'compute',
       label: 'Apply the challenge',
-      // In order: the dropped are kept apart before findings is rewritten.
+      // In order: the dropped are kept apart before findings is rewritten. An objection raised in
+      // an earlier round again, word for word, was researched already: reported, not reopened.
       assign: [
-        { field: 'dismissed', expr: 'pick(findings, positions(dispositions, "^F[0-9]+ DROP "))' },
+        {
+          field: 'dismissed',
+          expr: 'dismissed + pick(findings, positions(dispositions, "^F[0-9]+ DROP "))',
+        },
         {
           field: 'dismissals',
-          expr: 'pick(dispositions, positions(dispositions, "^F[0-9]+ DROP "))',
+          expr: 'dismissals + pick(dispositions, positions(dispositions, "^F[0-9]+ DROP "))',
         },
         {
           field: 'findings',
           expr: `pick(findings, positions(dispositions, "^F[0-9]+ KEEP ")) + replace(pick(findings, positions(dispositions, "^F[0-9]+ DOWNGRADE MEDIUM ")), "${SEVERITY}", "[MEDIUM]") + replace(pick(findings, positions(dispositions, "^F[0-9]+ DOWNGRADE LOW ")), "${SEVERITY}", "[LOW]")`,
         },
         { field: 'findingsBrief', expr: 'brief(findings, 240)' },
+        {
+          field: 'unresolvedObjections',
+          expr: 'unique(unresolvedObjections + without(realObjections, without(realObjections, pastObjections)))',
+        },
+        { field: 'realObjections', expr: 'without(realObjections, pastObjections)' },
+      ],
+    },
+    {
+      id: 'anyReal',
+      kind: 'condition',
+      label: 'Real objections?',
+      expression: 'len(realObjections) > 0',
+    },
+    {
+      id: 'roundsLeft',
+      kind: 'condition',
+      label: 'Research them? (rounds left)',
+      expression: 'debateRounds < maxDebateRounds',
+    },
+    {
+      id: 'reopen',
+      kind: 'compute',
+      label: 'Research objections',
+      assign: [
+        { field: 'objectionGaps', expr: 'realObjections' },
+        { field: 'pastObjections', expr: 'pastObjections + objections' },
+        {
+          field: 'debateLog',
+          expr: 'append(debateLog, "Round " + text(debateRounds + 1) + ": " + text(len(realObjections)) + " of " + text(len(objections)) + " objections sent to research, " + text(len(findings)) + " findings standing")',
+        },
+        { field: 'debateRounds', expr: 'debateRounds + 1' },
+      ],
+    },
+    {
+      id: 'keepOpen',
+      kind: 'compute',
+      label: 'Report open objections',
+      // Out of rounds, not out of objections: the real ones are said in the result, not dropped.
+      assign: [
+        { field: 'unresolvedObjections', expr: 'unique(unresolvedObjections + realObjections)' },
       ],
     },
     {
@@ -821,7 +1142,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
             ' + if(len(inventoryRejected) > 0, ["Context the review was to use whose citation did not hold: " + join(inventoryRejected, "; ")], [])',
             ' + if(len(stepsFailed) > 0, ["Steps that failed, so what they check was not checked: " + join(stepsFailed, "; ")], [])',
             ' + if(len(dismissed) > 0 && len(findings) == 0, ["The skeptic dismissed every finding: check the dismissals"], [])',
-            ` + if(requireChecks && !(verify && !includes(testOutput, "not run: ")) && (len(deleted) > 0 || count(files, "${DOC_FILE}") < len(files)), ["The tests were required (requireChecks) but did not run here"], [])`,
+            ' + if(len(unresolvedObjections) > 0, ["Objections the debate could not settle: " + join(unresolvedObjections, "; ")], [])',
           ].join(''),
         },
         {
@@ -836,8 +1157,6 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
             ' + if(len(unverified) > 0, ["Findings not verified (their quote is not in this checkout: is the reviewed code checked out?): " + join(unverified, "; ")], [])',
             ' + if(len(dismissed) > 0, ["Dismissed by the skeptic: " + join(dismissals, "; ")], [])',
             ' + if(!empty(diffError), ["The diff could not be scanned (no smell or masking leads): " + diffError], [])',
-            ' + if(!verify, ["Tests and lint not run here (verify is off: CI runs them)"], if(includes(testOutput, "not run: "), ["Tests " + testOutput], []))',
-            ' + if(includes(lintOutput, "not run: "), ["Lint " + lintOutput], [])',
             ', "\n")',
           ].join(''),
         },
@@ -847,14 +1166,39 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       id: 'hasIssues',
       kind: 'condition',
       label: 'Issues?',
-      expression: 'len(findings) > 0 || !testsPassed || !lintPassed',
+      expression: 'len(findings) > 0',
+    },
+    {
+      id: 'comment',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Write review comments',
+      // It explains the issue and shows the fix: held to the code standard like a reviewer.
+      reviewsCode: true,
+      // A few findings per part: each comment reads the code it explains.
+      fanOut: { over: 'findings', per: 3, agents: 'agents' },
+      directive: COMMENT_DIRECTIVE,
+      reads: ['target', 'intent', 'claims', 'findings', 'context', 'evidence', 'diffRange'],
+      writes: ['comments'],
+      retries: 2,
+      checks: [
+        {
+          expr: 'heads(comments, "^F[0-9]+") == ids(findings)',
+          message: 'Write one comment per finding, starting with its id, in the order of findings.',
+        },
+        {
+          expr: `len(unmatched(comments, "${COMMENT_SHAPE}")) == 0`,
+          message:
+            'Give each comment every part, in order: "What is wrong:", "Example:", "Why it matters:", "How to fix:".',
+        },
+      ],
     },
     {
       id: 'report',
       kind: 'agent',
       role: 'assessor',
       label: 'Write report',
-      directive: `Write a short review of \`target\` from \`findings\`, ordered by severity (HIGH first), with a suggested fix for each. ${CITE_BY_ID} If \`testsPassed\` or \`lintPassed\` is false, the engine's run failed: say so first, with the failing tests or errors from \`testOutput\` or \`lintOutput\`. Then list what is not settled (\`openItems\`, \`adverseVerdicts\`) and what \`coverage\` lists as not reviewed or not checked, and end with the files reviewed.`,
+      directive: `Write a short summary of the review of \`target\`: the findings by severity (HIGH first), one line each, citing its id; the full explanation of each is in \`comments\` (do not repeat it). ${CITE_BY_ID} Then list what is not settled (\`openItems\`, \`adverseVerdicts\`) and what \`coverage\` lists as not reviewed or not checked, and end with the files reviewed.`,
       reads: [
         'target',
         'claims',
@@ -864,20 +1208,11 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         'coverage',
         'openItems',
         'adverseVerdicts',
-        'testsPassed',
-        'testOutput',
-        'lintPassed',
-        'lintOutput',
+        'comments',
       ],
       writes: ['report'],
       retries: 2,
-      checks: [
-        {
-          // With no findings (only failing checks) there is nothing to cite.
-          expr: 'len(findings) == 0 || (len(refs(report)) > 0 && subset(refs(report), ids(findings)))',
-          message: citesFindings('report').message,
-        },
-      ],
+      checks: [citesFindings('report')],
     },
     {
       id: 'issuesSettled',
@@ -981,14 +1316,9 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     { id: 'hasDiff-cap', from: 'hasDiff', to: 'capFiles', branch: 'then' },
     { id: 'hasDiff-noDiff', from: 'hasDiff', to: 'noDiffReport', branch: 'else' },
     { id: 'noDiffReport-end', from: 'noDiffReport', to: 'noDiff' },
-    { id: 'cap-scan', from: 'capFiles', to: 'scanDiff' },
-    { id: 'scan-verifyOn', from: 'scanDiff', to: 'verifyOn' },
-    { id: 'verifyOn-tests', from: 'verifyOn', to: 'runTests', branch: 'then' },
-    { id: 'verifyOn-context', from: 'verifyOn', to: 'gatherContext', branch: 'else' },
-    { id: 'tests-hasLint', from: 'runTests', to: 'hasLint' },
-    { id: 'hasLint-lint', from: 'hasLint', to: 'runLint', branch: 'then' },
-    { id: 'hasLint-context', from: 'hasLint', to: 'gatherContext', branch: 'else' },
-    { id: 'lint-context', from: 'runLint', to: 'gatherContext' },
+    { id: 'cap-recall', from: 'capFiles', to: 'recall' },
+    { id: 'recall-scan', from: 'recall', to: 'scanDiff' },
+    { id: 'scan-context', from: 'scanDiff', to: 'gatherContext' },
     { id: 'context-ok', from: 'gatherContext', to: 'contextOk' },
     { id: 'contextOk-check', from: 'contextOk', to: 'checkContext', branch: 'then' },
     { id: 'contextOk-note', from: 'contextOk', to: 'noteContextFailed', branch: 'else' },
@@ -1008,18 +1338,40 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     { id: 'whole-ok', from: 'wholeChange', to: 'wholeOk' },
     { id: 'wholeOk-check', from: 'wholeOk', to: 'checkWhole', branch: 'then' },
     { id: 'wholeOk-note', from: 'wholeOk', to: 'noteWholeFailed', branch: 'else' },
-    { id: 'noteWhole-skeptic', from: 'noteWholeFailed', to: 'wantSkeptic' },
+    { id: 'noteWhole-second', from: 'noteWholeFailed', to: 'useSecond' },
     { id: 'checkWhole-merge', from: 'checkWhole', to: 'mergeWhole' },
-    { id: 'mergeWhole-skeptic', from: 'mergeWhole', to: 'wantSkeptic' },
+    { id: 'mergeWhole-aim', from: 'mergeWhole', to: 'aimChase' },
+    { id: 'aim-wantChase', from: 'aimChase', to: 'wantChase' },
+    { id: 'wantChase-chase', from: 'wantChase', to: 'chase', branch: 'then' },
+    { id: 'wantChase-second', from: 'wantChase', to: 'useSecond', branch: 'else' },
+    { id: 'chase-check', from: 'chase', to: 'checkChase' },
+    { id: 'checkChase-merge', from: 'checkChase', to: 'mergeChase' },
+    { id: 'mergeChase-whole', from: 'mergeChase', to: 'wholeChange', label: 're-judge' },
+    { id: 'useSecond-second', from: 'useSecond', to: 'second', branch: 'then' },
+    { id: 'useSecond-skeptic', from: 'useSecond', to: 'wantSkeptic', branch: 'else' },
+    { id: 'second-check', from: 'second', to: 'checkSecond' },
+    { id: 'checkSecond-merge', from: 'checkSecond', to: 'mergeSecond' },
+    { id: 'mergeSecond-skeptic', from: 'mergeSecond', to: 'wantSkeptic' },
     { id: 'wantSkeptic-yes', from: 'wantSkeptic', to: 'skeptic', branch: 'then' },
     { id: 'wantSkeptic-no', from: 'wantSkeptic', to: 'summarize', branch: 'else' },
     { id: 'skeptic-ok', from: 'skeptic', to: 'skepticOk' },
-    { id: 'skepticOk-apply', from: 'skepticOk', to: 'applyDispositions', branch: 'then' },
+    { id: 'skepticOk-pragmatist', from: 'skepticOk', to: 'usePragmatist', branch: 'then' },
     { id: 'skepticOk-note', from: 'skepticOk', to: 'noteSkepticFailed', branch: 'else' },
-    { id: 'apply-summarize', from: 'applyDispositions', to: 'summarize' },
     { id: 'noteSkeptic-summarize', from: 'noteSkepticFailed', to: 'summarize' },
+    { id: 'usePragmatist-yes', from: 'usePragmatist', to: 'pragmatist', branch: 'then' },
+    { id: 'usePragmatist-no', from: 'usePragmatist', to: 'takeAll', branch: 'else' },
+    { id: 'pragmatist-apply', from: 'pragmatist', to: 'applyDispositions' },
+    { id: 'takeAll-apply', from: 'takeAll', to: 'applyDispositions' },
+    { id: 'apply-anyReal', from: 'applyDispositions', to: 'anyReal' },
+    { id: 'anyReal-rounds', from: 'anyReal', to: 'roundsLeft', branch: 'then' },
+    { id: 'anyReal-summarize', from: 'anyReal', to: 'summarize', branch: 'else' },
+    { id: 'rounds-reopen', from: 'roundsLeft', to: 'reopen', branch: 'then' },
+    { id: 'rounds-keepOpen', from: 'roundsLeft', to: 'keepOpen', branch: 'else' },
+    { id: 'reopen-aim', from: 'reopen', to: 'aimChase', label: 'research objections' },
+    { id: 'keepOpen-summarize', from: 'keepOpen', to: 'summarize' },
     { id: 'summarize-hasIssues', from: 'summarize', to: 'hasIssues' },
-    { id: 'hasIssues-report', from: 'hasIssues', to: 'report', branch: 'then' },
+    { id: 'hasIssues-comment', from: 'hasIssues', to: 'comment', branch: 'then' },
+    { id: 'comment-report', from: 'comment', to: 'report' },
     { id: 'hasIssues-unverified', from: 'hasIssues', to: 'anyUnverified', branch: 'else' },
     { id: 'report-settled', from: 'report', to: 'issuesSettled' },
     { id: 'settled-issues', from: 'issuesSettled', to: 'issues', branch: 'then' },
@@ -1039,7 +1391,6 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     goal: 'Review the current branch',
     context: { target: 'HEAD~1..HEAD' },
     tools: {
-      runTests: () => ({ passed: true, output: 'Tests 12 passed', command: 'npm test' }),
       scanDiff: () => ({
         diff: 'diff --git a/src/core/engine.ts b/src/core/engine.ts\n@@ -119,1 +119,2 @@\n+    attempts += 1;',
         smells: [],
@@ -1051,6 +1402,8 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       checkObligations: (s) => ({ valid: s.obligations, invalid: [] }),
       checkReview: (s) => ({ valid: s.newFindings, invalid: [] }),
       checkWhole: (s) => ({ valid: s.wholeFindings, invalid: [] }),
+      checkChase: (s) => ({ valid: s.chaseNotes, invalid: [] }),
+      checkSecond: (s) => ({ valid: s.newFindings, invalid: [] }),
     },
     agents: {
       // Each finding keeps its location, so the reader can find the line.
@@ -1144,11 +1497,49 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       },
       skeptic: (s) => ({
         updates: {
-          dispositions: ((s.findings as string[]) ?? []).map(
+          proposedDispositions: ((s.findings as string[]) ?? []).map(
             (f) => `${f.split(' ')[0]} KEEP — the cited line does what the finding says`,
           ),
+          objections: [],
         },
         verdict: v('challenged'),
+      }),
+      // Research on what was unclear or objected to: a fact per point, where it was found.
+      chase: (s) => ({
+        updates: {
+          queries: ['git diff HEAD~1..HEAD -- src/core/engine.ts'],
+          chaseNotes: ((s.chaseItems as string[]) ?? []).map(
+            () => 'src/core/engine.ts:120 — the counter is bumped once per visit `attempts += 1`',
+          ),
+        },
+        verdict: v('researched'),
+      }),
+      second: () => ({ updates: { newFindings: [] }, verdict: v('found nothing new') }),
+      // Keeps what the skeptic would change and sends every objection to research.
+      pragmatist: (s) => ({
+        updates: {
+          dispositions: (s.proposedDispositions as string[]) ?? [],
+          objectionTriage: ((s.objections as string[]) ?? []).map(
+            (o) => `${o.slice(0, 40)}: REAL — reading the code settles it`,
+          ),
+          realObjections: (s.objections as string[]) ?? [],
+        },
+        verdict: v('triaged'),
+      }),
+      // One full comment per finding: what is wrong, an example, why it matters, how to fix.
+      comment: (s) => ({
+        updates: {
+          comments: ((s.findings as string[]) ?? []).map((f) =>
+            [
+              `${f.split(' ')[0]} The retry counter is never set back to zero`,
+              'What is wrong: `attempts` grows on every visit to the step (src/core/engine.ts:120) and is never reset when a step succeeds.',
+              'Example: a step fails twice, succeeds, then fails once more: today the third failure is "attempt 4 of 3" and the run stops; expected: "attempt 1 of 3", and it retries.',
+              'Why it matters: a run that recovered once can never recover again, so long runs stop on the first later failure.',
+              'How to fix: set `attempts = 0` when a step succeeds, and add a test that fails, succeeds, then fails again and expects a retry.',
+            ].join('\n'),
+          ),
+        },
+        verdict: v('commented'),
       }),
       report: (s) => ({
         updates: {
