@@ -640,13 +640,16 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    - `claimList`: what `claims` says and `intent` (an optional input: the linked issue or its
      acceptance criteria) asks for, one claim each (`C1 …`);
    - `context`: for each changed file, the conventions, similar code and callers to compare it
-     with (`path:line — [CONVENTION|SIMILAR|CALLER] why \`quote\``);
+     with, citing that rule or code and naming the file it is for
+     (`AGENTS.md:3 — [CONVENTION] (for: db/schema.sql) why \`quote\``);
    - `behaviours`: what the change adds or changes (`B1 path:line — …`);
    - `obligations`: the other changes it requires (`O1 [CALLER|MIGRATION|CONFIG|DOCS|ERRPATH]
      path:line — what must exist`), cited at the line that creates the need.
 
-   Each list is numbered in order (checked) and its citations are checked. An entry whose
-   citation fails is kept apart, and it keeps the review from ending "Looks good".
+   Each list is numbered in order (checked) and its citations are checked while the AI still has
+   the files open (`cites` and `citesAlso`), then again by the engine. An entry whose citation
+   still fails is kept apart, and it keeps the review from ending "Looks good". Obligations are
+   only what the codebase requires: a rule, what similar changes include, or code that breaks.
 5. **Find issues** in parallel parts. Each issue is
    `path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`quote\``, checked by the engine. The
    categories (shared with the PR review phase, in `phases/reviewRules.ts`):

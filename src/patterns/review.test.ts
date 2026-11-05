@@ -546,7 +546,7 @@ describe('review: the whole change, against an independent inventory', () => {
           updates: {
             claimList: ['C1 c'],
             context: [
-              'src/core/engine.ts:3 — [CALLER] still imports the deleted module `import { old }`',
+              'src/core/engine.ts:3 — [CALLER] (for: src/old.ts) still imports the deleted module `import { old }`',
             ],
             behaviours: [],
             obligations: [
@@ -742,6 +742,28 @@ describe('review: what live runs taught', () => {
     expect(state.findings).toEqual([
       'F1 src/core/engine.ts:120 — [BUG] [HIGH] retry counter never resets `attempts += 1`',
       'F2 src/core/engine.ts:120 — [PERF] [LOW] counted on every visit `attempts += 1`',
+    ]);
+  });
+
+  it('context cites the rule or code compared with, and names the changed file it is for', () => {
+    const withContext =
+      (context: string[]): Agent =>
+      (s) => {
+        const base = demo.agents!.gatherContext!(s, 0) as { updates: Record<string, unknown> };
+        return { updates: { ...base.updates, context }, verdict: v };
+      };
+    const untagged = withContext([
+      'AGENTS.md:3 — [CONVENTION] a change needs a test `needs a test`',
+    ]);
+    const tagged = withContext([
+      'AGENTS.md:3 — [CONVENTION] (for: src/core/engine.ts) a change needs a test `needs a test`',
+    ]);
+    const { r, state } = play({ agents: { ...quiet, gatherContext: inTurn(untagged, tagged) } });
+    const [first] = rejections(r, 'gatherContext');
+    expect(first).toMatch(/\(for: changed path\)/);
+    expect(first).toMatch(/tagged "\(for: <that path>\)"/);
+    expect(state.context).toEqual([
+      'AGENTS.md:3 — [CONVENTION] (for: src/core/engine.ts) a change needs a test `needs a test`',
     ]);
   });
 
