@@ -81,7 +81,8 @@ function smellsOf(f: FileDiff): string[] {
     if (run === LONG_BLOCK)
       at(runStart, `${LONG_BLOCK}+ added lines in one block: one long function? (G30)`);
     prev = line;
-    if (DEBUG_LEFTOVER.test(text) && !TEST_FILE.test(f.path)) at(line, 'debug output left in (G12)');
+    if (DEBUG_LEFTOVER.test(text) && !TEST_FILE.test(f.path))
+      at(line, 'debug output left in (G12)');
     if (COMMENTED_CODE.test(text)) at(line, 'commented-out code (C5)');
     if (/\b(TODO|FIXME|XXX|HACK)\b/.test(text)) at(line, 'a TODO left in the change');
     const sig = SIGNATURE.exec(text);
