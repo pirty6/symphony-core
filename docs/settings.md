@@ -44,7 +44,7 @@ end.
 
 | Setting (default) | Trades | Change it when | Tier |
 |---|---|---|---|
-| `lean` (on) | One switch for the settings below that cut time and tokens together: `maxDebateRounds` capped at 1, `singlePass`, `gapAimed`, `keepUnchallenged`, `gapsPerChase` 1, and an AI-rated complexity 4 capped at 3 (the maestro's rating included; one you set stays). While it is on, those switches cannot be turned back individually | Off if answers get worse, or for a high-stakes run that wants two debate rounds or the second investigator. Off, each setting applies as set | R: estimated ≈36–38 min and ≈19.6M input against 55.7 min and 26.0M on one 197-file run (with the two switches below), not yet A/B'd |
+| `lean` (on) | One switch for the settings below that cut time and tokens together: `singlePass`, `gapAimed`, `keepUnchallenged`, `gapsPerChase` 1, and an AI-rated complexity 4 capped at 3 (the maestro's rating included; one you set stays). While it is on, those switches cannot be turned back individually | Off if answers get worse, or for a high-stakes run that wants the second investigator. Off, each setting applies as set | R: estimated ≈36–38 min and ≈19.6M input against 55.7 min and 26.0M on one 197-file run (with the two switches below), not yet A/B'd |
 | `SYMPHONY_SCRUB` (on; `=off` turns it off) | Credentials in inputs, patterns, AI answers, tool results, transcripts, the live feed, the studio's stream and the CLI's output are replaced by `[REDACTED:<kind>]` before anything is saved or shown | Off only to debug a repair against the raw text, on a machine you trust | D (core/scrub.ts) |
 | `SYMPHONY_END_ON_SUBMIT` (on; `=0` turns it off) | Ends a step's session when the turn with a valid answer ends: no closing call (4–6 s per step; closing calls were 15–19% of model time in recorded maestro runs). A revision the AI would have made in a later turn is lost | `=0` if answers that the AI used to revise come out worse (`revision` in `symphony cost`) |
 | `SYMPHONY_EFFORT_CAPS` (on; `=0` turns it off) | Steps play at most their `maxEffort`. The maestro's propose, skeptic and pragmatist cap at `high`, which matters only at tier 4 (opus `xhigh`): about 246 s → 150 s per composition, and output −40% | `=0` for a high-stakes composition where the debate should reason at the tier's full effort | R (trial 13: 3/3 caught the planted concern either way) | R (trial 13: 6/6 solved either way, −45% premium requests, −51% input; 1 revision in 39 steps would have been lost) |
@@ -61,7 +61,7 @@ end.
 | `agents` (the plan picks 1–6), `agentsCap` (6, 1 to 6) | Wall time vs concurrent calls (not tokens) | `agentsCap` 4 if reports show rate limits or unread items | R: 6 at once was never measured (trial 1). Rate limits are now waited out and counted |
 | `singlePass` (off, pilot; on with `lean`) | Fewer steps vs a pricier tier for the triage read | After trial 3 | R |
 | `maxExperiments` (12, at least 1) | Time | Lower it (never 0) for speed. Untimed experiments run in parallel | M: 15 serial experiments took 20% of one run; a tailored 0 left a run stuck |
-| `maxDebateRounds` (2; at most 1 with `lean`), `pragmatistFrom` (3) | Correctness (a hypothesis) vs time and tokens | 1 for speed-bound runs | M for cost: round 2 was ~16% of input and ~21% of time in one run. R for correctness: one run had two verified corrections (trial 9) |
+| `maxDebateRounds` (3, a ceiling), `pragmatistFrom` (3) | Correctness (a hypothesis) vs time and tokens | 1 for speed-bound runs. After round 1, another round plays only when the last one's research found new evidence, so most debates stop sooner; `debateLog` says why it stopped | M for cost: round 2 was ~16% of input and ~21% of time in one run. R for correctness: one run had two verified corrections (trial 9) |
 | `keepUnchallenged` (off), `readerHypotheses` (on), `gapAimed` (off); the first and last are on with `lean` | Unmeasured | After their A/Bs | R |
 | `supportJudge` (off; `judgeBatch` 40) | Catches a real quote attached to a wrong claim vs tokens and a second model family. Does nothing for web findings | `shadow` for high-stakes workspace questions; `enforce` only after calibration (trial 10) | D/R |
 | complexity (auto; `lean` caps a rated 4 at 3) | 1: no debate, cheapest. 4: the heaviest model at xhigh effort, plus a second investigator | Force 1 for routine lookups, 4 for high stakes (a chosen 4 is kept). Ratings vary | D |
@@ -87,7 +87,7 @@ end.
 
 - **Default:** the code defaults, `lean` on.
 - **Routine question:** complexity 1.
-- **High-stakes workspace question:** complexity 4 and `lean` off (two debate rounds, the second
+- **High-stakes workspace question:** complexity 4 and `lean` off (the second
   investigator), with `supportJudge` set to `shadow`.
 - **Huge, budget-bound repository:** a lower `maxTriageFiles`. Locate decides what is read there,
   not `narrowRead`. Gap expansion stays on.

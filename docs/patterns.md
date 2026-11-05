@@ -39,13 +39,18 @@ The 🧹 badge on a node in the studio shows which steps are held to it.
 ## investigate
 
 Answer a question with evidence, from whatever sources it needs: workspace files, web pages,
-experiments, git history, GitHub, dependencies, MCP servers.
+experiments, git history, GitHub, dependencies, Azure DevOps (read-only `az`), MCP servers.
+Read-only `az` commands (`list`, `show`, `get`, `query`; `az rest` and `az devops invoke` only as
+GET) and a `kusto_query` tool (queries and `.show` only, signed in with `az login`) let research
+read pipelines, branch policies and Kusto tables; nothing that writes is allowed.
 
 1. **Recall and plan.** Facts and lessons from earlier runs are recalled and re-checked
    against today's files, once for the question and again for the sub-questions (within the
    same caps: 12 facts, 6 lessons). The planner splits the question into sub-questions, decides for
    every available source whether it can hold evidence (a reason for each skip), chooses
-   how many sub-agents to use (1-6), and may split the question into independent parts.
+   how many sub-agents to use (1-6), and may split the question into independent parts. The
+   web and experiments are always used when they are on offer: a plan that skips either is
+   sent back.
 2. **Hypotheses.** Competing answers before any evidence, each with what would confirm or
    refute it. The engine keeps a tally per hypothesis (`hypothesisStatus`: findings for and
    against, *untested*, *challenged*) after every batch, and later steps steer by it.
@@ -77,7 +82,11 @@ experiments, git history, GitHub, dependencies, MCP servers.
    depth (following references and history) and writes a checked note per file, and those it
    read completely skip the deep read only if the engine's preload record shows it gave them
    whole (no record: none skip).
-5. **Experiments** (after your approval) and **source searches**, in parallel.
+5. **Experiments** (after your approval) and **source searches**, in parallel. Each
+   experiment is targeted: it runs only the tests or commands that bear on a hypothesis, never
+   the whole suite (a design that would is sent back). Each runs in a throwaway copy of the
+   workspace (a git worktree) that is discarded after the call; with no copy to be had it runs
+   in the workspace and says so.
 6. **Close gaps.** The gap check writes one entry per sub-question, in order: `S<n>:
    ANSWERED [F…]` citing findings, or `S<n>: GAP — what is missing`; the engine derives the
    gaps from it. First the gaps expand the read: the engine ranks the files not yet read by the
@@ -90,7 +99,9 @@ experiments, git history, GitHub, dependencies, MCP servers.
    hypothesis. The engine appends a coverage section: files not triaged, pages, experiments,
    what could not be read, sources searched and skipped, findings taken on trust.
 8. **Challenge.** The debate above; REAL objections reopen research (within the run-wide
-   research budget). `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
+   research budget), at most `maxDebateRounds` (3) rounds. After the first, another round plays
+   only when the last one's research found new evidence; `debateLog` says why it stopped (the
+   skeptic only repeated itself, the cap, or nothing new). `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
    keep word for word the sub-answers no objection named, so it opens no new front.
 9. **Support judge** (`supportJudge`: off by default; `shadow`, `enforce`). Each cited
    workspace finding's quote, with the numbered lines around it, its claim and nothing else, is
@@ -213,11 +224,20 @@ flowchart TD
 <!-- /flow:investigate -->
 
 **Lean** (`lean`, on by default) bundles the settings estimated to cut time and tokens together:
-at most one debate round, single-pass triage, gap-aimed research, unchallenged sub-answers kept,
+single-pass triage, gap-aimed research, unchallenged sub-answers kept,
 a sub-agent per gap, and an AI-rated complexity 4 (the investigation's or the maestro's) capped
 at 3; a complexity you set stays. Turn it off
 (studio Features, or `--with lean=false`) if answers get worse; the settings then apply as set.
 See [settings.md](settings.md) and the lean trial in [trials.md](trials.md).
+
+**How to verify what is open.** When questions stay open, a step writes one line for each, in
+order: `V<n> READ|QUERY|RUN — the exact files, query or command — what it would show`. The
+brief has them under "How to verify what is still open".
+
+**Follow-up** (`followOpen`, off by default; a Features switch, since it is one more
+investigation): an investigation that leaves questions or objections open puts one more
+investigate run in front of the chain. Its question lists each open item with its check, then
+the brief; it has experiments on offer like any investigation, and it does not follow itself up.
 
 ## fix
 
@@ -697,8 +717,9 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
 
    The engine applies the dispositions: dropped findings are kept apart under "Dismissed",
    downgrades change the severity. REAL objections go back to research and the whole change is
-   judged again, bounded by `maxDebateRounds` (2); one raised again word for word is reported as
-   not settled instead of researched again.
+   judged again, bounded by `maxDebateRounds` (3), and after the first round only when research
+   found new evidence; one raised again word for word is reported as not settled instead of
+   researched again.
 9. **Memory.** What earlier runs found true and that still matches the files (`knownFacts`) is
    recalled at the start; every judging step reads it as leads to check, never as evidence.
 10. **Review comments** (when there are issues): one per finding, in order, in parts of three,
