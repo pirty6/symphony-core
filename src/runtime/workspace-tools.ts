@@ -4,6 +4,7 @@
  * facts, not an AI's report. Commands come from the run inputs or the
  * project's own test script, never from the AI.
  */
+import { scanDiff } from '../core/diffscan.js';
 import { checkCitations, withContext } from './evidence.js';
 import { recall, rememberFacts, rememberLesson, sameRequest } from './memory.js';
 import { execFile, spawn } from 'node:child_process';
@@ -311,6 +312,39 @@ export async function workspaceDiff(
   return { diff: `${shown}${extra}`.trim(), hash: h.digest('hex').slice(0, 16), files };
 }
 
+/** A git revision or range ("main...HEAD", "abc123..HEAD", "HEAD~1"): never an option. */
+const GIT_RANGE = /^[\w./~^@{}-]+(\.{2,3}[\w./~^@{}-]+)?$/;
+
+/**
+ * The diff a review reads (`git diff <range>`, or the uncommitted changes when the range is
+ * empty), cut to MAX_DIFF with what was cut named, and scanned whole for smells and changes that
+ * may hide a failing test (core/diffscan).
+ */
+export async function scanRange(ctx: ToolContext, range: string): Promise<Record<string, unknown>> {
+  const none = { diff: '', smells: [], masking: [] };
+  try {
+    if (!range.trim()) {
+      const { diff } = await workspaceDiff(ctx);
+      return { ...none, ...scanDiff(diff), diff, error: '' };
+    }
+    if (!GIT_RANGE.test(range) || range.startsWith('-'))
+      return { ...none, error: `not a git revision or range: ${range}` };
+    const { stdout } = await git(
+      'git',
+      ['--no-pager', 'diff', '--no-color', '--no-ext-diff', range, '--', '.', NOT_THE_EDIT],
+      { cwd: ctx.workspace, maxBuffer: 64 * 1024 * 1024, signal: ctx.signal },
+    );
+    const diff = stdout.trimEnd();
+    return {
+      ...scanDiff(diff),
+      diff: diff.length > MAX_DIFF ? truncateDiff(diff, MAX_DIFF) : diff,
+      error: '',
+    };
+  } catch (e) {
+    return { ...none, error: (e as Error).message.split('\n')[0] ?? 'git diff failed' };
+  }
+}
+
 export function workspaceTools(): ToolSpec[] {
   return [
     {
@@ -391,6 +425,13 @@ export function workspaceTools(): ToolSpec[] {
             ? args.paths.filter((p): p is string => typeof p === 'string' && p.trim() !== '')
             : [],
         ),
+    },
+    {
+      name: 'diff.scan',
+      description:
+        'The diff of a git revision or range (empty: the uncommitted changes), cut at 30,000 characters with what was cut named, and scanned for smells in added lines and for test changes that may hide a failure: { diff, smells, masking, error }.',
+      outputs: ['diff', 'smells', 'masking', 'error'],
+      run: (args, ctx) => scanRange(ctx, typeof args.range === 'string' ? args.range : ''),
     },
     {
       name: 'evidence.check',
