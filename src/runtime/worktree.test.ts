@@ -12,7 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { editsFiles, isolateRun } from './worktree.js';
+import { editsFiles, isolateRun, sandboxFor } from './worktree.js';
 import { fix, implement, investigate, refactor, review } from '../patterns/index.js';
 
 const base = mkdtempSync(join(tmpdir(), 'symphony-wt-'));
@@ -125,5 +125,21 @@ describe('editing runs play in their own worktree', { timeout: 30_000 }, () => {
     ).toBeUndefined();
     const plain = mkdtempSync(join(base, 'plain-'));
     expect(await isolateRun(plain, { label: 'fix', env, root })).toBeUndefined();
+  });
+});
+
+describe('sandboxFor (a throwaway copy for one step)', () => {
+  it('copies the workspace as it is, keeps nothing done in it, and leaves the workspace alone', async () => {
+    const ws = repo('sandbox');
+    const box = (await sandboxFor(ws, { ...env, SYMPHONY_WORKTREES: undefined })('experiment'))!;
+    expect(read(join(box.dir, 'a.txt'), 'utf8')).toBe('one\nwork in progress\n');
+    expect(read(join(box.dir, 'new.txt'), 'utf8')).toBe('untracked\n');
+    writeFileSync(join(box.dir, 'tmp.test.js'), 'a temporary test\n');
+    writeFileSync(join(box.dir, 'a.txt'), 'changed in the copy\n');
+    await box.discard();
+    expect(existsSync(box.dir)).toBe(false);
+    expect(existsSync(join(ws, 'tmp.test.js'))).toBe(false);
+    expect(read(join(ws, 'a.txt'), 'utf8')).toBe('one\nwork in progress\n');
+    expect(await sandboxFor(ws, { SYMPHONY_WORKTREES: 'off' })('x')).toBeUndefined();
   });
 });

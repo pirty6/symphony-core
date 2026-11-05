@@ -1432,6 +1432,49 @@ describe('CopilotProvider', () => {
     expect(sessions[1]!.cfg.mcpServers).toBeUndefined();
   });
 
+  it('offers kusto_query to steps that may read outside the workspace, read-only', async () => {
+    const asked: string[] = [];
+    const { client, sessions } = fakeClient(async (cfg, emit) => {
+      if (cfg.tools!.some((t) => t.name === 'kusto_query')) {
+        for (const query of ['T | count', '.drop table T'])
+          emit('assistant.message', {
+            content: String(
+              await callTool(cfg, 'kusto_query', { cluster: 'c', database: 'd', query }),
+            ),
+          });
+      }
+      await callTool(cfg, 'submit_result', { updates: { word: 'x' } });
+      emit('session.idle');
+    });
+    const p = new CopilotProvider({
+      clientFactory: () => client,
+      kusto: {
+        token: async () => 'tok',
+        fetch: (async (_url: string, init: RequestInit) => {
+          asked.push(String(init.body));
+          return new Response(
+            JSON.stringify({ Tables: [{ Columns: [{ ColumnName: 'n' }], Rows: [[7]] }] }),
+          );
+        }) as unknown as typeof fetch,
+      },
+    });
+    const go = (capabilities: ('web' | 'mcp')[]) =>
+      p.runAgent({
+        pause: { ...pause, capabilities },
+        state: {},
+        visit: 0,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      });
+    const out = await go(['mcp']);
+    expect(out.transcript.output).toContain('n\n7');
+    expect(out.transcript.output).toContain('kusto_query refused: `.drop table`');
+    expect(asked).toEqual([JSON.stringify({ db: 'd', csl: 'T | count' })]);
+    expect(out.transcript.prompt).toContain('kusto_query(cluster, database, query)');
+    await go([]);
+    expect(sessions[1]!.cfg.tools!.map((t) => t.name)).toEqual(['submit_result']);
+  });
+
   it('picks the model and effort from the complexity tier, checked against available models', async () => {
     const { client, sessions } = fakeClient(async (cfg, emit) => {
       await callTool(cfg, 'submit_result', { updates: { word: 'x' } });

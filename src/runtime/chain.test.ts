@@ -140,3 +140,43 @@ describe('the hint carries on', () => {
     expect(started[0]!.score.context.hint).toBe('only the CLI');
   });
 });
+
+const allPatterns = async () => PATTERNS;
+
+describe('an investigation follows up what it left open', () => {
+  it('once, even with the follow-up switch on for every run', async () => {
+    const inv = compileScore(investigate, {
+      context: { question: 'why?', followOpen: true },
+      generatedAt: 't',
+    });
+    const started: ExecutableScore[] = [];
+    const start = async (s: ExecutableScore) => {
+      started.push(s);
+      return 'child';
+    };
+    const next = chainNext({
+      chain: [],
+      score: inv,
+      library: allPatterns,
+      features: { followOpen: 'true' },
+      start,
+    });
+    await next!(
+      end('partial', { followOpen: true, question: 'why?', openQuestions: ['who calls it?'] }),
+    );
+    expect(started).toHaveLength(1);
+    const follow = started[0]!;
+    expect(follow.pattern).toBe('investigate');
+    expect(String(follow.context.question)).toMatch(/left open:\n- who calls it\?/);
+    expect(follow.initialState.followOpen).toBe(false);
+    // Its own end hands nothing on.
+    const after = chainNext({
+      chain: [],
+      score: follow,
+      library: allPatterns,
+      features: { followOpen: 'true' },
+      start,
+    });
+    expect(after).toBeUndefined();
+  });
+});

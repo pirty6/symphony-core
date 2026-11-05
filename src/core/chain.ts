@@ -21,12 +21,17 @@ export const stepPattern = (step: ChainStep): string =>
   typeof step === 'string' ? step : step.pattern;
 
 /**
- * Runs that may put runs of their own in front of the chain: a backlog (its queue), and a review
- * asked to hand what it could not settle to investigate (`investigateOpen`).
+ * Runs that may put runs of their own in front of the chain: a backlog (its queue), a review
+ * asked to hand what it could not settle to investigate (`investigateOpen`), and an
+ * investigation asked to follow up what it left open (`followOpen`).
  */
 export const handsOnQueue = (score: ExecutableScore): boolean =>
   score.pattern === 'backlog' ||
-  (score.pattern === 'review' && score.initialState.investigateOpen === true);
+  (score.pattern === 'review' && score.initialState.investigateOpen === true) ||
+  (score.pattern === 'investigate' && score.initialState.followOpen === true);
+
+const strings = (s: Readonly<Record<string, unknown>>, k: string): string[] =>
+  Array.isArray(s[k]) ? (s[k] as unknown[]).filter((x): x is string => typeof x === 'string') : [];
 
 /** The ends of a review that leave something not settled. */
 const REVIEW_OPEN = new Set(['openQuestions', 'issuesOpen']);
@@ -35,11 +40,7 @@ const REVIEW_OPEN = new Set(['openQuestions', 'issuesOpen']);
 function reviewFollowUp(score: ExecutableScore, performance: Performance): ChainStep[] {
   const s = performance.finalState;
   if (s.investigateOpen !== true || !REVIEW_OPEN.has(String(s.reviewStatus))) return [];
-  const list = (k: string) =>
-    Array.isArray(s[k])
-      ? (s[k] as unknown[]).filter((x): x is string => typeof x === 'string')
-      : [];
-  const open = [...list('openItems'), ...list('adverseVerdicts')];
+  const open = [...strings(s, 'openItems'), ...strings(s, 'adverseVerdicts')];
   if (open.length === 0) return [];
   const brief = typeof s.handoff === 'string' ? s.handoff.trim() : '';
   const goal = [
@@ -59,11 +60,48 @@ function reviewFollowUp(score: ExecutableScore, performance: Performance): Chain
 }
 
 /**
+ * What an investigation left open, each question with its check (`verification`, "V<n> …"), as
+ * one more investigation limited to them. It never asks for a follow-up of its own.
+ */
+function investigateFollowUp(score: ExecutableScore, performance: Performance): ChainStep[] {
+  const s = performance.finalState;
+  if (s.followOpen !== true) return [];
+  if (performance.outcome !== 'success' && performance.outcome !== 'partial') return [];
+  const questions = strings(s, 'openQuestions');
+  const objections = strings(s, 'unresolvedObjections');
+  if (questions.length === 0 && objections.length === 0) return [];
+  const checks = strings(s, 'verification');
+  const checkFor = (n: number) => checks.find((c) => c.startsWith(`V${n} `));
+  const brief = typeof s.handoff === 'string' ? s.handoff.trim() : '';
+  const subject = String(s.question ?? score.goal);
+  const goal = [
+    `Settle what an investigation of "${cut(subject, 300)}" left open:`,
+    ...questions.flatMap((q, i) => {
+      const check = checkFor(i + 1);
+      return check ? [`- ${q}`, `  How to verify: ${check}`] : [`- ${q}`];
+    }),
+    ...objections.map((o) => `- Objection the debate could not settle: ${o}`),
+    ...(brief ? ['', '## The investigation, as handed on', '', cut(brief, HANDOFF_CHARS)] : []),
+  ].join('\n');
+  return [
+    {
+      pattern: 'investigate',
+      goal,
+      context: {
+        hint: 'A follow-up limited to the open items above: settle each with its check (read the code, query the data, or a targeted experiment in a throwaway copy, never the whole test suite), and do not redo what the brief already settles.',
+        followOpen: false,
+      },
+    },
+  ];
+}
+
+/**
  * Steps a run puts in front of the rest of its chain: a successful backlog run
  * plays `runPattern` once per entry of `queue`, each with `testCommand` if set.
  */
 export function followUps(score: ExecutableScore, performance: Performance): ChainStep[] {
   if (score.pattern === 'review') return reviewFollowUp(score, performance);
+  if (score.pattern === 'investigate') return investigateFollowUp(score, performance);
   if (!handsOnQueue(score) || performance.outcome !== 'success') return [];
   const s = performance.finalState;
   const pattern = typeof s.runPattern === 'string' && s.runPattern.trim();

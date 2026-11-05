@@ -80,7 +80,13 @@ export const DEBATE_STATE: readonly StateField[] = [
     description: 'Objections worth more research',
   },
   { name: 'debateRounds', type: 'number' },
-  { name: 'maxDebateRounds', type: 'number', initial: 2 },
+  // A bound: the debate stops sooner when research stops finding anything new (debateFindings).
+  { name: 'maxDebateRounds', type: 'number', initial: 3 },
+  {
+    name: 'debateFindings',
+    type: 'number',
+    description: 'How much evidence there was when the last round went to research',
+  },
   {
     name: 'secondOpinion',
     type: 'string',
@@ -207,6 +213,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       'realObjections',
       'debateRounds',
       'maxDebateRounds',
+      'debateFindings',
       'secondOpinion',
       'disagreements',
       'unresolvedObjections',
@@ -352,8 +359,10 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       {
         id: 'roundsLeft',
         kind: 'condition',
-        label: 'Research them? (rounds left)',
-        expression: 'debateRounds < maxDebateRounds',
+        label: 'Research them? (rounds left, research still finding)',
+        // Another round only helps if the last one's research found something new: when it found
+        // nothing, the same objections would come back and research would come back empty again.
+        expression: `debateRounds < maxDebateRounds && (debateRounds == 0 || len(${evidence}) > debateFindings)`,
       },
       {
         id: 'usePragmatist',
@@ -402,6 +411,10 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         // Out of rounds, not out of objections: the REAL ones are said in the result, not dropped.
         assign: [
           { field: 'unresolvedObjections', expr: 'unique(unresolvedObjections + realObjections)' },
+          {
+            field: 'debateLog',
+            expr: `append(debateLog, "Stopped after " + text(debateRounds) + " round(s): " + if(len(objections) > 0 && len(without(objections, pastObjections)) == 0, "the skeptic only repeated objections already researched", if(debateRounds >= maxDebateRounds, "the cap (maxDebateRounds) was reached", "the last round's research found nothing new")) + "; " + text(len(realObjections)) + " objection(s) reported as open")`,
+          },
         ],
       },
       {
@@ -433,6 +446,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
             expr: `append(debateLog, "Round " + text(debateRounds + 1) + ": " + text(len(realObjections)) + " of " + text(len(objections)) + " objections sent to research" + ${cfg.about ? `if(len(unique(heads(realObjections, "^S[0-9]+"))) > 0, " (on " + join(unique(heads(realObjections, "^S[0-9]+")), ", ") + ")", "")` : '""'} + ", " + text(len(${evidence})) + " findings so far")`,
           },
           { field: 'debateRounds', expr: 'debateRounds + 1' },
+          { field: 'debateFindings', expr: `len(${evidence})` },
           ...(cfg.resetOnReopen ? [{ field: cfg.resetOnReopen, expr: '0' }] : []),
         ],
       },

@@ -64,7 +64,7 @@ export const FEATURES: readonly Feature[] = [
     field: 'lean',
     label: 'Lean run',
     description:
-      'On by default: one debate round, single-pass triage, gap-aimed research, unchallenged sub-answers kept, a sub-agent per gap, and an AI-rated complexity (by the investigation or the maestro) capped at 3; one you set stays. About a third less time and a quarter fewer tokens (estimated). Turn it off if answers get worse; the switches below then apply one by one.',
+      'On by default: single-pass triage, gap-aimed research, unchallenged sub-answers kept, a sub-agent per gap, and an AI-rated complexity (by the investigation or the maestro) capped at 3; one you set stays. About a third less time and a quarter fewer tokens (estimated). Turn it off if answers get worse; the switches below then apply one by one.',
   },
   {
     field: 'supportJudge',
@@ -148,6 +148,12 @@ export const FEATURES: readonly Feature[] = [
     label: 'Plain summary',
     description:
       'On by default: the result starts with a short version for people, in Simplified Technical English (short sentences, common words, no citation ids), written from the cited answer. The full version for AI agents is always there. Off saves one model call.',
+  },
+  {
+    field: 'followOpen',
+    label: 'Follow up what an investigation leaves open',
+    description:
+      'Off by default (it is one more investigation): questions an investigation leaves open are handed, each with how to verify it, to a follow-up investigation limited to them, which plays next with experiments on offer. The follow-up does not follow itself up.',
   },
   {
     field: 'investigateOpen',

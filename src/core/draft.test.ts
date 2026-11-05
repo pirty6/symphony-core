@@ -129,6 +129,21 @@ describe('adaptPattern', () => {
       expect.stringMatching(/must be an object/),
     ]);
     expect(adaptPattern(p, {}).errors).toEqual([]);
+    // Guidance may bound experiments and web research, never rule them out (seen live: a run
+    // told "do not plan experiments" left every runtime question unverified).
+    for (const text of [
+      'Do not plan experiments that rerun the test suite to measure the flake rate.',
+      'Skip web research; the code says enough.',
+      'Avoid any experiments.',
+    ])
+      expect(adaptPattern(p, { directives: { [agent.id]: text } }).errors).toEqual([
+        expect.stringMatching(/must not rule out experiments or web research \("/),
+      ]);
+    for (const text of [
+      'Run only the three flaky specs, 30 times each with retries off; never the whole suite.',
+      'No need to read the vendor docs twice.',
+    ])
+      expect(adaptPattern(p, { directives: { [agent.id]: text } }).errors).toEqual([]);
     // Too long is refused by name, never cut silently.
     const long = 'x'.repeat(MAX_GUIDANCE + 1);
     expect(adaptPattern(p, { directives: { [agent.id]: long } }).errors).toEqual([

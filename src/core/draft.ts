@@ -80,6 +80,7 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(raw.fresh === true ? { fresh: true } : {}),
         ...(isComplexity(raw.complexity) ? { complexity: raw.complexity } : {}),
         ...(raw.isolated === true ? { isolated: true } : {}),
+        ...(raw.sandbox === true ? { sandbox: true } : {}),
         ...(raw.reviewsCode === true ? { reviewsCode: true } : {}),
         ...(typeof raw.cites === 'string' && raw.cites ? { cites: raw.cites } : {}),
         ...(Array.isArray(raw.citesAlso) && raw.citesAlso.every((f) => typeof f === 'string')
@@ -336,6 +337,13 @@ export function summarizeComposed(
   return { kind, name, steps, aiSteps, guided, settings, headline };
 }
 
+/**
+ * Guidance that rules out trying things ("do not plan experiments", "skip web research"):
+ * refused. Bounding them ("never the whole suite", "at most 5 runs") is fine.
+ */
+const RULES_OUT_TRYING =
+  /\b(do not|don't|never|no|avoid|skip|without)\s+(plan(ning)?|run(ning)?|design(ing)?|use|using|do(ing)?|any)?\s*(any\s+)?(experiments?|web(\s+(research|search|pages))?)\b/i;
+
 /** Guidance per step: longer is refused (named back to shorten), never cut silently. */
 export const MAX_GUIDANCE = 2000;
 
@@ -366,6 +374,13 @@ export function adaptPattern(
     }
     if (typeof text !== 'string' || !text.trim()) {
       errors.push(`adaptation.directives.${n.id}: guidance must be non-empty text`);
+      return n;
+    }
+    const forbids = RULES_OUT_TRYING.exec(text);
+    if (forbids) {
+      errors.push(
+        `adaptation.directives.${n.id}: guidance must not rule out experiments or web research ("${forbids[0]}"): bound them instead (name the tests to run, the repeats, a timeout); experiments ask before they run`,
+      );
       return n;
     }
     if (text.trim().length > MAX_GUIDANCE) {

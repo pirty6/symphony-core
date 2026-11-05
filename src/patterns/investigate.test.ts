@@ -50,10 +50,20 @@ function runWith(
     parallel?: number;
   } = {},
 ) {
+  // web and experiment always play when on offer: a test that does not use them describes a
+  // machine that does not offer them.
+  const offered = (s: Readonly<Record<string, unknown>>) => {
+    const all = demo.tools!.catalog!(s) as { names: string[]; descriptions: string[] };
+    const keep = all.names.map((n) => !['web', 'experiment'].includes(n) || use.includes(n));
+    return {
+      names: all.names.filter((_, i) => keep[i]),
+      descriptions: all.descriptions.filter((_, i) => keep[i]),
+    };
+  };
   const script: DemoScript = {
     ...demo,
     ...(approvals ? { approvals } : {}),
-    tools: { ...demo.tools, ...over.tools },
+    tools: { ...demo.tools, catalog: offered, ...over.tools },
     agents: {
       ...demo.agents,
       ...over.agents,
@@ -717,6 +727,17 @@ describe('investigate always ends: research rounds are bounded', () => {
           updates: { ...assessFor(s, [(s.subQuestions as string[])[0]!]), confidence: 0.2 },
           verdict: v,
         }),
+        // Research always finds something new, so the debate runs to its cap.
+        chase: (s, visit) => {
+          const r = demo.agents!.chase!(s, visit);
+          return {
+            ...r,
+            updates: {
+              ...r.updates,
+              newFindings: [`git-history | commit c${visit} — found on visit ${visit}`],
+            },
+          };
+        },
         challenge: (_s, visit) => ({
           updates: { objections: [`S1: src/x.ts was never read (F1, round ${visit})`] },
           verdict: v,
@@ -1013,6 +1034,140 @@ describe('investigate asks for a hint once', () => {
       expect(
         (investigate.nodes.find((n) => n.id === id) as unknown as { reads: string[] }).reads,
       ).toContain('hint');
+  });
+});
+
+const rejections = (r: ReturnType<typeof runScripted>, node: string) =>
+  (r.state.steps.find((x) => x.nodeId === node)?.attempts ?? []).map((a) => a.errors.join(' '));
+
+describe('investigate always tries: the web and targeted experiments', () => {
+  /** The demo, with the plan's skips and the experiments it designs replaced. */
+  const play = (skip: string[], experiments?: string[][]) => {
+    let designs = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        plan: (st) => {
+          const base = demo.agents!.plan!(st, 0) as { updates: Record<string, unknown> };
+          const names = (st.sourceNames as string[]) ?? [];
+          return {
+            updates: {
+              ...base.updates,
+              useSources: names.filter((n) => !skip.includes(n)),
+              skipSources: skip,
+              skipReasons: skip.map(() => 'not needed'),
+            },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+          };
+        },
+        ...(experiments
+          ? {
+              designExperiments: () => ({
+                updates: {
+                  experiments: experiments[Math.min(designs++, experiments.length - 1)]!,
+                  timedExperiments: [],
+                },
+                verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+              }),
+            }
+          : {}),
+      },
+    };
+    return runScripted(compileInvestigate({ goal: 'g', context: { question: 'q' } }), script);
+  };
+
+  it('skipping the web or experiments when they are on offer is sent back', () => {
+    const noWeb = play(['web', 'prior-runs']);
+    expect(rejections(noWeb, 'plan')[0]).toMatch(/Always use web/);
+    const noTries = play(['experiment', 'prior-runs']);
+    expect(rejections(noTries, 'plan')[0]).toMatch(
+      /Always use experiment: test the hypotheses with small, targeted runs/,
+    );
+  });
+
+  it('an experiment that runs the whole suite is sent back; one test, repeated, is not', () => {
+    const r = play(
+      ['prior-runs'],
+      [
+        ['npm test — whether it is flaky — count failures'],
+        ['cd packages/ui && npx playwright test --retries=0 — flaky? — count'],
+        [
+          'npx playwright test e2e/drag.spec.ts --repeat-each=30 --retries=0 — whether the drag test is flaky — failures out of 30',
+          'npx jest --testPathPattern=lookup -t "returns unknown" — the fallback — passes',
+        ],
+      ],
+    );
+    const [suite, flagsOnly] = rejections(r, 'designExperiments');
+    expect(suite).toMatch(/never the whole suite/);
+    expect(flagsOnly).toMatch(/never the whole suite/);
+    expect(rejections(r, 'designExperiments')).toHaveLength(2);
+    expect(r.state.steps.some((x) => x.nodeId === 'parallelExperiment')).toBe(true);
+  });
+
+  it('experiments play in a throwaway copy of the workspace', () => {
+    for (const id of ['experiment', 'parallelExperiment'])
+      expect(investigate.nodes.find((n) => n.id === id)).toMatchObject({ sandbox: true });
+  });
+});
+
+/** A verification line per open item: a query each. */
+const right = (st: Readonly<Record<string, unknown>>) =>
+  ((st.openQuestions as string[]) ?? []).map((q, i) =>
+    i === 0
+      ? `V${i + 1} QUERY — kusto_query cluster bohemiahealth, database Health: TestHealthV2 | where Timestamp > ago(30d) | summarize retried=countif(Retried) by Package — the flake rate per package`
+      : `V${i + 1} QUERY — az repos policy list --branch master -o table — which policies apply`,
+  );
+
+describe('investigate says how to verify what is still open', () => {
+  /** The demo, its answer leaving two questions open, and the verification answers given in turn. */
+  const play = (...answers: ((s: Readonly<Record<string, unknown>>) => string[])[]) => {
+    let n = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        answer: (st, i) => {
+          const base = demo.agents!.answer!(st, i) as { updates: Record<string, unknown> };
+          return {
+            updates: {
+              ...base.updates,
+              openQuestions: [
+                'What is the real flake rate per package?',
+                'Which branch policies apply?',
+              ],
+            },
+            verdict: { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'r' },
+          };
+        },
+        planVerification: (st) => ({
+          updates: { verification: answers[Math.min(n++, answers.length - 1)]!(st) },
+          verdict: { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'r' },
+        }),
+      },
+    };
+    return runScripted(compileInvestigate({ goal: 'g', context: { question: 'q' } }), script);
+  };
+
+  it('one line per open item, in order, each a read, a query or a run, in the brief', () => {
+    const r = play(right);
+    const open = r.state.state.openQuestions as string[];
+    expect(open.length).toBeGreaterThanOrEqual(2);
+    expect(r.state.state.verification).toHaveLength(open.length);
+    expect(String(r.state.state.handoff)).toContain('## How to verify what is still open');
+    expect(String(r.state.state.handoff)).toContain('V1 QUERY — kusto_query cluster bohemiahealth');
+  });
+
+  it('a missing line, or one that is not a read, a query or a run, is sent back', () => {
+    const short = (st: Readonly<Record<string, unknown>>) => right(st).slice(1);
+    const vague = (st: Readonly<Record<string, unknown>>) =>
+      right(st).map((x, i) => (i === 0 ? 'V1 look into it' : x));
+    const r = play(short, vague, right);
+    const errors = (r.state.steps.find((x) => x.nodeId === 'planVerification')?.attempts ?? []).map(
+      (a) => a.errors.join(' '),
+    );
+    expect(errors[0]).toMatch(/one verification entry per entry of openQuestions/);
+    expect(errors[1]).toMatch(/READ\|QUERY\|RUN — the exact files, query or command/);
   });
 });
 
@@ -1738,12 +1893,12 @@ describe('lean (on by default): the settings measured to cut time and tokens, be
     return runScripted(score, script);
   };
 
-  it('on: one debate round, single-pass triage, gap-aimed research, sub-answers kept, a sub-agent per gap', () => {
+  it('on: single-pass triage, gap-aimed research, sub-answers kept, a sub-agent per gap; debate rounds left to the evidence', () => {
     const r = play();
     expect(r.state.outcome).toBe('success');
     expect(r.state.state).toMatchObject({
       lean: true,
-      maxDebateRounds: 1,
+      maxDebateRounds: 3,
       singlePass: true,
       gapAimed: true,
       keepUnchallenged: true,
@@ -1756,7 +1911,7 @@ describe('lean (on by default): the settings measured to cut time and tokens, be
     const r = play({ lean: false });
     expect(r.state.outcome).toBe('success');
     expect(r.state.state).toMatchObject({
-      maxDebateRounds: 2,
+      maxDebateRounds: 3,
       singlePass: false,
       gapAimed: false,
       keepUnchallenged: false,

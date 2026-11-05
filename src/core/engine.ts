@@ -459,6 +459,7 @@ function makePause(
       ...(codeStandardFor(node) ? { codeStandard: codeStandardFor(node) } : {}),
       ...(node.cites ? { cites: node.cites } : {}),
       ...(node.citesAlso?.length ? { citesAlso: node.citesAlso } : {}),
+      ...(node.sandbox ? { sandbox: true } : {}),
       ...(node.checks?.length ? { checks: node.checks } : {}),
       ...(node.otherModel ? { otherModel: true } : {}),
       ...(node.maxEffort ? { maxEffort: node.maxEffort } : {}),

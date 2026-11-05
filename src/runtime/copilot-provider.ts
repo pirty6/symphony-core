@@ -10,6 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { defaultKustoDeps, kustoQuery, type KustoDeps } from './kusto.js';
 import { CopilotClient, defineTool, ToolSet } from '@github/copilot-sdk';
 import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
 import { webSearch, type SearchResult } from './web-search.js';
@@ -47,6 +48,7 @@ import {
 
 export const DRAFT_TOOL = 'submit_draft';
 export const WEB_SEARCH_TOOL = 'web_search';
+export const KUSTO_TOOL = 'kusto_query';
 
 export interface SessionLike {
   on(handler: (event: { type: string; data?: unknown }) => void): () => void;
@@ -177,6 +179,8 @@ export interface CopilotProviderOptions {
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
   /** Backend for the web_search tool (nodes with the 'web' capability). */
   readonly webSearch?: (query: string, signal: AbortSignal) => Promise<readonly SearchResult[]>;
+  /** Backend for the kusto_query tool (nodes with the 'web' or 'mcp' capability). */
+  readonly kusto?: KustoDeps;
   readonly gitHubToken?: string;
   /** Where the token was set (e.g. TOKEN), named in messages when Copilot refuses it. */
   readonly gitHubTokenSource?: string;
@@ -196,6 +200,8 @@ interface SessionRun {
   readonly role: Role;
   readonly tools: readonly ReturnType<typeof defineTool>[];
   readonly onlyCustomTools: boolean;
+  /** Where the session works instead of the workspace (a sandbox step's throwaway copy). */
+  readonly cwd?: string;
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
   readonly model?: string;
   readonly effort?: ReasoningEffort;
@@ -557,7 +563,9 @@ export class CopilotProvider implements Provider {
     const config: SessionConfig = {
       ...(run.model ? { model: run.model } : {}),
       ...(run.effort ? { reasoningEffort: run.effort } : {}),
-      ...(this.opts.workingDirectory ? { workingDirectory: this.opts.workingDirectory } : {}),
+      ...((run.cwd ?? this.opts.workingDirectory)
+        ? { workingDirectory: run.cwd ?? this.opts.workingDirectory }
+        : {}),
       tools: [...run.tools],
       ...(run.onlyCustomTools
         ? {
@@ -1121,11 +1129,15 @@ export class CopilotProvider implements Provider {
         ].join('\n');
       },
     });
+    const external =
+      (pause.capabilities.includes('web') || pause.capabilities.includes('mcp')) && !integrating;
     const tools = [
       tool,
       ...(pause.capabilities.includes('web') && !integrating
         ? [this.webSearchTool(req.signal)]
         : []),
+      // Read-only data the change's own systems hold (test health, pipeline metrics).
+      ...(external ? [this.kustoTool(req.signal)] : []),
     ];
     const play = (m: { model?: string; effort?: ReasoningEffort }) =>
       this.runSession({
@@ -1135,6 +1147,7 @@ export class CopilotProvider implements Provider {
         tools,
         mcpServers,
         onlyCustomTools: isolated,
+        ...(req.cwd ? { cwd: req.cwd } : {}),
         ...(m.model ? { model: m.model } : {}),
         ...(m.effort ? { effort: m.effort } : {}),
         complexity: pause.complexity,
@@ -1251,6 +1264,36 @@ export class CopilotProvider implements Provider {
         ...(out.usage ? { usage: out.usage } : {}),
       },
     };
+  }
+
+  private kustoTool(signal: AbortSignal): ReturnType<typeof defineTool> {
+    const deps = this.opts.kusto ?? defaultKustoDeps;
+    return defineTool(KUSTO_TOOL, {
+      description:
+        'Run a read-only Kusto (Azure Data Explorer) query with your Azure sign-in: a KQL query or a .show command (no other control commands). Returns at most 200 rows as tab-separated text.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cluster: { type: 'string', description: 'Cluster name or https URL' },
+          database: { type: 'string', description: 'Database name' },
+          query: { type: 'string', description: 'KQL query, or a .show command' },
+        },
+        required: ['cluster', 'database', 'query'],
+      },
+      skipPermission: true,
+      handler: async (args: unknown) => {
+        const a = (args ?? {}) as Record<string, unknown>;
+        return kustoQuery(
+          {
+            cluster: String(a.cluster ?? ''),
+            database: String(a.database ?? ''),
+            query: String(a.query ?? ''),
+          },
+          deps,
+          signal,
+        );
+      },
+    });
   }
 
   private webSearchTool(signal: AbortSignal): ReturnType<typeof defineTool> {

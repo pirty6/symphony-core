@@ -394,6 +394,7 @@ export const review: Pattern = {
         'realObjections',
         'debateRounds',
         'maxDebateRounds',
+        'debateFindings',
         'unresolvedObjections',
       ].includes(f.name),
     ),
@@ -1095,8 +1096,10 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     {
       id: 'roundsLeft',
       kind: 'condition',
-      label: 'Research them? (rounds left)',
-      expression: 'debateRounds < maxDebateRounds',
+      label: 'Research them? (rounds left, last one found something)',
+      // Another round only while research still turns up findings: a barren round ends the debate.
+      expression:
+        'debateRounds < maxDebateRounds && (debateRounds == 0 || len(evidence) > debateFindings)',
     },
     {
       id: 'reopen',
@@ -1110,6 +1113,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
           expr: 'append(debateLog, "Round " + text(debateRounds + 1) + ": " + text(len(realObjections)) + " of " + text(len(objections)) + " objections sent to research, " + text(len(findings)) + " findings standing")',
         },
         { field: 'debateRounds', expr: 'debateRounds + 1' },
+        { field: 'debateFindings', expr: 'len(evidence)' },
       ],
     },
     {
@@ -1119,6 +1123,10 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       // Out of rounds, not out of objections: the real ones are said in the result, not dropped.
       assign: [
         { field: 'unresolvedObjections', expr: 'unique(unresolvedObjections + realObjections)' },
+        {
+          field: 'debateLog',
+          expr: 'append(debateLog, "Stopped after " + text(debateRounds) + " round(s): " + if(debateRounds >= maxDebateRounds, "the cap (maxDebateRounds) was reached", "the last round\'s research found nothing new") + "; " + text(len(realObjections)) + " objection(s) reported as open")',
+        },
       ],
     },
     {

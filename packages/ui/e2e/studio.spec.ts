@@ -15,6 +15,17 @@ async function runningNow(page: Page) {
   return live
 }
 
+/** investigate's demo asks before its experiments (they run in a throwaway copy): approve them. */
+async function allowExperiments(page: Page) {
+  const card = page.getByTestId('approval-card')
+  await expect(card).toContainText('throwaway copy', { timeout: 20_000 })
+  await card.getByRole('button', { name: 'Approve', exact: true }).click()
+}
+
+/** The newest saved review run (other tests save runs of their own patterns at the same time). */
+const savedReview = (page: Page) =>
+  page.getByTestId('saved-run').filter({ has: page.locator('b', { hasText: /^review$/ }) }).first().locator('.lib-item')
+
 async function guess(page: Page, letter: string) {
   const card = page.getByTestId('approval-card')
   const pauseId = await card.getAttribute('data-pause-id')
@@ -86,8 +97,8 @@ test('saved runs replay and verify deterministically', async ({ page }) => {
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await page.getByTestId('toggle-demo-runs').click()
-  // A saved run, not a live one ("Running now" items look the same).
-  await page.getByTestId('saved-run').first().locator('.lib-item').click()
+  // A saved review run, not a live one ("Running now" items look the same), nor another test's.
+  await savedReview(page).click()
   await expect(page.getByTestId('replay-check')).toContainText('reproduces this run exactly')
   await page.getByLabel('timeline').fill('5')
   await expect(page.getByTestId('timeline-events').locator('li.current')).toBeVisible()
@@ -133,6 +144,7 @@ test('phases collapse into one node, light up while running and open into their 
   await open(page, 'investigate')
   await expect(page.getByTestId('node-inventory')).toHaveCount(0)
   await page.getByRole('button', { name: '▶ Run' }).click()
+  await allowExperiments(page)
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await expect(page.getByTestId('phase-deepPhase')).toHaveAttribute('data-status', 'done')
   await page.getByRole('button', { name: 'open phase listPhase' }).dispatchEvent('click')
@@ -164,6 +176,7 @@ test('auto-approve can be turned on mid-run: the waiting approval answers itself
 test('the result opens in a reader: people\'s version first, then the brief for an AI agent', async ({ page }) => {
   await open(page, 'investigate')
   await page.getByRole('button', { name: '▶ Run' }).click()
+  await allowExperiments(page)
   await expect(page.getByTestId('run-status')).toHaveText('done', { timeout: 30_000 })
   // The people's version is short: it shows in the inspector, and the reader stays closed (the
   // long brief for an AI agent does not open it).
@@ -185,8 +198,8 @@ test('a saved run can be forked from the step shown on the timeline', async ({ p
   await page.getByRole('button', { name: '▶ Run' }).click()
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await page.getByTestId('toggle-demo-runs').click()
-  // A saved run, not a live one ("Running now" items look the same).
-  await page.getByTestId('saved-run').first().locator('.lib-item').click()
+  // A saved review run, not a live one ("Running now" items look the same), nor another test's.
+  await savedReview(page).click()
   await expect(page.getByTestId('replay-check')).toContainText('reproduces this run exactly')
   await page.getByLabel('timeline').fill('6')
   const fork = page.getByTestId('fork')

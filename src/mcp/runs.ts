@@ -49,7 +49,7 @@ import {
   runsDirFor,
   saveRun,
 } from '../runtime/store.js';
-import { editsFiles, isolate } from '../runtime/worktree.js';
+import { editsFiles, isolate, sandboxFor } from '../runtime/worktree.js';
 import { prForRun } from '../runtime/pr.js';
 
 const DRAFTS_DIR = 'src/patterns/drafts';
@@ -417,7 +417,11 @@ export class RunManager {
           : {}),
         autoApprove: req.autoApprove === true,
         ...(providerName === 'copilot'
-          ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
+          ? {
+              envHash: () => gitFingerprint(dir),
+              scratch: await runScratch(workspace),
+              sandbox: sandboxFor(dir),
+            }
           : {}),
         ...(isolation ? { isolation } : {}),
         ...(pr ? { cleanup: pr.finish } : {}),

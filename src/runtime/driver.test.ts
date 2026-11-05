@@ -1221,3 +1221,81 @@ describe('auto-approve mid-run', () => {
     await done;
   });
 });
+
+/** Answers; with `failFirst`, the first call breaks (the engine asks again). */
+const answering = (seen: AgentRequest[], failFirst = false): Provider => ({
+  name: 'copilot',
+  runAgent: async (req): Promise<AgentResponse> => {
+    seen.push(req);
+    if (failFirst && seen.length === 1) throw new Error('the session broke');
+    return {
+      result: {
+        updates: { note: 'ran' },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+      },
+      transcript: { provider: 'copilot', prompt: '', output: '', toolCalls: [] },
+    };
+  },
+  draft: () => Promise.reject(new Error('n/a')),
+});
+
+describe('sandbox steps', () => {
+  const p: Pattern = {
+    name: 'try',
+    description: 'd',
+    requiredContext: [],
+    state: [{ name: 'note', type: 'string' }],
+    start: 's',
+    nodes: [
+      { id: 's', kind: 'start', label: 'S' },
+      {
+        id: 'experiment',
+        kind: 'agent',
+        role: 'executor',
+        label: 'E',
+        sandbox: true,
+        directive: 'd',
+        reads: [],
+        writes: ['note'],
+      },
+      { id: 'e', kind: 'end', label: 'E' },
+    ],
+    edges: [
+      { id: '1', from: 's', to: 'experiment' },
+      { id: '2', from: 'experiment', to: 'e' },
+    ],
+  };
+  const score = compileScore(p, { goal: 'g', generatedAt: 't' });
+
+  it('plays in its own throwaway copy, discarded after the call, even when it fails', async () => {
+    const seen: AgentRequest[] = [];
+    const discarded: string[] = [];
+    const sandbox = async (label: string) => ({
+      dir: `/tmp/box-${label}`,
+      discard: async () => void discarded.push(label),
+    });
+    const perf = await new Run({ score, provider: answering(seen), clock, sandbox }).start();
+    expect(perf.outcome).toBe('success');
+    expect(seen[0]).toMatchObject({ cwd: '/tmp/box-experiment', pause: { sandbox: true } });
+    expect(discarded).toEqual(['experiment']);
+    // A call that breaks still has its copy removed; the next attempt gets a fresh one.
+    await new Run({ score, provider: answering([], true), clock, sandbox }).start();
+    expect(discarded).toEqual(['experiment', 'experiment', 'experiment']);
+  });
+
+  it('with no copy to be had, it plays in the workspace and says so', async () => {
+    const seen: AgentRequest[] = [];
+    const run = new Run({
+      score,
+      provider: answering(seen),
+      clock,
+      sandbox: async () => undefined,
+    });
+    await run.start();
+    expect(seen[0]!.cwd).toBeUndefined();
+    expect(seen[0]!.pause.sandbox).toBe(false);
+    expect(JSON.stringify(run.messages)).toContain(
+      'No throwaway copy of the workspace could be made',
+    );
+  });
+});

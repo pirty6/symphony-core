@@ -892,6 +892,39 @@ describe('review reuses investigate: the chase, the debate and memory', () => {
     expect(rejections(sent.r, 'skeptic')[0]).toMatch(/Name what each objection attacks/);
   });
 
+  it('another debate round only when the last one turned up new evidence', () => {
+    const reworded: Agent = (s, visit) => ({
+      updates: {
+        proposedDispositions: ((s.findings as string[]) ?? []).map(
+          (f) => `${f.split(' ')[0]} KEEP — holds`,
+        ),
+        objections: [`C1 is not met: the counter is off by ${visit}, see src/core/engine.ts:120`],
+      },
+      verdict: v,
+    });
+    // Round 1's research adds a note (new), so round 2 runs; round 2 finds only that note again.
+    const barren = play({ agents: { skeptic: reworded, chase: researching } });
+    expect(barren.state.debateRounds).toBe(2);
+    expect(barren.state.debateRounds).toBeLessThan(barren.state.maxDebateRounds as number);
+    expect(barren.state.debateLog).toEqual([
+      expect.stringMatching(/^Round 1: /),
+      expect.stringMatching(/^Round 2: /),
+      "Stopped after 2 round(s): the last round's research found nothing new; 1 objection(s) reported as open",
+    ]);
+    const finding: Agent = (_s, visit) => ({
+      updates: {
+        queries: [`git log -L120,120:src/core/engine.ts (${visit})`],
+        chaseNotes: [`src/core/engine.ts:${120 + visit} — new on visit ${visit}`],
+      },
+      verdict: v,
+    });
+    const productive = play({ agents: { skeptic: reworded, chase: finding } });
+    expect(productive.state.debateRounds).toBe(productive.state.maxDebateRounds);
+    expect(productive.state.debateLog).toContainEqual(
+      expect.stringMatching(/^Stopped after 3 round\(s\): the cap \(maxDebateRounds\) was reached/),
+    );
+  });
+
   it('a second, independent reviewer plays once at complexity 4; what it finds is checked and merged', () => {
     const second: Agent = () => ({
       updates: {

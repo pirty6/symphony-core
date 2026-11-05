@@ -62,7 +62,12 @@ export function chainNext(
     try {
       score = compileScore(pattern, {
         goal,
-        context: { ...context, ...featureInputs(pattern, opts.features) },
+        // What a follow-up was built with wins over the switches (a follow-up never asks for another).
+        context: {
+          ...context,
+          ...featureInputs(pattern, opts.features),
+          ...(typeof step === 'string' ? {} : step.context),
+        },
         ...(opts.complexity ? { complexity: opts.complexity } : {}),
         ...(opts.improvisation !== undefined ? { improvisation: opts.improvisation } : {}),
       });
