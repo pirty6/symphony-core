@@ -51,18 +51,20 @@ const collecting =
   });
 
 describe('review', () => {
-  it('runs the tests on the code first, and gives the reviewers the changed tests', () => {
-    const { ran, state, end } = play(
-      {
-        agents: {
-          collect: collecting(['src/a.ts', 'src/a.test.ts'], ['pnpm-lock.yaml — lockfile']),
-        },
+  it("never runs tests or lint (the change's CI does), and gives the reviewers the changed tests", () => {
+    const { ran, state, end } = play({
+      agents: {
+        collect: collecting(['src/a.ts', 'src/a.test.ts'], ['pnpm-lock.yaml — lockfile']),
       },
-      { verify: true },
-    );
-    expect(ran.indexOf('runTests')).toBeLessThan(ran.indexOf('analyze'));
+    });
+    expect(review.nodes.some((n) => n.kind === 'tool' && n.tool === 'tests.run')).toBe(false);
+    expect(review.state.map((f) => f.name)).not.toContain('verify');
     expect(state.changedTests).toEqual(['src/a.test.ts']);
+    expect(ran).toContain('analyze');
     expect(end).toBe('issues');
+    expect(String(state.handoff)).toContain(
+      "Tests and lint: not run by a review (the change's CI runs them).",
+    );
     // What was left out, and why, is in the result.
     expect(state.coverage).toMatch(/Left out: pnpm-lock.yaml — lockfile/);
   });
@@ -94,24 +96,6 @@ describe('review', () => {
     expect(capped.state.report).toMatch(/Not reviewed \(over maxFiles 2\): src\/c\.ts/);
   });
 
-  it('verify is off by default (CI runs the checks); on, failing tests are an issue even when no line is cited', () => {
-    const failing = play(
-      {
-        agents: quiet,
-        tools: {
-          runTests: () => ({ passed: false, output: 'FAIL a.test.ts > adds', command: 'npm test' }),
-        },
-      },
-      { verify: true },
-    );
-    expect(failing.end).toBe('issues');
-    expect(failing.ran).toContain('report');
-    const off = play({ agents: quiet });
-    expect(off.ran).not.toContain('runTests');
-    expect(off.end).toBe('clean');
-    expect(off.state.report).toMatch(/Tests and lint not run here \(verify is off: CI runs them\)/);
-  });
-
   it('a part that could not read its files does not throw away the others', () => {
     const { r, state, end } = play(
       {
@@ -139,33 +123,6 @@ describe('review', () => {
     expect(state.findings).toContain('F1 src/a.ts:3 — [BUG] [HIGH] off by one `i < n`');
     expect(state.coverage).toMatch(/Not reviewed \(the reviewer could not read them\): src\/b\.ts/);
     expect(r.state.outcome).toBe('success');
-  });
-
-  it('checks that did not run say why, and keep the command you gave', () => {
-    const notRun = {
-      passed: true,
-      output: 'not run: remote callers do not run commands here',
-      command: '',
-    };
-    const { state, end } = play(
-      {
-        agents: { ...quiet, collect: collecting(['src/a.ts'], [], ['src/old.ts']) },
-        tools: { runTests: () => notRun, runLint: () => notRun },
-      },
-      { verify: true, testCommand: 'pnpm test', lintCommand: 'tsc --noEmit' },
-    );
-    expect(state.testCommand).toBe('pnpm test');
-    expect(state.coverage).toMatch(/Tests not run: remote callers/);
-    expect(state.coverage).toMatch(/Lint not run: remote callers/);
-    expect(state.coverage).toMatch(/Deleted \(nothing left to read; .*\): src\/old\.ts/);
-    expect(end).toBe('clean');
-  });
-
-  it('runs the tests afresh each time, never from a cached run', () => {
-    const node = review.nodes.find((n) => n.id === 'runTests') as {
-      args?: Record<string, unknown>;
-    };
-    expect(node.args).toEqual({ optional: true });
   });
 
   it('every finding names its category and severity', () => {
@@ -682,22 +639,7 @@ describe('review: the skeptic (S11)', () => {
   });
 });
 
-describe('review: required checks and intent', () => {
-  it('requireChecks keeps a review whose tests did not run from "Looks good"; docs-only changes are exempt', () => {
-    const unrun = play({ agents: quiet }, { requireChecks: true });
-    expect(unrun.state.openItems).toEqual([
-      'The tests were required (requireChecks) but did not run here',
-    ]);
-    expect(unrun.end).toBe('openQuestions');
-    const ran = play({ agents: quiet }, { requireChecks: true, verify: true });
-    expect(ran.end).toBe('clean');
-    const docs = play(
-      { agents: { ...quiet, collect: collecting(['README.md']) } },
-      { requireChecks: true },
-    );
-    expect(docs.end).toBe('clean');
-  });
-
+describe('review: intent', () => {
   it('intent and the engine scan reach the steps that judge', () => {
     for (const step of ['gatherContext', 'analyze', 'wholeChange'])
       expect(review.nodes.find((n) => n.id === step)).toMatchObject({
@@ -971,5 +913,77 @@ describe('review reuses investigate: the chase, the debate and memory', () => {
       expect(node.reads).toContain('knownFacts');
       expect(node.directive).toContain('use them as leads to check, never as evidence');
     }
+  });
+});
+
+/** A review comment with every part, for the finding with this id. */
+const fullComment = (findingId: string) =>
+  `${findingId} Off by one\nWhat is wrong: the loop stops before n.\nExample: sumTo(4) gives 6 today; expected 10.\nWhy it matters: every total is short.\nHow to fix: \`i <= n\`, and a test for sumTo(4).`;
+
+describe('review comments: what is wrong, an example, why it matters, how to fix', () => {
+  it('each finding gets one, in order, with every part; the brief carries them whole', () => {
+    const { state, r } = play();
+    expect(rejections(r, 'comment')).toEqual([]);
+    expect((state.comments as string[]).map((c) => c.split(' ')[0])).toEqual(['F1', 'F2']);
+    expect(state.comments as string[]).toContainEqual(
+      expect.stringMatching(
+        /What is wrong: [\s\S]*Example: [\s\S]*Why it matters: [\s\S]*How to fix: /,
+      ),
+    );
+    expect(String(state.handoff)).toContain(
+      '## Review comments: what is wrong, an example, why it matters, how to fix',
+    );
+    expect(String(state.handoff)).toContain((state.comments as string[])[0]);
+  });
+
+  it('a comment without an example, or out of order, is sent back by what it misses', () => {
+    const noExample: Agent = (s) => ({
+      updates: {
+        comments: ((s.findings as string[]) ?? []).map((f) =>
+          fullComment(f.split(' ')[0]!).replace(/Example: .*\n/, ''),
+        ),
+      },
+      verdict: v,
+    });
+    const reversed: Agent = (s) => ({
+      updates: {
+        comments: ((s.findings as string[]) ?? [])
+          .map((f) => fullComment(f.split(' ')[0]!))
+          .toReversed(),
+      },
+      verdict: v,
+    });
+    const right: Agent = (s) => ({
+      updates: {
+        comments: ((s.findings as string[]) ?? []).map((f) => fullComment(f.split(' ')[0]!)),
+      },
+      verdict: v,
+    });
+    const { r, end } = play({ agents: { comment: inTurn(noExample, reversed, right) } });
+    const [missing, order] = rejections(r, 'comment');
+    expect(missing).toMatch(/"What is wrong:", "Example:", "Why it matters:", "How to fix:"/);
+    expect(order).toMatch(
+      /one comment per finding, starting with its id, in the order of findings/,
+    );
+    expect(end).toBe('issues');
+  });
+
+  it('many findings are commented in parts of three, and still one per finding, in order', () => {
+    const five: Agent = (s) => ({
+      updates: {
+        newFindings: [1, 2, 3, 4, 5].map(
+          (n) => `src/core/engine.ts:${118 + n} — [BUG] [LOW] issue ${n} \`attempts += 1\``,
+        ),
+        reviewed: (s.files as string[]) ?? [],
+        attestations: attest(['CORRECTNESS']),
+      },
+      verdict: v,
+    });
+    const { r, state } = play({ agents: { analyze: five, wholeChange: soundWhole } });
+    expect(r.state.steps.filter((x) => x.nodeId === 'comment')).toHaveLength(1);
+    expect((state.comments as string[]).map((c) => c.split(' ')[0])).toEqual(
+      (state.findings as string[]).map((f) => f.split(' ')[0]),
+    );
+    expect(state.comments).toHaveLength(5);
   });
 });
