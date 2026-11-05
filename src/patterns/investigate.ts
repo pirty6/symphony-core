@@ -1423,10 +1423,12 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'executor',
       label: 'Run experiments side by side',
+      // Each in its own throwaway copy: it may add a temporary test; nothing comes back.
+      sandbox: true,
       // One sub-agent per experiment that times nothing, as many at once as the plan chose.
       fanOut: { over: 'parallelExperiments', per: 1, agents: 'agents' },
       directive:
-        'Run the ONE experiment in `parallelExperiments` in the workspace. Other experiments run at the same time: do not modify tracked files, and keep scripts and output in a subfolder of the scratch folder named in your instructions that no one else uses (e.g. named after your experiment). Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings` as "experiment | <command> — result". If it cannot run, say exactly why in `newFindings`.',
+        'Run the ONE experiment in `parallelExperiments`. You work in a throwaway copy of the workspace: add or change files there if the experiment needs it (e.g. a temporary test next to the code it tests); nothing comes back to the real workspace. Run only what the experiment names (one test file or test name, its repeats, its timeout), never the whole test suite. Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings` as "experiment | <command> — result". If it cannot run, say exactly why in `newFindings`.',
       reads: ['question', 'parallelExperiments'],
       writes: ['queries', 'newFindings'],
       cites: 'newFindings',
@@ -1465,11 +1467,12 @@ export const investigate: Pattern = {
       id: 'experiment',
       kind: 'agent',
       role: 'executor',
+      sandbox: true,
       maxVisits: 20,
       visitsFrom: 'maxExperiments + 2',
       label: 'Run timed experiment',
       directive:
-        'Run `currentExperiment` in the workspace. Do not modify tracked files: put any scripts and output only in the scratch folder named in your instructions. For timings, warm up once and report the median of at least 3 runs with the raw numbers. Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings`. If it cannot run, say exactly why in `newFindings`.',
+        'Run `currentExperiment`. You work in a throwaway copy of the workspace: add or change files there if the experiment needs it (e.g. a temporary test); nothing comes back to the real workspace. Run only what the experiment names, never the whole test suite. For timings, warm up once and report the median of at least 3 runs with the raw numbers. Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings`. If it cannot run, say exactly why in `newFindings`.',
       reads: ['question', 'currentExperiment'],
       writes: ['queries', 'newFindings'],
       cites: 'newFindings',

@@ -100,6 +100,14 @@ describe('buildAgentPrompt', () => {
       expect(a.indexOf(part)).toBeLessThan(cut);
   });
 
+  it('tells a sandbox step it works in a throwaway copy it may change', () => {
+    const boxed = buildAgentPrompt({ ...pause, role: 'executor', sandbox: true });
+    expect(boxed).toContain(
+      'a throwaway copy of the project, made for this step and deleted after it',
+    );
+    expect(boxed).not.toContain('scratch folder');
+  });
+
   it("tells an executor to keep temporary files in the run's scratch folder", () => {
     const executor = { ...pause, role: 'executor' as const };
     expect(buildAgentPrompt(executor, { scratchDir: '/w/.symphony/scratch/r1' })).toContain(

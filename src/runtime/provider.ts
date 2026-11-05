@@ -39,6 +39,8 @@ export interface AgentRequest {
   readonly integrate?: readonly unknown[];
   /** This run's scratch folder, deleted when the run ends. */
   readonly scratchDir?: string;
+  /** Where this call works instead of the workspace: a throwaway copy for a sandbox step. */
+  readonly cwd?: string;
   /** pause.preload: the listed workspace files, read whole by the runtime. */
   readonly files?: readonly PreloadedFile[];
 }
@@ -107,7 +109,9 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
       ? '- Only the input below. You have no workspace or shell tools for this step: reason from what you were given.'
       : pause.role === 'assessor'
         ? "- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff/ls-files/check-ignore, gh issue/pr/run/search view|list, gh api GETs, az list/show/get/query commands and az devops invoke or az rest GETs for Azure DevOps and Azure, ls, cat, find, jq). No interpreters (python, node, bash -c…): they can write files, so they are refused. Read JSON with jq, e.g. `jq '.results[] | {task, pass}' file.json`. A command line runs only if every part is allowed; a refusal names the part, so run the rest again without it."
-        : `- Workspace: read, edit and run commands as this step needs. Put scripts, notes and other temporary files only in ${sources.scratchDir ? `the run's scratch folder \`${sources.scratchDir}\` (deleted when the run ends)` : 'the system temp folder'}, never in the project.`,
+        : pause.sandbox
+          ? '- Workspace: a throwaway copy of the project, made for this step and deleted after it. You may add or change files in it to try something (e.g. a temporary test next to the code it tests); nothing you do here reaches the real project.'
+          : `- Workspace: read, edit and run commands as this step needs. Put scripts, notes and other temporary files only in ${sources.scratchDir ? `the run's scratch folder \`${sources.scratchDir}\` (deleted when the run ends)` : 'the system temp folder'}, never in the project.`,
     ...(pause.capabilities.includes('web')
       ? [
           '- Web: web_search(query) to find pages, then web_fetch(url) to read them. Cite every URL you rely on.',
