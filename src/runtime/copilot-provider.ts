@@ -944,16 +944,24 @@ export class CopilotProvider implements Provider {
     pause: AgentPause,
     updates: Readonly<Record<string, unknown>>,
   ): Promise<string[]> {
-    const cited = pause.cites ? updates[pause.cites] : undefined;
-    if (!this.opts.workingDirectory || !Array.isArray(cited)) return [];
-    const r = await checkCitations(
-      this.opts.workingDirectory,
-      cited.filter((c): c is string => typeof c === 'string'),
+    const workspace = this.opts.workingDirectory;
+    if (!workspace) return [];
+    const fields = [...(pause.cites ? [pause.cites] : []), ...(pause.citesAlso ?? [])];
+    const errors = await Promise.all(
+      fields.map(async (field) => {
+        const cited = updates[field];
+        if (!Array.isArray(cited)) return [];
+        const r = await checkCitations(
+          workspace,
+          cited.filter((c): c is string => typeof c === 'string'),
+        );
+        return r.invalid.map(
+          (i) =>
+            `${field}: "${i.finding.slice(0, 120)}" — ${i.reason}. Fix the path, line or quote from the file, or remove it.`,
+        );
+      }),
     );
-    return r.invalid.map(
-      (i) =>
-        `${pause.cites}: "${i.finding.slice(0, 120)}" — ${i.reason}. Fix the path, line or quote from the file, or remove it.`,
-    );
+    return errors.flat();
   }
 
   /** Up to two other models, from the nearest tiers, for when a content filter blocks one. */

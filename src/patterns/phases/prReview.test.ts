@@ -58,11 +58,19 @@ describe('PR review after the tests pass', () => {
           }
         : approve();
     const blocking = play(fix, {
-      agents: { prReview: review('APPROVE', ['BLOCKING src/a.ts:3 — off by one']) },
+      agents: {
+        prReview: review('APPROVE', [
+          'BLOCKING src/a.ts:3 — [BUG] off by one (bears on: issue) `i <= n`',
+        ]),
+      },
     });
     expect(rejections(blocking.r).join()).toMatch(/APPROVE with a BLOCKING comment/);
     const nits = play(fix, {
-      agents: { prReview: review('REQUEST_CHANGES', ['NIT src/a.ts:3 — rename x']) },
+      agents: {
+        prReview: review('REQUEST_CHANGES', [
+          'NIT src/a.ts:3 — [CLEAN] [N1] rename x `const x = 1`',
+        ]),
+      },
     });
     expect(rejections(nits.r).join()).toMatch(/needs at least one BLOCKING comment/);
     const untagged = play(fix, { agents: { prReview: review('APPROVE', ['looks fine']) } });
@@ -71,8 +79,8 @@ describe('PR review after the tests pass', () => {
     const honest = play(fix, {
       agents: {
         prReview: review('APPROVE', [
-          'RESOLVED src/a.ts:3 — the boundary is now exclusive',
-          'NIT src/a.ts:9 — a clearer name',
+          'RESOLVED src/a.ts:3 — the boundary is now exclusive `i < n`',
+          'NIT src/a.ts:9 — [CLEAN] [N1] a clearer name `const x = 1`',
         ]),
       },
     });
@@ -92,7 +100,9 @@ describe('PR review after the tests pass', () => {
       agents: {
         prReview: (_s, visit) =>
           visit === 0
-            ? changes('BLOCKING src/a.ts:3 — the test passes without the fix')
+            ? changes(
+                'BLOCKING src/a.ts:3 — [TEST] the test passes without the fix (bears on: tests) `expect(x)`',
+              )
             : approve(),
       },
     });
@@ -104,20 +114,25 @@ describe('PR review after the tests pass', () => {
     // The second edit saw the reviewer's comment.
     const second = r.state.steps.filter((s) => s.nodeId === 'apply')[1]!;
     expect(second.input?.reviewComments).toEqual([
-      'BLOCKING src/a.ts:3 — the test passes without the fix',
+      'BLOCKING src/a.ts:3 — [TEST] the test passes without the fix (bears on: tests) `expect(x)`',
     ]);
     expect(second.input?.failureReason).toMatch(/PR review requested changes/);
   });
 
   it('never approved: after the last round a person accepts the change, or stops it', () => {
-    const never = { prReview: () => changes('BLOCKING src/a.ts:1 — still wrong') };
+    const never = {
+      prReview: () =>
+        changes('BLOCKING src/a.ts:1 — [BUG] still wrong (bears on: rootCause) `i <= n`'),
+    };
     const accepted = play(fix, {
       agents: never,
       approvals: { acceptAnyway: () => ({ approved: true }) },
     });
     expect(accepted.end).toBe('fixed');
     expect(accepted.ran('prReview')).toBe(3);
-    expect(accepted.state.reviewComments).toEqual(['BLOCKING src/a.ts:1 — still wrong']);
+    expect(accepted.state.reviewComments).toEqual([
+      'BLOCKING src/a.ts:1 — [BUG] still wrong (bears on: rootCause) `i <= n`',
+    ]);
 
     const stopped = play(fix, {
       agents: never,
@@ -134,7 +149,11 @@ describe('PR review after the tests pass', () => {
   it('a review round whose edit changes nothing lets a person decide, only on the reviewed, verified patch', () => {
     const once = {
       prReview: (_s: unknown, visit: number) =>
-        visit === 0 ? changes('BLOCKING src/a.ts:1 — rename the flag') : approve(),
+        visit === 0
+          ? changes(
+              'BLOCKING src/a.ts:1 — [CLEAN] [F3] rename the flag (bears on: Clean Code) `run(true)`',
+            )
+          : approve(),
     };
     // The green patch h1 is reviewed; the review edit changes nothing (still h1).
     const stuck = play(fix, {

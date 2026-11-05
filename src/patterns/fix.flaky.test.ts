@@ -439,12 +439,14 @@ describe('fix: the stability gate (opt-in)', () => {
               visit === 0
                 ? {
                     reviewDecision: 'REQUEST_CHANGES',
-                    reviewComments: ['BLOCKING src/paginate.ts:7 — name the constant'],
+                    reviewComments: [
+                      'BLOCKING src/paginate.ts:7 — [CLEAN] [G25] name the constant (bears on: Clean Code) `limit = 50`',
+                    ],
                     reviewSummary: 'one change',
                   }
                 : {
                     reviewDecision: 'APPROVE',
-                    reviewComments: ['RESOLVED src/paginate.ts:7 — named'],
+                    reviewComments: ['RESOLVED src/paginate.ts:7 — named `PAGE_SIZE`'],
                     reviewSummary: 'ok',
                   },
             verdict: v,

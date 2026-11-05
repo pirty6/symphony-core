@@ -69,6 +69,15 @@ describe('validatePattern', () => {
     expect(m).toMatch(/reads unknown state field 'nope'/);
   });
 
+  it('a cited field must be one the step writes (cites and citesAlso)', () => {
+    const nodes = base.nodes.map((n) =>
+      n.id === 'gather' ? { ...n, citesAlso: ['nope'] } : n,
+    ) as ScoreNode[];
+    expect(messages(withNodes(nodes))).toMatch(
+      /citesAlso 'nope' must be one of the fields it writes/,
+    );
+  });
+
   it('flags unreachable nodes and missing ends', () => {
     const nodes = [...base.nodes, { id: 'orphan', kind: 'end', label: 'x' } as ScoreNode];
     expect(messages(withNodes(nodes))).toMatch(/'orphan' is unreachable/);

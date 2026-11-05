@@ -133,6 +133,8 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
       (f) => `  - ${f.name} (${f.type})${f.description ? `: ${f.description}` : ''}`,
     ),
     '- `verdict`: { outcome: "applied" | "failed" | "skipped", confidence: 0..1, shouldTerminate: boolean, reason: one sentence }.',
+    // Seen live: a reviewer that found broken code answered "failed", and its verdicts were lost.
+    '- `outcome` says whether YOU did this step: "applied" when you did it, whatever you found (broken code, a failing build or a refuted claim is a result, not a failure); "failed" only when you could not do the step (you could not read what you needed, or your tools broke).',
     '- `shouldTerminate` is almost always false: the workflow moves on to its next step by itself. Set it to true ONLY to abort the entire workflow because continuing would be impossible or harmful.',
   );
   if (pause.outputSchema.length === 0)
@@ -145,8 +147,9 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
       ...checks.map((m) => `  - ${m}`),
     );
   if (pause.cites) {
+    const fields = [pause.cites, ...(pause.citesAlso ?? [])].map((f) => `\`${f}\``).join(', ');
     lines.push(
-      `- Write each \`${pause.cites}\` entry from the workspace as "path:line — fact \`exact text from that line\`" (a short verbatim quote in backticks). The file, the line and the quote are checked, and entries that fail are sent back or dropped. Entries from other sources: "source | location — fact".`,
+      `- Write each ${fields} entry from the workspace as "path:line — fact \`exact text from that line\`" (a short verbatim quote in backticks). The file, the line and the quote are checked, and entries that fail are sent back or dropped. Entries from other sources: "source | location — fact".`,
     );
   }
   if (pause.codeStandard) lines.push('', ...codeStandardSection(pause.codeStandard));

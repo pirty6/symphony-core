@@ -17,13 +17,15 @@ Shared building blocks (in [`src/patterns/phases/`](../src/patterns/phases)):
 | Evidence and citations | investigate, fix, implement, review | Every finding cites `path:line` with a quote, or a URL / named source. The engine checks file citations; failures go to `unverified`, not into the answer. |
 | Challenge (debate) | investigate, fix, implement | By complexity: a skeptic (≥2; read-only tools and another model family; at most 5 objections, each naming the finding or quoted claim it attacks; an objection repeated word for word from an earlier round is reported as unresolved instead of researched again, while a reworded one is treated as new), a pragmatist (from complexity `pragmatistFrom`, 3) who triages each one as REAL or THEORETICAL with a cited reason, a second independent investigator (4). REAL objections go back to research, bounded by `maxDebateRounds`; the next answer must resolve, rebut or mark OPEN each one by its tag; those still open are reported. |
 | Edit and verify | fix, refactor, implement | An executor edits; the engine captures the diff (an edit that changed nothing is caught), runs the tests and the linter, and triages failures: environment, wrong diagnosis (back to research), or try again, bounded by `maxAttempts`. |
-| PR review | fix, refactor, implement | A reviewer reads the diff; blocking comments go back to editing, bounded; you can accept despite the review. |
+| PR review | fix, refactor, implement | A reviewer reads the diff, with review's categories and Clean Code ids; each comment cites its line with a quote, and each BLOCKING one names what it bears on (the goal, what it is checked against, tests or Clean Code). Blocking comments go back to editing, bounded; you can accept despite the review. |
 
 **Code standard.** Every step that writes or reviews code is held to the practices of *Clean
-Code* (Robert C. Martin), summarized in [`src/core/standards.ts`](../src/core/standards.ts):
-names that reveal intent, small functions that do one thing, no hidden side effects, no
-duplication, errors that are not swallowed, comments that say why, one reason to change, clean
-tests, and the code you touch left a little cleaner. The codebase's own conventions come first.
+Code* (Robert C. Martin), summarized in our own words in
+[`src/core/standards.ts`](../src/core/standards.ts), one rule per chapter: names, functions,
+duplication, errors, comments, formatting, objects and data, boundaries, classes, systems, simple
+design, concurrency, tests (F.I.R.S.T.), and the code you touch left a little cleaner. The
+codebase's own conventions come first. Reviewers also get the 66 smells and heuristics of ch. 17
+by id (C1 to T9) and the F.I.R.S.T. test qualities, and name one in each CLEAN finding.
 - Executors with workspace tools always get it in their prompt.
 - Steps marked `reviewsCode` (review's *Find issues*, the PR review phase) judge against it:
   - review reports a break as a `CLEAN` finding;
@@ -616,44 +618,100 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    not review: could not fetch refs/pull/N/merge … (Authentication failed)"). Only real AI runs
    check out; scripted demos play on the workspace as it is.
 1. **Collect the diff** (never replayed: a PR can change on its host): the files to review, the
-   files left out and why (lockfiles, generated, binary, deleted), and what the change claims to
-   do. With a PR checked out, the diff is `git diff <prBase> HEAD`. Every changed file must be
-   listed or left out with why, and a path the PR does not change is sent back by name. No
-   changes ends `failed` with why in the report ("Could not review: …"), never an empty report
-   and never "looks good".
-2. **Cap.** At most `maxFiles` (60) files are reviewed; the rest are named as not reviewed.
+   files the change deletes, the files left out and why (lockfiles, generated, binary), the git
+   range of the change, and what the change claims to do. With a PR checked out, the diff is
+   `git diff <prBase> HEAD`. Every changed file must be listed, deleted or left out with why, and a
+   path the PR does not change is sent back by name. No changes ends `failed` with why in the
+   report ("Could not review: …"), never an empty report and never "looks good". A change that
+   only deletes files is still reviewed: what still uses them is judged.
+2. **Cap and scan.** At most `maxFiles` (60) files are reviewed; the rest are named as not
+   reviewed. The engine scans the diff (`diff.scan`, no AI): smells in the added lines (long
+   blocks, more than three parameters, boolean parameters, commented-out code, debug output, each
+   with its Clean Code id) and test changes that may hide a failure (a test skipped or focused,
+   assertions removed, a retry or wait added, a test file deleted). These are leads for the
+   reviewers, never findings by themselves.
 3. **Run the checks** (`verify`, off by default because the PR's CI pipeline already runs them; a
    Features switch): when on, the engine runs the tests, and `lintCommand` if set, on the code as
-   it is. When off, the coverage says the tests and lint were not run here. A project with no test command says "not run",
-   and so does a run for a remote caller (Copilot Studio): no code runs on this machine for them.
-4. **Find issues** in parallel parts. Each issue is
-   `path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`quote\``, checked by the engine:
-   - BUG and SECURITY;
-   - PERF;
-   - TEST (changed behaviour no test covers, weakened tests);
-   - FLAKY;
-   - REDUNDANT;
-   - DESIGN (against the codebase's rules);
-   - CLEAN (new or edited code that breaks a Clean Code rule, named);
-   - CLAIM (it does not do what it says).
+   it is. When off, the coverage says the tests and lint were not run here. A project with no
+   test command says "not run", and so does a run for a remote caller (Copilot Studio): no code
+   runs on this machine for them. With `requireChecks` on, a review whose tests did not run here
+   cannot end "Looks good" (changes to documentation only are exempt).
+4. **Gather context**, once, over the whole change, before anyone judges it:
+   - `claimList`: what `claims` says and `intent` (an optional input: the linked issue or its
+     acceptance criteria) asks for, one claim each (`C1 …`);
+   - `context`: for each changed file, the conventions, similar code and callers to compare it
+     with, citing that rule or code and naming the file it is for
+     (`AGENTS.md:3 — [CONVENTION] (for: db/schema.sql) why \`quote\``);
+   - `behaviours`: what the change adds or changes (`B1 path:line — …`);
+   - `obligations`: the other changes it requires (`O1 [CALLER|MIGRATION|CONFIG|DOCS|ERRPATH]
+     path:line — what must exist`), cited at the line that creates the need.
 
-   An honest "could not read it" ends `failed`.
-5. **Report** (issues, or failing tests or lint), and what was not reviewed or not checked. With
-   nothing found, it ends:
-   - **Could not verify** (partial) when every finding's quote is missing from this checkout:
-     the reviewed code must be checked out here;
-   - **Reviewed in part** (partial) when files were over the cap or not read whole;
-   - **Looks good** (success) only otherwise.
+   Each list is numbered in order (checked) and its citations are checked while the AI still has
+   the files open (`cites` and `citesAlso`), then again by the engine. An entry whose citation
+   still fails is kept apart, and it keeps the review from ending "Looks good". Obligations are
+   only what the codebase requires: a rule, what similar changes include, or code that breaks.
+5. **Find issues** in parallel parts. Each issue is
+   `path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`quote\``, checked by the engine. The
+   categories (shared with the PR review phase, in `phases/reviewRules.ts`):
+   - BUG, SECURITY, PERF;
+   - CONCURRENCY, ERRPATH (null, undefined, empty and error results), COMPAT (exported
+     signatures, config keys, schemas, wire formats);
+   - TEST, FLAKY;
+   - MISSING (a change the diff needs but does not contain, cited at the line that needs it);
+   - REDUNDANT;
+   - DESIGN (names the similar code it was compared with);
+   - CLEAN (with a Clean Code rule id, e.g. `[CLEAN] [MEDIUM] [G5]`, checked against the list);
+   - CLAIM, SCOPE (an edit unrelated to what the change is for).
+
+   Each part also attests, per dimension, what it examined (`D5 PITFALLS: NONE — …`), so "did
+   not look at concurrency" and "concurrency is fine" read differently. Eight dimensions, in
+   order, each checked: correctness, fit, sense, Clean Code, pitfalls, missing code, tests and
+   smells. An attestation that says ISSUES needs a finding. An honest "could not read it" ends
+   `failed`.
+6. **Judge the whole change**, once, on a stronger tier, with the whole diff:
+   - a verdict per claim (`C1 MET|PARTIAL|NOT MET|UNCLEAR`);
+   - the approach, against the similar code: one alternative, and what could regress;
+   - a verdict per behaviour on its tests (`B1 TESTED|WEAK|UNTESTED|NA`);
+   - a verdict per required change (`O1 FOUND|ABSENT`);
+   - each file related or unrelated to what the change is for.
+
+   One verdict per entry, by id and in order: an omitted or doubled entry is sent back. Each
+   adverse verdict (PARTIAL, NOT MET, WEAK, UNTESTED, ABSENT, unrelated) must also be a finding,
+   which is checked and merged like the others.
+7. **Challenge the findings** (from complexity 2; another model family): one disposition per
+   finding, `KEEP`, `DOWNGRADE MEDIUM|LOW` or `DROP` (a drop quotes the code that refutes it).
+   The engine applies them: dropped findings are kept apart under "Dismissed", downgrades change
+   the severity.
+8. **Report** (issues, or failing tests or lint), what is not settled, and what was not reviewed
+   or not checked. It ends:
+   - **Issues reported** (success), or **Issues reported, not all settled** (partial) when
+     something is open: an UNCLEAR claim, a context citation that failed, a step that failed (the
+     skeptic or the whole-change step), or tests required and not run;
+   - with nothing found: **Could not verify** (partial) when findings' quotes are missing from this
+     checkout; **Reviewed in part** (partial) when files were over the cap or not read whole;
+     **Not settled** (partial) when something is open, or the skeptic dropped every finding;
+     **Looks good** (success) only otherwise.
 
 Known limits:
 - Citations to URLs or PR numbers are not checked.
 - Files are given to the model whole by the engine, so a file your organisation's Copilot content
   exclusion covers is not held back here: review such repositories with that in mind.
+- The claim list is written by the context step: a claim it leaves out gets no verdict. The
+  whole-change step cannot leave one out.
+- The Clean Code rules and the 66 rule ids of ch. 17 are checked against the book; their glosses
+  are our own words.
+- `requireChecks` counts only the tests run here: the PR's CI status is not read.
+
+**Measuring it.** `npm run cli -- eval --task review-…` runs the seeded review tasks. Each plants
+one defect: a fix in the wrong place, an untested behaviour, a loosened assertion, a copied helper
+with a flag argument, a caller not updated, a missing migration (plus a control with it present),
+an unchecked lookup, a broken AGENTS.md rule, and an unrelated edit. The report gives recall per
+category and the false flags (`review-clean` is the false-flag control).
 
 **Two versions of the result.** As in investigate (step 11), the result starts with a short version
 for people in Simplified Technical English (`summary`, checked by the engine; the `plainSummary`
 switch turns it off), then a brief for an AI agent written by the engine from the record
-(`handoff`): the status, instructions (fix HIGH first, re-read each line, run the tests), the checked findings, what not to rely on, what the change says it does, the coverage, failing test or lint output, and the review as written. The run marks which end it reached, writes both, then ends there; a chained
+(`handoff`): the status, instructions (fix HIGH first, re-read each line, run the tests), the checked findings, what is not settled, what the skeptic dismissed, what not to rely on, what the change says it does, the verdicts per claim, behaviour and required change, the engine's scan, what each reviewer examined, the coverage, failing test or lint output, and the review as written. The run marks which end it reached, writes both, then ends there; a chained
 run gets the brief whole. The people's version starts each finding with its location
 (`` `src/app.ts:42` — … ``), so you can find the line. The engine sends the summary back when a
 finding's location is missing.
@@ -670,38 +728,67 @@ flowchart TD
   n_collect["🤖 Collect diff"]
   n_hasDiff{"Anything changed?"}
   n_capFiles["Files to review"]
+  n_scanDiff[/"🔧 Scan the diff"/]
   n_verifyOn{"Run the checks?"}
   n_runTests[/"🔧 Run tests"/]
   n_hasLint{"Lint?"}
   n_runLint[/"🔧 Run lint"/]
+  n_gatherContext["🤖 Gather context"]
+  n_contextOk{"Context gathered?"}
+  n_noteContextFailed["Note it"]
+  n_checkContext[/"🔧 Check context"/]
+  n_checkBehaviours[/"🔧 Check behaviours"/]
+  n_checkObligations[/"🔧 Check obligations"/]
+  n_mergeContext["Keep what failed"]
+  n_hasFiles{"Files to read?"}
   n_analyze["🤖 Find issues ×N"]
   n_analyzed{"Reviewed?"}
   n_checkReview[/"🔧 Check citations"/]
   n_mergeReview["Record issues"]
+  n_wholeChange["🤖 Judge the whole change"]
+  n_wholeOk{"Judged?"}
+  n_noteWholeFailed["Note it"]
+  n_checkWhole[/"🔧 Check citations"/]
+  n_mergeWhole["Record its issues"]
+  n_wantSkeptic{"Challenge? (≥2)"}
+  n_skeptic["🤖 Challenge findings"]
+  n_skepticOk{"Challenged?"}
+  n_noteSkepticFailed["Note it"]
+  n_applyDispositions["Apply the challenge"]
+  n_summarize["What is settled"]
   n_hasIssues{"Issues?"}
   n_report["🤖 Write report"]
+  n_issuesSettled{"All settled?"}
   n_anyUnverified{"Findings unverified?"}
   n_unverifiedReport["Not verified"]
   n_anyGaps{"Reviewed in part?"}
   n_partReport["Reviewed in part"]
+  n_anyOpen{"Anything not settled?"}
+  n_openReport["Not settled"]
   n_cleanReport["Nothing found"]
   n_issues(["Issues reported · success"])
+  n_issuesOpen(["Issues reported, not all settled · partial"])
   n_clean(["Looks good · success"])
   n_notVerified(["Could not verify · partial"])
   n_partlyReviewed(["Reviewed in part · partial"])
+  n_openQuestions(["Not settled · partial"])
   n_noDiffReport["Say why"]
   n_noDiff(["No changes found · failed"])
   n_notReviewed(["Could not review · failed"])
   n_mark_issues["Ending: Issues reported"]
+  n_mark_issuesOpen["Ending: Issues reported, not all settled"]
   n_mark_notVerified["Ending: Could not verify"]
   n_mark_partlyReviewed["Ending: Reviewed in part"]
+  n_mark_openQuestions["Ending: Not settled"]
   n_mark_clean["Ending: Looks good"]
   n_handoffDoc["Write the AI version"]
   n_wantPlain{"Plain summary?"}
   n_explain["🤖 Write the version for people"]
   n_endIs_issues{"Issues reported?"}
+  n_endIs_issuesOpen{"Issues reported, not all settled?"}
   n_endIs_notVerified{"Could not verify?"}
   n_endIs_partlyReviewed{"Reviewed in part?"}
+  n_endIs_openQuestions{"Not settled?"}
   n_start --> n_prInfo
   n_prInfo --> n_prFetched
   n_prFetched -->|"yes"| n_collect
@@ -711,42 +798,78 @@ flowchart TD
   n_hasDiff -->|"yes"| n_capFiles
   n_hasDiff -->|"no"| n_noDiffReport
   n_noDiffReport --> n_noDiff
-  n_capFiles --> n_verifyOn
+  n_capFiles --> n_scanDiff
+  n_scanDiff --> n_verifyOn
   n_verifyOn -->|"yes"| n_runTests
-  n_verifyOn -->|"no"| n_analyze
+  n_verifyOn -->|"no"| n_gatherContext
   n_runTests --> n_hasLint
   n_hasLint -->|"yes"| n_runLint
-  n_hasLint -->|"no"| n_analyze
-  n_runLint --> n_analyze
+  n_hasLint -->|"no"| n_gatherContext
+  n_runLint --> n_gatherContext
+  n_gatherContext --> n_contextOk
+  n_contextOk -->|"yes"| n_checkContext
+  n_contextOk -->|"no"| n_noteContextFailed
+  n_noteContextFailed --> n_hasFiles
+  n_checkContext --> n_checkBehaviours
+  n_checkBehaviours --> n_checkObligations
+  n_checkObligations --> n_mergeContext
+  n_mergeContext --> n_hasFiles
+  n_hasFiles -->|"yes"| n_analyze
+  n_hasFiles -->|"no"| n_wholeChange
   n_analyze --> n_analyzed
   n_analyzed -->|"yes"| n_checkReview
   n_analyzed -->|"no"| n_notReviewed
   n_checkReview --> n_mergeReview
-  n_mergeReview --> n_hasIssues
+  n_mergeReview --> n_wholeChange
+  n_wholeChange --> n_wholeOk
+  n_wholeOk -->|"yes"| n_checkWhole
+  n_wholeOk -->|"no"| n_noteWholeFailed
+  n_noteWholeFailed --> n_wantSkeptic
+  n_checkWhole --> n_mergeWhole
+  n_mergeWhole --> n_wantSkeptic
+  n_wantSkeptic -->|"yes"| n_skeptic
+  n_wantSkeptic -->|"no"| n_summarize
+  n_skeptic --> n_skepticOk
+  n_skepticOk -->|"yes"| n_applyDispositions
+  n_skepticOk -->|"no"| n_noteSkepticFailed
+  n_applyDispositions --> n_summarize
+  n_noteSkepticFailed --> n_summarize
+  n_summarize --> n_hasIssues
   n_hasIssues -->|"yes"| n_report
   n_hasIssues -->|"no"| n_anyUnverified
-  n_report --> n_mark_issues
+  n_report --> n_issuesSettled
+  n_issuesSettled -->|"yes"| n_mark_issues
+  n_issuesSettled -->|"no"| n_mark_issuesOpen
   n_anyUnverified -->|"yes"| n_unverifiedReport
   n_anyUnverified -->|"no"| n_anyGaps
   n_unverifiedReport --> n_mark_notVerified
   n_anyGaps -->|"yes"| n_partReport
-  n_anyGaps -->|"no"| n_cleanReport
+  n_anyGaps -->|"no"| n_anyOpen
   n_partReport --> n_mark_partlyReviewed
+  n_anyOpen -->|"yes"| n_openReport
+  n_anyOpen -->|"no"| n_cleanReport
+  n_openReport --> n_mark_openQuestions
   n_cleanReport --> n_mark_clean
   n_mark_issues --> n_handoffDoc
+  n_mark_issuesOpen --> n_handoffDoc
   n_mark_notVerified --> n_handoffDoc
   n_mark_partlyReviewed --> n_handoffDoc
+  n_mark_openQuestions --> n_handoffDoc
   n_mark_clean --> n_handoffDoc
   n_handoffDoc --> n_wantPlain
   n_wantPlain -->|"yes"| n_explain
   n_wantPlain -->|"no"| n_endIs_issues
   n_explain --> n_endIs_issues
   n_endIs_issues -->|"yes"| n_issues
-  n_endIs_issues -->|"no"| n_endIs_notVerified
+  n_endIs_issues -->|"no"| n_endIs_issuesOpen
+  n_endIs_issuesOpen -->|"yes"| n_issuesOpen
+  n_endIs_issuesOpen -->|"no"| n_endIs_notVerified
   n_endIs_notVerified -->|"yes"| n_notVerified
   n_endIs_notVerified -->|"no"| n_endIs_partlyReviewed
   n_endIs_partlyReviewed -->|"yes"| n_partlyReviewed
-  n_endIs_partlyReviewed -->|"no"| n_clean
+  n_endIs_partlyReviewed -->|"no"| n_endIs_openQuestions
+  n_endIs_openQuestions -->|"yes"| n_openQuestions
+  n_endIs_openQuestions -->|"no"| n_clean
 ```
 
 <!-- /flow:review -->

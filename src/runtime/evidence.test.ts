@@ -31,6 +31,16 @@ describe('checkCitations', () => {
     expect(r.checked).toBe(2);
   });
 
+  it('a quote of a template literal with its backticks escaped still matches (seen live)', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'ev-tpl-'));
+    writeFileSync(join(d, 'r.js'), 'const d = 1;\nreturn `${d.day}/${d.month + 1}`;\n');
+    const finding = 'B1 r.js:2 — renders the month `return \\`${d.day}/${d.month + 1}\\`;`';
+    const r = await checkCitations(d, [finding]);
+    rmSync(d, { recursive: true, force: true });
+    expect(r.invalid).toEqual([]);
+    expect(r.valid).toEqual([finding]);
+  });
+
   it('a quote of a line that holds a secret, scrubbed in the record, still matches the file', async () => {
     const d = mkdtempSync(join(tmpdir(), 'ev-secret-'));
     const token = `ghp_${'a1B2c3D4e5'.repeat(4)}`;

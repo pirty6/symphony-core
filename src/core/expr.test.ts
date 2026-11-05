@@ -87,6 +87,11 @@ describe('evalExpr values', () => {
     ['join([], "-")', ''],
     ['withIds(["F1 a", "F2 b", "F3 c"], ["F3", "F1", "F9"])', ['F1 a', 'F3 c']],
     ['unmatched(["S1: a", "b", "S12: c"], "^S[0-9]+: ")', ['b']],
+    [
+      'replace(["F1 a.ts:1 — [BUG] [HIGH] x [HIGH]", "b"], "[[](HIGH|MEDIUM|LOW)]", "[LOW]")',
+      ['F1 a.ts:1 — [BUG] [LOW] x [HIGH]', 'b'],
+    ],
+    ['replace("cost $5", "[0-9]+", "$&$1")', 'cost $$&$1'],
     ['"round " + text(2) + ", ok " + text(true)', 'round 2, ok true'],
     ['count(["a.ts:1", "web | x", "b.ts:2"], "^[a-z.]+:[0-9]")', 2],
     ['positions(["x", "binary", "y", "pdf"], "binary|pdf")', [2, 4]],
@@ -157,6 +162,7 @@ describe('evalExpr values', () => {
     expect(() => ev('join([1, 2], ",")')).toThrow(/list of strings/);
     expect(() => ev('join(guessed, 1)')).toThrow(/separator/);
     expect(() => ev('unmatched(guessed, "(")')).toThrow(/invalid pattern/);
+    expect(() => ev('replace("a", "(", "b")')).toThrow(/invalid pattern/);
   });
 
   it('rejects mixed-type arithmetic', () => {
