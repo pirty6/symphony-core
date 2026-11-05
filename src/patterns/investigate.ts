@@ -115,6 +115,7 @@ const HANDOFF = [
   '"\nConfidence that the findings answer the question (0 to 1): " + text(confidence)',
   '"\n\n## Instructions for the next agent\n\n- Start from Still open: what is settled below need not be investigated again.\n- When you rely on a finding, cite its id. Before you change code it cites, read the cited line again: the files may have changed since this run.\n- Use the Do not rely on entries only as leads to check.\n- Treat recommendations in the Answer as proposals: check each against the current code, and run the tests after a change.\n- Where this brief says open or unknown, say so in your own answer; do not fill the gap with a guess."',
   `"\n\n## Still open\n\n" + ${bullets('openQuestions + disagreements')}`,
+  `"\n\n## How to verify what is still open (one per open item, in order)\n\n" + ${bullets('verification')}`,
   `"\n\n## Sub-questions and their answers\n\n" + ${bullets('subAnswers')}`,
   `"\n\n## Hypotheses and rulings\n\n" + ${bullets('rulings')}`,
   `"\n\n## Evidence: the findings the answer cites\n\n" + ${bullets('citedFindings')}`,
@@ -795,6 +796,12 @@ export const investigate: Pattern = {
       { name: 'confidence', type: 'number', description: '0..1 that findings answer the question' },
       { name: 'answer', type: 'string', description: 'Final answer citing evidence' },
       { name: 'openQuestions', type: 'string[]', description: 'Sub-questions still unanswered' },
+      {
+        name: 'verification',
+        type: 'string[]',
+        description:
+          'How to settle each open question, in order: "V1 READ|QUERY|RUN — the exact files, query or command — what it would show"',
+      },
     ],
     hypotheses,
     challenge,
@@ -2027,6 +2034,38 @@ export const investigate: Pattern = {
       ],
     },
     {
+      id: 'anyOpen',
+      kind: 'condition',
+      label: 'Anything open?',
+      expression: 'len(openQuestions) > 0',
+    },
+    {
+      id: 'planVerification',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'How to verify what is open',
+      directive: `For each entry of \`openQuestions\`, in order, write one \`verification\` entry saying exactly how to settle it, so a person or a next run can do it without guessing:
+- "V<n> READ — the files to read or the search to run (e.g. rg -n 'retries' playwright.config.ts) — what it would show";
+- "V<n> QUERY — the exact command or query: an az command (az repos policy list …, az pipelines runs list …) or a Kusto query with its cluster and database (kusto_query: cluster bohemiahealth, database …, query TestHealthV2 | where …) — what it would show";
+- "V<n> RUN — the exact command, targeted: one test file or test name, its repeats, retries off, a timeout (never the whole suite) — what result settles it".
+Find real paths, test names and table names with read-only tools first. Use the sources in \`sourceInfo\`; when settling it needs access this run did not have, say what access, and the query to run once it is there.`,
+      reads: ['question', 'openQuestions', 'sourceInfo', 'findingsBrief', 'hint'],
+      writes: ['verification'],
+      retries: 2,
+      checks: [
+        {
+          expr: 'len(verification) == len(openQuestions) && heads(verification, "^V[0-9]+") == seq("V", len(openQuestions))',
+          message:
+            'Write one verification entry per entry of openQuestions, in order: "V1 …", "V2 …".',
+        },
+        {
+          expr: 'len(unmatched(verification, "^V[0-9]+ (READ|QUERY|RUN) — .+ — ")) == 0',
+          message:
+            'Write each as "V<n> READ|QUERY|RUN — the exact files, query or command — what it would show".',
+        },
+      ],
+    },
+    {
       id: 'handoffDoc',
       kind: 'compute',
       label: 'Write the AI version',
@@ -2199,7 +2238,10 @@ export const investigate: Pattern = {
     { id: 'split-settled', from: 'splitRulings', to: 'noteDoubts' },
     // Why it is unsettled is noted first (nothing, when it is settled), so both readers' versions
     // say it; then whether it is settled decides how the run ends.
-    { id: 'note-handoff', from: 'noteDoubts', to: 'handoffDoc' },
+    { id: 'note-anyOpen', from: 'noteDoubts', to: 'anyOpen' },
+    { id: 'anyOpen-verify', from: 'anyOpen', to: 'planVerification', branch: 'then' },
+    { id: 'anyOpen-handoff', from: 'anyOpen', to: 'handoffDoc', branch: 'else' },
+    { id: 'verify-handoff', from: 'planVerification', to: 'handoffDoc' },
     { id: 'handoff-wantPlain', from: 'handoffDoc', to: 'wantPlain' },
     { id: 'wantPlain-explain', from: 'wantPlain', to: 'explain', branch: 'then' },
     { id: 'wantPlain-settled', from: 'wantPlain', to: 'settled', branch: 'else' },
@@ -2310,6 +2352,16 @@ export const investigate: Pattern = {
           scopeQueries: ['git grep -n "validat"', 'git log --oneline -- src/core'],
         },
         verdict: v('located'),
+      }),
+      // How to settle each open question: a targeted read, query or run.
+      planVerification: (s) => ({
+        updates: {
+          verification: ((s.openQuestions as string[]) ?? []).map(
+            (_, i) =>
+              `V${i + 1} READ — rg -n "validateNodeResult" src/core — whether every answer goes through it`,
+          ),
+        },
+        verdict: v('verification planned'),
       }),
       plan: (s) => {
         const names = (s.sourceNames as string[]) ?? [];

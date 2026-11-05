@@ -1099,6 +1099,64 @@ describe('investigate always tries: the web and targeted experiments', () => {
   });
 });
 
+describe('investigate says how to verify what is still open', () => {
+  /** The demo, its answer leaving two questions open, and the verification answers given in turn. */
+  const play = (...answers: ((s: Readonly<Record<string, unknown>>) => string[])[]) => {
+    let n = 0;
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        answer: (st, i) => {
+          const base = demo.agents!.answer!(st, i) as { updates: Record<string, unknown> };
+          return {
+            updates: {
+              ...base.updates,
+              openQuestions: [
+                'What is the real flake rate per package?',
+                'Which branch policies apply?',
+              ],
+            },
+            verdict: { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'r' },
+          };
+        },
+        planVerification: (st) => ({
+          updates: { verification: answers[Math.min(n++, answers.length - 1)]!(st) },
+          verdict: { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'r' },
+        }),
+      },
+    };
+    return runScripted(compileInvestigate({ goal: 'g', context: { question: 'q' } }), script);
+  };
+  const right = (st: Readonly<Record<string, unknown>>) =>
+    ((st.openQuestions as string[]) ?? []).map((q, i) =>
+      i === 0
+        ? `V${i + 1} QUERY — kusto_query cluster bohemiahealth, database Health: TestHealthV2 | where Timestamp > ago(30d) | summarize retried=countif(Retried) by Package — the flake rate per package`
+        : `V${i + 1} QUERY — az repos policy list --branch master -o table — which policies apply`,
+    );
+
+  it('one line per open item, in order, each a read, a query or a run, in the brief', () => {
+    const r = play(right);
+    const open = r.state.state.openQuestions as string[];
+    expect(open.length).toBeGreaterThanOrEqual(2);
+    expect(r.state.state.verification).toHaveLength(open.length);
+    expect(String(r.state.state.handoff)).toContain('## How to verify what is still open');
+    expect(String(r.state.state.handoff)).toContain('V1 QUERY — kusto_query cluster bohemiahealth');
+  });
+
+  it('a missing line, or one that is not a read, a query or a run, is sent back', () => {
+    const short = (st: Readonly<Record<string, unknown>>) => right(st).slice(1);
+    const vague = (st: Readonly<Record<string, unknown>>) =>
+      right(st).map((x, i) => (i === 0 ? 'V1 look into it' : x));
+    const r = play(short, vague, right);
+    const errors = (r.state.steps.find((x) => x.nodeId === 'planVerification')?.attempts ?? []).map(
+      (a) => a.errors.join(' '),
+    );
+    expect(errors[0]).toMatch(/one verification entry per entry of openQuestions/);
+    expect(errors[1]).toMatch(/READ\|QUERY\|RUN — the exact files, query or command/);
+  });
+});
+
 describe('investigate experiments', () => {
   it('timed experiments run one at a time after the others ran side by side', () => {
     const exps = ['a — time the cold start', 'b — does it crash?', 'c — does it leak?'];
