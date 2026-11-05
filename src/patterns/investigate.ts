@@ -2,6 +2,7 @@ import { itemOf } from '../core/items.js';
 import { resolvePaths } from '../core/paths.js';
 import { bullets, PLAIN_CHECKS, plainDirective, READER_STATE } from './phases/readers.js';
 import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
+import { chaseSteps } from './phases/chase.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import {
   checkFindings,
@@ -170,6 +171,44 @@ export function assessFor(
 
 const AGAINST =
   ' Look for evidence for AND against every entry of `leadHypotheses`, and tag each finding with the hypotheses it bears on, e.g. "[H2 against]". `leadStatus` counts those tags so far: look hardest at the hypotheses it marks untested or challenged. If `leadHypotheses` is empty, gather evidence on the question and sub-questions alone and do not tag findings.';
+
+/** Gap research: the shared chase (phases/chase), its steps placed in the graph below. */
+const CHASE = chaseSteps({
+  ids: { chase: 'chase', check: 'checkChase', merge: 'mergeChase' },
+  label: 'Close gaps',
+  mergeLabel: 'Record gap research',
+  capabilities: ['web', 'mcp'],
+  // gapsPerChase 1: one sub-agent per gap, each with the whole brief (for an A/B).
+  fanOut: { over: 'chaseGaps', per: 'gapsPerChase', agents: 'agents', warm: 'warmFirst' },
+  directive:
+    'Close every gap in `chaseGaps` (the sub-questions not yet answered, or what the gap check says each one is missing: `subQuestions` are the questions they belong to) with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
+    AGAINST,
+  reads: [
+    'leadHypotheses',
+    'leadStatus',
+    'question',
+    'subQuestions',
+    'chaseGaps',
+    'hint',
+    'findingsBrief',
+    'sourceInfo',
+    'consulted',
+  ],
+  notes: 'newFindings',
+  checks: [
+    {
+      expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
+      message: 'No hypotheses were given: do not tag findings with [H…].',
+    },
+  ],
+  remember: false,
+  merge: [
+    ...MERGE_FINDINGS,
+    ...STATUS,
+    { field: 'gapRounds', expr: 'gapRounds + 1' },
+    { field: 'chaseRounds', expr: 'chaseRounds + 1' },
+  ],
+});
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -1642,48 +1681,8 @@ export const investigate: Pattern = {
       label: 'Chase gaps?',
       expression: 'len(gaps) > 0 && gapRounds < maxGapRounds && chaseRounds < maxChaseRounds',
     },
-    {
-      id: 'chase',
-      kind: 'agent',
-      role: 'assessor',
-      label: 'Close gaps',
-      capabilities: ['web', 'mcp'],
-      // gapsPerChase 1: one sub-agent per gap, each with the whole brief (for an A/B).
-      fanOut: { over: 'chaseGaps', per: 'gapsPerChase', agents: 'agents', warm: 'warmFirst' },
-      directive:
-        'Close every gap in `chaseGaps` (the sub-questions not yet answered, or what the gap check says each one is missing: `subQuestions` are the questions they belong to) with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
-        AGAINST,
-      reads: [
-        'leadHypotheses',
-        'leadStatus',
-        'question',
-        'subQuestions',
-        'chaseGaps',
-        'hint',
-        'findingsBrief',
-        'sourceInfo',
-        'consulted',
-      ],
-      writes: ['queries', 'newFindings'],
-      cites: 'newFindings',
-      retries: 2,
-      checks: [
-        {
-          expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
-          message: 'No hypotheses were given: do not tag findings with [H…].',
-        },
-        {
-          expr: 'len(queries) > 0',
-          message: 'Record every query, command or tool call you made in queries.',
-        },
-        {
-          expr: 'len(newFindings) > 0',
-          message:
-            'Report a finding for every gap, even if it is where you looked without success.',
-        },
-      ],
-    },
-    checkFindings('checkChase', 'newFindings', false),
+    CHASE.chase,
+    CHASE.check,
     {
       id: 'aimChase',
       kind: 'compute',
@@ -1697,17 +1696,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    {
-      id: 'mergeChase',
-      kind: 'compute',
-      label: 'Record gap research',
-      assign: [
-        ...MERGE_FINDINGS,
-        ...STATUS,
-        { field: 'gapRounds', expr: 'gapRounds + 1' },
-        { field: 'chaseRounds', expr: 'chaseRounds + 1' },
-      ],
-    },
+    CHASE.merge,
     {
       id: 'confident',
       kind: 'condition',
