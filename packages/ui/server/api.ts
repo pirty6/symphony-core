@@ -47,7 +47,7 @@ import {
   runtimeExtras,
   type RuntimeExtras,
 } from '../../../src/runtime/factory.js'
-import { isolate, editsFiles } from '../../../src/runtime/worktree.js'
+import { isolate, editsFiles, sandboxFor } from '../../../src/runtime/worktree.js'
 import { prForRun } from '../../../src/runtime/pr.js'
 import { autoPrune, cachedReplayCheck, checkReplay, deleteRun, type ReplayCheck, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
 import { stateDir } from '../../../src/runtime/state.js'
@@ -284,7 +284,7 @@ export function createApi(opts: ApiOptions) {
         stepMode: settings.stepMode,
         breakpoints: settings.breakpoints,
         ...(provider.name === 'copilot'
-          ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace) }
+          ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace), sandbox: sandboxFor(dir) }
           : {}),
         ...(isolation ? { isolation } : {}),
         ...(pr ? { cleanup: pr.finish } : {}),

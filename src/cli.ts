@@ -65,7 +65,7 @@ import type {
 import { libraryPatterns, maestro, maestroThen } from './patterns/index.js';
 import { concertNext } from './runtime/concert.js';
 import { loadRepertoire, runsDirFor } from './runtime/store.js';
-import { editsFiles, isolate } from './runtime/worktree.js';
+import { editsFiles, isolate, sandboxFor } from './runtime/worktree.js';
 import { prForRun } from './runtime/pr.js';
 import { IMPROVISATION_LEVELS, isImprovisation, playsFromRepertoire } from './core/jazz.js';
 import { Run, type NextPerformance, type RunMessage, type RunOptions } from './runtime/driver.js';
@@ -299,7 +299,11 @@ async function play(
       stepMode: o.step,
       breakpoints: o.breakpoints,
       ...(o.providerName === 'copilot'
-        ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(cwd) }
+        ? {
+            envHash: () => gitFingerprint(dir),
+            scratch: await runScratch(cwd),
+            sandbox: sandboxFor(dir),
+          }
         : {}),
       ...(isolation ? { isolation } : {}),
       ...(pr ? { cleanup: pr.finish } : {}),
