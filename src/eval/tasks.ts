@@ -426,6 +426,7 @@ const INVOICE_DATE_JS =
 
 const CART_JS =
   'export function total(items) {\n  let sum = 0;\n  for (const item of items) sum += item.price * item.qty;\n  return sum;\n}\n';
+const CART_TEST = `${TEST_HEAD}import { total } from '../src/cart.js';\ntest('sums', () => assert.equal(total([{ price: 2, qty: 3 }]), 6));\n`;
 const CART_DISCOUNT = CART_JS.replace(
   '  return sum;',
   '  if (sum > 100) sum = sum * 0.9;\n  return sum;',
@@ -508,13 +509,17 @@ const SEEDED_REVIEWS: readonly EvalTask[] = [
       'package.json': PKG,
       '.gitignore': IGNORE,
       'src/cart.js': CART_JS,
-      'test/cart.test.js': `${TEST_HEAD}import { total } from '../src/cart.js';\ntest('sums', () => assert.equal(total([{ price: 2, qty: 3 }]), 6));\n`,
+      'test/cart.test.js': CART_TEST,
     },
     changes: { 'src/cart.js': CART_DISCOUNT },
     check: seededReview({
       category: 'TEST',
       accept: ['TEST'],
-      at: [{ file: 'src/cart.js', text: CART_DISCOUNT, near: 'sum > 100' }],
+      // At the untested line, or at the test that should check it.
+      at: [
+        { file: 'src/cart.js', text: CART_DISCOUNT, near: 'sum > 100' },
+        { file: 'test/cart.test.js', text: CART_TEST, near: "test('sums'" },
+      ],
     }),
   },
   {
@@ -1107,7 +1112,8 @@ export const EVAL_TASKS: readonly EvalTask[] = [
       'package.json': PKG,
       '.gitignore': IGNORE,
       'src/sum.js': SUM_RIGHT,
-      'test/sum.test.js': `${TEST_HEAD}import { sumTo } from '../src/sum.js';\ntest('sums 1..n', () => assert.equal(sumTo(4), 10));\n`,
+      // The boundary the change now documents is tested: nothing in it is left to flag.
+      'test/sum.test.js': `${TEST_HEAD}import { sumTo } from '../src/sum.js';\ntest('sums 1..n', () => assert.equal(sumTo(4), 10));\ntest('0 for n < 1', () => assert.equal(sumTo(0), 0));\n`,
     },
     changes: {
       'src/sum.js': SUM_RIGHT.replace(
