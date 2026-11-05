@@ -10,7 +10,6 @@ import {
   EVIDENCE_STATE,
   MEMORY_NOTE,
   MEMORY_STATE,
-  MERGE_FINDINGS,
   recallMemory,
 } from './phases/evidence.js';
 import {
@@ -114,6 +113,20 @@ Why it matters: who or what breaks, when, and how badly (why the severity).
 How to fix: the smallest correct change (a short code snippet when it fits in a few lines), and the test that would catch it.
 
 Work each example out from the code; never claim you ran it. Plain words, short sentences; name things by their name in the code.`;
+
+/**
+ * Record checked issues with ids. Unlike investigate's findings, a review's can be dismissed, so
+ * ids go on from every one made (kept or dismissed: never reused), and one already dismissed is
+ * not recorded again.
+ */
+const mergeIssues = (field: string) => [
+  {
+    field: 'findings',
+    expr: `findings + numbered(without(unique(${field}), unnumbered(findings) + unnumbered(dismissed)), len(findings) + len(dismissed) + 1)`,
+  },
+  { field: 'unverified', expr: 'unverified + rejectedFindings' },
+  { field: 'findingsBrief', expr: 'brief(findings, 240)' },
+];
 
 /** What an objection attacks: a verdict by its id (C2, B1, O3), or a missed issue at path:line. */
 const OBJECTION_TARGET = '(^|[^A-Za-z0-9])[CBO][0-9]+([^0-9]|$)|[^ :]+:[0-9]+';
@@ -717,7 +730,12 @@ ${ATTESTATION_DIRECTIVE}${MEMORY_NOTE}`,
       expression: 'verdict.outcome != "failed" || len(reviewed) > 0',
     },
     checkFindings('checkReview'),
-    { id: 'mergeReview', kind: 'compute', label: 'Record issues', assign: [...MERGE_FINDINGS] },
+    {
+      id: 'mergeReview',
+      kind: 'compute',
+      label: 'Record issues',
+      assign: mergeIssues('newFindings'),
+    },
     {
       id: 'wholeChange',
       kind: 'agent',
@@ -828,12 +846,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
           field: 'wholeFindings',
           expr: `pick(wholeFindings, outside(heads(wholeFindings, "${PLACE}"), heads(unnumbered(findings), "${PLACE}")))`,
         },
-        {
-          field: 'findings',
-          expr: 'findings + numbered(without(unique(wholeFindings), unnumbered(findings)), len(findings) + 1)',
-        },
-        { field: 'unverified', expr: 'unverified + rejectedFindings' },
-        { field: 'findingsBrief', expr: 'brief(findings, 240)' },
+        ...mergeIssues('wholeFindings'),
       ],
     },
     {
@@ -902,7 +915,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
           field: 'newFindings',
           expr: `pick(newFindings, outside(heads(newFindings, "${PLACE}"), heads(unnumbered(findings), "${PLACE}")))`,
         },
-        ...MERGE_FINDINGS,
+        ...mergeIssues('newFindings'),
         { field: 'secondReviewed', expr: 'true' },
       ],
     },

@@ -1001,3 +1001,49 @@ describe('review comments: what is wrong, an example, why it matters, how to fix
     expect(state.comments).toHaveLength(5);
   });
 });
+
+describe('finding ids across rounds (seen live)', () => {
+  it('an id is never reused after a dismissal, and a dismissed finding found again stays dismissed', () => {
+    let skeptics = 0;
+    const objection = 'C1 is not settled: see src/core/engine.ts:120';
+    const skeptic: Agent = (s) => {
+      skeptics += 1;
+      const ids = ((s.findings as string[]) ?? []).map((f) => f.split(' ')[0]!);
+      return {
+        updates: {
+          proposedDispositions: ids.map((fid) =>
+            skeptics === 1 && fid === 'F2' ? 'F2 DROP — duplicates F1' : `${fid} KEEP — holds`,
+          ),
+          objections: skeptics === 1 ? [objection] : [],
+        },
+        verdict: v,
+      };
+    };
+    let wholes = 0;
+    const whole: Agent = (s) => {
+      wholes += 1;
+      const ok = soundWhole(s, 0) as { updates: Record<string, unknown> };
+      return {
+        updates: {
+          ...ok.updates,
+          // The second time, it finds the dismissed issue again, and a new one.
+          wholeFindings: [
+            'src/core/engine.ts:120 — [TEST] [MEDIUM] no test checks the retry limit `attempts += 1`',
+            ...(wholes > 1
+              ? ['src/core/engine.ts:121 — [PERF] [LOW] counted twice `attempts += 1`']
+              : []),
+          ],
+        },
+        verdict: v,
+      };
+    };
+    const { state } = play({ agents: { skeptic, wholeChange: whole } });
+    expect(state.dismissed).toEqual([
+      'F2 src/core/engine.ts:120 — [TEST] [MEDIUM] no test checks the retry limit `attempts += 1`',
+    ]);
+    expect((state.findings as string[]).map((f) => f.split(' — ')[0])).toEqual([
+      'F1 src/core/engine.ts:120',
+      'F3 src/core/engine.ts:121',
+    ]);
+  });
+});
