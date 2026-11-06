@@ -272,11 +272,18 @@ export async function sourceCatalog(
     entries.push([
       'prior-runs',
       // No count: a run's own history must not change the next run's input.
-      `earlier Symphony runs with recorded answers in ${runsDirFor(ctx.repoRoot)}`,
+      `earlier Symphony runs with recorded answers in ${runsDirFor(ctx.repoRoot)}. ${PRIOR_RUNS_HOW}`,
     ]);
   }
   return { names: entries.map(([n]) => n), descriptions: entries.map(([n, d]) => `${n}: ${d}`) };
 }
+
+/**
+ * How to search run records cheaply: they can be hundreds of MB, and a recursive grep over them
+ * took a live sweep minutes. Filter on the one-line summaries first, then ask one field of a few.
+ */
+export const PRIOR_RUNS_HOW =
+  'Each run is <pattern>/<id>.json with a one-line <id>.summary (pattern, goal, outcome, startedAt, steps, durationMs): filter the summaries first (grep or jq -s on *.summary), then read only the records you need with a jq path (.performance.finalState.<field>, or .performance.steps[] | select(.nodeId == "...")); never grep -r or a broad regex across the .json records, which can be hundreds of MB.';
 
 /** A string or a list of them, as strings (anything else dropped). */
 const strings = (v: unknown): string[] =>

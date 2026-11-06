@@ -3,7 +3,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { builtinTools, defaultTools, listRepoFiles, sourceCatalog } from './builtin-tools.js';
+import {
+  builtinTools,
+  defaultTools,
+  listRepoFiles,
+  PRIOR_RUNS_HOW,
+  sourceCatalog,
+} from './builtin-tools.js';
+import { readdir, readFile } from 'node:fs/promises';
 import { TOOL_OUTPUTS } from '../core/catalog.js';
 import { compileScore } from '../core/compile.js';
 import { toPerformance } from '../core/engine.js';
@@ -129,6 +136,14 @@ describe('sources.catalog', () => {
     });
     expect(prior(once)).toMatch(/^prior-runs: earlier Symphony runs/);
     expect(prior(twice)).toBe(prior(once));
+    // It says how to search them cheaply, and the summaries hold the fields it names.
+    expect(prior(once)).toContain(PRIOR_RUNS_HOW);
+    const summary = (await readdir(join(runs, score.pattern))).find((f) => f.endsWith('.summary'));
+    const fields = Object.keys(
+      JSON.parse(await readFile(join(runs, score.pattern, summary!), 'utf8')),
+    );
+    for (const f of PRIOR_RUNS_HOW.match(/\(([^)]+)\)/)![1]!.split(', '))
+      expect(fields).toContain(f);
   });
 
   it('is exposed through the default registry', async () => {
