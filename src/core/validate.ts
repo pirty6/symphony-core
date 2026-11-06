@@ -196,6 +196,8 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         ) {
           errors.push({ ...at, message: 'complexityShift must be a whole number from -3 to 3' });
         }
+        if (n.shiftUpTo !== undefined && ![1, 2, 3, 4].includes(n.shiftUpTo))
+          errors.push({ ...at, message: 'shiftUpTo must be a tier from 1 to 4' });
         if (n.maxEffort !== undefined && !EFFORTS.includes(n.maxEffort))
           errors.push({ ...at, message: `maxEffort must be one of ${EFFORTS.join(', ')}` });
         if (n.sandbox && n.role !== 'executor')
