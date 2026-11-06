@@ -85,8 +85,8 @@ read pipelines, branch policies and Kusto tables; nothing that writes is allowed
 5. **Experiments** (after your approval) and **source searches**, in parallel. Each
    experiment is targeted: it runs only the tests or commands that bear on a hypothesis, never
    the whole suite (a design that would is sent back). Each runs in a throwaway copy of the
-   workspace (a git worktree) that is discarded after the call; with no copy to be had it runs
-   in the workspace and says so.
+   workspace (a git worktree) that is discarded after the call. With no copy to be had it fails
+   closed: the step runs read-only and reports what it could not run.
 6. **Close gaps.** The gap check writes one entry per sub-question, in order: `S<n>:
    ANSWERED [F…]` citing findings, or `S<n>: GAP — what is missing`; the engine derives the
    gaps from it. First the gaps expand the read: the engine ranks the files not yet read by the

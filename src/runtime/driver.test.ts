@@ -4,7 +4,14 @@ import { hashOf } from '../core/hash.js';
 import { replayPerformance, restoreEngine, RestoreError } from '../core/replay.js';
 import type { AgentPause, Pattern, Performance, SavedRun } from '../core/types.js';
 import { fix, hangman, implement } from '../patterns/index.js';
-import { performScore, readsPages, Run, type RunMessage, type RunStatus } from './driver.js';
+import {
+  NO_SANDBOX,
+  performScore,
+  readsPages,
+  Run,
+  type RunMessage,
+  type RunStatus,
+} from './driver.js';
 import { KEEP_ANSWER, type AgentRequest, type AgentResponse, type Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
 import { registry } from './tools.js';
@@ -1283,7 +1290,7 @@ describe('sandbox steps', () => {
     expect(discarded).toEqual(['experiment', 'experiment', 'experiment']);
   });
 
-  it('with no copy to be had, it plays in the workspace and says so', async () => {
+  it('with no copy to be had, it fails closed: read-only, told to say it could not run', async () => {
     const seen: AgentRequest[] = [];
     const run = new Run({
       score,
@@ -1294,8 +1301,20 @@ describe('sandbox steps', () => {
     await run.start();
     expect(seen[0]!.cwd).toBeUndefined();
     expect(seen[0]!.pause.sandbox).toBe(false);
-    expect(JSON.stringify(run.messages)).toContain(
-      'No throwaway copy of the workspace could be made',
-    );
+    // Never read-write in the real workspace: an executor without its copy only reads.
+    expect(seen[0]!.pause.role).toBe('assessor');
+    expect(seen[0]!.pause.directive.startsWith(NO_SANDBOX)).toBe(true);
+    expect(JSON.stringify(run.messages)).toContain('this step runs read-only');
+    // A copy that fails to be made counts the same as none.
+    const failing: AgentRequest[] = [];
+    await new Run({
+      score,
+      provider: answering(failing),
+      clock,
+      sandbox: async () => {
+        throw new Error('git worktree add failed');
+      },
+    }).start();
+    expect(failing[0]!.pause.role).toBe('assessor');
   });
 });
