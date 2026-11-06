@@ -17,8 +17,10 @@ export interface LiveRun {
   pattern: string
   goal: string
   status: string
-  /** 'chat' for a run a VS Code chat plays (the MCP server); absent for this studio's own. */
+  /** 'chat' for a run a VS Code chat plays (the MCP server), 'cli' for one the symphony CLI plays; absent for this studio's own. */
   source?: string
+  /** The score it plays: matches its saved checkpoint while it plays (absent from older servers). */
+  scoreId?: string
   workspace?: string
   /** When it started playing (ISO); absent from older servers. */
   startedAt?: string

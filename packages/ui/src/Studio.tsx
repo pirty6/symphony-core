@@ -28,6 +28,7 @@ import { FrameNode, PhaseNode } from './canvas/PhaseNode'
 import { SubAgentNode } from './canvas/SubAgentNode'
 import { Home } from './panels/Home'
 import { api, errorText, isNetworkError, isRunGone, RUN_GONE, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
+import { savedToList, someRunEnded } from './lib/saved'
 import { subAgentItems, subAgentNodes,
   chooseFeature,
   resetFeatures,
@@ -118,6 +119,7 @@ export default function Studio() {
   const [rightOpen, toggleRight] = useSidebar('right')
   const [saved, setSaved] = useState<SavedSummary[]>([])
   const [live, setLive] = useState<LiveRun[]>([])
+  const liveRef = useRef<LiveRun[]>([])
   /** The last poll could not reach the server (stopped or restarting); clears when it answers. */
   const [serverDown, setServerDown] = useState(false)
   const [meta, setMeta] = useState<PatternMeta>(BLANK)
@@ -231,6 +233,9 @@ export default function Studio() {
     const poll = () =>
       void api.liveRuns().then(
         (runs) => {
+          // A run that stops playing has just saved its final record: list it.
+          if (someRunEnded(liveRef.current, runs)) refreshSaved()
+          liveRef.current = runs
           setLive(runs)
           setServerDown(false)
         },
@@ -239,7 +244,7 @@ export default function Studio() {
     poll()
     const timer = setInterval(poll, 2000)
     return () => clearInterval(timer)
-  }, [])
+  }, [refreshSaved])
 
   // Load the library and the pattern named in the URL once; later loads are user actions.
   const loadPatternRef = useRef(loadPattern)
@@ -762,7 +767,7 @@ export default function Studio() {
         toggle={<SideToggle side="left" open={leftOpen} name="library" onToggle={toggleLeft} />}
         library={library}
         activeName={meta.name}
-        saved={saved}
+        saved={savedToList(saved, live)}
         editable={editable}
         asking={view.mode === 'live' && ACTIVE.has(view.status) && meta.name === 'maestro'}
         onLoad={loadPattern}

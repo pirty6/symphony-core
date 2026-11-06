@@ -16,7 +16,7 @@ import { type Adaptation, summarizeComposed } from './core/draft.js';
 import 'dotenv/config';
 import { readFile } from 'node:fs/promises';
 import { scrubbingOn, StreamScrubber } from './core/scrub.js';
-import { scrubbedFeed } from './runtime/live.js';
+import { liveRoot, publishLive, scrubbedFeed } from './runtime/live.js';
 import { createInterface } from 'node:readline/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -386,8 +386,19 @@ async function play(
   });
   const stop = () => run.stop('interrupted');
   process.on('SIGINT', stop);
-  const perf = await run.start();
-  process.off('SIGINT', stop);
+  // The studio shows runs this terminal or script plays live, and can steer them, as it does a
+  // chat's (src/runtime/live.ts). Published before it starts, so it is seen from its first message.
+  const live = liveRoot(process.env);
+  const unpublish = live
+    ? await publishLive(run, { source: 'cli', workspace: cwd }, live).catch(() => undefined)
+    : undefined;
+  let perf: Performance;
+  try {
+    perf = await run.start();
+  } finally {
+    unpublish?.();
+    process.off('SIGINT', stop);
+  }
   const saved = run.messages.find((m) => m.type === 'performance');
   if (saved?.type === 'performance' && saved.savedTo) console.log(c.dim(`saved ${saved.savedTo}`));
   if (!o.quiet) {

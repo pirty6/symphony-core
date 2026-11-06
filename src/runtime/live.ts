@@ -83,7 +83,7 @@ export interface LiveMeta {
   readonly id: string;
   readonly pattern: string;
   readonly goal: string;
-  /** Who plays it: 'chat' (the MCP server, e.g. a VS Code chat). */
+  /** Who plays it: 'chat' (the MCP server, e.g. a VS Code chat) or 'cli' (the symphony CLI). */
   readonly source: string;
   readonly workspace: string;
   readonly pid: number;

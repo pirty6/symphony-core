@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { main as runCli, parseContext, unattendedApproval } from './cli.js';
 import { fix, hangman } from './patterns/index.js';
+import { LiveRuns } from './runtime/live.js';
 
 const cwd = mkdtempSync(join(tmpdir(), 'symphony-cli-'));
 afterAll(() => rmSync(cwd, { recursive: true, force: true }));
@@ -219,6 +220,21 @@ describe('main', () => {
     });
     out = '';
     expect(await main(['verify', forked], cwd)).toBe(0);
+  });
+
+  it('publishes the run it plays, so the studio shows it running and can steer it', async () => {
+    const live = mkdtempSync(join(tmpdir(), 'symphony-cli-live-'));
+    vi.stubEnv('SYMPHONY_LIVE', '');
+    vi.stubEnv('SYMPHONY_LIVE_DIR', live);
+    try {
+      expect(await main(['run', 'fix', '--auto-approve'], cwd)).toBe(0);
+      const [run] = await new LiveRuns(live).list();
+      expect(run).toMatchObject({ source: 'cli', workspace: cwd, status: 'done' });
+      expect(run?.score.pattern).toBe('fix');
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(live, { recursive: true, force: true });
+    }
   });
 
   it('never approves for a real AI when nobody is at a terminal', () => {
