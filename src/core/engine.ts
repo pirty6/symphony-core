@@ -270,7 +270,11 @@ function follow(
 export function complexityFor(
   score: ExecutableScore,
   state: Readonly<Record<string, unknown>>,
-  node: { readonly complexity?: Complexity; readonly complexityShift?: number },
+  node: {
+    readonly complexity?: Complexity;
+    readonly complexityShift?: number;
+    readonly shiftUpTo?: Complexity;
+  },
 ): Complexity {
   if (node.complexity) return node.complexity;
   const fromState = state.complexity;
@@ -278,7 +282,9 @@ export function complexityFor(
     fromState === 1 || fromState === 2 || fromState === 3 || fromState === 4
       ? fromState
       : (score.complexity ?? 2);
-  return Math.min(4, Math.max(1, run + (node.complexityShift ?? 0))) as Complexity;
+  const shifted = Math.min(4, Math.max(1, run + (node.complexityShift ?? 0)));
+  const capped = node.shiftUpTo ? Math.max(run, Math.min(shifted, node.shiftUpTo)) : shifted;
+  return Math.min(shifted, capped) as Complexity;
 }
 
 function choicesOf(score: ExecutableScore, node: ScoreNode) {

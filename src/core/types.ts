@@ -113,6 +113,11 @@ export interface AgentNode extends NodeBase {
    * bulk mechanical steps -1, steps that judge or write the conclusion +1.
    */
   readonly complexityShift?: number;
+  /**
+   * A positive shift never lifts the step above this tier; a run already at or above it keeps
+   * its own (e.g. 3: a step one tier up, but on the top tier only when the run is).
+   */
+  readonly shiftUpTo?: Complexity;
   /** No workspace tools at all: the agent works only from its input. */
   readonly isolated?: boolean;
   /**
