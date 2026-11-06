@@ -94,7 +94,11 @@ read pipelines, branch policies and Kusto tables; nothing that writes is allowed
    `maxExpandRounds` (2) times, then checks again. Then targeted research (`gapAimed`, a pilot:
    aimed at what the GAP notes say is missing). It moves on only when no gap is left and
    nothing is queued to read, never on the model's confidence; otherwise it asks you once for
-   a hint.
+   a hint. Gap research only reads; when only running something would settle a gap, it lists
+   the run in `gapRuns` (one test file or test name, never the whole suite), and an executor
+   plays it in a throwaway copy within `maxExperiments`, asking you once unless you already
+   allowed experiments. Earlier Symphony runs (`prior-runs`) are searched through their
+   one-line `.summary` files first, then one `jq` path of the few records needed.
 7. **Answer.** Cited by finding id, one answer per sub-question (or OPEN), one ruling per
    hypothesis. The engine appends a coverage section: files not triaged, pages, experiments,
    what could not be read, sources searched and skipped, findings taken on trust.
