@@ -1,6 +1,12 @@
 import { itemOf } from '../core/items.js';
 import { resolvePaths } from '../core/paths.js';
-import { bullets, PLAIN_CHECKS, plainDirective, READER_STATE } from './phases/readers.js';
+import {
+  bullets,
+  PLAIN_CHECKS,
+  PLAIN_SKIP,
+  plainDirective,
+  READER_STATE,
+} from './phases/readers.js';
 import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
 import { chaseSteps } from './phases/chase.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
@@ -2189,6 +2195,7 @@ Find real paths, test names and table names with read-only tools first. Use the 
       reads: ['question', ...PLAIN_SOURCES],
       writes: ['summary'],
       retries: 2,
+      skipWhenStuck: PLAIN_SKIP,
       checks: [...PLAIN_CHECKS],
     },
     // Only a settled answer teaches: what was asked and how it ended, a lead for later questions

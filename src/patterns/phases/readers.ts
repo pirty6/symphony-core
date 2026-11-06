@@ -78,6 +78,15 @@ export function plainDirective(
   ].join('\n');
 }
 
+/**
+ * The summary for people is a nicety: when it cannot be written, the brief for AI agents is still
+ * complete, so the run goes on and says so (in 3 of 120 eval runs it had sunk a right answer).
+ */
+export const PLAIN_SKIP = {
+  field: 'summary',
+  text: 'The short version for people could not be written; the brief below has the full answer',
+} as const;
+
 export const PLAIN_CHECKS: readonly AcceptanceCheck[] = [
   { expr: 'len(summary) > 0', message: 'Write the summary.' },
   {
@@ -160,6 +169,7 @@ export function readers(o: {
       reads: [...o.sources],
       writes: ['summary'],
       retries: 2,
+      skipWhenStuck: PLAIN_SKIP,
       checks: [...PLAIN_CHECKS, ...(o.locations ? [locationCheck(o.locations)] : [])],
     },
     ...ends.slice(0, -1).map(
