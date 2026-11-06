@@ -1937,7 +1937,10 @@ export const investigate: Pattern = {
       writes: ['answer', 'openQuestions', 'rulings', 'subAnswers', 'objectionResolutions'],
       verifyBelow: 0.6,
       retries: 2,
+      // One tier up, but Opus only on a complexity-4 run: in 20 eval runs per arm a Sonnet answer
+      // at complexity 3 was as often right (20/20) and the runs 24% shorter.
       complexityShift: 1,
+      shiftUpTo: 3,
       checks: [
         { expr: 'len(answer) > 0', message: 'Write the answer.' },
         citesFindings('answer'),

@@ -685,8 +685,10 @@ describe('complexity: rated from the problem, scaled per step', () => {
     expect(t.hypothesize).toBe(3);
     expect(t.triage).toBe(2);
     expect(t.deepRead).toBe(3);
-    expect(t.answer).toBe(4);
+    // The answer is one tier up, but on the top tier only in a complexity-4 run (shiftUpTo 3).
+    expect(t.answer).toBe(3);
     expect(t.challenge).toBe(4);
+    expect(tiers(auto(rate(4))).answer).toBe(4);
     const low = tiers(auto(rate(1)));
     expect(low.triage).toBe(1);
     expect(low.answer).toBe(2);
