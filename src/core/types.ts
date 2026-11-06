@@ -118,6 +118,11 @@ export interface AgentNode extends NodeBase {
    * its own (e.g. 3: a step one tier up, but on the top tier only when the run is).
    */
   readonly shiftUpTo?: Complexity;
+  /**
+   * A step the run can do without (e.g. the summary for people): out of attempts, the engine writes
+   * `text` and the last errors to `field` (one it writes) and goes on, instead of stopping.
+   */
+  readonly skipWhenStuck?: { readonly field: string; readonly text: string };
   /** No workspace tools at all: the agent works only from its input. */
   readonly isolated?: boolean;
   /**
