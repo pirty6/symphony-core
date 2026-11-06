@@ -74,7 +74,7 @@ describe('live runs: a run another process plays, in the studio', () => {
     stop();
     await new Promise((r) => setTimeout(r, 300));
     const [seen] = await new LiveRuns(dir).list();
-    await seen!.poll();
+    await seen!.open();
     const file = JSON.stringify(seen!.messages);
     // Read as anyone reading the file would: the streamed pieces joined up.
     const streamed = seen!.messages
@@ -98,7 +98,12 @@ describe('live runs: a run another process plays, in the studio', () => {
     const [seen] = await studio.list();
     expect(seen).toMatchObject({ id: run.id, source: 'chat', workspace: '/w' });
     expect(seen!.score.pattern).toBe('fix');
+    // Listed by its status alone: nothing it said is read until someone opens it.
     await until(async () => (await seen!.poll(), seen!.status === 'awaiting-approval'));
+    expect(seen!.messages).toEqual([]);
+    const letGo = await seen!.open();
+    // Messages are written in batches: they follow the status shortly.
+    await until(async () => (await seen!.poll(), seen!.messages.length > 0));
 
     // The studio answers; the process that plays the run applies it.
     const streamed: number[] = [];
@@ -116,6 +121,13 @@ describe('live runs: a run another process plays, in the studio', () => {
     expect(text(seen!.messages)).toBe(text(run.messages));
     expect(streamed.length).toBeGreaterThan(0);
     expect(seen!.answerApproval({ approved: true })).toBe('the run has ended');
+    // The last viewer gone, it is freed; opened again, it is read again, the same.
+    const all = seen!.messages.length;
+    letGo();
+    expect(seen!.messages).toEqual([]);
+    const again = await seen!.open();
+    expect(seen!.messages).toHaveLength(all);
+    again();
     stop();
     studio.dispose();
   });
@@ -143,7 +155,37 @@ describe('live runs: a run another process plays, in the studio', () => {
     );
     const [lost] = await new LiveRuns(dir).list();
     expect(lost!.status).toBe('cancelled');
+    await lost!.open();
     expect(lost!.messages.at(-1)).toMatchObject({ seq: 1, reason: /session that played it ended/ });
+  });
+
+  it('lists a finished run by its last status alone, and lets go of runs older than a day', async () => {
+    const dir = root();
+    const run = fixRun();
+    mkdirSync(join(dir, run.id));
+    const meta = {
+      id: run.id,
+      pattern: 'fix',
+      goal: 'g',
+      source: 'chat',
+      workspace: '/w',
+      pid: process.pid,
+      startedAt: 't',
+      score: run.score,
+    };
+    writeFileSync(join(dir, run.id, 'meta.json'), JSON.stringify(meta));
+    // An older publisher (no status file); a long run, its last status at the end.
+    const chatter = `${JSON.stringify({ seq: 0, type: 'provider', nodeId: 'x', attempt: 1, event: { type: 'info', text: 'x'.repeat(1000) } })}\n`;
+    writeFileSync(
+      join(dir, run.id, 'messages.jsonl'),
+      chatter.repeat(200) + `${JSON.stringify({ seq: 200, type: 'status', status: 'done' })}\n`,
+    );
+    const live = new LiveRuns(dir);
+    const [seen] = await live.list();
+    expect(seen!.status).toBe('done');
+    expect(seen!.messages).toEqual([]);
+    // A day later it is out of the list (and let go of).
+    expect(await live.list(Date.now() + 25 * 3600_000)).toEqual([]);
   });
 
   it('is on by default under the home folder; SYMPHONY_LIVE=off turns it off', () => {

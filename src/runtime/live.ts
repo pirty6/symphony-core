@@ -77,7 +77,10 @@ export type RunLike = Pick<
   | 'answerOvertime'
   | 'answerRecovery'
   | 'answerApproval'
->;
+> & {
+  /** Load what the run said so far for a viewer; the function it gives back lets go of it. */
+  readonly open?: () => Promise<() => void>;
+};
 
 export interface LiveMeta {
   readonly id: string;
@@ -106,6 +109,35 @@ const FLUSH_MS = 100;
 const KEEP_MS = 7 * 24 * 3600_000;
 /** The studio lists runs whose folder changed within this. */
 const LIST_MS = 24 * 3600_000;
+/** A run's last status, written by the process that plays it. */
+const STATUS_FILE = 'status.json';
+/** Without a status file (an older publisher), its last status is looked for in this much of the end. */
+const TAIL_BYTES = 64 * 1024;
+
+/** The last status a run's messages give, read from the end of the file only. */
+async function lastStatus(file: string): Promise<RunStatus | undefined> {
+  let fh;
+  try {
+    fh = await open(file, 'r');
+  } catch {
+    return undefined;
+  }
+  try {
+    const { size } = await fh.stat();
+    const length = Math.min(size, TAIL_BYTES);
+    const buf = Buffer.alloc(length);
+    await fh.read(buf, 0, length, size - length);
+    const lines = buf.toString('utf8').split('\n').toReversed();
+    for (const line of lines) {
+      if (!line.includes('"status"')) continue;
+      const m = parse<RunMessage>(line);
+      if (m?.type === 'status') return m.status;
+    }
+    return undefined;
+  } finally {
+    await fh.close();
+  }
+}
 
 export function liveRoot(env: Readonly<Record<string, string | undefined>>): string | undefined {
   const v = env.SYMPHONY_LIVE?.trim().toLowerCase();
@@ -206,6 +238,7 @@ export async function publishLive(
   };
   await writeFile(join(dir, 'meta.json'), JSON.stringify(meta));
   const messagesFile = join(dir, 'messages.jsonl');
+  const statusFile = join(dir, STATUS_FILE);
   // In order, a batch at a time: many small messages (streamed text) must not each be a write.
   let pending: string[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -223,6 +256,11 @@ export async function publishLive(
   const feed = scrubbedFeed((m) => pending.push(`${JSON.stringify({ ...m, seq: seq++ })}\n`));
   const add = (m: RunMessage) => {
     feed(m);
+    // The studio lists runs by this small file, never by reading every message.
+    if (m.type === 'status')
+      writing = writing
+        .then(() => writeFile(statusFile, JSON.stringify({ status: m.status })))
+        .catch(() => undefined);
     if (m.type === 'status' && TERMINAL.has(m.status)) flush();
     else timer ??= setTimeout(flush, FLUSH_MS);
   };
@@ -282,6 +320,8 @@ export class LiveRun implements RunLike {
   readonly messages: RunMessage[] = [];
   status: RunStatus = 'running';
   private polling: Promise<void> | undefined;
+  /** Viewers that opened it: its messages are in memory only while there are some. */
+  private viewers = 0;
   private readonly listeners = new Set<(m: RunMessage) => void>();
   private readonly read = { offset: 0, partial: '' };
   private readonly dir: string;
@@ -301,12 +341,48 @@ export class LiveRun implements RunLike {
     return TERMINAL.has(this.status);
   }
 
+  get opened(): boolean {
+    return this.viewers > 0;
+  }
+
+  /**
+   * Load its messages for a viewer (a run can be hundreds of MB); the function it gives back lets
+   * go, and when the last viewer has, they are freed (read again on the next open).
+   */
+  async open(): Promise<() => void> {
+    this.viewers += 1;
+    await this.poll();
+    let gone = false;
+    return () => {
+      if (gone) return;
+      gone = true;
+      this.viewers -= 1;
+      if (this.viewers === 0) this.release();
+    };
+  }
+
+  private release(): void {
+    this.messages.length = 0;
+    this.read.offset = 0;
+    this.read.partial = '';
+  }
+
   /** Read what the playing process wrote since the last time (one read at a time). */
   poll(): Promise<void> {
-    this.polling ??= this.readMore().finally(() => {
+    this.polling ??= (this.opened ? this.readMore() : this.readStatus()).finally(() => {
       this.polling = undefined;
     });
     return this.polling;
+  }
+
+  /** Its status alone, from the small file the player writes (or the end of its messages). */
+  private async readStatus(): Promise<void> {
+    const recorded = parse<{ status?: RunStatus }>(
+      await readFile(join(this.dir, STATUS_FILE), 'utf8').catch(() => ''),
+    )?.status;
+    const status = recorded ?? (await lastStatus(join(this.dir, 'messages.jsonl')));
+    if (status) this.status = status;
+    if (!this.ended && !alive(this.pid)) this.status = 'cancelled';
   }
 
   private async readMore(): Promise<void> {
@@ -392,10 +468,14 @@ export class LiveRuns {
     const found = await Promise.all(
       names.map(async (name) => {
         const known = this.runs.get(name);
-        if (known) return known;
         const dir = join(this.root, name);
         const st = await stat(dir).catch(() => undefined);
-        if (!st || now - st.mtimeMs > LIST_MS) return undefined;
+        if (!st || now - st.mtimeMs > LIST_MS) {
+          // Out of the list: let go of it unless someone is looking at it.
+          if (known && !known.opened) this.runs.delete(name);
+          return known?.opened ? known : undefined;
+        }
+        if (known) return known;
         const meta = parse<LiveMeta>(
           await readFile(join(dir, 'meta.json'), 'utf8').catch(() => ''),
         );
@@ -420,7 +500,8 @@ export class LiveRuns {
   private follow(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
-      const playing = [...this.runs.values()].filter((r) => !r.ended);
+      // Only runs someone is watching are read as they play; the rest are listed by status.
+      const playing = [...this.runs.values()].filter((r) => !r.ended && r.opened);
       if (playing.length === 0) {
         clearInterval(this.timer);
         this.timer = undefined;
