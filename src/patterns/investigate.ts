@@ -189,7 +189,7 @@ const CHASE = chaseSteps({
   // gapsPerChase 1: one sub-agent per gap, each with the whole brief (for an A/B).
   fanOut: { over: 'chaseGaps', per: 'gapsPerChase', agents: 'agents', warm: 'warmFirst' },
   directive:
-    'Close every gap in `chaseGaps` (the sub-questions not yet answered, or what the gap check says each one is missing: `subQuestions` are the questions they belong to) with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked.' +
+    'Close every gap in `chaseGaps` (the sub-questions not yet answered, or what the gap check says each one is missing: `subQuestions` are the questions they belong to) with targeted research, using ANY source in `sourceInfo` (including ones skipped before) and `hint` if set. Record every query, command or tool call in `queries` and every fact as "source | location — fact" in `newFindings`. If a gap has no evidence anywhere, add a finding saying where you looked. You cannot run tests or scripts here (read-only): when only running something would settle a gap (a targeted test, a measurement), do not try; put it in `gapRuns` as "<exact command> — what it would show — <the gap>", one test file or test name, never the whole suite, and it is run in a throwaway copy within the experiment budget (`gapRuns` is [] when nothing needs running).' +
     AGAINST,
   reads: [
     'leadHypotheses',
@@ -203,7 +203,13 @@ const CHASE = chaseSteps({
     'consulted',
   ],
   notes: 'newFindings',
+  alsoWrites: ['gapRuns'],
   checks: [
+    {
+      expr: `len(without(positions(gapRuns, "${WHOLE_SUITE}"), positions(gapRuns, "${TARGETED_RUN}"))) == 0`,
+      message:
+        'A gap run names one test file or test name (or a flag that narrows it), never the whole suite.',
+    },
     {
       expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
       message: 'No hypotheses were given: do not tag findings with [H…].',
@@ -691,6 +697,18 @@ export const investigate: Pattern = {
       { name: 'pendingExperiments', type: 'string[]' },
       { name: 'currentExperiment', type: 'string', description: 'Experiment to run now' },
       { name: 'ran', type: 'string[]', description: 'Experiments run' },
+      {
+        name: 'gapRuns',
+        type: 'string[]',
+        description:
+          'Runs gap research needs but cannot do read-only: "<command> — what it would show — <gap>"',
+      },
+      { name: 'parallelGapRuns', type: 'string[]', description: 'The gap runs playing now' },
+      {
+        name: 'experimentsApproved',
+        type: 'boolean',
+        description: 'A person allowed experiments in this run (asked once)',
+      },
       { name: 'pendingSources', type: 'string[]' },
       {
         name: 'currentSources',
@@ -916,6 +934,14 @@ export const investigate: Pattern = {
         'chase',
         'checkChase',
         'mergeChase',
+        'wantRuns',
+        'runsAllowed',
+        'allowGapRuns',
+        'dropGapRuns',
+        'takeGapRuns',
+        'gapExperiment',
+        'checkGapRuns',
+        'mergeGapRuns',
         'confident',
         'clarify',
         'useHint',
@@ -1448,6 +1474,7 @@ export const investigate: Pattern = {
       assign: [
         { field: 'parallelExperiments', expr: 'without(experiments, timedExperiments)' },
         { field: 'pendingExperiments', expr: 'timedExperiments' },
+        { field: 'experimentsApproved', expr: 'true' },
       ],
     },
     {
@@ -1738,6 +1765,74 @@ export const investigate: Pattern = {
       ],
     },
     CHASE.merge,
+    {
+      id: 'wantRuns',
+      kind: 'condition',
+      label: 'Runs a gap needs?',
+      // Within what is left of the experiment budget; past it, they stay for the brief.
+      expression: 'len(gapRuns) > 0 && len(ran) < maxExperiments',
+    },
+    {
+      id: 'runsAllowed',
+      kind: 'condition',
+      label: 'Experiments allowed already?',
+      expression: 'experimentsApproved',
+    },
+    {
+      id: 'allowGapRuns',
+      kind: 'approval',
+      label: 'Allow runs for the gaps?',
+      message:
+        'Gap research needs these runs to settle what it could not read. Each runs in a throwaway copy of your workspace, on its own targeted tests. Approve to run them, or reject to go on without them.',
+      writes: [],
+      shows: ['gapRuns'],
+    },
+    {
+      id: 'dropGapRuns',
+      kind: 'compute',
+      label: 'Skip the gap runs',
+      assign: [{ field: 'gapRuns', expr: '[]' }],
+    },
+    {
+      id: 'takeGapRuns',
+      kind: 'compute',
+      label: 'Queue the gap runs',
+      assign: [
+        { field: 'parallelGapRuns', expr: 'take(gapRuns, maxExperiments - len(ran))' },
+        { field: 'gapRuns', expr: '[]' },
+        { field: 'experimentsApproved', expr: 'true' },
+      ],
+    },
+    {
+      id: 'gapExperiment',
+      kind: 'agent',
+      role: 'executor',
+      label: 'Run what the gaps need',
+      sandbox: true,
+      maxVisits: 20,
+      visitsFrom: 'maxExperiments + 2',
+      fanOut: { over: 'parallelGapRuns', per: 1, agents: 'agents' },
+      directive:
+        'Run the ONE gap run in `parallelGapRuns`: the command, to show what it says it would show for its gap. You work in a throwaway copy of the workspace: add or change files there if the run needs it (e.g. a temporary test); nothing comes back to the real workspace. Run only what it names, never the whole test suite. Record every command you ran in `queries` and each result, with its numbers and the command, in `newFindings` as "experiment | <command> — result". If it cannot run, say exactly why in `newFindings`.',
+      reads: ['question', 'parallelGapRuns', 'subQuestions'],
+      writes: ['queries', 'newFindings'],
+      cites: 'newFindings',
+      retries: 1,
+      checks: [
+        { expr: 'len(queries) > 0', message: 'Record the commands you ran in queries.' },
+        {
+          expr: 'len(newFindings) > 0',
+          message: 'Report the results (or why it could not run) in newFindings.',
+        },
+      ],
+    },
+    checkFindings('checkGapRuns', 'newFindings', false),
+    {
+      id: 'mergeGapRuns',
+      kind: 'compute',
+      label: 'Record the gap runs',
+      assign: [...MERGE_FINDINGS, ...STATUS, { field: 'ran', expr: 'ran + parallelGapRuns' }],
+    },
     {
       id: 'confident',
       kind: 'condition',
@@ -2220,7 +2315,18 @@ Find real paths, test names and table names with read-only tools first. Use the 
     { id: 'moreGaps-confident', from: 'moreGaps', to: 'confident', branch: 'else' },
     { id: 'chase-checkChase', from: 'chase', to: 'checkChase' },
     { id: 'checkChase-mergeChase', from: 'checkChase', to: 'mergeChase' },
-    { id: 'mergeChase-assess', from: 'mergeChase', to: 'assess', label: 're-assess' },
+    { id: 'mergeChase-wantRuns', from: 'mergeChase', to: 'wantRuns' },
+    { id: 'wantRuns-allowed', from: 'wantRuns', to: 'runsAllowed', branch: 'then' },
+    { id: 'wantRuns-assess', from: 'wantRuns', to: 'assess', branch: 'else', label: 're-assess' },
+    { id: 'runsAllowed-take', from: 'runsAllowed', to: 'takeGapRuns', branch: 'then' },
+    { id: 'runsAllowed-ask', from: 'runsAllowed', to: 'allowGapRuns', branch: 'else' },
+    { id: 'allowGapRuns-take', from: 'allowGapRuns', to: 'takeGapRuns', branch: 'approved' },
+    { id: 'allowGapRuns-drop', from: 'allowGapRuns', to: 'dropGapRuns', branch: 'rejected' },
+    { id: 'dropGapRuns-assess', from: 'dropGapRuns', to: 'assess', label: 're-assess' },
+    { id: 'takeGapRuns-run', from: 'takeGapRuns', to: 'gapExperiment' },
+    { id: 'gapExperiment-check', from: 'gapExperiment', to: 'checkGapRuns' },
+    { id: 'checkGapRuns-merge', from: 'checkGapRuns', to: 'mergeGapRuns' },
+    { id: 'mergeGapRuns-assess', from: 'mergeGapRuns', to: 'assess', label: 're-assess' },
     { id: 'confident-multiPart', from: 'confident', to: 'multiPart', branch: 'then' },
     { id: 'confident-clarify', from: 'confident', to: 'clarify', branch: 'else' },
     { id: 'clarify-useHint', from: 'clarify', to: 'useHint', branch: 'approved' },
@@ -2281,6 +2387,7 @@ Find real paths, test names and table names with read-only tools first. Use the 
           'checkExperiment',
           'checkSource',
           'checkChase',
+          'checkGapRuns',
           'checkSecond',
         ].map((id) => [
           id,
@@ -2412,6 +2519,13 @@ Find real paths, test names and table names with read-only tools first. Use the 
         },
         verdict: v('ran'),
       }),
+      gapExperiment: (s) => ({
+        updates: {
+          queries: [String((s.parallelGapRuns as string[])[0]).split(' — ')[0] ?? 'npm test'],
+          newFindings: ['experiment | npx vitest run src/core/engine.test.ts — 3 of 3 pass'],
+        },
+        verdict: v('ran'),
+      }),
       experiment: (s) => ({
         updates: {
           queries: [String(s.currentExperiment).split(' — ')[0] ?? 'npm test'],
@@ -2488,6 +2602,7 @@ Find real paths, test names and table names with read-only tools first. Use the 
       chase: (s) => ({
         updates: {
           queries: ['git log -S validateNodeResult'],
+          gapRuns: [],
           newFindings: [
             `git-history | commit "feat(core): score/performance types and response validation" — validation added with the engine${tagged(s, ' [H2 against]')}`,
           ],
@@ -2591,6 +2706,7 @@ Find real paths, test names and table names with read-only tools first. Use the 
     },
     approvals: {
       allowExperiments: () => ({ approved: true }),
+      allowGapRuns: () => ({ approved: true }),
       clarify: () => ({ approved: true, updates: { hint: 'look at src/core/schema.ts' } }),
     },
   },

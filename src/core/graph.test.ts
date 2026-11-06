@@ -109,7 +109,21 @@ describe('loop layout', () => {
       'checkSource',
       'mergeSource',
     ]);
-    expect(bodies.get('moreGaps')).toEqual(['aimChase', 'chase', 'checkChase', 'mergeChase']);
+    // Gap research, then the runs it asks for (when allowed) before the gaps are checked again.
+    expect(bodies.get('moreGaps')).toEqual([
+      'aimChase',
+      'chase',
+      'checkChase',
+      'mergeChase',
+      'wantRuns',
+      'runsAllowed',
+      'takeGapRuns',
+      'allowGapRuns',
+      'gapExperiment',
+      'dropGapRuns',
+      'checkGapRuns',
+      'mergeGapRuns',
+    ]);
     const pos = layout(investigate);
     expect(pos.get('triage')!.y).toBe(pos.get('filesLeft')!.y);
     expect(pos.get('triage')!.x).toBeGreaterThan(pos.get('filesLeft')!.x);

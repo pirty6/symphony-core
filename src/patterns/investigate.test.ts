@@ -840,7 +840,7 @@ describe('investigate always ends: research rounds are bounded', () => {
           chase: (s, visit) => {
             const first = (s.chaseGaps as string[])[0] === (s.subQuestions as string[])[0];
             return first
-              ? { updates: { queries: ['grep x'], newFindings: [] }, verdict: v }
+              ? { updates: { queries: ['grep x'], gapRuns: [], newFindings: [] }, verdict: v }
               : demo.agents!.chase!(s, visit);
           },
         },
@@ -1929,5 +1929,102 @@ describe('lean (on by default): the settings measured to cut time and tokens, be
     // Given but only rated (the maestro's classifier): capped like the investigation's own rating.
     expect(play({ complexityRated: true }, 4, 4).state.state.complexity).toBe(3);
     expect(play({}, 2).state.state.complexity).toBe(2);
+  });
+});
+
+describe('runs a gap needs: research is read-only, so a sandboxed step runs them', () => {
+  const RUN =
+    'npx vitest run src/core/engine.test.ts — whether an invalid answer changes state — S1';
+  /** Gap research that asks for `runs` on its first visit, then finds what the demo finds. */
+  const play = (
+    runs: string[],
+    context: Record<string, unknown> = {},
+    rejectExperiments = false,
+  ) => {
+    const asked: string[][] = [];
+    const script: DemoScript = {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        assess: (s, visit) => ({
+          updates: {
+            ...assessFor(s, visit === 0 ? ((s.subQuestions as string[]) ?? []).slice(0, 1) : []),
+            confidence: 0.9,
+          },
+          verdict: { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'r' },
+        }),
+        chase: (s, visit) => {
+          const r = demo.agents!.chase!(s, visit) as { updates: Record<string, unknown> };
+          return { ...r, updates: { ...r.updates, gapRuns: visit === 0 ? runs : [] } } as never;
+        },
+        gapExperiment: (s, visit) => {
+          asked.push([...((s.parallelGapRuns as string[]) ?? [])]);
+          return demo.agents!.gapExperiment!(s, visit);
+        },
+      },
+      approvals: {
+        ...demo.approvals,
+        ...(rejectExperiments ? { allowExperiments: () => ({ approved: false }) } : {}),
+      },
+    };
+    const r = runScripted(
+      compileInvestigate({ goal: 'g', context: { ...demo.context!, ...context } }),
+      script,
+    );
+    const at = (id: string) => r.state.steps.filter((x) => x.nodeId === id).length;
+    return { r, asked, at, state: r.state.state };
+  };
+
+  it('plays in a throwaway copy, its result a finding, without asking again once experiments were allowed', () => {
+    const { r, asked, at, state } = play([RUN]);
+    expect(r.state.outcome).toBe('success');
+    expect(asked).toEqual([[RUN]]);
+    expect(at('allowGapRuns')).toBe(0);
+    expect(state.ran).toContain(RUN);
+    expect(state.gapRuns).toEqual([]);
+    expect(JSON.stringify(state.findings)).toContain('3 of 3 pass');
+    const node = compileInvestigate({ goal: 'g', context: demo.context! }).nodes.find(
+      (n) => n.id === 'gapExperiment',
+    );
+    expect(node).toMatchObject({ role: 'executor', sandbox: true });
+  });
+
+  it('asks once when experiments were not allowed before; a rejection skips them', () => {
+    const asked = play([RUN], {}, true);
+    expect(asked.at('allowGapRuns')).toBe(1);
+    expect(asked.asked).toEqual([[RUN]]);
+    const rejected = runScripted(compileInvestigate({ goal: 'g', context: demo.context! }), {
+      ...demo,
+      agents: {
+        ...demo.agents,
+        chase: (s, v) => {
+          const r = demo.agents!.chase!(s, v) as { updates: Record<string, unknown> };
+          return { ...r, updates: { ...r.updates, gapRuns: v === 0 ? [RUN] : [] } } as never;
+        },
+      },
+      approvals: {
+        ...demo.approvals,
+        allowGapRuns: () => ({ approved: false }),
+        allowExperiments: () => ({ approved: false }),
+      },
+    });
+    expect(rejected.state.steps.some((x) => x.nodeId === 'gapExperiment')).toBe(false);
+  });
+
+  it('within what is left of the experiment budget', () => {
+    const many = [RUN, RUN.replace('engine', 'schema'), RUN.replace('engine', 'expr')];
+    const { asked, state } = play(many, { maxExperiments: 2 });
+    // The demo's own experiment used one of the two.
+    expect(asked).toEqual([[many[0]]]);
+    expect((state.ran as string[]).length).toBe(2);
+    expect(play([RUN], { maxExperiments: 1 }).asked).toEqual([]);
+  });
+
+  it('a whole-suite run is sent back', () => {
+    const { r } = play(['npm test — whether anything fails — S1']);
+    const errs = (r.state.steps.find((x) => x.nodeId === 'chase')?.attempts ?? []).flatMap(
+      (a) => a.errors,
+    );
+    expect(errs.join(' ')).toMatch(/never the whole suite/);
   });
 });

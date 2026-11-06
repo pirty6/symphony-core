@@ -18,6 +18,7 @@ const finding: NonNullable<DemoScript['agents']>[string] = (s, v) => ({
   ...agents.chase!(s, v),
   updates: {
     queries: [`git log -S x (round ${v})`],
+    gapRuns: [],
     newFindings: [`git-history | commit c${v} — round ${v} found something new`],
   },
 });

@@ -16,6 +16,8 @@ export interface ChaseConfig {
   readonly reads: readonly string[];
   /** The string[] field the research writes its cited facts to, checked by the engine. */
   readonly notes: string;
+  /** Other fields the research may write (e.g. runs it needs but cannot do read-only). */
+  readonly alsoWrites?: readonly string[];
   /** Checks of the pattern's own, before the shared ones (every query recorded, a fact per item). */
   readonly checks?: readonly AcceptanceCheck[];
   readonly capabilities?: AgentNode['capabilities'];
@@ -47,7 +49,7 @@ export function chaseSteps(cfg: ChaseConfig): Chase {
       ...cfg.bound,
       directive: cfg.directive,
       reads: [...cfg.reads],
-      writes: ['queries', cfg.notes],
+      writes: ['queries', cfg.notes, ...(cfg.alsoWrites ?? [])],
       cites: cfg.notes,
       retries: 2,
       checks: [
