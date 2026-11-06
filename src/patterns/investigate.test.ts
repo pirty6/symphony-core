@@ -760,10 +760,10 @@ describe('investigate always ends: research rounds are bounded', () => {
     const gapRounds = s.maxGapRounds as number;
     expect(chases).toBeLessThanOrEqual(2 * gapRounds + (s.maxDebateRounds as number) * gapRounds);
     expect(s.debateRounds).toBe(s.maxDebateRounds);
-    // Out of rounds, not out of objections: they are reported, not dropped.
-    expect(s.unresolvedObjections).toEqual([
-      `S1: src/x.ts was never read (F1, round ${s.maxDebateRounds})`,
-    ]);
+    // Out of rounds: no challenge after the last one (it could no longer reopen research).
+    expect(r.state.steps.filter((x) => x.nodeId === 'challenge')).toHaveLength(
+      s.maxDebateRounds as number,
+    );
     const normal = runScripted(compileInvestigate({ goal: 'g', context: demo.context! }), demo);
     expect(normal.state.state.unresolvedObjections).toEqual([]);
     // One budget for the whole run, whatever resets the per-round one.
@@ -2026,5 +2026,32 @@ describe('runs a gap needs: research is read-only, so a sandboxed step runs them
       (a) => a.errors,
     );
     expect(errs.join(' ')).toMatch(/never the whole suite/);
+  });
+});
+
+describe('a summary for people that cannot be written does not sink the run', () => {
+  const failing: DemoScript = {
+    ...demo,
+    agents: {
+      ...demo.agents,
+      explain: () => ({
+        updates: { summary: 'One very long sentence. '.repeat(3), confidence: 1 },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+      }),
+    },
+  };
+  it('out of attempts, it says so in the summary and the run ends as it would have', () => {
+    const score = compileInvestigate({ goal: 'g', context: demo.context!, generatedAt: 't' });
+    const r = runScripted(score, failing, { at: 't' });
+    expect(r.state.kind).toBe('done');
+    expect(r.state.outcome).toBe('success');
+    expect(String(r.state.state.summary)).toMatch(
+      /^The short version for people could not be written; the brief below has the full answer \(updates\.confidence is not writable/,
+    );
+    const step = r.state.steps.find((x) => x.nodeId === 'explain')!;
+    expect(step.verdict?.outcome).toBe('failed');
+    expect(step.attempts).toHaveLength(3);
+    // The record replays to the same end.
+    expect(replayPerformance(score, toPerformance(r.state)).divergence.reproduced).toBe(true);
   });
 });

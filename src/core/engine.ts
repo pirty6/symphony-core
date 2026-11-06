@@ -270,7 +270,11 @@ function follow(
 export function complexityFor(
   score: ExecutableScore,
   state: Readonly<Record<string, unknown>>,
-  node: { readonly complexity?: Complexity; readonly complexityShift?: number },
+  node: {
+    readonly complexity?: Complexity;
+    readonly complexityShift?: number;
+    readonly shiftUpTo?: Complexity;
+  },
 ): Complexity {
   if (node.complexity) return node.complexity;
   const fromState = state.complexity;
@@ -278,7 +282,9 @@ export function complexityFor(
     fromState === 1 || fromState === 2 || fromState === 3 || fromState === 4
       ? fromState
       : (score.complexity ?? 2);
-  return Math.min(4, Math.max(1, run + (node.complexityShift ?? 0))) as Complexity;
+  const shifted = Math.min(4, Math.max(1, run + (node.complexityShift ?? 0)));
+  const capped = node.shiftUpTo ? Math.max(run, Math.min(shifted, node.shiftUpTo)) : shifted;
+  return Math.min(shifted, capped) as Complexity;
 }
 
 function choicesOf(score: ExecutableScore, node: ScoreNode) {
@@ -1099,6 +1105,10 @@ function resolveAgent(
       attempt: pause.attempt,
       errors: checked.errors,
     });
+    if (pause.attempt >= pause.maxAttempts && node.kind === 'agent' && node.skipWhenStuck) {
+      skipStuck(score, ctx, node, node.skipWhenStuck, checked.errors, res.at);
+      return;
+    }
     if (pause.attempt >= pause.maxAttempts) {
       // Out of attempts: ask a human instead of failing (a run without one answers 'stop').
       const stuck: StuckPause = {
@@ -1171,6 +1181,57 @@ function resolveAgent(
   }
   ctx.completedAt = res.at ?? ctx.completedAt;
   if (follow(score, ctx, node, true, next)) drive(score, ctx);
+}
+
+/** Out of attempts at a step the run can do without: say so in its field, record it failed, go on. */
+function skipStuck(
+  score: ExecutableScore,
+  ctx: Ctx,
+  node: ScoreNode,
+  skip: { readonly field: string; readonly text: string },
+  errors: readonly string[],
+  at: string | undefined,
+): void {
+  const pause = ctx.pause as AgentPause;
+  const hashBefore = stateHashOf(ctx.state, ctx.env);
+  const updates = { [skip.field]: `${skip.text} (${errors.join('; ')})` };
+  const verdict = {
+    outcome: 'failed' as const,
+    confidence: 0,
+    shouldTerminate: false,
+    reason: `no valid response after ${ctx.attempts.length} attempt(s); the run goes on without it`,
+  };
+  const before = ctx.state;
+  ctx.state = { ...before, ...updates };
+  const changes = diff(before, ctx.state);
+  ctx.lastVerdict = verdict;
+  ctx.lastWrites = Object.keys(updates);
+  ctx.pause = undefined;
+  recordStep(
+    ctx,
+    node,
+    {
+      input: pause.input,
+      changes,
+      updates,
+      verdict,
+      attempts: ctx.attempts,
+      ...(at ? { at } : {}),
+    },
+    hashBefore,
+  );
+  ctx.attempts = [];
+  ctx.recoveries = [];
+  emit(ctx, {
+    type: 'node-completed',
+    step: ctx.step,
+    nodeId: node.id,
+    changes,
+    verdict,
+    stateHash: stateHashOf(ctx.state, ctx.env),
+  });
+  ctx.completedAt = at ?? ctx.completedAt;
+  if (follow(score, ctx, node, true, undefined)) drive(score, ctx);
 }
 
 function resolveApproval(

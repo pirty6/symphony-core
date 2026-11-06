@@ -97,6 +97,10 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...(Number.isInteger(raw.complexityShift)
           ? { complexityShift: raw.complexityShift as number }
           : {}),
+        ...([1, 2, 3, 4].includes(raw.shiftUpTo as number)
+          ? { shiftUpTo: raw.shiftUpTo as Complexity }
+          : {}),
+        ...skipWhenStuckOf(raw.skipWhenStuck),
         ...(raw.solo === true ? { solo: true } : {}),
       };
     }
@@ -205,6 +209,14 @@ function preloadReportOf(raw: unknown): {
           ...(typeof r.rest === 'string' && r.rest ? { rest: r.rest } : {}),
         },
       }
+    : {};
+}
+
+/** `{ field, text }` as given, or nothing. */
+function skipWhenStuckOf(v: unknown): { skipWhenStuck?: { field: string; text: string } } {
+  const o = v as { field?: unknown; text?: unknown } | undefined;
+  return typeof o?.field === 'string' && typeof o.text === 'string'
+    ? { skipWhenStuck: { field: o.field, text: o.text } }
     : {};
 }
 
@@ -458,7 +470,7 @@ export function draftInstructions(): string {
 Node kinds:
 - start {id,kind:"start",label}: exactly one.
 - agent {id,kind:"agent",role:"assessor"|"executor",label,directive,reads:[state keys],writes:[state keys],maxVisits?,
-  capabilities?:["web","mcp"], checks?:[{expr,message}], complexity?:1-4 (fixed tier), complexityShift?:-2..2 (tiers above or below the run's complexity: bulk steps -1, judging or concluding steps +1), maxEffort?:"low"|"medium"|"high"|"xhigh" (the highest reasoning effort the step asks for, whatever its tier), isolated?:true (no workspace tools), reviewsCode?:true (a step that reviews code: it judges it against Clean Code too; executors with workspace tools always write to Clean Code), fresh?:true (never replayed: it reads something outside the workspace, e.g. a PR on GitHub), cites?:"<string[] field it writes>" (entries cite path:line, checked against the workspace),
+  capabilities?:["web","mcp"], checks?:[{expr,message}], complexity?:1-4 (fixed tier), complexityShift?:-2..2 (tiers above or below the run's complexity: bulk steps -1, judging or concluding steps +1), shiftUpTo?:1-4 (a positive shift never lifts the step above this tier unless the run is already there), maxEffort?:"low"|"medium"|"high"|"xhigh" (the highest reasoning effort the step asks for, whatever its tier), isolated?:true (no workspace tools), reviewsCode?:true (a step that reviews code: it judges it against Clean Code too; executors with workspace tools always write to Clean Code), fresh?:true (never replayed: it reads something outside the workspace, e.g. a PR on GitHub), cites?:"<string[] field it writes>" (entries cite path:line, checked against the workspace),
   solo?:true (assessor only: from Swing up the AI picks one of its labelled, unguarded out edges)} - checks are expressions over state+answer that must be true
   or the answer is rejected and re-asked (use them to force full coverage, e.g. subset(batch, examined)).
   assessor = read-only research/analysis; executor = may edit files and run commands. AI runs ONLY in agent nodes.

@@ -1,6 +1,12 @@
 import { itemOf } from '../core/items.js';
 import { resolvePaths } from '../core/paths.js';
-import { bullets, PLAIN_CHECKS, plainDirective, READER_STATE } from './phases/readers.js';
+import {
+  bullets,
+  PLAIN_CHECKS,
+  PLAIN_SKIP,
+  plainDirective,
+  READER_STATE,
+} from './phases/readers.js';
 import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
 import { chaseSteps } from './phases/chase.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
@@ -1937,7 +1943,10 @@ export const investigate: Pattern = {
       writes: ['answer', 'openQuestions', 'rulings', 'subAnswers', 'objectionResolutions'],
       verifyBelow: 0.6,
       retries: 2,
+      // One tier up, but Opus only on a complexity-4 run: in 20 eval runs per arm a Sonnet answer
+      // at complexity 3 was as often right (20/20) and the runs 24% shorter.
       complexityShift: 1,
+      shiftUpTo: 3,
       checks: [
         { expr: 'len(answer) > 0', message: 'Write the answer.' },
         citesFindings('answer'),
@@ -2186,6 +2195,7 @@ Find real paths, test names and table names with read-only tools first. Use the 
       reads: ['question', ...PLAIN_SOURCES],
       writes: ['summary'],
       retries: 2,
+      skipWhenStuck: PLAIN_SKIP,
       checks: [...PLAIN_CHECKS],
     },
     // Only a settled answer teaches: what was asked and how it ended, a lead for later questions

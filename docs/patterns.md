@@ -85,8 +85,8 @@ read pipelines, branch policies and Kusto tables; nothing that writes is allowed
 5. **Experiments** (after your approval) and **source searches**, in parallel. Each
    experiment is targeted: it runs only the tests or commands that bear on a hypothesis, never
    the whole suite (a design that would is sent back). Each runs in a throwaway copy of the
-   workspace (a git worktree) that is discarded after the call; with no copy to be had it runs
-   in the workspace and says so.
+   workspace (a git worktree) that is discarded after the call. With no copy to be had it fails
+   closed: the step runs read-only and reports what it could not run.
 6. **Close gaps.** The gap check writes one entry per sub-question, in order: `S<n>:
    ANSWERED [F…]` citing findings, or `S<n>: GAP — what is missing`; the engine derives the
    gaps from it. First the gaps expand the read: the engine ranks the files not yet read by the
@@ -105,7 +105,12 @@ read pipelines, branch policies and Kusto tables; nothing that writes is allowed
 8. **Challenge.** The debate above; REAL objections reopen research (within the run-wide
    research budget), at most `maxDebateRounds` (3) rounds. After the first, another round plays
    only when the last one's research found new evidence; `debateLog` says why it stopped (the
-   skeptic only repeated itself, the cap, or nothing new). `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
+   skeptic only repeated itself, the cap, or nothing new). No challenge plays after the last
+   round: it could no longer reopen research (in 33 recorded runs it never changed the answer);
+   what the rewrite marks OPEN in `objectionResolutions` still leaves the run partial. The
+   answer is one tier up, but on Opus only in a complexity-4 run (`shiftUpTo: 3`): at complexity
+   3 a Sonnet answer was as often right in the eval matrix, with runs 24% shorter.
+   `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
    keep word for word the sub-answers no objection named, so it opens no new front.
 9. **Support judge** (`supportJudge`: off by default; `shadow`, `enforce`). Each cited
    workspace finding's quote, with the numbered lines around it, its claim and nothing else, is
@@ -125,7 +130,9 @@ read pipelines, branch policies and Kusto tables; nothing that writes is allowed
       *In short*, *What we found*, *What to do* (only when the answer recommends actions), *What
       is not certain* and *How we checked*. The engine sends it back when a sentence has more than
       25 words (naming each one), when it holds a citation id, or when a section is missing. The
-      `plainSummary` switch (on by default) turns it off, which saves one model call.
+      `plainSummary` switch (on by default) turns it off, which saves one model call. When it
+      fails its checks three times, the run goes on: the summary says it could not be written
+      and the brief stands (`skipWhenStuck`).
     - **For an AI agent (`handoff`).** The engine writes it from the record, so it is complete
       and the same every time. In order, most important first:
       - the task;
@@ -222,7 +229,7 @@ flowchart TD
 | Run experiments | With your approval, run and measure | Experiments listed? → Allow experiments? → Queue experiments → Untimed experiments? → Run experiments side by side → Check citations → Record experiments → Timed experiments left? → Next experiment → Run timed experiment → Check citations → Record experiment |
 | Search sources | History, GitHub, dependencies, MCP | Sources left? → Next source → Search source → Check citations → Record source |
 | Close gaps | Targeted research, then a human hint | Find gaps → Record gaps → Expand the read? → Unread files → Rank by the gaps → Queue gap files → Files queued? → Gap expansion read? → Back to the gaps → Chase gaps? → Aim the research → Close gaps → Check citations → Record gap research → Runs a gap needs? → Experiments allowed already? → Allow runs for the gaps? → Skip the gap runs → Queue the gap runs → Run what the gaps need → Check citations → Record the gap runs → Gaps closed? → Ask for a hint → Use hint |
-| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left, research still finding) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
+| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2, a round left) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left, research still finding) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
 | Support judge | Off by default: does each cited finding's quote back its claim? | Support judge? → What the judge can check → Lines around each quote → Any to judge? → Support judge → Record the rulings |
 
 <!-- /flow:investigate -->
@@ -442,7 +449,7 @@ flowchart TD
 | --- | --- | --- |
 | Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
 | Diagnose | Evidence for and against every hypothesis, then the root cause | Gather evidence → Check citations → Record evidence → Diagnose |
-| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left, research still finding) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
+| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2, a round left) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left, research still finding) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
 | Show the flake | With the stability gate: before the edit, the flaky test must fail under the gate command | Arm the stability gate? → Show the flake first? → Workspace unpatched? → No edit yet? → No control possible → Start the control → Run before the edit → Count control run → Run the control again? → Flake shown? → Edit without the flake shown? → Flake not shown |
 | Tests first | Tests written before the code must fail for the right reason, then stay locked | Plan the reproducing test → Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
@@ -570,7 +577,7 @@ flowchart TD
 | Green baseline | Tests must pass before anything changes, or a failure could not be told apart | Run tests first → Green? → Snapshot workspace |
 | Competing approaches | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity |
 | Design | Evidence for and against each approach, then a design with acceptance criteria | Explore the code → Check citations → Record evidence → Design |
-| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left, research still finding) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
+| Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2, a round left) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left, research still finding) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
 | Tests first | Tests written before the code must fail for the right reason, then stay locked | Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
 | PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |

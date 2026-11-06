@@ -125,6 +125,12 @@ export const CHECKPOINT_EVERY_MS = 30_000;
 /** fanOut.warm: the longest the other parts wait for the first one to start answering. */
 const WARM_MS = 30_000;
 
+const NO_SANDBOX_INFO =
+  'No throwaway copy of the workspace could be made: this step runs read-only and reports that it could not run.';
+/** Told to a sandbox step that got no copy: it reads only, and says what it could not run. */
+export const NO_SANDBOX =
+  'No throwaway copy of the workspace could be made, so this step is read-only: run nothing that executes code or changes files (no tests, scripts or installs). Record what you would have run, and for each, say it could not run because no throwaway copy could be made.';
+
 export interface RunOptions {
   readonly id?: string;
   readonly score: ExecutableScore;
@@ -447,15 +453,22 @@ export class Run {
       pause.sandbox && this.opts.sandbox
         ? await this.opts.sandbox(pause.nodeId).catch(() => undefined)
         : undefined;
-    if (pause.sandbox && !box)
-      onEvent({
-        type: 'info',
-        text: 'No throwaway copy of the workspace could be made: this step runs in the workspace, scratch files only.',
-      });
+    // Fail closed: with no copy, the step may only read, and says it could not run anything.
+    const closed = pause.sandbox === true && !box;
+    if (closed) onEvent({ type: 'info', text: NO_SANDBOX_INFO });
     let played: Awaited<ReturnType<Provider['runAgent']>>;
     try {
       played = await this.opts.provider.runAgent({
-        pause: box ? pause : { ...pause, sandbox: false },
+        pause: box
+          ? pause
+          : closed
+            ? {
+                ...pause,
+                sandbox: false,
+                role: 'assessor',
+                directive: `${NO_SANDBOX} ${pause.directive}`,
+              }
+            : pause,
         state: this.engine.state,
         visit: (this.engine.visits[pause.nodeId] ?? 1) - 1,
         signal,

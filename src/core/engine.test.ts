@@ -6,6 +6,7 @@ import {
   acceptance,
   advance,
   canonicalEntry,
+  complexityFor,
   createEngine,
   mapToolOutput,
   toPerformance,
@@ -842,5 +843,17 @@ describe('engine: low confidence is re-checked once, one tier smarter', () => {
   it('a confident answer goes straight through', () => {
     const r = answerAgent(s, createEngine(s), ok({ word: 'cat' }));
     expect(r.state.pause).toMatchObject({ kind: 'approval' });
+  });
+});
+
+describe('a step one tier up, capped (shiftUpTo)', () => {
+  const runScore = { complexity: 2 } as unknown as ExecutableScore;
+  const at = (run: number, node: Parameters<typeof complexityFor>[2]) =>
+    complexityFor(runScore, { complexity: run }, node);
+  it('goes up to the cap, never past it, and never below the run', () => {
+    const answer = { complexityShift: 1, shiftUpTo: 3 as const };
+    expect([1, 2, 3, 4].map((run) => at(run, answer))).toEqual([2, 3, 3, 4]);
+    expect([1, 2, 3, 4].map((run) => at(run, { complexityShift: 1 }))).toEqual([2, 3, 4, 4]);
+    expect(at(3, { complexityShift: -1, shiftUpTo: 3 })).toBe(2);
   });
 });

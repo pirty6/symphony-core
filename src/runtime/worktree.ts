@@ -50,6 +50,8 @@ export const sandboxFor =
 const COPY_AT_ONCE = 16;
 /** Installed dependencies are linked, not copied, so the tests run as they do in the workspace. */
 const DEPENDENCY_DIRS = ['node_modules', '.venv', 'venv'];
+/** Tool caches under node_modules: made fresh in a copy, so a run there never writes them back. */
+export const NODE_CACHES: ReadonlySet<string> = new Set(['.vite', '.vitest', '.cache']);
 const AUTHOR = [
   '-c',
   'user.name=Symphony',
@@ -120,9 +122,21 @@ export async function linkDependencies(top: string, wt: string): Promise<void> {
     for (const name of DEPENDENCY_DIRS) {
       const from = join(top, d, name);
       const to = join(wt, d, name);
-      if (existsSync(from) && existsSync(dirname(to)) && !existsSync(to))
-        await symlink(from, to, 'dir');
+      if (!existsSync(from) || !existsSync(dirname(to)) || existsSync(to)) continue;
+      if (name === 'node_modules') await linkEntries(from, to);
+      else await symlink(from, to, 'dir');
     }
+  }
+}
+
+/**
+ * node_modules as a real folder of links to the workspace's entries, its caches left out: tools
+ * that write a cache there (vitest's .vite) write it in the copy, not through to the workspace.
+ */
+async function linkEntries(from: string, to: string): Promise<void> {
+  await mkdir(to);
+  for (const entry of await readdir(from)) {
+    if (!NODE_CACHES.has(entry)) await symlink(join(from, entry), join(to, entry));
   }
 }
 

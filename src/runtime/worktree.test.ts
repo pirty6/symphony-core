@@ -37,6 +37,8 @@ function repo(name: string): string {
   writeFileSync(join(dir, 'a.txt'), 'one\nwork in progress\n');
   writeFileSync(join(dir, 'new.txt'), 'untracked\n');
   writeFileSync(join(dir, 'node_modules', 'dep', 'index.js'), '');
+  mkdirSync(join(dir, 'node_modules', '.vite'));
+  writeFileSync(join(dir, 'node_modules', '.vite', 'kept.json'), '{"workspace":1}');
   return dir;
 }
 
@@ -57,8 +59,16 @@ describe('editing runs play in their own worktree', { timeout: 30_000 }, () => {
     const iso = (await isolateRun(ws, { label: 'fix', env, root }))!;
     expect(read(join(iso.dir, 'a.txt'), 'utf8')).toBe('one\nwork in progress\n');
     expect(read(join(iso.dir, 'new.txt'), 'utf8')).toBe('untracked\n');
-    expect(lstatSync(join(iso.dir, 'node_modules')).isSymbolicLink()).toBe(true);
+    // A folder of links to the installed packages: tests run as they do in the workspace.
+    expect(lstatSync(join(iso.dir, 'node_modules')).isDirectory()).toBe(true);
+    expect(lstatSync(join(iso.dir, 'node_modules', 'dep')).isSymbolicLink()).toBe(true);
     expect(existsSync(join(iso.dir, 'node_modules', 'dep', 'index.js'))).toBe(true);
+    // Caches are not shared: one written in the copy stays there.
+    expect(existsSync(join(iso.dir, 'node_modules', '.vite'))).toBe(false);
+    mkdirSync(join(iso.dir, 'node_modules', '.vite'));
+    writeFileSync(join(iso.dir, 'node_modules', '.vite', 'results.json'), '{}');
+    expect(existsSync(join(ws, 'node_modules', '.vite', 'results.json'))).toBe(false);
+    expect(read(join(ws, 'node_modules', '.vite', 'kept.json'), 'utf8')).toBe('{"workspace":1}');
     expect(status(iso.dir)).toBe('');
     writeFileSync(join(iso.dir, 'b.txt'), 'b fixed\n');
     expect(status(iso.dir).trim()).toBe('M b.txt');
