@@ -1,11 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
+import { open, startRun } from './helpers'
 import { investigate } from '../../../src/patterns/investigate'
-
-async function open(page: Page, pattern: string) {
-  await page.goto(`/#${pattern}`)
-  await expect(page.locator('.tb-title')).toContainText(pattern)
-  await expect(page.getByText(/Valid: every path is bounded/)).toBeVisible()
-}
 
 /** "Running now" starts closed: open it (it then stays open, remembered). */
 async function runningNow(page: Page) {
@@ -36,7 +31,7 @@ async function guess(page: Page, letter: string) {
 
 test('plays hangman live: AI picks, human guesses, engine scores', async ({ page }) => {
   await open(page, 'hangman')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('approval-card')).toBeVisible()
   await expect(page.getByTestId('node-ask')).toHaveAttribute('data-status', 'paused')
   for (const l of ['p', 'l', 'a', 'n', 'e', 't']) {
@@ -51,7 +46,7 @@ test('plays hangman live: AI picks, human guesses, engine scores', async ({ page
 
 test('a running run shows how long it has taken, ticking, in the sidebar and the top bar', async ({ page }) => {
   await open(page, 'hangman')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('approval-card')).toBeVisible()
   // The estimate, when there is one, comes from earlier hangman runs (the test above).
   const time = /^⏱ \d+s( · (~\d+s left|taking longer than usual))?$/
@@ -73,7 +68,7 @@ test('step mode halts before and after the AI; the proposed result is visible be
   await open(page, 'fix')
   await page.getByText('auto-approve').click()
   await page.getByLabel('step mode').check()
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   const gate = page.getByTestId('gate-card')
   // First the tool steps (the tests before any edit, snapshot, recall), then the first AI step.
   await expect(gate).toContainText('Paused before “baseline”')
@@ -94,7 +89,7 @@ test('step mode halts before and after the AI; the proposed result is visible be
 
 test('saved runs replay and verify deterministically', async ({ page }) => {
   await open(page, 'review')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await page.getByTestId('toggle-demo-runs').click()
   // A saved review run, not a live one ("Running now" items look the same), nor another test's.
@@ -129,7 +124,7 @@ test('bebop plays takes that a bandleader merges', async ({ page }) => {
   await open(page, 'review')
   await page.getByLabel('improvisation').fill('3')
   await expect(page.locator('.knob-name')).toHaveText('Bebop')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await page.getByLabel('follow active node').uncheck()
   await page.getByRole('button', { name: 'Fit View' }).click()
@@ -143,7 +138,7 @@ test('bebop plays takes that a bandleader merges', async ({ page }) => {
 test('phases collapse into one node, light up while running and open into their steps', async ({ page }) => {
   await open(page, 'investigate')
   await expect(page.getByTestId('node-inventory')).toHaveCount(0)
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await allowExperiments(page)
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await expect(page.getByTestId('phase-deepPhase')).toHaveAttribute('data-status', 'done')
@@ -164,7 +159,7 @@ test('steps that write or review code show the Clean Code badge; others do not',
 
 test('auto-approve can be turned on mid-run: the waiting approval answers itself', async ({ page }) => {
   await open(page, 'fix')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   // fix plays its diagnosis first: the plan's approval comes a little later.
   await expect(page.getByTestId('approval-card')).toBeVisible({ timeout: 20_000 })
   await expect(page.getByLabel('auto-approve')).toBeEnabled()
@@ -175,7 +170,7 @@ test('auto-approve can be turned on mid-run: the waiting approval answers itself
 
 test('the result opens in a reader: people\'s version first, then the brief for an AI agent', async ({ page }) => {
   await open(page, 'investigate')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await allowExperiments(page)
   await expect(page.getByTestId('run-status')).toHaveText('done', { timeout: 30_000 })
   // The people's version is short: it shows in the inspector, and the reader stays closed (the
@@ -195,7 +190,7 @@ test('the result opens in a reader: people\'s version first, then the brief for 
 
 test('a saved run can be forked from the step shown on the timeline', async ({ page }) => {
   await open(page, 'review')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('run-status')).toHaveText('done')
   await page.getByTestId('toggle-demo-runs').click()
   // A saved review run, not a live one ("Running now" items look the same), nor another test's.
@@ -255,7 +250,7 @@ test('then run: a successful run hands its result to the next pattern, and the s
   await open(page, 'investigate')
   await page.getByLabel('auto-approve').check()
   await page.getByLabel('then run').selectOption('fix')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('notice')).toContainText("investigate finished. Now playing 'fix' with what it found.")
   await expect(page.locator('.tb-title')).toContainText('fix')
   await expect(page.getByTestId('run-status')).toHaveText('done')
@@ -266,14 +261,14 @@ test('then run: a successful run hands its result to the next pattern, and the s
 
 test('several runs play at once on one server; the studio switches between them', async ({ page }) => {
   await open(page, 'hangman')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('approval-card')).toBeVisible()
   // A second run while the first waits for its guess.
   await page.locator('button.lib-item').filter({ has: page.locator('b', { hasText: /^fix$/ }) }).click()
   await expect(page.locator('.tb-title')).toContainText('fix')
   await page.getByText('auto-approve').click()
   await page.getByLabel('step mode').check()
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('gate-card')).toContainText('Paused before “baseline”')
   const live = await runningNow(page)
   await expect(live.getByRole('button', { name: /fix/ }).first()).toContainText('on screen')
@@ -308,13 +303,13 @@ test('inputs start empty with the demo as a hint, the large editor writes into t
   // Blank again: the offline demo plays its own example.
   await issue.fill('')
   await page.getByText('auto-approve').click()
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('run-status')).toHaveText('done')
 })
 
 test('a lost server says so and reconnects; request errors close with ✕ and clear when switching runs', async ({ page }) => {
   await open(page, 'hangman')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('approval-card')).toBeVisible()
   // The server goes away: the poll shows it, and it clears itself when the server answers again.
   await page.route('**/api/runs', (r) => r.abort())
@@ -339,7 +334,7 @@ test('a lost server says so and reconnects; request errors close with ✕ and cl
 
 test('an answer that does not get through can be sent again', async ({ page }) => {
   await open(page, 'hangman')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   const card = page.getByTestId('approval-card')
   await card.getByLabel('letter', { exact: true }).fill('e')
   await page.route('**/api/runs/*/approval', (r) => r.abort())
@@ -356,7 +351,7 @@ for (const lose of ['restarted', 'unreachable'] as const) {
     await open(page, 'fix')
     await page.getByText('auto-approve').click()
     await page.getByLabel('step mode').check()
-    await page.getByRole('button', { name: '▶ Run' }).click()
+    await startRun(page)
     const gate = page.getByTestId('gate-card')
     await expect(gate).toBeVisible()
     await page.route('**/api/runs/*/control', (r) =>
@@ -374,7 +369,7 @@ for (const lose of ['restarted', 'unreachable'] as const) {
 test('deletes one saved run from the list after a second click', async ({ page }) => {
   await open(page, 'review')
   await page.getByText('auto-approve').click()
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('run-status')).toHaveText('done')
   const toggle = page.getByTestId('toggle-demo-runs')
   if ((await toggle.innerText()).startsWith('Show')) await toggle.click()
@@ -421,7 +416,7 @@ test('the extras toggle shows optional patterns, and is remembered', async ({ pa
 
 test('the minimap lights up where the run is, as the diagram does', async ({ page }) => {
   await open(page, 'hangman')
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('approval-card')).toBeVisible()
   await expect(page.getByTestId('node-ask')).toHaveAttribute('data-status', 'paused')
   const minimap = page.locator('.react-flow__minimap')
@@ -433,7 +428,7 @@ test('the minimap lights up where the run is, as the diagram does', async ({ pag
 test('during a run, nodes and closed phases can be moved, but nothing can be connected', async ({ page }) => {
   await open(page, 'investigate')
   await page.getByLabel('step mode').check()
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('gate-card')).toBeVisible()
   // Bring every node into view first (the window may be small).
   await page.locator('.react-flow__controls-fitview').click()
@@ -469,7 +464,7 @@ test('the sub-agents of a fanned-out step show as nodes beside it, each with its
   await page.getByLabel('context agents', { exact: true }).fill('2')
   await page.getByText('auto-approve').click()
   await page.getByLabel('step mode').check()
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   const gate = page.getByTestId('gate-card')
   for (let i = 0; i < 40 && !(await page.getByTestId('subagent-1').isVisible()); i++) {
     await gate.getByRole('button', { name: '⏭ Step' }).click()
@@ -523,7 +518,7 @@ test('library sections fold away, and a feature switch reaches the run it starts
   await judge.getByLabel('Support judge').selectOption('shadow')
   await expect(judge).toContainText('changed')
   await page.getByText('auto-approve').click()
-  await page.getByRole('button', { name: '▶ Run' }).click()
+  await startRun(page)
   await expect(page.getByTestId('run-status')).toHaveText('done', { timeout: 30_000 })
   await page.getByRole('button', { name: 'State', exact: true }).click()
   await expect(page.getByTestId('state-supportJudge')).toContainText('shadow')
