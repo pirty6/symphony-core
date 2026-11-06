@@ -1055,6 +1055,46 @@ describe('fan-out retry', () => {
     expect(perf.finalState.read).toEqual(['a', 'b', 'c', 'd']);
     expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
   });
+
+  it('a pause holds the parts not yet started; those playing finish; resume plays the rest', async () => {
+    const asked: string[] = [];
+    let run!: Run;
+    const provider: Provider = {
+      name: 'parts',
+      runAgent: async (req) => {
+        const file = (req.pause.input.files as string[])[0]!;
+        asked.push(file);
+        // Paused while the first two parts play.
+        if (asked.length === 1) run.pause();
+        await new Promise((r) => setTimeout(r, 5));
+        return {
+          result: {
+            updates: { read: [file] },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: file },
+          },
+          transcript: { provider: 'parts', prompt: '', output: file, toolCalls: [] },
+        };
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const score = compileScore(reader, {
+      goal: 'g',
+      context: { files: ['a', 'b', 'c', 'd', 'e', 'f'] },
+      generatedAt: 't',
+    });
+    run = new Run({ score, provider, clock });
+    const done = run.start();
+    await expect.poll(() => run.status).toBe('paused');
+    // The two that were playing finished; nothing new started.
+    expect(asked).toHaveLength(2);
+    const halt = run.messages.findLast((m) => m.type === 'status' && m.status === 'paused');
+    expect(halt).toMatchObject({ nodeId: 'readAll', phase: 'parts' });
+    expect(JSON.stringify(run.messages)).toContain('Pausing: the calls already playing finish');
+    run.resume();
+    const perf = await done;
+    expect(perf.outcome).toBe('success');
+    expect(asked.toSorted()).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+  });
 });
 
 describe('setup errors', () => {
