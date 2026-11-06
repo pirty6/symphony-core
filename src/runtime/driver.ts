@@ -293,6 +293,7 @@ export class Run {
   pause(): void {
     if (this.pauseRequested || this.stopRequested) return;
     this.pauseRequested = true;
+    this.holdParts = true;
     // A call already playing is not cut off: say when the pause takes hold.
     const at = this.engine?.pause?.nodeId;
     if (at && this.status === 'running')
@@ -304,12 +305,15 @@ export class Run {
 
   resume(): void {
     this.pauseRequested = false;
+    this.holdParts = false;
     this.release?.();
   }
 
   /** Pass exactly one gate, then stop at the next one. */
   step(): void {
     this.pauseRequested = true;
+    // One step: its parts all play, and the run halts at the next gate.
+    this.holdParts = false;
     this.release?.();
   }
 
@@ -422,10 +426,12 @@ export class Run {
   // ── loop ──────────────────────────────────────────────────────────
 
   private held: Promise<void> | undefined;
+  /** Pressed pause (not step): parts not yet started wait. */
+  private holdParts = false;
 
   /** Between the parts of a step: one halt for every worker, released by resume or step. */
   private holdIfPaused(nodeId: string): Promise<void> {
-    if (!this.pauseRequested || this.stopRequested) return Promise.resolve();
+    if (!this.holdParts || this.stopRequested) return Promise.resolve();
     this.held ??= this.gate(nodeId, 'parts').finally(() => {
       this.held = undefined;
     });
