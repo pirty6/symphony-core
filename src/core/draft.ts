@@ -100,6 +100,7 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
         ...([1, 2, 3, 4].includes(raw.shiftUpTo as number)
           ? { shiftUpTo: raw.shiftUpTo as Complexity }
           : {}),
+        ...skipWhenStuckOf(raw.skipWhenStuck),
         ...(raw.solo === true ? { solo: true } : {}),
       };
     }
@@ -208,6 +209,14 @@ function preloadReportOf(raw: unknown): {
           ...(typeof r.rest === 'string' && r.rest ? { rest: r.rest } : {}),
         },
       }
+    : {};
+}
+
+/** `{ field, text }` as given, or nothing. */
+function skipWhenStuckOf(v: unknown): { skipWhenStuck?: { field: string; text: string } } {
+  const o = v as { field?: unknown; text?: unknown } | undefined;
+  return typeof o?.field === 'string' && typeof o.text === 'string'
+    ? { skipWhenStuck: { field: o.field, text: o.text } }
     : {};
 }
 

@@ -198,6 +198,14 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         }
         if (n.shiftUpTo !== undefined && ![1, 2, 3, 4].includes(n.shiftUpTo))
           errors.push({ ...at, message: 'shiftUpTo must be a tier from 1 to 4' });
+        if (n.skipWhenStuck) {
+          const f = g.state.find((s) => s.name === n.skipWhenStuck!.field);
+          if (!n.writes.includes(n.skipWhenStuck.field) || f?.type !== 'string')
+            errors.push({
+              ...at,
+              message: 'skipWhenStuck.field must be a string field the step writes',
+            });
+        }
         if (n.maxEffort !== undefined && !EFFORTS.includes(n.maxEffort))
           errors.push({ ...at, message: `maxEffort must be one of ${EFFORTS.join(', ')}` });
         if (n.sandbox && n.role !== 'executor')

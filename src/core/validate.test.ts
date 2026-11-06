@@ -243,3 +243,18 @@ describe('validatePattern', () => {
     ).toEqual([]);
   });
 });
+
+describe('step options that bound a tier or a failure', () => {
+  const gather = (extra: Record<string, unknown>) =>
+    withNodes(
+      base.nodes.map((n) => (n.id === 'gather' ? (Object.assign({}, n, extra) as ScoreNode) : n)),
+    );
+  it('shiftUpTo is a tier; skipWhenStuck names a string field the step writes', () => {
+    expect(messages(gather({ shiftUpTo: 5 }))).toMatch(/shiftUpTo must be a tier from 1 to 4/);
+    expect(messages(gather({ shiftUpTo: 3 }))).toBe('');
+    const skip = (field: string) => gather({ skipWhenStuck: { field, text: 't' } });
+    // notes is a list, topic is not written: neither will do; a written string field would.
+    expect(messages(skip('notes'))).toMatch(/skipWhenStuck.field must be a string field/);
+    expect(messages(skip('topic'))).toMatch(/skipWhenStuck.field must be a string field/);
+  });
+});
