@@ -296,7 +296,10 @@ patterns without one (refactor, review, analyze), play at tier 2.
 
 **Per step.** A node may pin its tier (`complexity`) or shift the run's tier (`complexityShift`,
 -3..3, clamped to 1-4): triage and listing play one tier cheaper, answers, diagnoses, designs and
-debaters one tier smarter. It may also cap its reasoning effort (`maxEffort`): the maestro's propose,
+debaters one tier smarter; `shiftUpTo` keeps a shifted step below a tier unless the run is
+already there (investigate's answer: Sonnet at complexity 3, Opus at 4). A step the run can do
+without (`skipWhenStuck`, the summary for people) says so and the run goes on when it runs out of
+attempts. It may also cap its reasoning effort (`maxEffort`): the maestro's propose,
 skeptic and pragmatist play at most `high`, so on tier 4 they use opus at `high` rather than `xhigh`
 (`SYMPHONY_EFFORT_CAPS=0` lifts the caps).
 

@@ -105,7 +105,12 @@ read pipelines, branch policies and Kusto tables; nothing that writes is allowed
 8. **Challenge.** The debate above; REAL objections reopen research (within the run-wide
    research budget), at most `maxDebateRounds` (3) rounds. After the first, another round plays
    only when the last one's research found new evidence; `debateLog` says why it stopped (the
-   skeptic only repeated itself, the cap, or nothing new). `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
+   skeptic only repeated itself, the cap, or nothing new). No challenge plays after the last
+   round: it could no longer reopen research (in 33 recorded runs it never changed the answer);
+   what the rewrite marks OPEN in `objectionResolutions` still leaves the run partial. The
+   answer is one tier up, but on Opus only in a complexity-4 run (`shiftUpTo: 3`): at complexity
+   3 a Sonnet answer was as often right in the eval matrix, with runs 24% shorter.
+   `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
    keep word for word the sub-answers no objection named, so it opens no new front.
 9. **Support judge** (`supportJudge`: off by default; `shadow`, `enforce`). Each cited
    workspace finding's quote, with the numbered lines around it, its claim and nothing else, is
@@ -125,7 +130,9 @@ read pipelines, branch policies and Kusto tables; nothing that writes is allowed
       *In short*, *What we found*, *What to do* (only when the answer recommends actions), *What
       is not certain* and *How we checked*. The engine sends it back when a sentence has more than
       25 words (naming each one), when it holds a citation id, or when a section is missing. The
-      `plainSummary` switch (on by default) turns it off, which saves one model call.
+      `plainSummary` switch (on by default) turns it off, which saves one model call. When it
+      fails its checks three times, the run goes on: the summary says it could not be written
+      and the brief stands (`skipWhenStuck`).
     - **For an AI agent (`handoff`).** The engine writes it from the record, so it is complete
       and the same every time. In order, most important first:
       - the task;
