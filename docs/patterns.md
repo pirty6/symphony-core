@@ -167,7 +167,7 @@ flowchart TD
   n_deepPhase[["Deep read · 8 steps"]]
   n_experimentPhase[["Run experiments · 12 steps"]]
   n_sourcePhase[["Search sources · 5 steps"]]
-  n_gapPhase[["Close gaps · 17 steps"]]
+  n_gapPhase[["Close gaps · 25 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
   n_judgePhase[["Support judge · 6 steps"]]
   n_start --> n_planPhase
@@ -217,7 +217,7 @@ flowchart TD
 | Deep read | Every relevant file and listed page, completely | Queue deep reads → Deep reads left? → Next deep batch → Deep read → Check citations → Record deep read → Retry unreadable? → Queue unreadable again |
 | Run experiments | With your approval, run and measure | Experiments listed? → Allow experiments? → Queue experiments → Untimed experiments? → Run experiments side by side → Check citations → Record experiments → Timed experiments left? → Next experiment → Run timed experiment → Check citations → Record experiment |
 | Search sources | History, GitHub, dependencies, MCP | Sources left? → Next source → Search source → Check citations → Record source |
-| Close gaps | Targeted research, then a human hint | Find gaps → Record gaps → Expand the read? → Unread files → Rank by the gaps → Queue gap files → Files queued? → Gap expansion read? → Back to the gaps → Chase gaps? → Aim the research → Close gaps → Check citations → Record gap research → Gaps closed? → Ask for a hint → Use hint |
+| Close gaps | Targeted research, then a human hint | Find gaps → Record gaps → Expand the read? → Unread files → Rank by the gaps → Queue gap files → Files queued? → Gap expansion read? → Back to the gaps → Chase gaps? → Aim the research → Close gaps → Check citations → Record gap research → Runs a gap needs? → Experiments allowed already? → Allow runs for the gaps? → Skip the gap runs → Queue the gap runs → Run what the gaps need → Check citations → Record the gap runs → Gaps closed? → Ask for a hint → Use hint |
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left, research still finding) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
 | Support judge | Off by default: does each cited finding's quote back its claim? | Support judge? → What the judge can check → Lines around each quote → Any to judge? → Support judge → Record the rulings |
 
