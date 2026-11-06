@@ -760,10 +760,10 @@ describe('investigate always ends: research rounds are bounded', () => {
     const gapRounds = s.maxGapRounds as number;
     expect(chases).toBeLessThanOrEqual(2 * gapRounds + (s.maxDebateRounds as number) * gapRounds);
     expect(s.debateRounds).toBe(s.maxDebateRounds);
-    // Out of rounds, not out of objections: they are reported, not dropped.
-    expect(s.unresolvedObjections).toEqual([
-      `S1: src/x.ts was never read (F1, round ${s.maxDebateRounds})`,
-    ]);
+    // Out of rounds: no challenge after the last one (it could no longer reopen research).
+    expect(r.state.steps.filter((x) => x.nodeId === 'challenge')).toHaveLength(
+      s.maxDebateRounds as number,
+    );
     const normal = runScripted(compileInvestigate({ goal: 'g', context: demo.context! }), demo);
     expect(normal.state.state.unresolvedObjections).toEqual([]);
     // One budget for the whole run, whatever resets the per-round one.

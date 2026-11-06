@@ -114,57 +114,58 @@ describe('debate phases in investigate', () => {
         }),
       },
     };
-    const { r, ran, state } = play(2, relentless);
-    // It ends, and says so: an answer with objections still open is partial.
+    // The last round's objection is one the rewritten answer could not settle.
+    const unsettled: DemoScript = {
+      ...relentless,
+      agents: {
+        ...relentless.agents,
+        answer: (s, v) => {
+          const base = agents.answer!(s, v) as { updates: Record<string, unknown> };
+          const open = ((s.realObjections as string[]) ?? []).map(
+            (o) => `${o.split(':')[0]}: OPEN — still nothing that reads x`,
+          );
+          return { ...base, updates: { ...base.updates, objectionResolutions: open } } as never;
+        },
+      },
+    };
+    const { r, ran, state } = play(2, unsettled);
+    expect(state.debateRounds).toBe(state.maxDebateRounds);
+    // No challenge once no research round is left: it could not reopen anything.
+    expect(ran('challenge')).toBe(state.maxDebateRounds);
+    // It ends, and says so: what the answer could not settle makes it partial.
     expect(r.state.outcome).toBe('partial');
     expect(r.state.cursor).toBe('doubts');
-    // Why it is partial is recorded, and the open objections are open questions.
-    expect(state.doubts).toEqual([expect.stringMatching(/^Objections were still open/)]);
-    expect(state.openQuestions).toEqual(
-      expect.arrayContaining(state.unresolvedObjections as string[]),
-    );
+    expect(state.doubts).toEqual([
+      expect.stringMatching(/^Objections the answer could not settle: S1: OPEN/),
+    ]);
     // An unsettled answer teaches nothing: no lesson, and no facts remembered.
     expect(ran('learnAnswer')).toBe(0);
     expect(ran('rememberCited')).toBe(0);
-    expect(state.debateRounds).toBe(state.maxDebateRounds);
-    expect(ran('challenge')).toBe((state.maxDebateRounds as number) + 1);
   });
 
-  it('at the cap only REAL objections leave doubts; theoretical ones do not', () => {
-    const objecting = (realAtCap: boolean): DemoScript => ({
+  it('after the last round, what the answer settled leaves no doubt', () => {
+    const settled: DemoScript = {
       ...demo,
       agents: {
         ...agents,
         chase: finding,
         challenge: (s, v) => ({
           ...agents.challenge!(s, v),
-          updates: { objections: [`S1: F1 objection ${v}`, `S0: F1 nit ${v}`] },
+          updates: { objections: [`S1: F1 objection ${v}`] },
         }),
-        triageObjections: (s, v) => {
-          const objections = s.objections as string[];
-          const last = v >= (s.maxDebateRounds as number);
-          const real = last && !realAtCap ? [] : [objections[0]!];
-          return {
-            ...agents.triageObjections!(s, v),
-            updates: {
-              objectionTriage: objections.map(
-                (o) => `${o}: ${real.includes(o) ? 'REAL' : 'THEORETICAL'} — it bears on S1`,
-              ),
-              realObjections: real,
-            },
-          };
+        answer: (s, v) => {
+          const base = agents.answer!(s, v) as { updates: Record<string, unknown> };
+          const done = ((s.realObjections as string[]) ?? []).map(
+            (o) => `${o.split(':')[0]}: RESOLVED — the new commit shows it [F1]`,
+          );
+          return { ...base, updates: { ...base.updates, objectionResolutions: done } } as never;
         },
       },
-    });
-    const real = play(3, objecting(true));
-    expect(real.r.state.outcome).toBe('partial');
-    // Only the REAL one is open; the nit is not.
-    expect(real.state.unresolvedObjections).toEqual([
-      `S1: F1 objection ${real.state.maxDebateRounds}`,
-    ]);
-    const theoretical = play(3, objecting(false));
-    expect(theoretical.r.state.outcome).toBe('success');
-    expect(theoretical.state.unresolvedObjections).toEqual([]);
+    };
+    const { r, state } = play(3, settled);
+    expect(state.debateRounds).toBe(3);
+    expect(state.unresolvedObjections).toEqual([]);
+    expect(r.state.outcome).toBe('success');
   });
 
   it('objections name their sub-question, and stay open through research until it settles them', () => {
@@ -419,7 +420,7 @@ describe('the debate remembers its earlier rounds', () => {
     );
     expect(rejections(r, 'challenge')).toEqual([]);
     expect(state.debateRounds).toBe(state.maxDebateRounds);
-    expect(r.state.outcome).toBe('partial');
+    expect(r.state.steps.filter((x) => x.nodeId === 'challenge')).toHaveLength(3);
   });
 
   it("a pragmatist's reason names its ground (an F-id or S<n>), and only F-ids that exist", () => {

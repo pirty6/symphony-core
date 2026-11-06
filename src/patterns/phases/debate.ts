@@ -276,8 +276,10 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
       {
         id: 'useSkeptic',
         kind: 'condition',
-        label: 'Skeptic? (≥2)',
-        expression: 'complexity >= 2',
+        label: 'Skeptic? (≥2, a round left)',
+        // The first challenge always plays; after the last research round, another changed nothing
+        // in 33 of 33 recorded runs (it can no longer reopen research), so it is skipped.
+        expression: 'complexity >= 2 && (debateRounds == 0 || debateRounds < maxDebateRounds)',
       },
       {
         id: 'challenge',
@@ -517,7 +519,13 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
     ],
     edges: [
       { id: 'useSkeptic-challenge', from: 'useSkeptic', to: 'challenge', branch: 'then' },
-      { id: 'useSkeptic-done', from: 'useSkeptic', to: done, branch: 'else', label: 'no debate' },
+      {
+        id: 'useSkeptic-done',
+        from: 'useSkeptic',
+        to: done,
+        branch: 'else',
+        label: 'no debate, or no round left',
+      },
       { id: 'challenge-onlyRepeats', from: 'challenge', to: 'onlyRepeats' },
       { id: 'onlyRepeats-keep', from: 'onlyRepeats', to: 'keepRepeats', branch: 'then' },
       { id: 'onlyRepeats-drop', from: 'onlyRepeats', to: 'dropRepeats', branch: 'else' },
