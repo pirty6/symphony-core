@@ -108,6 +108,9 @@ read pipelines, branch policies and Kusto tables; nothing that writes is allowed
    skeptic only repeated itself, the cap, or nothing new). No challenge plays after the last
    round: it could no longer reopen research (in 33 recorded runs it never changed the answer);
    what the rewrite marks OPEN in `objectionResolutions` still leaves the run partial. The
+   rewrite may change a ruling only by citing a finding found since the last answer, and a
+   ruling that goes back to what an earlier answer said must be UNKNOWN, with an open question
+   (in recorded runs, round 2 undid half of round 1's flips). The
    answer is one tier up, but on Opus only in a complexity-4 run (`shiftUpTo: 3`): at complexity
    3 a Sonnet answer was as often right in the eval matrix, with runs 24% shorter.
    `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
