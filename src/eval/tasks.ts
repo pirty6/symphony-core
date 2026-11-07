@@ -3,10 +3,11 @@
  * fixture, names the pattern and inputs to run, and checks the outcome with code
  * (hidden tests, exact facts), never by asking an AI.
  */
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type { Complexity } from '../core/types.js';
 
@@ -681,6 +682,95 @@ const SEEDED_REVIEWS: readonly EvalTask[] = [
   },
 ];
 
+/** This repository as it was at a commit: a real, sizeable workspace (code, tests and docs). */
+const REAL_REF = '37c8743';
+let realFiles: Record<string, string> | undefined;
+function realRepo(): EvalTask[] {
+  const root = fileURLToPath(new URL('../..', import.meta.url));
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  // Read only when a task is played (a getter), and once: the snapshot is ~230 files.
+  const files = () =>
+    (realFiles ??= Object.fromEntries(
+      git('ls-tree', '-r', '--name-only', REAL_REF)
+        .split('\n')
+        .filter((f) => f && !/\.(png|jpe?g|gif|ico|woff2?|pdf)$/i.test(f))
+        .map((f) => [f, git('show', `${REAL_REF}:${f}`)]),
+    ));
+  const task = (
+    id: string,
+    question: string,
+    check: (answer: string) => { pass: boolean; notes: string[] },
+  ): EvalTask => ({
+    id,
+    pattern: 'investigate',
+    inputs: { question },
+    get files() {
+      return files();
+    },
+    heavy: true,
+    check: async ({ outcome, state }) => {
+      const r = check(String(state.answer ?? ''));
+      return { pass: outcome === 'success' && r.pass, notes: [`outcome ${outcome}`, ...r.notes] };
+    },
+  });
+  return [
+    task(
+      'investigate-real-sandbox',
+      'In this repository, what happens to an investigate experiment when no throwaway copy of the workspace can be made, and where in the code is that decided?',
+      (a) => {
+        const where = /driver\.ts/.test(a);
+        const closed = /read-only|assessor/i.test(a);
+        return {
+          pass: where && closed,
+          notes: [
+            where ? 'names driver.ts' : 'does not name driver.ts',
+            closed ? 'says it runs read-only' : 'does not say it runs read-only',
+          ],
+        };
+      },
+    ),
+    task(
+      'investigate-real-lean',
+      // A false premise that stale docs (docs/trials.md) seem to back: lean no longer caps it.
+      "Why does the lean setting cap investigate's debate at one round?",
+      (a) => {
+        const denies = /\b(no longer|does not|doesn't|not|never)\b[^.]{0,80}\b(cap|limit)/i.test(a);
+        return {
+          pass: denies,
+          notes: [denies ? 'says lean does not cap it' : 'explains a cap that is not there'],
+        };
+      },
+    ),
+    task(
+      'investigate-real-answer-model',
+      "On which model does investigate's answer step play when the run's complexity is 3, and what in the code decides it?",
+      (a) => {
+        const model = /sonnet[- ]5\.5/i.test(a);
+        const cap = /shiftUpTo/.test(a);
+        return {
+          pass: model && cap,
+          notes: [
+            model ? 'says Sonnet 5.5' : 'does not say Sonnet 5.5',
+            cap ? 'names shiftUpTo' : 'does not name shiftUpTo',
+          ],
+        };
+      },
+    ),
+    task(
+      'investigate-real-final-challenge',
+      "Why does investigate's skeptic not challenge the answer again after the last debate round?",
+      (a) => {
+        const why = /\b33\b|(can no longer|cannot|can't|could not|no longer) reopen/i.test(a);
+        return {
+          pass: why,
+          notes: [why ? 'gives the reason in the code' : 'does not give the reason in the code'],
+        };
+      },
+    ),
+  ];
+}
+
 export const EVAL_TASKS: readonly EvalTask[] = [
   withHiddenTest(
     {
@@ -1035,6 +1125,7 @@ export const EVAL_TASKS: readonly EvalTask[] = [
     check: async ({ outcome, state }) =>
       both(succeeded(outcome), mentions(String(state.answer ?? ''), ['7', 'src/mod217.js'])),
   },
+  ...realRepo(),
   {
     // The maestro, judged on what it composed: every requirement met by a real step.
     id: 'maestro-requirements',
