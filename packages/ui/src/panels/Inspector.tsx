@@ -47,10 +47,12 @@ export function GateCard({ view, onResume, onStep, onStop }: { view: RunView; on
   return (
     <div className="card gate" data-testid="gate-card">
       <h3>
-        ⏸ Paused {gate.phase === 'before' ? 'before' : view.pause?.kind === 'tool' ? 'after the tool ran at' : 'after AI answered at'} “{gate.nodeId}”
+        ⏸ Paused {gate.phase === 'before' ? 'before' : gate.phase === 'parts' ? 'between the parts of' : view.pause?.kind === 'tool' ? 'after the tool ran at' : 'after AI answered at'} “{gate.nodeId}”
       </h3>
       {gate.phase === 'before' ? (
         <p className="muted">Nothing has run yet for this node. Inspect its input below, then continue.</p>
+      ) : gate.phase === 'parts' ? (
+        <p className="muted">The parts already played are kept; the rest start when you continue.</p>
       ) : (
         <>
           <p className="muted">The engine has not applied this yet. It will be validated against the node's schema.</p>

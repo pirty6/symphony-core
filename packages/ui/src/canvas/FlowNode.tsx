@@ -129,7 +129,7 @@ export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNo
       )}
       {n.kind === 'end' && <div className={`fn-outcome outcome-${n.outcome ?? 'success'}`}>{n.outcome ?? 'success'}</div>}
       {data.gate && (
-        <div className="fn-gate">{data.gate === 'before' ? '⏸ paused before running' : '⏸ AI answered: review before applying'}</div>
+        <div className="fn-gate">{data.gate === 'before' ? '⏸ paused before running' : data.gate === 'parts' ? '⏸ paused between parts' : '⏸ AI answered: review before applying'}</div>
       )}
       {n.kind === 'condition' ? (
         <>

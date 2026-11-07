@@ -21,7 +21,7 @@ export type FlowNodeData = {
   visits?: number
   breakpoint?: boolean
   issues?: string[]
-  gate?: 'before' | 'after'
+  gate?: 'before' | 'after' | 'parts'
   /** Who played this node's latest step in a finished run. */
   origin?: StepOrigin
   onToggleBreakpoint?: (id: string) => void
@@ -217,7 +217,7 @@ export interface RunView {
   /** Frame index being shown; null follows the latest frame. */
   readonly cursor: number | null
   readonly pause?: Pause
-  readonly gate?: { readonly nodeId: string; readonly phase: 'before' | 'after'; readonly proposed?: unknown }
+  readonly gate?: { readonly nodeId: string; readonly phase: 'before' | 'after' | 'parts'; readonly proposed?: unknown }
   readonly streams: readonly AiStream[]
   readonly performance?: Performance
   readonly savedTo?: string

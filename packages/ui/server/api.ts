@@ -388,7 +388,9 @@ export function createApi(opts: ApiOptions) {
     })
   }
 
-  function streamRun(req: IncomingMessage, res: ServerResponse, run: RunLike): void {
+  async function streamRun(req: IncomingMessage, res: ServerResponse, run: RunLike): Promise<void> {
+    // A run another process plays is read only while someone watches it, and let go after.
+    const letGo = run.open ? await run.open() : undefined
     sseHeaders(res)
     const lastId = Number(req.headers['last-event-id'] ?? -1)
     let closed = false
@@ -406,11 +408,15 @@ export function createApi(opts: ApiOptions) {
       }
     })
     for (const m of [...run.messages]) write(m)
-    if (closed) return
+    if (closed) {
+      letGo?.()
+      return
+    }
     const off = run.subscribe(write)
     res.on('close', () => {
       closed = true
       off()
+      letGo?.()
     })
   }
 
@@ -545,7 +551,7 @@ export function createApi(opts: ApiOptions) {
           return true
         }
         if (m[2] === 'events' && method === 'GET') {
-          streamRun(req, res, run)
+          await streamRun(req, res, run)
           return true
         }
         const body = await readJson(req)
