@@ -1899,6 +1899,7 @@ describe('lean (on by default): the settings measured to cut time and tokens, be
     expect(r.state.state).toMatchObject({
       lean: true,
       maxDebateRounds: 3,
+      maxExperiments: 4,
       singlePass: true,
       gapAimed: true,
       keepUnchallenged: true,
@@ -1912,6 +1913,7 @@ describe('lean (on by default): the settings measured to cut time and tokens, be
     expect(r.state.outcome).toBe('success');
     expect(r.state.state).toMatchObject({
       maxDebateRounds: 3,
+      maxExperiments: 12,
       singlePass: false,
       gapAimed: false,
       keepUnchallenged: false,
@@ -1920,6 +1922,7 @@ describe('lean (on by default): the settings measured to cut time and tokens, be
     expect(r.state.steps.some((x) => x.nodeId === 'triageDeep')).toBe(false);
     // Lean never raises a cap set lower.
     expect(play({ maxDebateRounds: 0 }).state.state.maxDebateRounds).toBe(0);
+    expect(play({ maxExperiments: 2 }).state.state.maxExperiments).toBe(2);
   });
 
   it('caps an AI-rated 4 at 3; a complexity chosen for the run stays', () => {
