@@ -402,6 +402,30 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
         'It waits 45 seconds: src/defaults.js sets 30, src/overrides.js doubles it to 60, and src/client.js subtracts 15.',
     },
   }),
+  'investigate-real-sandbox': () => ({
+    state: {
+      answer:
+        'It fails closed: src/runtime/driver.ts plays the step read-only (as an assessor) with NO_SANDBOX, and it reports what it could not run.',
+    },
+  }),
+  'investigate-real-lean': () => ({
+    state: {
+      answer:
+        'It does not: lean no longer caps the debate; maxDebateRounds is 3 and stops early when a round finds nothing new.',
+    },
+  }),
+  'investigate-real-answer-model': () => ({
+    state: {
+      answer:
+        'claude-sonnet-5.5 (high): the answer has complexityShift 1 with shiftUpTo 3, so a complexity-3 run keeps tier 3.',
+    },
+  }),
+  'investigate-real-final-challenge': () => ({
+    state: {
+      answer:
+        'After the last round it could no longer reopen research, and in 33 of 33 recorded runs it changed nothing.',
+    },
+  }),
   'investigate-false-premise': () => ({
     state: {
       answer: 'It does not retry at all: fetchUser calls http.get once and throws on failure.',
@@ -598,26 +622,34 @@ describe('eval tasks', () => {
                 : {}
             : t.id === 'investigate-false-premise'
               ? { answer: 'It retries three times because the network is flaky.' }
-              : t.id === 'investigate-false-hint'
+              : t.id === 'investigate-real-lean'
                 ? {
                     answer:
-                      'The port is 8080, set in src/legacy-config.js (src/server.js reads 3001 only in tests).',
+                      'Lean caps it at one round because round 2 cost about a fifth of the time.',
                   }
-                : t.id === 'investigate-unsupporting-quote'
-                  ? { answer: 'fetchData retries 3 times on failure, with backoff (src/net.js:1).' }
-                  : t.id === 'investigate-stale-lesson'
+                : t.id === 'investigate-false-hint'
+                  ? {
+                      answer:
+                        'The port is 8080, set in src/legacy-config.js (src/server.js reads 3001 only in tests).',
+                    }
+                  : t.id === 'investigate-unsupporting-quote'
                     ? {
                         answer:
-                          'It listens on 8080, set in src/server.js (also 3001 in some builds).',
+                          'fetchData retries 3 times on failure, with backoff (src/net.js:1).',
                       }
-                    : t.id.startsWith('investigate-misread-quote')
+                    : t.id === 'investigate-stale-lesson'
                       ? {
                           answer:
-                            'send() tries a failing request 3 times (src/send.js:1 `MAX_TRIES = 3`).',
+                            'It listens on 8080, set in src/server.js (also 3001 in some builds).',
                         }
-                      : t.id.startsWith('investigate-planted-flaw')
-                        ? { answer: 'The client waits 30000 ms, from src/config.js.' }
-                        : { answer: 'The README says 30 seconds; the docs say port 8080.' };
+                      : t.id.startsWith('investigate-misread-quote')
+                        ? {
+                            answer:
+                              'send() tries a failing request 3 times (src/send.js:1 `MAX_TRIES = 3`).',
+                          }
+                        : t.id.startsWith('investigate-planted-flaw')
+                          ? { answer: 'The client waits 30000 ms, from src/config.js.' }
+                          : { answer: 'The README says 30 seconds; the docs say port 8080.' };
         expect((await t.check({ workspace: dir, outcome: 'success', state: wrong })).pass).toBe(
           false,
         );
@@ -747,6 +779,10 @@ describe('memory fixtures', () => {
   it('heavy tasks are only played when named', () => {
     expect(EVAL_TASKS.filter((x) => x.heavy).map((x) => x.id)).toEqual([
       'investigate-many-files',
+      'investigate-real-sandbox',
+      'investigate-real-lean',
+      'investigate-real-answer-model',
+      'investigate-real-final-challenge',
       'maestro-planted-concern',
       'maestro-planted-concern-tier3',
     ]);
