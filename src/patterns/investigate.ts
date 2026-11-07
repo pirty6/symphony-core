@@ -385,6 +385,14 @@ export const investigate: Pattern = {
         type: 'string[]',
         description: 'The sub-answers of the previous answer',
       },
+      { name: 'prevRulings', type: 'string[]', description: 'The rulings of the previous answer' },
+      { name: 'firstRulings', type: 'string[]', description: 'The rulings of the first answer' },
+      {
+        name: 'answeredAt',
+        type: 'number',
+        initial: 0,
+        description: 'How many findings there were at the previous answer (the rest are new since)',
+      },
       {
         name: 'objectionResolutions',
         type: 'string[]',
@@ -1938,6 +1946,7 @@ export const investigate: Pattern = {
         // The objections it must answer when it was challenged.
         'realObjections',
         'prevSubAnswers',
+        'prevRulings',
         'keepUnchallenged',
       ],
       writes: ['answer', 'openQuestions', 'rulings', 'subAnswers', 'objectionResolutions'],
@@ -1985,6 +1994,18 @@ export const investigate: Pattern = {
           expr: 'subset(refs(objectionResolutions), ids(findings))',
           message: 'objectionResolutions may cite only ids that exist in findings.',
         },
+        // Rounds that flip a ruling and flip it back (half of round 2's flips in recorded runs)
+        // say the evidence goes both ways: a change needs new evidence, a return is UNKNOWN.
+        {
+          expr: 'len(unmatched(flipsWithout(rulings, prevRulings, ids(drop(findings, answeredAt))), "^H[0-9]+: UNKNOWN")) == 0',
+          message:
+            'A ruling that changes since the last answer must cite a finding found since then (one not in the findings the last answer had); otherwise keep the earlier ruling, or rule it UNKNOWN and say what is missing.',
+        },
+        {
+          expr: 'len(unmatched(flipBacks(rulings, prevRulings, firstRulings), "^H[0-9]+: UNKNOWN")) == 0',
+          message:
+            'A ruling that goes back to what an earlier answer said means the evidence goes both ways: rule it UNKNOWN, and add to openQuestions what would settle it.',
+        },
         {
           // keepUnchallenged (off by default, for an A/B): a rewrite after a challenge leaves
           // alone what no REAL objection named, so it opens no new front for the next skeptic.
@@ -2005,8 +2026,11 @@ export const investigate: Pattern = {
           // Sub-questions the answer says are open are open questions, word for word.
           expr: `unique(gaps + openQuestions + unresolvedObjections + ${OPEN_ENTRIES('subAnswers')} + ${OPEN_ENTRIES('objectionResolutions')})`,
         },
-        // What a rewrite after a challenge is compared with (keepUnchallenged).
+        // What a rewrite after a challenge is compared with (keepUnchallenged, flip-flops).
         { field: 'prevSubAnswers', expr: 'subAnswers' },
+        { field: 'firstRulings', expr: 'if(len(firstRulings) == 0, rulings, firstRulings)' },
+        { field: 'prevRulings', expr: 'rulings' },
+        { field: 'answeredAt', expr: 'len(findings)' },
       ],
     },
     ...hypotheses.nodes,

@@ -755,3 +755,70 @@ describe('debate fragments', () => {
     expect(report.errors).toEqual([]);
   });
 });
+
+const answerErrors = (r: ReturnType<typeof play>['r']) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'answer' ? e.errors : [],
+  );
+
+describe('flip-flops: a ruling that changes needs new evidence; one that goes back is UNKNOWN', () => {
+  /** The skeptic objects every round and research finds something new each time. */
+  const rounds = (h2: (visit: number, newest: string, call: number) => string): DemoScript => {
+    let call = 0;
+    return {
+      ...demo,
+      agents: {
+        ...agents,
+        chase: finding,
+        challenge: (s, v) => ({
+          ...agents.challenge!(s, v),
+          updates: { objections: [`S1: F1 objection ${v}`] },
+        }),
+        answer: (s, v) => {
+          const base = agents.answer!(s, v) as { updates: Record<string, unknown> };
+          const findings = (s.findings as string[]) ?? [];
+          const newest = findings.at(-1)!.split(' ')[0]!;
+          const rulings = (base.updates.rulings as string[]).map((r) =>
+            r.startsWith('H2:') ? h2(v, newest, call) : r,
+          );
+          call += 1;
+          return { ...base, updates: { ...base.updates, rulings } } as never;
+        },
+      },
+    };
+  };
+
+  it('a changed ruling citing only old evidence is sent back; citing a new finding it holds', () => {
+    // Round 1 flips H2 on an old finding first, then on the finding research just found.
+    let tries = 0;
+    const { r, state } = play(
+      3,
+      rounds((v, newest) => {
+        if (v === 0) return 'H2: REFUTED — no state change outside advance() [F1]';
+        if (v === 1 && tries++ === 0) return 'H2: CONFIRMED — on a second look [F1]';
+        return `H2: CONFIRMED — the new commit shows it [${newest}]`;
+      }),
+    );
+    expect(answerErrors(r).join(' ')).toMatch(
+      /A ruling that changes since the last answer must cite a finding found since then/,
+    );
+    expect(state.rulings).toContainEqual(expect.stringMatching(/^H2: CONFIRMED — the new commit/));
+  });
+
+  it('back to what an earlier answer said: only UNKNOWN is accepted', () => {
+    let backTries = 0;
+    const { r, state } = play(
+      3,
+      rounds((v, newest) => {
+        if (v === 0) return 'H2: REFUTED — first look [F1]';
+        if (v === 1) return `H2: CONFIRMED — round 1 found this [${newest}]`;
+        // Round 2 goes back to REFUTED, with new evidence: the evidence goes both ways.
+        return backTries++ === 0
+          ? `H2: REFUTED — round 2 found this [${newest}]`
+          : `H2: UNKNOWN — rounds 1 and 2 found evidence both ways [${newest}]`;
+      }),
+    );
+    expect(answerErrors(r).join(' ')).toMatch(/goes back to what an earlier answer said/);
+    expect(state.rulings).toContainEqual(expect.stringMatching(/^H2: UNKNOWN/));
+  });
+});
