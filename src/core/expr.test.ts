@@ -182,3 +182,30 @@ describe('exprFields', () => {
     ]);
   });
 });
+
+const evaluate = (src: string, st: Record<string, unknown>) => evalExpr(parseExpr(src), st);
+
+describe('flip-flops: a changed verdict needs new evidence; going back is UNKNOWN', () => {
+  const st = {
+    prev: ['H1: CONFIRMED — x [F2]', 'H2: REFUTED — y [F3]', 'H3: UNKNOWN — z'],
+    first: ['H1: REFUTED — a [F1]', 'H2: REFUTED — b', 'H3: UNKNOWN — c'],
+    now: [
+      'H1: REFUTED — back again [F2]',
+      'H2: CONFIRMED — new commit [F9]',
+      'H3: CONFIRMED — same old [F3]',
+    ],
+    fresh: ['F8', 'F9'],
+  };
+  it('flipsWithout: changed verdicts citing none of the new ids', () => {
+    expect(evaluate('flipsWithout(now, prev, fresh)', st)).toEqual([
+      'H1: REFUTED — back again [F2]',
+      'H3: CONFIRMED — same old [F3]',
+    ]);
+    // Unchanged, or new to the list: never a flip.
+    expect(evaluate('flipsWithout(prev, prev, [])', st)).toEqual([]);
+    expect(evaluate('flipsWithout(now, [], [])', st)).toEqual([]);
+  });
+  it('flipBacks: changed verdicts that return to what the first list said', () => {
+    expect(evaluate('flipBacks(now, prev, first)', st)).toEqual(['H1: REFUTED — back again [F2]']);
+  });
+});

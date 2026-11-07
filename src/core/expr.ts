@@ -19,7 +19,10 @@
  *   longSentences(text, n) (its sentences of more than n words),
  *   diffLines(diff, pathPattern) (a unified diff's lines for the files whose path matches),
  *   runsNeeded(tolerance, candidates) (clean runs that bound a failure rate, see below),
- *   replace(textOrList, pattern, text) (the first match in each, replaced by the literal text).
+ *   replace(textOrList, pattern, text) (the first match in each, replaced by the literal text),
+ *   flipsWithout(rulings, previous, ids) (entries "H<n>: VERDICT …" whose verdict changed since
+ *   the previous list and that cite none of the ids), flipBacks(rulings, previous, first) (entries
+ *   whose verdict changed since the previous list, back to what the first list said).
  */
 
 export type Expr =
@@ -68,7 +71,9 @@ type FnName =
   | 'longSentences'
   | 'diffLines'
   | 'runsNeeded'
-  | 'replace';
+  | 'replace'
+  | 'flipsWithout'
+  | 'flipBacks';
 
 const FNS: Record<FnName, number> = {
   len: 1,
@@ -108,7 +113,19 @@ const FNS: Record<FnName, number> = {
   diffLines: 2,
   runsNeeded: 2,
   replace: 3,
+  flipsWithout: 3,
+  flipBacks: 3,
 };
+
+/** "H2: REFUTED — …" → ["H2", "REFUTED"]; anything else → undefined. */
+const VERDICT = /^([A-Z]+\d+):\s*([A-Z][A-Z ]*?)(?=\s*[—–-]|\s*$)/;
+const verdicts = (list: readonly string[]): Map<string, string> =>
+  new Map(
+    list.flatMap((s) => {
+      const m = VERDICT.exec(s);
+      return m ? [[m[1]!, m[2]!.trim()] as [string, string]] : [];
+    }),
+  );
 
 /**
  * Runs with no failure that bound a failure rate below `tolerance` at 95% confidence, shared
@@ -624,6 +641,29 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
               keep = re.test(diffPath(l));
             if (l.startsWith('@@')) inHeader = false;
             return keep;
+          });
+        }
+        case 'flipsWithout': {
+          // A verdict that changed must rest on evidence found since: else it is a flip-flop.
+          const before = verdicts(strings('flipsWithout', args[1]));
+          const fresh = new Set(strings('flipsWithout', args[2]));
+          return strings('flipsWithout', x).filter((s) => {
+            const m = VERDICT.exec(s);
+            const was = m ? before.get(m[1]!) : undefined;
+            if (!m || was === undefined || was === m[2]!.trim()) return false;
+            return !(s.match(ANY_ID) ?? []).some((id) => fresh.has(id));
+          });
+        }
+        case 'flipBacks': {
+          // Back to what an earlier round said: the evidence goes both ways.
+          const before = verdicts(strings('flipBacks', args[1]));
+          const first = verdicts(strings('flipBacks', args[2]));
+          return strings('flipBacks', x).filter((s) => {
+            const m = VERDICT.exec(s);
+            if (!m) return false;
+            const now = m[2]!.trim();
+            const was = before.get(m[1]!);
+            return was !== undefined && was !== now && first.get(m[1]!) === now;
           });
         }
         case 'runsNeeded': {
