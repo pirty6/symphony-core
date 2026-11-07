@@ -26,6 +26,7 @@ import {
   SUM_CONCERN,
   ROUTES,
   ROUTING_TASKS,
+  realRepoAvailable,
   routedAs,
   type EvalTask,
 } from './tasks.js';
@@ -600,8 +601,11 @@ for (const [i, route] of ROUTES.entries())
     },
   });
 
+// The real-repository tasks need this repository's history (not in a shallow clone).
+const playable = (t: EvalTask) => !t.id.startsWith('investigate-real-') || realRepoAvailable();
+
 describe('eval tasks', () => {
-  it.each([...EVAL_TASKS, ...ROUTING_TASKS].map((t) => [t.id, t] as const))(
+  it.each([...EVAL_TASKS, ...ROUTING_TASKS].filter(playable).map((t) => [t.id, t] as const))(
     '%s: the check fails as given and passes with a right answer',
     async (_id, t) => {
       const solve = SOLUTIONS[t.id];

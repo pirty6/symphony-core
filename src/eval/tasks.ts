@@ -683,12 +683,25 @@ const SEEDED_REVIEWS: readonly EvalTask[] = [
 ];
 
 /** This repository as it was at a commit: a real, sizeable workspace (code, tests and docs). */
-const REAL_REF = '37c8743';
+export const REAL_REF = '37c8743';
+const REAL_ROOT = fileURLToPath(new URL('../..', import.meta.url));
+
+/** Whether this checkout holds the snapshot's commit (a shallow clone may not). */
+export function realRepoAvailable(): boolean {
+  try {
+    execFileSync('git', ['cat-file', '-e', `${REAL_REF}^{commit}`], {
+      cwd: REAL_ROOT,
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 let realFiles: Record<string, string> | undefined;
 function realRepo(): EvalTask[] {
-  const root = fileURLToPath(new URL('../..', import.meta.url));
   const git = (...args: string[]) =>
-    execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    execFileSync('git', args, { cwd: REAL_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   // Read only when a task is played (a getter), and once: the snapshot is ~230 files.
   const files = () =>
     (realFiles ??= Object.fromEntries(
