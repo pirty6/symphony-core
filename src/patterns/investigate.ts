@@ -989,6 +989,8 @@ export const investigate: Pattern = {
         { field: 'gapAimed', expr: 'gapAimed || lean' },
         { field: 'keepUnchallenged', expr: 'keepUnchallenged || lean' },
         { field: 'gapsPerChase', expr: 'if(lean, 1, gapsPerChase)' },
+        // Experiments and gap runs share this budget: 12 took ~6 min of a measured 51-min run.
+        { field: 'maxExperiments', expr: 'if(lean && maxExperiments > 4, 4, maxExperiments)' },
       ],
     },
     {
