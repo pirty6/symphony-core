@@ -6,6 +6,7 @@
  * whatever branch the workspace is on. No AI step needs network or CLI access for it.
  */
 import { spawn } from 'node:child_process';
+import { signInFreeEnv, signInsOff } from './signins.js';
 import { randomBytes } from 'node:crypto';
 import { mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -138,7 +139,10 @@ export async function prForRun(
 ): Promise<PrCheckout | undefined> {
   const target = pattern.checkout ? context[pattern.checkout] : undefined;
   if (opts.provider !== 'copilot' || typeof target !== 'string') return undefined;
-  return checkoutPr(workspace, target, opts.env ? { env: opts.env } : {});
+  // Without sign-ins, the fetch uses none of your credentials: a private repository's PR fails.
+  const base = opts.env ?? process.env;
+  const env = signInsOff(base) ? signInFreeEnv(base) : opts.env;
+  return checkoutPr(workspace, target, env ? { env } : {});
 }
 
 /**

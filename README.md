@@ -59,6 +59,29 @@ can explore every feature without credentials.
 2. In the studio choose **AI → GitHub Copilot** and run. Each agent call uses the model for its
    complexity tier (see below); typing a model in the toolbar forces one model for every tier.
 
+### Use your own models (Tenstorrent, vLLM, Ollama)
+
+Every step can run on a model server of your own instead of Copilot: no GitHub account is used.
+Any OpenAI-compatible server works, e.g. `tt-inference-server` or vLLM on a Tenstorrent machine.
+The model must support tool calling: steps read files, run read-only commands and submit their
+result through tools. In `.env`:
+
+```bash
+SYMPHONY_MODEL_URL=http://tt.example.org:8000/v1   # the server's OpenAI-compatible base URL
+SYMPHONY_MODEL_ID=openai/gpt-oss-120b              # optional: default, the first it lists
+SYMPHONY_MODEL_KEY=...                             # optional: if the server needs a key
+```
+
+Then choose **AI → GitHub Copilot** as usual: the runs go to your server. One model plays every
+step (complexity tiers and reasoning efforts are Copilot's).
+
+**Sharing it on your network.** `SYMPHONY_SIGNINS=off` runs every step with none of your
+credentials: no GitHub, Copilot or Azure token, empty `gh` and `az` sign-ins, no git credential
+helper or SSH agent, no MCP servers and no Kusto tool, whatever command a step runs. Then start
+the studio for the network with `npm run studio -- --host 0.0.0.0`. The studio has no sign-in of
+its own: anyone who can reach it can start runs (on your model server) and read the workspace and
+saved runs, so keep it on a network you trust.
+
 Agents work in the repository folder by default; set `SYMPHONY_WORKSPACE=/path/to/project` in `.env`
 to point them at another project. **Executor nodes can edit files and run commands there**;
 assessor nodes are held read-only by the permission policy (reads, URLs and read-only shell
