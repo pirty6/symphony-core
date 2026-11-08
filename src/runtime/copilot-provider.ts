@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultKustoDeps, kustoQuery, type KustoDeps } from './kusto.js';
+import { signInFreeEnv } from './signins.js';
 import { CopilotClient, defineTool, ToolSet } from '@github/copilot-sdk';
 import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
 import { webSearch, type SearchResult } from './web-search.js';
@@ -182,6 +183,21 @@ export interface CopilotProviderOptions {
   /** Backend for the kusto_query tool (nodes with the 'web' or 'mcp' capability). */
   readonly kusto?: KustoDeps;
   readonly gitHubToken?: string;
+  /**
+   * Every step on a model server of your own (OpenAI-compatible, e.g. vLLM on a Tenstorrent
+   * machine) instead of Copilot: no GitHub sign-in is used. `model` unset: the first one the
+   * server lists (GET {baseUrl}/models).
+   */
+  readonly localModel?: {
+    readonly baseUrl: string;
+    readonly apiKey?: string;
+    readonly model?: string;
+  };
+  /**
+   * false: steps run with none of the host's credentials (runtime/signins.ts), and the Kusto tool,
+   * which uses your Azure sign-in, is not offered.
+   */
+  readonly signIns?: boolean;
   /** Where the token was set (e.g. TOKEN), named in messages when Copilot refuses it. */
   readonly gitHubTokenSource?: string;
   /** Safety net per call; default a minute after the step limit the driver enforces (limits.ts). */
@@ -495,15 +511,20 @@ export class CopilotProvider implements Provider {
   private ensureClient(): Promise<ClientLike> {
     if (this.client) return Promise.resolve(this.client);
     this.starting ??= (async () => {
-      const token = this.tokenRejected ? undefined : this.opts.gitHubToken;
+      const local = this.opts.localModel !== undefined;
+      const token = this.tokenRejected || local ? undefined : this.opts.gitHubToken;
       const auth = token ? { gitHubToken: token } : {};
+      // What the steps' commands inherit: none of the host's credentials when sign-ins are off.
+      const env =
+        this.opts.signIns === false ? signInFreeEnv(process.env) : withoutTokenVars(process.env);
       const client =
         this.opts.clientFactory?.(auth) ??
         (new CopilotClient(
           token
-            ? auth
+            ? { ...auth, env: this.opts.signIns === false ? env : process.env }
             : // The CLI prefers token variables over a sign-in: hide them so the sign-in is used.
-              { useLoggedInUser: true, env: withoutTokenVars(process.env) },
+              // A local model needs no sign-in at all.
+              { useLoggedInUser: !local, env },
         ) as unknown as ClientLike);
       await client.start();
       this.client = client;
@@ -522,6 +543,8 @@ export class CopilotProvider implements Provider {
     /** The token variable used instead of the signed-in account, when one is set. */
     tokenSource?: string;
   }> {
+    const local = this.opts.localModel;
+    if (local) return { signedIn: true, message: `local model server ${local.baseUrl}` };
     const client = await this.ensureClient();
     const source =
       this.opts.gitHubToken && !this.tokenRejected && this.opts.gitHubTokenSource
@@ -560,9 +583,19 @@ export class CopilotProvider implements Provider {
     const client = await this.ensureClient();
     if (run.signal.aborted) throw abortError();
     const toolCalls: ToolCallRecord[] = [];
+    const local = this.opts.localModel;
     const config: SessionConfig = {
       ...(run.model ? { model: run.model } : {}),
-      ...(run.effort ? { reasoningEffort: run.effort } : {}),
+      ...(run.effort && !local ? { reasoningEffort: run.effort } : {}),
+      ...(local
+        ? {
+            provider: {
+              type: 'openai' as const,
+              baseUrl: local.baseUrl,
+              ...(local.apiKey ? { apiKey: local.apiKey } : {}),
+            },
+          }
+        : {}),
       ...((run.cwd ?? this.opts.workingDirectory)
         ? { workingDirectory: run.cwd ?? this.opts.workingDirectory }
         : {}),
@@ -845,6 +878,7 @@ export class CopilotProvider implements Provider {
   async modelFor(
     complexity: Complexity,
   ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
+    if (this.opts.localModel) return { model: await this.localModelId() };
     const available = await this.availableModels();
     const forced = this.opts.model;
     if (forced && (!available || available.has(forced))) return { model: forced };
@@ -876,6 +910,8 @@ export class CopilotProvider implements Provider {
   private async tierFor(
     pause: AgentPause,
   ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
+    // One model serves every step: tiers, step overrides and efforts are Copilot's.
+    if (this.opts.localModel) return { model: await this.localModelId() };
     const spec = this.opts.nodeModels?.[pause.nodeId];
     const t = spec ? await this.ownModel(pause, spec) : await this.tierModel(pause);
     // An effort named for the step is played as named; any other is capped by its maxEffort.
@@ -994,6 +1030,32 @@ export class CopilotProvider implements Provider {
   }
 
   private models: Promise<Map<string, readonly string[]> | undefined> | undefined;
+  private localId: Promise<string> | undefined;
+
+  /** The local model's id: as configured, else the first the server lists. */
+  private localModelId(): Promise<string> {
+    const local = this.opts.localModel!;
+    if (local.model) return Promise.resolve(local.model);
+    this.localId ??= (async () => {
+      const res = await fetch(`${local.baseUrl.replace(/\/+$/, '')}/models`, {
+        headers: local.apiKey ? { Authorization: `Bearer ${local.apiKey}` } : {},
+        signal: AbortSignal.timeout(15_000),
+      }).catch((e: Error) => {
+        throw new SetupError(`The model server at ${local.baseUrl} did not answer (${e.message}).`);
+      });
+      const list = res.ok ? ((await res.json()) as { data?: { id?: string }[] }) : undefined;
+      const id = list?.data?.find((m) => typeof m.id === 'string')?.id;
+      if (!id)
+        throw new SetupError(
+          `The model server at ${local.baseUrl} lists no model (GET /models: ${res.status}). Set SYMPHONY_MODEL_ID.`,
+        );
+      return id;
+    })();
+    this.localId.catch(() => {
+      this.localId = undefined;
+    });
+    return this.localId;
+  }
 
   private availableModels(): Promise<Map<string, readonly string[]> | undefined> {
     this.models ??= (async () => {
@@ -1137,7 +1199,7 @@ export class CopilotProvider implements Provider {
         ? [this.webSearchTool(req.signal)]
         : []),
       // Read-only data the change's own systems hold (test health, pipeline metrics).
-      ...(external ? [this.kustoTool(req.signal)] : []),
+      ...(external && this.opts.signIns !== false ? [this.kustoTool(req.signal)] : []),
     ];
     const play = (m: { model?: string; effort?: ReasoningEffort }) =>
       this.runSession({

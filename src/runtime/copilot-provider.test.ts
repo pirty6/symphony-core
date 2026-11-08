@@ -10,6 +10,7 @@ import type { AgentPause, Pattern } from '../core/types.js';
 import {
   CopilotProvider,
   ISOLATED_SYSTEM,
+  KUSTO_TOOL,
   SIGN_IN_HELP,
   emptiedFields,
   hasContent,
@@ -1657,5 +1658,93 @@ describe('CopilotProvider + engine: malformed submissions', () => {
     expect(rejected).toHaveLength(3);
     expect(perf.finalState.examined).toEqual([]);
     expect(perf.reason).toMatch(/deepRead.*verdict is missing/);
+  });
+});
+
+const localReq = (p: AgentPause = pause) => ({
+  pause: p,
+  state: {},
+  visit: 0,
+  signal: new AbortController().signal,
+  onEvent: () => {},
+});
+
+describe('a local model server instead of Copilot', () => {
+  /** A session that submits a valid result, on whatever model it was given. */
+  const submitting = () =>
+    fakeClient(async (cfg, emit) => {
+      await callTool(cfg, 'submit_result', {
+        updates: { word: 'cat' },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+      });
+      emit('assistant.message', { content: 'Done.', model: String(cfg.model) });
+      emit('session.idle');
+    });
+
+  it('every step plays on its model, through its endpoint, with no sign-in and no effort', async () => {
+    const { client, sessions } = submitting();
+    let asked = false;
+    const p = new CopilotProvider({
+      clientFactory: () => ({
+        ...client,
+        // Copilot would say nobody is signed in: a local model never asks.
+        getAuthStatus: async () => ((asked = true), { isAuthenticated: false }),
+      }),
+      localModel: { baseUrl: 'http://tt.local:8000/v1', apiKey: 'k', model: 'openai/gpt-oss-120b' },
+    });
+    for (const complexity of [1, 4] as const) await p.runAgent(localReq({ ...pause, complexity }));
+    expect(asked).toBe(false);
+    for (const s of sessions) {
+      expect(s.cfg.model).toBe('openai/gpt-oss-120b');
+      expect(s.cfg.reasoningEffort).toBeUndefined();
+      expect(s.cfg.provider).toEqual({
+        type: 'openai',
+        baseUrl: 'http://tt.local:8000/v1',
+        apiKey: 'k',
+      });
+    }
+    expect((await p.authStatus()).message).toBe('local model server http://tt.local:8000/v1');
+  });
+
+  it('with no model named, the first the server lists', async () => {
+    const http = await import('node:http');
+    const server = http.createServer((q, r) => {
+      r.writeHead(q.url === '/v1/models' ? 200 : 404, { 'content-type': 'application/json' });
+      r.end(JSON.stringify({ data: [{ id: 'Qwen/Qwen3.8-27B' }] }));
+    });
+    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
+    try {
+      const { port } = server.address() as { port: number };
+      const { client, sessions } = submitting();
+      const p = new CopilotProvider({
+        clientFactory: () => client,
+        localModel: { baseUrl: `http://127.0.0.1:${port}/v1/` },
+      });
+      await p.runAgent(localReq());
+      expect(sessions[0]!.cfg.model).toBe('Qwen/Qwen3.8-27B');
+      // A server that is not there says so, at setup.
+      const gone = new CopilotProvider({
+        clientFactory: () => client,
+        localModel: { baseUrl: 'http://127.0.0.1:1/v1' },
+      });
+      await expect(gone.runAgent(localReq())).rejects.toThrow(/did not answer/);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('without sign-ins, the Kusto tool (your Azure sign-in) is not offered', async () => {
+    const web = { ...pause, capabilities: ['web'] as AgentPause['capabilities'] };
+    const tools = async (signIns?: boolean) => {
+      const { client, sessions } = submitting();
+      await new CopilotProvider({
+        clientFactory: () => client,
+        model: 'm1',
+        ...(signIns === false ? { signIns } : {}),
+      }).runAgent(localReq(web));
+      return sessions[0]!.cfg.tools!.map((t) => t.name);
+    };
+    expect(await tools()).toContain(KUSTO_TOOL);
+    expect(await tools(false)).not.toContain(KUSTO_TOOL);
   });
 });
