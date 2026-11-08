@@ -107,6 +107,10 @@ export function withoutTokenVars(env: NodeJS.ProcessEnv): Record<string, string 
 }
 
 /** What to do when Copilot refuses the account that is signed in. */
+/** Sign-ins are off and no model server of your own is set: there is no model to run on. */
+export const NO_SIGNINS_HELP =
+  'Sign-ins are off (SYMPHONY_SIGNINS=off), so Copilot, which runs as your GitHub account, is not used. Set SYMPHONY_MODEL_URL to your own model server, or use the offline demo.';
+
 export function refusedHelp(login?: string): string {
   return `Copilot refused the GitHub account signed in on this machine${login ? ` (${login})` : ''}. Check that it has Copilot (https://github.com/settings/copilot) and that your organization allows Copilot in the CLI, then run \`npm run login\` again. The offline demo (AI: Scripted) works without it.`;
 }
@@ -545,6 +549,8 @@ export class CopilotProvider implements Provider {
   }> {
     const local = this.opts.localModel;
     if (local) return { signedIn: true, message: `local model server ${local.baseUrl}` };
+    // Sign-ins off means nobody's account: Copilot would run as whoever is signed in here.
+    if (this.opts.signIns === false) return { signedIn: false, message: NO_SIGNINS_HELP };
     const client = await this.ensureClient();
     const source =
       this.opts.gitHubToken && !this.tokenRejected && this.opts.gitHubTokenSource
@@ -577,7 +583,8 @@ export class CopilotProvider implements Provider {
         await this.dropClient();
         status = await this.authStatus().catch(() => undefined);
       }
-      if (status && !status.signedIn) throw new SetupError(SIGN_IN_HELP);
+      if (status && !status.signedIn)
+        throw new SetupError(this.opts.signIns === false ? NO_SIGNINS_HELP : SIGN_IN_HELP);
       this.signInChecked = status !== undefined;
     }
     const client = await this.ensureClient();

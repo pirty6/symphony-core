@@ -1733,13 +1733,23 @@ describe('a local model server instead of Copilot', () => {
     }
   });
 
+  it('without sign-ins and no model server, it refuses rather than run as your Copilot account', async () => {
+    const { client, sessions } = submitting();
+    const p = new CopilotProvider({
+      clientFactory: () => ({ ...client, getAuthStatus: async () => ({ isAuthenticated: true }) }),
+      signIns: false,
+    });
+    await expect(p.runAgent(localReq())).rejects.toThrow(/SYMPHONY_MODEL_URL/);
+    expect(sessions).toHaveLength(0);
+  });
+
   it('without sign-ins, the Kusto tool (your Azure sign-in) is not offered', async () => {
     const web = { ...pause, capabilities: ['web'] as AgentPause['capabilities'] };
     const tools = async (signIns?: boolean) => {
       const { client, sessions } = submitting();
       await new CopilotProvider({
         clientFactory: () => client,
-        model: 'm1',
+        localModel: { baseUrl: 'http://tt.local:8000/v1', model: 'm1' },
         ...(signIns === false ? { signIns } : {}),
       }).runAgent(localReq(web));
       return sessions[0]!.cfg.tools!.map((t) => t.name);
