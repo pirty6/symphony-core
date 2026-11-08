@@ -78,7 +78,10 @@ step (complexity tiers and reasoning efforts are Copilot's).
 **Sharing it on your network.** `SYMPHONY_SIGNINS=off` runs every step with none of your
 credentials: no GitHub, Copilot or Azure token, empty `gh` and `az` sign-ins, no git credential
 helper or SSH agent, no MCP servers and no Kusto tool, whatever command a step runs. Then start
-the studio for the network with `npm run studio -- --host 0.0.0.0`. The studio has no sign-in of
+the studio for the network with `npm run studio -- --host 0.0.0.0` (to reach it by a name, e.g.
+`symphony.example.org`, also set `SYMPHONY_STUDIO_HOSTS=symphony.example.org`). Without
+`SYMPHONY_MODEL_URL`, runs with sign-ins off stop at once rather than use your Copilot account.
+The studio has no sign-in of
 its own: anyone who can reach it can start runs (on your model server) and read the workspace and
 saved runs, so keep it on a network you trust.
 
