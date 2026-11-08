@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { open, startRun } from './helpers'
+import { approve, autoApproveWaitingCard, open, openSavedRun, startRun, waitForRunEnd } from './helpers'
 import { investigate } from '../../../src/patterns/investigate'
 
 /** "Running now" starts closed: open it (it then stays open, remembered). */
@@ -14,7 +14,7 @@ async function runningNow(page: Page) {
 async function allowExperiments(page: Page) {
   const card = page.getByTestId('approval-card')
   await expect(card).toContainText('throwaway copy', { timeout: 20_000 })
-  await card.getByRole('button', { name: 'Approve', exact: true }).click()
+  await approve(page, card)
 }
 
 /** The newest saved review run (other tests save runs of their own patterns at the same time). */
@@ -23,10 +23,7 @@ const savedReview = (page: Page) =>
 
 async function guess(page: Page, letter: string) {
   const card = page.getByTestId('approval-card')
-  const pauseId = await card.getAttribute('data-pause-id')
-  await card.getByLabel('letter', { exact: true }).fill(letter)
-  await card.getByRole('button', { name: 'Approve', exact: true }).click()
-  await expect(page.locator(`[data-pause-id="${pauseId}"]`)).toHaveCount(0)
+  await approve(page, card, { field: 'letter', value: letter })
 }
 
 test('plays hangman live: AI picks, human guesses, engine scores', async ({ page }) => {
@@ -38,7 +35,7 @@ test('plays hangman live: AI picks, human guesses, engine scores', async ({ page
     await expect(page.getByTestId('approval-card')).toBeVisible()
     await guess(page, l)
   }
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
   await expect(page.getByTestId('node-win')).toHaveAttribute('data-status', 'done')
   await page.getByRole('button', { name: 'State', exact: true }).click()
   await expect(page.getByTestId('state-won')).toContainText('true')
@@ -83,18 +80,17 @@ test('step mode halts before and after the AI; the proposed result is visible be
   await expect(page.getByTestId('proposed-result')).toContainText('H1: paginate slices from start - 1')
   await page.getByLabel('step mode').uncheck()
   await gate.getByRole('button', { name: '▶ Resume' }).click()
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
   await expect(page.getByTestId('run-result')).toContainText("reached end 'fixed'")
 })
 
 test('saved runs replay and verify deterministically', async ({ page }) => {
   await open(page, 'review')
   await startRun(page)
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
   await page.getByTestId('toggle-demo-runs').click()
   // A saved review run, not a live one ("Running now" items look the same), nor another test's.
-  await savedReview(page).click()
-  await expect(page.getByTestId('replay-check')).toContainText('reproduces this run exactly')
+  await openSavedRun(page, savedReview(page))
   await page.getByLabel('timeline').fill('5')
   await expect(page.getByTestId('timeline-events').locator('li.current')).toBeVisible()
 })
@@ -113,10 +109,10 @@ test('the maestro composes a score, then the orchestra performs it', async ({ pa
   await expect(page.getByTestId('tailoring')).toContainText('maxAttempts = 2')
   // How each requirement is met, before the go.
   await expect(page.getByTestId('approval-card')).toContainText(/R1: \w+ — /)
-  await page.getByTestId('approval-card').getByRole('button', { name: 'Approve', exact: true }).click()
+  await approve(page, page.getByTestId('approval-card'))
   await expect(page.getByTestId('notice')).toContainText("composed 'fix' (complexity 3)")
   await expect(page.locator('.tb-title')).toContainText('fix')
-  await page.getByTestId('approval-card').getByRole('button', { name: 'Approve', exact: true }).click()
+  await approve(page, page.getByTestId('approval-card'))
   await expect(page.getByTestId('run-result')).toContainText("reached end 'fixed'")
 })
 
@@ -125,7 +121,7 @@ test('bebop plays takes that a bandleader merges', async ({ page }) => {
   await page.getByLabel('improvisation').fill('3')
   await expect(page.locator('.knob-name')).toHaveText('Bebop')
   await startRun(page)
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
   await page.getByLabel('follow active node').uncheck()
   await page.getByRole('button', { name: 'Fit View' }).click()
   await page.getByTestId('node-collect').click()
@@ -140,7 +136,7 @@ test('phases collapse into one node, light up while running and open into their 
   await expect(page.getByTestId('node-inventory')).toHaveCount(0)
   await startRun(page)
   await allowExperiments(page)
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
   await expect(page.getByTestId('phase-deepPhase')).toHaveAttribute('data-status', 'done')
   await page.getByRole('button', { name: 'open phase listPhase' }).dispatchEvent('click')
   await expect(page.getByTestId('frame-listPhase')).toBeVisible()
@@ -161,18 +157,18 @@ test('auto-approve can be turned on mid-run: the waiting approval answers itself
   await open(page, 'fix')
   await startRun(page)
   // fix plays its diagnosis first: the plan's approval comes a little later.
-  await expect(page.getByTestId('approval-card')).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByLabel('auto-approve')).toBeEnabled()
-  await page.getByLabel('auto-approve').check()
-  await expect(page.getByTestId('approval-card')).toHaveCount(0)
-  await expect(page.getByTestId('run-status')).toHaveText('done', { timeout: 20_000 })
+  const card = page.getByTestId('approval-card')
+  await expect(card).toBeVisible({ timeout: 20_000 })
+  await autoApproveWaitingCard(page, card)
+  await expect(card).toHaveCount(0)
+  await waitForRunEnd(page)
 })
 
 test('the result opens in a reader: people\'s version first, then the brief for an AI agent', async ({ page }) => {
   await open(page, 'investigate')
   await startRun(page)
   await allowExperiments(page)
-  await expect(page.getByTestId('run-status')).toHaveText('done', { timeout: 30_000 })
+  await waitForRunEnd(page)
   // The people's version is short: it shows in the inspector, and the reader stays closed (the
   // long brief for an AI agent does not open it).
   const reader = page.getByTestId('result-reader')
@@ -191,18 +187,17 @@ test('the result opens in a reader: people\'s version first, then the brief for 
 test('a saved run can be forked from the step shown on the timeline', async ({ page }) => {
   await open(page, 'review')
   await startRun(page)
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
   await page.getByTestId('toggle-demo-runs').click()
   // A saved review run, not a live one ("Running now" items look the same), nor another test's.
-  await savedReview(page).click()
-  await expect(page.getByTestId('replay-check')).toContainText('reproduces this run exactly')
+  await openSavedRun(page, savedReview(page))
   await page.getByLabel('timeline').fill('6')
   const fork = page.getByTestId('fork')
   await expect(fork).toHaveText(/⑂ Fork from step \d+/)
   const step = Number((await fork.textContent())!.match(/\d+/)![0])
   await fork.click()
   await expect(page.getByTestId('notice')).toContainText(`Forked at step ${step}`)
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
   await expect(page.getByTestId('based-on')).toContainText(`forked from`)
   await expect(page.getByTestId('based-on')).toContainText(`after step ${step - 1}`)
 })
@@ -241,7 +236,7 @@ test('a stuck AI step waits for you: retry with a hint and a smarter tier, then 
   await expect(card).toBeVisible()
   await card.getByRole('button', { name: '✕ Stop run' }).click()
   // Stopped at a step that cannot answer: partial, with the work so far kept.
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
   await expect(page.getByTestId('run-result')).toContainText('partial')
   await expect(page.getByTestId('timeline-events')).toContainText('pick: stopped by studio')
 })
@@ -253,7 +248,7 @@ test('then run: a successful run hands its result to the next pattern, and the s
   await startRun(page)
   await expect(page.getByTestId('notice')).toContainText("investigate finished. Now playing 'fix' with what it found.")
   await expect(page.locator('.tb-title')).toContainText('fix')
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
   await expect(page.getByTestId('run-result')).toContainText("reached end 'fixed'")
   await page.getByRole('button', { name: 'State', exact: true }).click()
   await expect(page.getByTestId('state-issue')).toContainText('What the investigate run found')
@@ -304,7 +299,7 @@ test('inputs start empty with the demo as a hint, the large editor writes into t
   await issue.fill('')
   await page.getByText('auto-approve').click()
   await startRun(page)
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
 })
 
 test('a lost server says so and reconnects; request errors close with ✕ and clear when switching runs', async ({ page }) => {
@@ -370,7 +365,7 @@ test('deletes one saved run from the list after a second click', async ({ page }
   await open(page, 'review')
   await page.getByText('auto-approve').click()
   await startRun(page)
-  await expect(page.getByTestId('run-status')).toHaveText('done')
+  await waitForRunEnd(page)
   const toggle = page.getByTestId('toggle-demo-runs')
   if ((await toggle.innerText()).startsWith('Show')) await toggle.click()
   const newest = page.getByTestId('saved-run').filter({ has: page.locator('b', { hasText: /^review$/ }) }).first()
@@ -519,7 +514,7 @@ test('library sections fold away, and a feature switch reaches the run it starts
   await expect(judge).toContainText('changed')
   await page.getByText('auto-approve').click()
   await startRun(page)
-  await expect(page.getByTestId('run-status')).toHaveText('done', { timeout: 30_000 })
+  await waitForRunEnd(page)
   await page.getByRole('button', { name: 'State', exact: true }).click()
   await expect(page.getByTestId('state-supportJudge')).toContainText('shadow')
   // The judge played (the demo's rulings): every cited workspace finding was ruled on.
