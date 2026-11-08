@@ -179,6 +179,8 @@ export interface CatalogOptions {
   /** Pattern library for maestro tools; defaults to the built-in patterns. */
   readonly library?: () => Promise<readonly Pattern[]>;
   readonly mcp?: Omit<McpOptions, 'workspace'>;
+  /** No MCP server is offered as a source (they act as you: SYMPHONY_SIGNINS=off). */
+  readonly noMcp?: boolean;
   /** Skip probing GitHub (`gh`), e.g. in tests; Azure (`az`) too, unless probeAzure says. */
   readonly probeGitHub?: boolean;
   readonly probeAzure?: boolean;
@@ -263,7 +265,9 @@ export async function sourceCatalog(
     'experiment',
     'run targeted commands to test a hypothesis, reproduce behaviour or measure performance (one test file or test name, repeated, retries off; never the whole suite); each in a throwaway copy of the workspace, after your approval',
   ]);
-  const mcp = await discoverMcpServers({ ...opts.mcp, workspace: ws });
+  const mcp = opts.noMcp
+    ? { servers: {} }
+    : await discoverMcpServers({ ...opts.mcp, workspace: ws });
   for (const name of Object.keys(mcp.servers).toSorted()) {
     entries.push([`mcp:${name}`, `MCP server '${name}' (read-only tools only)`]);
   }

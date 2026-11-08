@@ -7,6 +7,7 @@ import type { ToolContext, ToolRegistry } from './tools.js';
 import { CopilotProvider, DEFAULT_TIERS, parseTiers, type Tier } from './copilot-provider.js';
 import type { Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
+import { signInsOff } from './signins.js';
 
 export type ProviderName = 'scripted' | 'copilot';
 
@@ -28,6 +29,16 @@ export interface ProviderConfig {
   readonly headerInSystem?: boolean;
   readonly endOnSubmit?: boolean;
   readonly effortCaps?: boolean;
+  /** Every step on your own model server instead of Copilot (SYMPHONY_MODEL_URL). */
+  readonly localModel?: LocalModel;
+  /** false: steps run with none of your credentials (SYMPHONY_SIGNINS=off). */
+  readonly signIns?: boolean;
+}
+
+export interface LocalModel {
+  readonly baseUrl: string;
+  readonly apiKey?: string;
+  readonly model?: string;
 }
 
 export function isProviderName(v: unknown): v is ProviderName {
@@ -51,6 +62,8 @@ export function makeProvider(cfg: ProviderConfig): Provider {
       ...(cfg.headerInSystem ? { headerInSystem: true } : {}),
       ...(cfg.endOnSubmit ? { endOnSubmit: true } : {}),
       ...(cfg.effortCaps === false ? { effortCaps: false } : {}),
+      ...(cfg.localModel ? { localModel: cfg.localModel } : {}),
+      ...(cfg.signIns === false ? { signIns: false } : {}),
       clock,
     });
   }
@@ -76,6 +89,8 @@ export function envConfig(env: NodeJS.ProcessEnv): {
   headerInSystem?: boolean;
   endOnSubmit?: boolean;
   effortCaps?: boolean;
+  localModel?: LocalModel;
+  signIns?: boolean;
 } {
   const model = env.COPILOT_MODEL ?? env.MODEL;
   const source = TOKEN_VARS.find((name) => env[name] && env[name] !== 'token');
@@ -84,9 +99,12 @@ export function envConfig(env: NodeJS.ProcessEnv): {
   const nodeModels = env.SYMPHONY_NODE_MODELS
     ? parseNodeModels(env.SYMPHONY_NODE_MODELS)
     : undefined;
+  const localModel = localModelFrom(env);
   return {
     ...(model ? { model } : {}),
     ...(token && source ? { gitHubToken: token, gitHubTokenSource: source } : {}),
+    ...(localModel ? { localModel } : {}),
+    ...(signInsOff(env) ? { signIns: false } : {}),
     ...(tiers ? { tiers } : {}),
     ...(env.SYMPHONY_ALT_MODEL ? { alternateModel: env.SYMPHONY_ALT_MODEL } : {}),
     ...(nodeModels ? { nodeModels } : {}),
@@ -98,6 +116,19 @@ export function envConfig(env: NodeJS.ProcessEnv): {
     // Steps' maxEffort (the maestro's tier-4 debate on 'high'); 0 plays each tier's own effort.
     effortCaps: !off(env.SYMPHONY_EFFORT_CAPS),
   };
+}
+
+/**
+ * SYMPHONY_MODEL_URL: an OpenAI-compatible server (vLLM, tt-inference-server, Ollama) for every
+ * step, e.g. http://tt.example.org:8000/v1; SYMPHONY_MODEL_ID its model (default: the first it
+ * lists), SYMPHONY_MODEL_KEY its API key if it needs one.
+ */
+export function localModelFrom(env: NodeJS.ProcessEnv): LocalModel | undefined {
+  const baseUrl = env.SYMPHONY_MODEL_URL?.trim();
+  if (!baseUrl) return undefined;
+  const apiKey = env.SYMPHONY_MODEL_KEY?.trim();
+  const model = env.SYMPHONY_MODEL_ID?.trim();
+  return { baseUrl, ...(apiKey ? { apiKey } : {}), ...(model ? { model } : {}) };
 }
 
 const off = (v: string | undefined) => v !== undefined && /^(0|false|off|no)$/i.test(v.trim());
@@ -129,14 +160,17 @@ export async function runtimeExtras(
   env: NodeJS.ProcessEnv,
 ): Promise<RuntimeExtras> {
   const includeUser = env.SYMPHONY_MCP_USER !== 'off';
-  const mcp =
-    env.SYMPHONY_MCP === 'off'
-      ? { servers: {}, skipped: [] }
-      : await discoverMcpServers({ workspace, includeUser, env });
+  // Without sign-ins: no MCP servers (they act as you), and no GitHub or Azure source.
+  const noSignIns = signInsOff(env);
+  const mcpOff = env.SYMPHONY_MCP === 'off' || noSignIns;
+  const mcp = mcpOff
+    ? { servers: {}, skipped: [] }
+    : await discoverMcpServers({ workspace, includeUser, env });
   return {
-    tools: defaultTools(
-      env.SYMPHONY_MCP === 'off' ? { mcp: { includeUser: false } } : { mcp: { includeUser } },
-    ),
+    tools: defaultTools({
+      mcp: { includeUser: mcpOff ? false : includeUser },
+      ...(noSignIns ? { probeGitHub: false, probeAzure: false, noMcp: true } : {}),
+    }),
     toolContext: { workspace, repoRoot },
     mcpServers: mcp.servers,
     mcpSkipped: mcp.skipped,
