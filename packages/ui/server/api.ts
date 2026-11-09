@@ -39,6 +39,7 @@ import { enabledExtras } from '../../../src/patterns/extras/index.js'
 import { draftPattern } from '../../../src/runtime/drafting.js'
 import { Run, type RunOptions } from '../../../src/runtime/driver.js'
 import { liveRoot, LiveRuns, scrubbedFeed, type RunLike } from '../../../src/runtime/live.js'
+import { envForRun, fromThisComputer } from '../../../src/runtime/signins.js'
 import {
   effectiveTiers,
   envConfig,
@@ -205,10 +206,22 @@ export function createApi(opts: ApiOptions) {
     return (await library()).find((l) => l.pattern.name === name)?.pattern.demo
   }
 
-  let extras: Promise<RuntimeExtras> | undefined
-  const runtime = () => (extras ??= runtimeExtras(workspace, opts.repoRoot, env))
+  // SYMPHONY_SIGNINS=here: runs started from another machine get none of your sign-ins (runtime/signins.ts).
+  const extras = new Map<boolean, Promise<RuntimeExtras>>()
+  const runtime = (here = true) => {
+    let x = extras.get(here)
+    if (!x) extras.set(here, (x = runtimeExtras(workspace, opts.repoRoot, envForRun(env, here))))
+    return x
+  }
 
-  function providerFor(name: unknown, model: unknown, pattern?: Pattern, mcpServers?: RuntimeExtras['mcpServers'], dir = workspace) {
+  function providerFor(
+    name: unknown,
+    model: unknown,
+    pattern?: Pattern,
+    mcpServers?: RuntimeExtras['mcpServers'],
+    dir = workspace,
+    here = true,
+  ) {
     if (!isProviderName(name)) throw new CompileError([{ message: 'provider must be scripted or copilot' }])
     return makeProvider({
       provider: name,
@@ -216,7 +229,7 @@ export function createApi(opts: ApiOptions) {
       workingDirectory: dir,
       delayMs: opts.scriptedDelayMs ?? 0,
       ...(mcpServers ? { mcpServers } : {}),
-      ...envConfig(env),
+      ...envConfig(envForRun(env, here)),
       ...(typeof model === 'string' && model ? { model } : {}),
     })
   }
@@ -227,6 +240,8 @@ export function createApi(opts: ApiOptions) {
     readonly autoApprove: boolean
     readonly stepMode: boolean
     readonly breakpoints: string[]
+    /** Started from this computer (a browser on localhost), not from another machine. */
+    readonly here: boolean
     readonly restore?: RunOptions['restore']
     /** Patterns (or backlog items) to play after this one. */
     readonly chain?: readonly ChainStep[]
@@ -237,14 +252,17 @@ export function createApi(opts: ApiOptions) {
   async function launch(score: ExecutableScore, pattern: Pattern, settings: Settings): Promise<Run> {
     const demo = pattern.demo ?? (await demoFor(pattern.name))
     const withDemo: Pattern = demo ? { ...pattern, demo } : pattern
-    const { tools, toolContext: shared, mcpServers } = await runtime()
+    const { tools, toolContext: shared, mcpServers } = await runtime(settings.here)
     // A real AI editing files plays in its own worktree, so runs can play at once.
     const isolation =
       settings.provider === 'copilot' && editsFiles(score) ? await isolate(workspace, score.pattern, env) : undefined
     // A run that reads a PR plays on the PR's own code, checked out apart (runtime/pr.ts).
     const pr = isolation
       ? undefined
-      : await prForRun(pattern, score.context, workspace, { provider: String(settings.provider ?? 'scripted'), env })
+      : await prForRun(pattern, score.context, workspace, {
+          provider: String(settings.provider ?? 'scripted'),
+          env: envForRun(env, settings.here),
+        })
     const dir = isolation?.dir ?? pr?.dir ?? workspace
     // In a worktree, memory stays in your workspace: what the run learns outlives the worktree.
     const toolContext = {
@@ -252,7 +270,7 @@ export function createApi(opts: ApiOptions) {
       ...(dir !== workspace ? { workspace: dir, memoryRoot: shared.workspace } : {}),
       ...(pr ? { pr: pr.info } : {}),
     }
-    const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir)
+    const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir, settings.here)
     const id = `run-${Date.now().toString(36)}-${(counter++).toString(36)}`
     const next = concertNext({
       maestroScore: score,
@@ -314,7 +332,7 @@ export function createApi(opts: ApiOptions) {
     return run
   }
 
-  async function startRun(body: Record<string, unknown>): Promise<Run> {
+  async function startRun(body: Record<string, unknown>, here: boolean): Promise<Run> {
     const pattern = asPattern(body.pattern)
     const complexity = [1, 2, 3, 4].includes(body.complexity as number) ? (body.complexity as Complexity) : undefined
     const improvisation = isImprovisation(body.improvisation) ? body.improvisation : undefined
@@ -334,11 +352,12 @@ export function createApi(opts: ApiOptions) {
       breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
       chain: Array.isArray(body.chain) ? body.chain.filter((t): t is string => typeof t === 'string' && t !== 'maestro') : [],
       features,
+      here,
     })
   }
 
   /** Resume an interrupted run in place, or fork a saved run from a step as a new run. */
-  async function continueRun(body: Record<string, unknown>): Promise<Run> {
+  async function continueRun(body: Record<string, unknown>, here: boolean): Promise<Run> {
     const file = runPath(runsDir, typeof body.file === 'string' ? body.file : '')
     if (!file) throw new CompileError([{ message: 'invalid run file' }])
     const { run: saved, issues } = await loadRun(file)
@@ -385,6 +404,7 @@ export function createApi(opts: ApiOptions) {
       stepMode: body.stepMode === true,
       breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
       restore: { result, basedOn: { kind, from: relative(runsDir, file), throughStep } },
+      here,
     })
   }
 
@@ -420,10 +440,10 @@ export function createApi(opts: ApiOptions) {
     })
   }
 
-  async function draft(body: Record<string, unknown>, res: ServerResponse): Promise<void> {
+  async function draft(body: Record<string, unknown>, res: ServerResponse, here: boolean): Promise<void> {
     const request = typeof body.request === 'string' ? body.request.trim() : ''
     if (!request) return send(res, 400, { error: 'request is required' })
-    const provider = providerFor(body.provider ?? 'scripted', body.model)
+    const provider = providerFor(body.provider ?? 'scripted', body.model, undefined, undefined, workspace, here)
     const ctrl = new AbortController()
     res.on('close', () => {
       if (!res.writableEnded) ctrl.abort()
@@ -495,16 +515,16 @@ export function createApi(opts: ApiOptions) {
         return true
       }
       if (method === 'POST' && path === '/api/draft') {
-        await draft(await readJson(req), res)
+        await draft(await readJson(req), res, fromThisComputer(req.socket.remoteAddress))
         return true
       }
       if (method === 'POST' && path === '/api/runs') {
-        const run = await startRun(await readJson(req))
+        const run = await startRun(await readJson(req), fromThisComputer(req.socket.remoteAddress))
         send(res, 200, { runId: run.id, score: run.score })
         return true
       }
       if (method === 'POST' && path === '/api/runs/continue') {
-        const run = await continueRun(await readJson(req))
+        const run = await continueRun(await readJson(req), fromThisComputer(req.socket.remoteAddress))
         send(res, 200, { runId: run.id, score: run.score })
         return true
       }
@@ -521,7 +541,8 @@ export function createApi(opts: ApiOptions) {
       }
       if (method === 'GET' && path === '/api/copilot/status') {
         // Whether a GitHub account is signed in for Copilot here, so the studio can say how to fix it.
-        const copilot = makeProvider({ provider: 'copilot', workingDirectory: workspace, ...envConfig(env) })
+        const here = fromThisComputer(req.socket.remoteAddress)
+        const copilot = makeProvider({ provider: 'copilot', workingDirectory: workspace, ...envConfig(envForRun(env, here)) })
         try {
           const status = await (copilot as { authStatus?: () => Promise<unknown> }).authStatus?.()
           send(res, 200, status ?? { signedIn: true, message: '' })

@@ -73,9 +73,14 @@ SYMPHONY_MODEL_KEY=...                             # optional: if the server nee
 ```
 
 Then choose **AI → GitHub Copilot** as usual: the runs go to your server. One model plays every
-step (complexity tiers and reasoning efforts are Copilot's).
+step (complexity tiers and reasoning efforts are Copilot's). Each run first checks the server
+answers (5 s): when it does not, the run stops at once with that reason, or, with
+`SYMPHONY_MODEL_FALLBACK=copilot`, plays on GitHub Copilot instead and says so (only where your
+sign-ins are allowed, see below).
 
-**Sharing it on your network.** `SYMPHONY_SIGNINS=off` runs every step with none of your
+**Sharing it on your network.** `SYMPHONY_SIGNINS=here` keeps your sign-ins (and the Copilot
+fallback) for runs started on this computer (a browser on localhost, the CLI, a VS Code chat) and
+treats every other machine as below. `SYMPHONY_SIGNINS=off` runs every step with none of your
 credentials: no GitHub, Copilot or Azure token, empty `gh` and `az` sign-ins, no git credential
 helper or SSH agent, no MCP servers and no Kusto tool, whatever command a step runs. Then start
 the studio for the network with `npm run studio -- --host 0.0.0.0` (to reach it by a name, e.g.

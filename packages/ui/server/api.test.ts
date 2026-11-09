@@ -304,3 +304,34 @@ describe('runs a chat plays (the MCP server, another process)', () => {
     // About 1 s here (the shared files are polled every 400 ms); slower CI runners need more.
   }, 15_000)
 })
+
+describe('sign-ins only here (SYMPHONY_SIGNINS=here)', () => {
+  it('a browser on another machine never falls back to your Copilot account', async () => {
+    const api = createApi({
+      repoRoot: root,
+      importer: (f) => import(pathToFileURL(f).href),
+      env: {
+        SYMPHONY_LIVE_DIR: live,
+        SYMPHONY_SIGNINS: 'here',
+        // A model server that is not there, with fallback on.
+        SYMPHONY_MODEL_URL: 'http://127.0.0.1:1/v1',
+        SYMPHONY_MODEL_ID: 'm',
+        SYMPHONY_MODEL_FALLBACK: 'copilot',
+      },
+    })
+    // Every request seems to come from another machine on the network.
+    const remote = createServer((req, res) => {
+      Object.defineProperty(req.socket, 'remoteAddress', { value: '198.168.10.7' })
+      void api.handle(req, res)
+    })
+    await new Promise<void>((r) => remote.listen(0, r))
+    try {
+      const url = `http://127.0.0.1:${(remote.address() as AddressInfo).port}/api/copilot/status`
+      const status = (await (await fetch(url)).json()) as { signedIn: boolean; message: string }
+      expect(status.signedIn).toBe(false)
+      expect(status.message).toMatch(/did not answer/)
+    } finally {
+      remote.close()
+    }
+  })
+})
