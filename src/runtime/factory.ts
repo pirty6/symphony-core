@@ -39,6 +39,8 @@ export interface LocalModel {
   readonly baseUrl: string;
   readonly apiKey?: string;
   readonly model?: string;
+  /** Copilot when the server does not answer (SYMPHONY_MODEL_FALLBACK=copilot; sign-ins allowed). */
+  readonly fallback?: boolean;
 }
 
 export function isProviderName(v: unknown): v is ProviderName {
@@ -128,7 +130,13 @@ export function localModelFrom(env: NodeJS.ProcessEnv): LocalModel | undefined {
   if (!baseUrl) return undefined;
   const apiKey = env.SYMPHONY_MODEL_KEY?.trim();
   const model = env.SYMPHONY_MODEL_ID?.trim();
-  return { baseUrl, ...(apiKey ? { apiKey } : {}), ...(model ? { model } : {}) };
+  const fallback = env.SYMPHONY_MODEL_FALLBACK?.trim().toLowerCase() === 'copilot';
+  return {
+    baseUrl,
+    ...(apiKey ? { apiKey } : {}),
+    ...(model ? { model } : {}),
+    ...(fallback ? { fallback } : {}),
+  };
 }
 
 const off = (v: string | undefined) => v !== undefined && /^(0|false|off|no)$/i.test(v.trim());

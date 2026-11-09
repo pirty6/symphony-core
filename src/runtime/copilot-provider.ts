@@ -196,6 +196,10 @@ export interface CopilotProviderOptions {
     readonly baseUrl: string;
     readonly apiKey?: string;
     readonly model?: string;
+    /** Copilot when the server does not answer (only with sign-ins allowed). */
+    readonly fallback?: boolean;
+    /** How long to wait for it to answer GET /models (default 5 s). */
+    readonly probeMs?: number;
   };
   /**
    * false: steps run with none of the host's credentials (runtime/signins.ts), and the Kusto tool,
@@ -515,7 +519,7 @@ export class CopilotProvider implements Provider {
   private ensureClient(): Promise<ClientLike> {
     if (this.client) return Promise.resolve(this.client);
     this.starting ??= (async () => {
-      const local = this.opts.localModel !== undefined;
+      const local = (await this.local()) !== undefined;
       const token = this.tokenRejected || local ? undefined : this.opts.gitHubToken;
       const auth = token ? { gitHubToken: token } : {};
       // What the steps' commands inherit: none of the host's credentials when sign-ins are off.
@@ -548,7 +552,15 @@ export class CopilotProvider implements Provider {
     tokenSource?: string;
   }> {
     const local = this.opts.localModel;
-    if (local) return { signedIn: true, message: `local model server ${local.baseUrl}` };
+    if (local) {
+      try {
+        if (await this.local())
+          return { signedIn: true, message: `local model server ${local.baseUrl}` };
+      } catch (e) {
+        return { signedIn: false, message: (e as Error).message };
+      }
+      // It did not answer: Copilot instead, as below.
+    }
     // Sign-ins off means nobody's account: Copilot would run as whoever is signed in here.
     if (this.opts.signIns === false) return { signedIn: false, message: NO_SIGNINS_HELP };
     const client = await this.ensureClient();
@@ -571,6 +583,11 @@ export class CopilotProvider implements Provider {
 
   private async runSession(run: SessionRun): Promise<SessionOutput> {
     if (run.signal.aborted) throw abortError();
+    const onLocal = await this.local();
+    if (this.fellBack) {
+      run.onEvent({ type: 'info', text: this.fellBack });
+      this.fellBack = undefined;
+    }
     if (!this.signInChecked) {
       let status = await this.authStatus().catch(() => undefined);
       // A configured token that is not accepted: try the account signed in on this machine.
@@ -590,7 +607,7 @@ export class CopilotProvider implements Provider {
     const client = await this.ensureClient();
     if (run.signal.aborted) throw abortError();
     const toolCalls: ToolCallRecord[] = [];
-    const local = this.opts.localModel;
+    const local = onLocal ? this.opts.localModel : undefined;
     const config: SessionConfig = {
       ...(run.model ? { model: run.model } : {}),
       ...(run.effort && !local ? { reasoningEffort: run.effort } : {}),
@@ -885,7 +902,10 @@ export class CopilotProvider implements Provider {
   async modelFor(
     complexity: Complexity,
   ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
-    if (this.opts.localModel) return { model: await this.localModelId() };
+    {
+      const onLocal = await this.local();
+      if (onLocal) return { model: onLocal.model };
+    }
     const available = await this.availableModels();
     const forced = this.opts.model;
     if (forced && (!available || available.has(forced))) return { model: forced };
@@ -918,7 +938,10 @@ export class CopilotProvider implements Provider {
     pause: AgentPause,
   ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
     // One model serves every step: tiers, step overrides and efforts are Copilot's.
-    if (this.opts.localModel) return { model: await this.localModelId() };
+    {
+      const onLocal = await this.local();
+      if (onLocal) return { model: onLocal.model };
+    }
     const spec = this.opts.nodeModels?.[pause.nodeId];
     const t = spec ? await this.ownModel(pause, spec) : await this.tierModel(pause);
     // An effort named for the step is played as named; any other is capped by its maxEffort.
@@ -1037,31 +1060,43 @@ export class CopilotProvider implements Provider {
   }
 
   private models: Promise<Map<string, readonly string[]> | undefined> | undefined;
-  private localId: Promise<string> | undefined;
+  private localState: Promise<{ readonly model: string } | undefined> | undefined;
+  /** Set once a run fell back to Copilot, so it is said once. */
+  private fellBack: string | undefined;
 
-  /** The local model's id: as configured, else the first the server lists. */
-  private localModelId(): Promise<string> {
-    const local = this.opts.localModel!;
-    if (local.model) return Promise.resolve(local.model);
-    this.localId ??= (async () => {
-      const res = await fetch(`${local.baseUrl.replace(/\/+$/, '')}/models`, {
+  /**
+   * The local model server, checked once: its model when it answers (configured, else the first
+   * it lists). When it does not, Copilot (fallback, sign-ins allowed), else a setup error at once,
+   * rather than a session retrying a server that is not there.
+   */
+  private local(): Promise<{ readonly model: string } | undefined> {
+    const local = this.opts.localModel;
+    if (!local) return Promise.resolve(undefined);
+    this.localState ??= (async () => {
+      const why = await fetch(`${local.baseUrl.replace(/\/+$/, '')}/models`, {
         headers: local.apiKey ? { Authorization: `Bearer ${local.apiKey}` } : {},
-        signal: AbortSignal.timeout(15_000),
-      }).catch((e: Error) => {
-        throw new SetupError(`The model server at ${local.baseUrl} did not answer (${e.message}).`);
-      });
-      const list = res.ok ? ((await res.json()) as { data?: { id?: string }[] }) : undefined;
-      const id = list?.data?.find((m) => typeof m.id === 'string')?.id;
-      if (!id)
-        throw new SetupError(
-          `The model server at ${local.baseUrl} lists no model (GET /models: ${res.status}). Set SYMPHONY_MODEL_ID.`,
-        );
-      return id;
+        signal: AbortSignal.timeout(local.probeMs ?? 5000),
+      }).then(
+        async (res) => {
+          const list = res.ok ? ((await res.json()) as { data?: { id?: string }[] }) : undefined;
+          const listed = list?.data?.find((m) => typeof m.id === 'string')?.id;
+          const model = local.model ?? listed;
+          if (res.ok && model) return { model };
+          return res.ok ? 'lists no model (set SYMPHONY_MODEL_ID)' : `answered ${res.status}`;
+        },
+        (e: Error) => `did not answer (${e.name === 'TimeoutError' ? 'timed out' : e.message})`,
+      );
+      if (typeof why !== 'string') return why;
+      if (local.fallback && this.opts.signIns !== false) {
+        this.fellBack = `The model server at ${local.baseUrl} ${why}: using GitHub Copilot for this run.`;
+        return undefined;
+      }
+      throw new SetupError(`The model server at ${local.baseUrl} ${why}.`);
     })();
-    this.localId.catch(() => {
-      this.localId = undefined;
+    this.localState.catch(() => {
+      this.localState = undefined;
     });
-    return this.localId;
+    return this.localState;
   }
 
   private availableModels(): Promise<Map<string, readonly string[]> | undefined> {
