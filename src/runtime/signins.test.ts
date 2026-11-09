@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { signInFreeEnv, signInsOff } from './signins.js';
+import { envForRun, fromThisComputer, signInFreeEnv, signInsOff } from './signins.js';
 
 const has = (cmd: string) => spawnSync(cmd, ['--version'], { stdio: 'ignore' }).status === 0;
 
@@ -50,5 +50,22 @@ describe('sign-ins off: nothing a step runs acts as the host', () => {
     const env = signInFreeEnv(process.env, mkdtempSync(join(tmpdir(), 'signins-')));
     const r = spawnSync('gh', ['auth', 'status'], { env, encoding: 'utf8' });
     expect(r.status).not.toBe(0);
+  });
+});
+
+describe('sign-ins only here (SYMPHONY_SIGNINS=here)', () => {
+  it('a run from this computer keeps them; one from another machine has none', () => {
+    const env = { SYMPHONY_SIGNINS: 'here', PATH: '/bin' };
+    expect(signInsOff(envForRun(env, true))).toBe(false);
+    expect(signInsOff(envForRun(env, false))).toBe(true);
+    // off is off everywhere; unset is on everywhere.
+    expect(signInsOff(envForRun({ SYMPHONY_SIGNINS: 'off' }, true))).toBe(true);
+    expect(signInsOff(envForRun({}, false))).toBe(false);
+  });
+  it('this computer is its loopback address', () => {
+    for (const a of ['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+      expect(fromThisComputer(a)).toBe(true);
+    for (const a of ['198.168.10.4', '192.168.1.5', '::ffff:10.0.0.2', undefined])
+      expect(fromThisComputer(a)).toBe(false);
   });
 });

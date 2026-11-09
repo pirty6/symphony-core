@@ -31,6 +31,23 @@ export function signInsOff(env: Env): boolean {
   return v !== undefined && /^(0|false|off|no)$/i.test(v);
 }
 
+/**
+ * SYMPHONY_SIGNINS=here: your sign-ins only for runs started on this computer (a browser on
+ * localhost, the CLI, a VS Code chat); runs from other machines get none. The environment for a
+ * run started here (`here`) or from elsewhere.
+ */
+export function envForRun(env: Env, here: boolean): Env {
+  const v = env.SYMPHONY_SIGNINS?.trim().toLowerCase();
+  return v === 'here' && !here ? { ...env, SYMPHONY_SIGNINS: 'off' } : env;
+}
+
+/** Whether a request comes from this computer (its loopback address). */
+export function fromThisComputer(remoteAddress: string | undefined): boolean {
+  if (!remoteAddress) return false;
+  const a = remoteAddress.replace(/^::ffff:/, '');
+  return a === '::1' || a === '127.0.0.1' || a.startsWith('127.');
+}
+
 let empty: string | undefined;
 /** One empty folder per process: where gh and az look for a sign-in, and find none. */
 function emptyConfigDir(): string {
