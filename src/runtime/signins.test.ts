@@ -23,8 +23,8 @@ describe('sign-ins off: nothing a step runs acts as the host', () => {
     expect(env.PATH).toBe('/bin');
     expect(env.HOME).toBe('/h');
     for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK']) expect(env[k]).toBeUndefined();
-    expect(env.GH_CONFIG_DIR).toBe('/tmp/empty/gh');
-    expect(env.AZURE_CONFIG_DIR).toBe('/tmp/empty/azure');
+    expect(env.GH_CONFIG_DIR).toBe(join('/tmp/empty', 'gh'));
+    expect(env.AZURE_CONFIG_DIR).toBe(join('/tmp/empty', 'azure'));
   });
 
   it('git has no credential helper, after any it already had', () => {
