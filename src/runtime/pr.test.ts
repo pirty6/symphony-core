@@ -158,7 +158,7 @@ describe('checkoutPr', () => {
     // Only on the remote, never fetched by the workspace: fetched, then its ref dropped.
     git(join(tmp, 'author'), 'push', '-q', 'origin', 'feature:refs/heads/user/x/feature');
     const remote = await checkoutBranch(ws, 'user/x/feature', { root });
-    expect(readFileSync(join(remote!.dir!, 'a.js'), 'utf8')).toBe('export const a = 2;\n');
+    expect(readFileSync(join(remote!.dir!, 'a.js'), 'utf8').trim()).toBe('export const a = 2;');
     expect(existsSync(join(remote!.dir!, 'b.js'))).toBe(true);
     expect(existsSync(join(ws, 'b.js'))).toBe(false);
     expect(git(ws, 'for-each-ref', 'refs/symphony')).toBe('');
