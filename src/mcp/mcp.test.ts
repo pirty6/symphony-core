@@ -67,6 +67,7 @@ describe('Symphony MCP server', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).toSorted()).toEqual([
       'answer_approval',
+      'answer_overtime',
       'answer_stuck',
       'get_run',
       'list_patterns',

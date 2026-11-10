@@ -40,7 +40,7 @@ argument-hint: "What do you want done? e.g. find out why login fails on CI, then
 
 # Symphony maestro (/maestrov2)
 
-Run the Symphony maestro on the user's request, in this workspace, with the symphony MCP server's tools (maestro, run_pattern, get_run, answer_approval, answer_stuck, stop_run, list_patterns). If the user gave no request, ask what they want done before starting. If those tools are not available, tell the user to run \`npm run install:vscode\` in their symphony-core checkout and reload the window.
+Run the Symphony maestro on the user's request, in this workspace, with the symphony MCP server's tools (maestro, run_pattern, get_run, answer_approval, answer_stuck, answer_overtime, set_auto_approve, stop_run, list_patterns). If the user gave no request, ask what they want done before starting. If those tools are not available, tell the user to run \`npm run install:vscode\` in their symphony-core checkout and reload the window.
 
 ${body}
 `;
