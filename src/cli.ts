@@ -269,7 +269,8 @@ async function play(
   const pr = isolation
     ? undefined
     : await prForRun(pattern, score.context, cwd, { provider: o.providerName });
-  if (pr && 'error' in pr.info) console.log(c.yellow(`PR ${pr.info.number}: ${pr.info.error}`));
+  if (pr?.info && 'error' in pr.info)
+    console.log(c.yellow(`PR ${pr.info.number}: ${pr.info.error}`));
   const dir = isolation?.dir ?? pr?.dir ?? cwd;
   if (dir !== cwd) console.log(c.dim(`playing in its own worktree: ${dir}`));
   // Until the run owns the PR checkout (cleanup), a failure here must remove it.
@@ -281,7 +282,7 @@ async function play(
       toolContext: {
         ...extras.toolContext,
         ...(dir !== cwd ? { workspace: dir, memoryRoot: extras.toolContext.workspace } : {}),
-        ...(pr ? { pr: pr.info } : {}),
+        ...(pr?.info ? { pr: pr.info } : {}),
       },
       provider: makeProvider({
         provider: o.providerName,
