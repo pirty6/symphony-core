@@ -52,7 +52,7 @@ function failure(e: unknown) {
   };
 }
 
-const NEXT = `Then call get_run with this run_id until it settles. When waitingFor is set, show it to the user and relay their decision (answer_approval or answer_stuck). When outcome is set, show result.`;
+const NEXT = `Then call get_run with this run_id until it settles. When waitingFor is set, show it to the user and relay their decision (answer_approval, answer_stuck or answer_overtime). When outcome is set, show result.`;
 
 /** Resolve the folder to work in: SYMPHONY_WORKSPACE, the client's first root, or cwd. */
 export async function clientWorkspace(server: McpServer, env: NodeJS.ProcessEnv): Promise<string> {
@@ -72,7 +72,7 @@ export async function clientWorkspace(server: McpServer, env: NodeJS.ProcessEnv)
 export function createSymphonyServer(runs: RunManager): McpServer {
   const server = new McpServer(SERVER_INFO, {
     instructions:
-      'Symphony runs deterministic, auditable AI pipelines. Start with maestro (any request) or run_pattern, then poll get_run. Never invent approvals: ask the user, then answer_approval / answer_stuck.',
+      'Symphony runs deterministic, auditable AI pipelines. Start with maestro (any request) or run_pattern, then poll get_run. Never invent approvals: ask the user, then answer_approval / answer_stuck / answer_overtime.',
   });
 
   server.registerTool(
@@ -183,7 +183,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
     {
       title: 'Check a Symphony run',
       description:
-        'Wait (up to wait_seconds) until the run needs a human or ends, then report: status, the step it is on, recent events, waitingFor (an approval with what to show, or a stuck step with why), and when it ended, outcome and result (Markdown). Follows hand-offs (maestro -> composed score -> chained patterns): runId is the latest run.',
+        'Wait (up to wait_seconds) until the run needs a human or ends, then report: status, the step it is on, recent events, waitingFor (an approval with what to show, a stuck step with why, or a step over its time limit), and when it ended, outcome and result (Markdown). Follows hand-offs (maestro -> composed score -> chained patterns): runId is the latest run.',
       inputSchema: {
         run_id: z.string(),
         wait_seconds: z.number().int().min(0).max(MAX_WAIT).optional().describe('Default 30'),
@@ -246,6 +246,23 @@ export function createSymphonyServer(runs: RunManager): McpServer {
             ...(a.complexity ? { complexity: a.complexity as Complexity } : {}),
           }),
         );
+      } catch (e) {
+        return failure(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'answer_overtime',
+    {
+      title: 'Keep waiting for a long step, or stop it',
+      description:
+        "A step reached its time limit and is still working (waitingFor.kind = 'overtime'). Relay the user's decision: wait (asked again after another limit) or stop_step (an answer it already submitted is kept; with none, it is retried). Auto-approved runs never ask: the step is stopped.",
+      inputSchema: { run_id: z.string(), action: z.enum(['wait', 'stop_step']) },
+    },
+    async (a) => {
+      try {
+        return json(runs.answerOvertime(a.run_id, a.action === 'wait' ? 'wait' : 'stop'));
       } catch (e) {
         return failure(e);
       }

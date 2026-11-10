@@ -148,6 +148,13 @@ export type Waiting =
       readonly feedback: readonly string[];
       readonly attempts: number;
       readonly complexity: Complexity;
+    }
+  | {
+      readonly kind: 'overtime';
+      readonly step: string;
+      readonly message: string;
+      /** How long the step has run (minutes). */
+      readonly minutes: number;
     };
 
 export interface Usage {
@@ -255,6 +262,20 @@ export interface RunView {
 const ACTIVE = new Set(['running', 'paused', 'awaiting-approval']);
 /** How long stop_run waits for the current step to end before answering. */
 const STOP_WAIT_MS = 15_000;
+
+function overtimeWaiting(
+  over: { readonly nodeId: string; readonly afterMs: number },
+  score: ExecutableScore,
+): Waiting {
+  const minutes = Math.round(over.afterMs / 60_000);
+  const step = score.nodes.find((n) => n.id === over.nodeId)?.label ?? over.nodeId;
+  return {
+    kind: 'overtime',
+    step,
+    minutes,
+    message: `'${step}' has run ${minutes} min, its time limit, and is still working. Keep waiting (asked again after another limit), or stop the step: an answer it already submitted is kept; with none, it counts as a failed attempt and is retried.`,
+  };
+}
 
 function describe(e: EngineEvent): string | undefined {
   switch (e.type) {
@@ -416,6 +437,8 @@ export class RunManager {
           ? { repertoire: await loadRepertoire(runsDir, score.id) }
           : {}),
         autoApprove: req.autoApprove === true,
+        // Someone relays the run: at the time limit, ask them rather than cut the step off.
+        askOnOvertime: req.autoApprove !== true,
         ...(providerName === 'copilot'
           ? {
               envHash: () => gitFingerprint(dir),
@@ -496,7 +519,9 @@ export class RunManager {
               attempts: pause.attempts,
               complexity: pause.complexity,
             }
-          : undefined;
+          : run.overtime
+            ? overtimeWaiting(run.overtime, run.score)
+            : undefined;
     const ended = !ACTIVE.has(run.status) && engine !== undefined && engine.kind !== 'running';
     const result = ended ? resultText(run.score, engine.state) : '';
     const active = pause?.nodeId ?? engine?.cursor;
@@ -550,7 +575,12 @@ export class RunManager {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(finish, Math.max(0, deadline - Date.now()));
         const off = managed.run.subscribe((m) => {
-          if (m.type === 'next' || (m.type === 'status' && m.status !== 'running')) finish();
+          if (
+            m.type === 'next' ||
+            (m.type === 'overtime' && m.state === 'asking') ||
+            (m.type === 'status' && m.status !== 'running')
+          )
+            finish();
         });
         function finish() {
           clearTimeout(timer);
@@ -597,6 +627,14 @@ export class RunManager {
   ): RunView {
     const { managed, id } = this.latest(runId);
     const error = managed.run.answerRecovery({ ...answer, by: 'mcp' });
+    if (error) throw new Error(error);
+    return this.view(id);
+  }
+
+  /** A step over its time limit (waitingFor.kind = 'overtime'): keep waiting, or stop the step. */
+  answerOvertime(runId: string, action: 'wait' | 'stop'): RunView {
+    const { managed, id } = this.latest(runId);
+    const error = managed.run.answerOvertime(action);
     if (error) throw new Error(error);
     return this.view(id);
   }
