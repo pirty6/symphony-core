@@ -213,7 +213,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
     },
     async (a) => {
       try {
-        const view: RunView = runs.answerApproval(a.run_id, {
+        const view: RunView = await runs.answerApproval(a.run_id, {
           approved: a.approved,
           ...(a.updates ? { updates: a.updates } : {}),
         });
@@ -240,7 +240,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
     async (a) => {
       try {
         return json(
-          runs.answerStuck(a.run_id, {
+          await runs.answerStuck(a.run_id, {
             action: a.action,
             ...(a.hint ? { hint: a.hint } : {}),
             ...(a.complexity ? { complexity: a.complexity as Complexity } : {}),
@@ -262,7 +262,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
     },
     async (a) => {
       try {
-        return json(runs.answerOvertime(a.run_id, a.action === 'wait' ? 'wait' : 'stop'));
+        return json(await runs.answerOvertime(a.run_id, a.action === 'wait' ? 'wait' : 'stop'));
       } catch (e) {
         return failure(e);
       }
@@ -279,7 +279,7 @@ export function createSymphonyServer(runs: RunManager): McpServer {
     },
     async (a) => {
       try {
-        return json(runs.setAutoApprove(a.run_id, a.on));
+        return json(await runs.setAutoApprove(a.run_id, a.on));
       } catch (e) {
         return failure(e);
       }

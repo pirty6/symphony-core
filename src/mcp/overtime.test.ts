@@ -77,12 +77,12 @@ describe('a step over its time limit, from chat', () => {
     expect(asked.waitingFor).toMatchObject({ kind: 'overtime', minutes: 0 });
     expect(asked.status).toBe('running');
     // Waiting: asked again after another limit, the step never cut off meanwhile.
-    expect(runs.answerOvertime(id, 'wait').waitingFor).toBeUndefined();
+    expect((await runs.answerOvertime(id, 'wait')).waitingFor).toBeUndefined();
     expect((await settle(runs, id)).waitingFor).toMatchObject({ kind: 'overtime' });
-    runs.answerOvertime(id, 'stop');
+    await runs.answerOvertime(id, 'stop');
     const next = await settle(runs, id);
     expect(next.waitingFor?.kind).not.toBe('overtime');
-    expect(() => runs.answerOvertime(id, 'wait')).toThrow('no step is over its time limit');
+    await expect(runs.answerOvertime(id, 'wait')).rejects.toThrow('no step is over its time limit');
     await runs.stop(id);
   });
 

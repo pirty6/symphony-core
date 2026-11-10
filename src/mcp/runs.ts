@@ -36,13 +36,22 @@ import type {
 import { libraryPatterns } from '../patterns/index.js';
 import { chainNext } from '../runtime/chain.js';
 import { concertNext } from '../runtime/concert.js';
-import { Run } from '../runtime/driver.js';
-import { liveRoot, publishLive } from '../runtime/live.js';
+import { Run, type RunOptions } from '../runtime/driver.js';
+import {
+  claimLive,
+  liveRoot,
+  noteLive,
+  publishLive,
+  readLiveEntry,
+  type LiveResume,
+} from '../runtime/live.js';
+import { restoreEngine } from '../core/replay.js';
 import type { Provider } from '../runtime/provider.js';
 import { envConfig, makeProvider, runtimeExtras, type ProviderName } from '../runtime/factory.js';
 import {
   autoPrune,
   gitFingerprint,
+  loadRun,
   runScratch,
   loadPatternFiles,
   loadRepertoire,
@@ -129,6 +138,8 @@ interface Managed {
   next?: string;
   /** Why a hand-off did not start (e.g. the composed score edits files over HTTP). */
   blocked?: string;
+  /** Picked up from its last checkpoint after the server that played it ended. */
+  resumed?: string;
   savedTo?: string;
   /** The approval a get_run first returned, and when: the gate wait splits there. */
   shown?: { readonly pauseId: string; readonly at: string };
@@ -262,6 +273,8 @@ export interface RunView {
 const ACTIVE = new Set(['running', 'paused', 'awaiting-approval']);
 /** How long stop_run waits for the current step to end before answering. */
 const STOP_WAIT_MS = 15_000;
+/** Hand-offs followed to find where a chain is now (a maestro, its run, a chain, resumes). */
+const MAX_HOPS = 20;
 
 function overtimeWaiting(
   over: { readonly nodeId: string; readonly afterMs: number },
@@ -306,6 +319,9 @@ function describe(e: EngineEvent): string | undefined {
 
 export class RunManager {
   private readonly runs = new Map<string, Managed>();
+  /** Runs another server played, by the id the chat knows, to the run that resumed them. */
+  private readonly aliases = new Map<string, string>();
+  private readonly adopting = new Map<string, Promise<void>>();
   private readonly opts: RunManagerOptions;
   constructor(opts: RunManagerOptions) {
     this.opts = opts;
@@ -368,6 +384,7 @@ export class RunManager {
     pattern: Pattern,
     req: StartRequest,
     chain: readonly ChainStep[],
+    restore?: RunOptions['restore'],
   ): Promise<string> {
     const workspace = req.workspace ?? (await this.opts.workspace());
     const runsDir = runsDirFor(workspace, this.opts.env);
@@ -410,7 +427,10 @@ export class RunManager {
         { ...req, autoApprove: managed?.run.autoApproves ?? req.autoApprove === true },
         rest,
       );
-      if (managed) managed.next = id;
+      if (managed) {
+        managed.next = id;
+        await this.note(managed.run.id, { next: id });
+      }
       return id;
     };
     const next =
@@ -451,9 +471,13 @@ export class RunManager {
         checkpoint: true,
         onSave: async (r, how) => {
           const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true });
-          if (managed) managed.savedTo = file;
+          if (managed && managed.savedTo !== file) {
+            managed.savedTo = file;
+            void this.note(managed.run.id, { savedTo: file });
+          }
           return file;
         },
+        ...(restore ? { restore } : {}),
         ...(next ? { next } : {}),
       });
     } catch (e) {
@@ -469,20 +493,114 @@ export class RunManager {
       : undefined;
     // Published before it starts, so the studio sees it from its first message.
     await published;
+    await this.note(run.id, {
+      provider: providerName,
+      autoApprove: req.autoApprove === true,
+      chain,
+    });
     void run.start().finally(() => provider.dispose?.());
     return run.id;
   }
 
   private get(runId: string): Managed {
-    const m = this.runs.get(runId);
+    const m = this.runs.get(this.aliases.get(runId) ?? runId);
     if (!m) throw new Error(`unknown run '${runId}'`);
     return m;
   }
 
+  private note(id: string, patch: LiveResume): Promise<void> {
+    const root = liveRoot(this.opts.env);
+    return root ? noteLive(root, id, patch) : Promise.resolve();
+  }
+
+  /**
+   * A run this server does not play, by an id a chat knows: when the server that played it ended
+   * mid-run (a restarted chat ends its MCP server), resume it from its last checkpoint here.
+   */
+  private async ensure(runId: string): Promise<void> {
+    if (this.runs.has(runId) || this.aliases.has(runId)) return;
+    const pending =
+      this.adopting.get(runId) ?? this.adopt(runId).finally(() => this.adopting.delete(runId));
+    this.adopting.set(runId, pending);
+    await pending;
+  }
+
+  private async adopt(runId: string): Promise<void> {
+    const root = liveRoot(this.opts.env);
+    if (!root) return;
+    let id = runId;
+    let entry = await readLiveEntry(root, id);
+    // Follow hand-offs (and earlier resumes) to the run the chain is on now.
+    for (let hops = 0; entry?.resume.next && hops < MAX_HOPS; hops++) {
+      const next = entry.resume.next;
+      if (this.runs.has(next)) {
+        this.aliases.set(runId, next);
+        return;
+      }
+      id = next;
+      entry = await readLiveEntry(root, id);
+    }
+    if (!entry) return;
+    const record = entry.resume.savedTo ? `; its record: ${entry.resume.savedTo}` : '';
+    if (entry.playing)
+      throw new Error(
+        `run '${runId}' is played by another Symphony process (pid ${entry.meta.pid}), e.g. another chat's: follow it there or in the studio`,
+      );
+    if (entry.status === 'done' || entry.status === 'failed')
+      throw new Error(`run '${runId}' ended (${entry.status}) before this server started${record}`);
+    if (!this.opts.editsAllowed)
+      throw new Error(
+        `run '${runId}' stopped when the Symphony server playing it ended; only a local chat can resume it${record}`,
+      );
+    const file = entry.resume.savedTo;
+    if (!file)
+      throw new Error(
+        `run '${runId}' stopped when the Symphony server playing it ended, before its first checkpoint: start it again`,
+      );
+    if (!(await claimLive(root, id)))
+      throw new Error(`run '${runId}' is being resumed by another Symphony process`);
+    const { run: saved, issues } = await loadRun(file);
+    if (issues.length) throw new Error(`cannot resume run '${runId}': ${issues.join('; ')}`);
+    const perf = saved.performance;
+    if (perf.outcome !== 'in-progress' && perf.outcome !== 'cancelled')
+      throw new Error(`run '${runId}' ended (${perf.outcome})${record}`);
+    const throughStep = perf.steps.at(-1)?.step ?? 0;
+    const pattern = (await this.library()).find((p) => p.name === saved.score.pattern) ?? {
+      name: saved.score.pattern,
+      description: saved.score.description,
+      requiredContext: [],
+      state: saved.score.state,
+      nodes: saved.score.nodes,
+      edges: saved.score.edges,
+      start: saved.score.start,
+    };
+    const resumed = await this.launch(
+      saved.score,
+      pattern,
+      {
+        pattern: pattern.name,
+        provider: (entry.resume.provider as ProviderName | undefined) ?? 'copilot',
+        autoApprove: entry.resume.autoApprove === true,
+        workspace: entry.meta.workspace,
+      },
+      entry.resume.chain ?? [],
+      {
+        result: restoreEngine(saved.score, perf),
+        basedOn: { kind: 'resumed', from: file, throughStep },
+      },
+    );
+    await this.note(id, { next: resumed });
+    this.aliases.set(runId, resumed);
+    this.aliases.set(id, resumed);
+    const managed = this.runs.get(resumed);
+    if (managed)
+      managed.resumed = `The Symphony server playing this run ended (e.g. the chat restarted it); resumed here from its last checkpoint: steps 1..${throughStep} replayed from the record, the rest played again.`;
+  }
+
   /** Follow hand-offs to the latest run of a chain. */
   private latest(runId: string): { managed: Managed; id: string; chain: string[] } {
-    const chain = [runId];
-    let id = runId;
+    let id = this.aliases.get(runId) ?? runId;
+    const chain = [id];
     let managed = this.get(id);
     while (managed.next && this.runs.has(managed.next)) {
       id = managed.next;
@@ -542,7 +660,7 @@ export class RunManager {
       ...(ended && engine.reason ? { reason: engine.reason } : {}),
       ...(result ? { result } : {}),
       ...(managed.savedTo ? { savedTo: managed.savedTo } : {}),
-      ...(managed.blocked ? { note: managed.blocked } : {}),
+      ...(managed.blocked || managed.resumed ? { note: managed.blocked ?? managed.resumed } : {}),
       ...(used.calls > 0 ? { tokens: formatUsage(used), usage: this.usage(engine, chain) } : {}),
       ...(edits ? { edits: describeEdits(edits) } : {}),
     };
@@ -569,6 +687,7 @@ export class RunManager {
    * `seconds` pass; then return its view. Short waits keep each tool call quick.
    */
   async wait(runId: string, seconds: number): Promise<RunView> {
+    await this.ensure(runId);
     const deadline = Date.now() + Math.max(0, seconds) * 1000;
     while (!this.settled(runId) && Date.now() < deadline) {
       const { managed } = this.latest(runId);
@@ -597,10 +716,11 @@ export class RunManager {
     return v;
   }
 
-  answerApproval(
+  async answerApproval(
     runId: string,
     answer: { approved: boolean; updates?: Record<string, unknown> },
-  ): RunView {
+  ): Promise<RunView> {
+    await this.ensure(runId);
     const { managed, id } = this.latest(runId);
     const pause = managed.run.engine?.pause;
     // Fields left out are empty, as in the studio (e.g. the maestro's "empty feedback = go").
@@ -621,10 +741,11 @@ export class RunManager {
     return this.view(id);
   }
 
-  answerStuck(
+  async answerStuck(
     runId: string,
     answer: { action: 'retry' | 'stop'; hint?: string; complexity?: Complexity },
-  ): RunView {
+  ): Promise<RunView> {
+    await this.ensure(runId);
     const { managed, id } = this.latest(runId);
     const error = managed.run.answerRecovery({ ...answer, by: 'mcp' });
     if (error) throw new Error(error);
@@ -632,7 +753,8 @@ export class RunManager {
   }
 
   /** A step over its time limit (waitingFor.kind = 'overtime'): keep waiting, or stop the step. */
-  answerOvertime(runId: string, action: 'wait' | 'stop'): RunView {
+  async answerOvertime(runId: string, action: 'wait' | 'stop'): Promise<RunView> {
+    await this.ensure(runId);
     const { managed, id } = this.latest(runId);
     const error = managed.run.answerOvertime(action);
     if (error) throw new Error(error);
@@ -648,9 +770,11 @@ export class RunManager {
    * Approvals answer themselves from now on (the one waiting included), in this run and the
    * runs it hands on to; or ask again. Stuck steps still ask. Any run id of a chain works.
    */
-  setAutoApprove(runId: string, on: boolean): RunView {
+  async setAutoApprove(runId: string, on: boolean): Promise<RunView> {
+    await this.ensure(runId);
     const { managed, id } = this.latest(runId);
     managed.run.setAutoApprove(on);
+    await this.note(id, { autoApprove: on });
     return this.view(id);
   }
 
