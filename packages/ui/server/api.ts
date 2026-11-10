@@ -268,7 +268,7 @@ export function createApi(opts: ApiOptions) {
     const toolContext = {
       ...shared,
       ...(dir !== workspace ? { workspace: dir, memoryRoot: shared.workspace } : {}),
-      ...(pr ? { pr: pr.info } : {}),
+      ...(pr?.info ? { pr: pr.info } : {}),
     }
     const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir, settings.here)
     const id = `run-${Date.now().toString(36)}-${(counter++).toString(36)}`
