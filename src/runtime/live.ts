@@ -5,7 +5,10 @@
  *
  * - meta.json: what the run is (its score) and which process plays it;
  * - messages.jsonl: every message of the run, in order, as the studio streams them;
- * - commands.jsonl: what the studio asks (approve, pause, stop…), applied by the playing process.
+ * - commands.jsonl: what the studio asks (approve, pause, stop…), applied by the playing process;
+ * - resume.json: how another process can pick the run up if this one ends mid-run (a chat's MCP
+ *   server is restarted, e.g. when the chat changes model): its saved file, and the run that
+ *   continued it (a hand-off, or this run resumed elsewhere).
  *
  * The process that plays the run stays its only owner: the studio never runs it, it only reads
  * and asks.
@@ -14,6 +17,7 @@ import { scrubbingOn, scrubValue, StreamScrubber } from '../core/scrub.js';
 import { appendFile, mkdir, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { ChainStep } from '../core/chain.js';
 import type { ExecutableScore } from '../core/types.js';
 import type { HumanAnswer, RecoveryAnswer, Run, RunMessage, RunStatus } from './driver.js';
 
@@ -184,6 +188,76 @@ const alive = (pid: number): boolean => {
     return (e as NodeJS.ErrnoException).code === 'EPERM';
   }
 };
+
+/** What another process needs to pick a run up: written by the process that plays it. */
+export interface LiveResume {
+  readonly savedTo?: string;
+  /** The run that continued this one: its hand-off, or this run resumed by another process. */
+  readonly next?: string;
+  readonly provider?: string;
+  readonly autoApprove?: boolean;
+  readonly chain?: readonly ChainStep[];
+}
+
+export interface LiveEntry {
+  readonly meta: LiveMeta;
+  readonly status?: RunStatus;
+  readonly resume: LiveResume;
+  /** Its process is still running. */
+  readonly playing: boolean;
+}
+
+const RESUME_FILE = 'resume.json';
+const CLAIM_FILE = 'claim';
+/** Run ids as Run makes them: never a path. */
+const RUN_ID = /^run-[a-z0-9]+-[a-z0-9]+$/;
+const noting = new Map<string, Promise<void>>();
+
+/** Add to a run's resume.json; one write at a time per run. */
+export function noteLive(root: string, id: string, patch: LiveResume): Promise<void> {
+  const file = join(root, id, RESUME_FILE);
+  const done = (noting.get(file) ?? Promise.resolve())
+    .then(async () => {
+      const now = parse<LiveResume>(await readFile(file, 'utf8').catch(() => '')) ?? {};
+      await writeFile(file, JSON.stringify({ ...now, ...patch }));
+    })
+    .catch(() => undefined);
+  noting.set(file, done);
+  return done;
+}
+
+/** A published run as another process sees it; undefined when there is none by that id. */
+export async function readLiveEntry(root: string, id: string): Promise<LiveEntry | undefined> {
+  if (!RUN_ID.test(id)) return undefined;
+  const dir = join(root, id);
+  const meta = parse<LiveMeta>(await readFile(join(dir, 'meta.json'), 'utf8').catch(() => ''));
+  if (!meta) return undefined;
+  const status = parse<{ status?: RunStatus }>(
+    await readFile(join(dir, STATUS_FILE), 'utf8').catch(() => ''),
+  )?.status;
+  const resume = parse<LiveResume>(await readFile(join(dir, RESUME_FILE), 'utf8').catch(() => ''));
+  return {
+    meta,
+    ...(status ? { status } : {}),
+    resume: resume ?? {},
+    playing: alive(meta.pid),
+  };
+}
+
+/** Take a run whose process ended, to resume it: false when another live process has it. */
+export async function claimLive(root: string, id: string): Promise<boolean> {
+  const file = join(root, id, CLAIM_FILE);
+  const mine = String(process.pid);
+  try {
+    await writeFile(file, mine, { flag: 'wx' });
+    return true;
+  } catch {
+    const holder = Number(await readFile(file, 'utf8').catch(() => ''));
+    if (holder > 0 && holder !== process.pid && alive(holder)) return false;
+    await writeFile(file, mine);
+    return true;
+  }
+}
 
 /** Apply one of the studio's commands to the run this process plays. */
 function apply(run: Run, c: LiveCommand): void {
