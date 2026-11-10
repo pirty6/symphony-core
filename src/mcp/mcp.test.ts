@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -261,6 +261,47 @@ describe('Symphony MCP server', () => {
     expect(
       (body as { name: string; available: boolean }[]).find((p) => p.name === 'fix')!.available,
     ).toBe(false);
+  });
+});
+
+/** The id of a process that has ended. */
+const endedPid = () => spawnSync(process.execPath, ['-e', '']).pid;
+
+describe('a chat whose Symphony server was restarted', () => {
+  it('picks its run up from the last checkpoint, by the id it knows', async () => {
+    const first = await connect(manager());
+    const { body } = await call(first, 'run_pattern', {
+      pattern: 'fix',
+      inputs: { issue: 'Page 2 repeats the last item of page 1' },
+      provider: 'scripted',
+    });
+    const id = body.run_id as string;
+    const waiting = await settle(first, id);
+    expect(waiting.waitingFor).toMatchObject({ kind: 'approval', step: 'Approve plan' });
+    // The server ends (a restarted chat ends it): its process is gone, the run was mid-way.
+    await call(first, 'stop_run', { run_id: id });
+    const metaFile = join(live, id, 'meta.json');
+    const meta = JSON.parse(readFileSync(metaFile, 'utf8')) as { pid: number };
+    writeFileSync(metaFile, JSON.stringify({ ...meta, pid: endedPid() }));
+    const second = await connect(manager());
+    const resumed = await settle(second, id);
+    expect(resumed.runId).not.toBe(id);
+    expect(resumed.note).toMatch(/resumed here from its last checkpoint/);
+    expect(resumed.waitingFor).toMatchObject({ kind: 'approval', step: 'Approve plan' });
+    const resumeFile = JSON.parse(readFileSync(join(live, id, 'resume.json'), 'utf8')) as object;
+    expect(resumeFile).toMatchObject({ next: resumed.runId, provider: 'scripted' });
+    // The chat goes on with the id it knows.
+    await call(second, 'answer_approval', { run_id: id, approved: true });
+    expect(await settle(second, id)).toMatchObject({ outcome: 'success' });
+    // Another server never plays it twice; unknown ids and paths are unknown runs.
+    const third = await connect(manager());
+    const twice = await call(third, 'get_run', { run_id: id, wait_seconds: 0 });
+    expect(twice.isError).toBe(true);
+    expect(twice.body).toMatch(/played by another Symphony process/);
+    for (const unknown of ['run-zzz-0', '../home']) {
+      const r = await call(third, 'get_run', { run_id: unknown, wait_seconds: 0 });
+      expect(r.body).toMatch(/unknown run/);
+    }
   });
 });
 
