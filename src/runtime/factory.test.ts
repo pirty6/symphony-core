@@ -92,6 +92,9 @@ describe('a local model, and no sign-ins', () => {
       ).opts.localModel;
     expect(served('local')).toEqual({ baseUrl: 'http://tt:8000/v1', model: 'q' });
     expect(served('copilot')).toBeUndefined();
+    // Recorded as such: a resumed run plays on the same one, and answers replay only on it.
+    expect(makeProvider({ provider: 'local', ...envConfig(env) }).name).toBe('local');
+    expect(makeProvider({ provider: 'copilot', ...envConfig(env) }).name).toBe('copilot');
     expect(() => makeProvider({ provider: 'local' })).toThrow(/SYMPHONY_MODEL_URL/);
     // Unchosen: the model server when there is one, else Copilot.
     expect(defaultProvider(env)).toBe('local');

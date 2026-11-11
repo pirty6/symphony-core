@@ -518,7 +518,10 @@ const MAX_SUBMIT_CORRECTIONS = 2;
 const abortError = () => new DOMException('aborted', 'AbortError');
 
 export class CopilotProvider implements Provider {
-  readonly name = 'copilot';
+  /** 'local' on your model server: its recorded answers are never replayed as Copilot's. */
+  get name(): 'copilot' | 'local' {
+    return this.opts.localModel ? 'local' : 'copilot';
+  }
   private readonly opts: CopilotProviderOptions;
   private client: ClientLike | undefined;
   private starting: Promise<ClientLike> | undefined;

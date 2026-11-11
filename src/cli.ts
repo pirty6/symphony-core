@@ -72,7 +72,9 @@ import { Run, type NextPerformance, type RunMessage, type RunOptions } from './r
 import { draftPattern } from './runtime/drafting.js';
 import {
   envConfig,
+  defaultProvider,
   isProviderName,
+  playsLive,
   makeProvider,
   runtimeExtras,
   type ProviderName,
@@ -262,9 +264,7 @@ async function play(
   const demo = pattern.demo ?? (await allPatterns(cwd)).find((p) => p.name === pattern.name)?.demo;
   // A real AI editing files plays in its own worktree; its edits come back when it ends.
   const isolation =
-    o.providerName === 'copilot' && editsFiles(score)
-      ? await isolate(cwd, score.pattern)
-      : undefined;
+    playsLive(o.providerName) && editsFiles(score) ? await isolate(cwd, score.pattern) : undefined;
   // A run that reads a PR plays on the PR's own code, checked out apart (runtime/pr.ts).
   const pr = isolation
     ? undefined
@@ -299,7 +299,7 @@ async function play(
       autoApprove: o.autoApprove,
       stepMode: o.step,
       breakpoints: o.breakpoints,
-      ...(o.providerName === 'copilot'
+      ...(playsLive(o.providerName)
         ? {
             envHash: () => gitFingerprint(dir),
             scratch: await runScratch(cwd),
@@ -558,7 +558,7 @@ async function scoreFromArgs(
     return 1;
   }
   if (!isProviderName(values.provider)) {
-    console.error(`--provider must be scripted or copilot`);
+    console.error(`--provider must be scripted, copilot or local`);
     return 1;
   }
   const { own } = splitContext(values.context, thenList(values.then));
@@ -621,7 +621,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
   const args = parseArgs({
     args: argv,
     options: {
-      provider: { type: 'string', default: 'copilot' },
+      provider: { type: 'string' },
       model: { type: 'string' },
       task: { type: 'string' },
       repeat: { type: 'string', short: 'n', default: '1' },
@@ -632,9 +632,9 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
       complexity: { type: 'string' },
     },
   });
-  const providerName = args.values.provider;
+  const providerName = args.values.provider ?? defaultProvider(process.env);
   if (!isProviderName(providerName)) {
-    console.error('--provider must be scripted or copilot');
+    console.error('--provider must be scripted, copilot or local');
     return 1;
   }
   const wanted = args.values.task?.split(',').map((t) => t.trim());
@@ -781,10 +781,13 @@ async function cmdRehearse(argv: string[], cwd: string): Promise<number> {
 
 /** The provider a saved run was played with, from its AI transcripts. */
 function recordedProvider(run: SavedRun): ProviderName {
-  const live = run.performance.steps.some(
-    (s) => s.transcript && s.transcript.provider !== 'scripted' && !s.transcript.fromRepertoire,
+  const live = run.performance.steps.flatMap((s) =>
+    s.transcript && s.transcript.provider !== 'scripted' && !s.transcript.fromRepertoire
+      ? [s.transcript.provider]
+      : [],
   );
-  return live ? 'copilot' : 'scripted';
+  if (live.length === 0) return 'scripted';
+  return live.includes('local') ? 'local' : 'copilot';
 }
 
 async function cmdContinue(
@@ -806,7 +809,7 @@ async function cmdContinue(
   const usage = kind === 'resumed' ? 'resume <run.json>' : 'fork <run.json> --at <step>';
   if (!file || (kind === 'forked' && values.at === undefined)) {
     console.error(
-      `usage: symphony ${usage} [--provider scripted|copilot] [--model id] [--auto-approve]`,
+      `usage: symphony ${usage} [--provider scripted|copilot|local] [--model id] [--auto-approve]`,
     );
     return 1;
   }
@@ -832,7 +835,7 @@ async function cmdContinue(
   const throughStep = kind === 'forked' ? at - 1 : last;
   const provider = values.provider ?? recordedProvider(run);
   if (!isProviderName(provider)) {
-    console.error('--provider must be scripted or copilot');
+    console.error('--provider must be scripted, copilot or local');
     return 1;
   }
   let result;
@@ -893,7 +896,7 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
   const request = positionals.join(' ').trim();
   if (!request || !isProviderName(values.provider)) {
     console.error(
-      'usage: symphony maestro "<what you want done>" [--provider copilot] [--complexity 1-4] [-i classical|cool|swing|bebop|free]',
+      'usage: symphony maestro "<what you want done>" [--provider copilot|local] [--complexity 1-4] [-i classical|cool|swing|bebop|free]',
     );
     return 1;
   }
@@ -982,7 +985,7 @@ async function cmdDraft(argv: string[], cwd: string): Promise<number> {
   const request = positionals.join(' ');
   if (!request || !isProviderName(values.provider)) {
     console.error(
-      'usage: symphony draft "<what the flow should do>" [--provider copilot] [--save]',
+      'usage: symphony draft "<what the flow should do>" [--provider copilot|local] [--save]',
     );
     return 1;
   }
@@ -1232,7 +1235,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   maestro "<request>"          compose the right score (debate by complexity), then perform it
       --compose-only  --save (write the composed score to src/patterns/drafts)
   run <pattern>                run in the terminal
-      --goal "..."  -c key=value  --provider scripted|copilot  --model <id>
+      --goal "..."  -c key=value  --provider scripted|copilot|local  --model <id>
       --complexity 1-4  -i classical|cool|swing|bebop|free (or 0-4)
       --auto-approve  --step  --break <nodeId>  --no-save
   draft "<request>"            AI drafts a pattern (--provider copilot, --save)
@@ -1245,7 +1248,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       (takes the same options as run; approvals are auto-approved)
   resume <run.json>            continue an interrupted or stopped run from its last checkpoint
   fork <run.json> --at <step>  keep steps before <step>, play the rest again as a new run
-      --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
+      --provider scripted|copilot|local (default: the one the run used)  --model <id>  --auto-approve
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
   where [runs|evals|memory]    where this workspace's saved runs, memory and reports are kept (outside it)
   eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time
