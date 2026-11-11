@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Markdown } from '../lib/markdown'
-import { resultMarkdown, type RunResult } from '../lib/model'
+import { ENDED_HEADING, resultMarkdown, type RunResult } from '../lib/model'
 
 function Value({ value }: { value: unknown }) {
   if (typeof value === 'string') return value.trim() ? <Markdown text={value} /> : <p className="muted">empty</p>
@@ -13,6 +13,12 @@ function Value({ value }: { value: unknown }) {
 function Sections({ result }: { result: RunResult }) {
   return (
     <>
+      {result.ended && (
+        <section className="result-section result-ended" data-testid="result-ended">
+          <h4>{ENDED_HEADING}</h4>
+          <p>{result.ended}</p>
+        </section>
+      )}
       {result.keys.map((k) => (
         <section key={k} className="result-section" data-testid={`result-${k}`}>
           <h4>{k}</h4>
@@ -25,7 +31,7 @@ function Sections({ result }: { result: RunResult }) {
 
 /** Preview in the inspector: the delivered values, clipped, with a way to read them in full. */
 export function ResultPreview({ result, onOpen }: { result: RunResult; onOpen: () => void }) {
-  if (result.keys.length === 0) return null
+  if (result.keys.length === 0 && !result.ended) return null
   return (
     <div className="result-preview" data-testid="result-preview">
       <div className="result-preview-body">

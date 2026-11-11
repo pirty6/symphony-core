@@ -195,6 +195,17 @@ describe('live run view', () => {
     expect(resultMarkdown({ keys: ['answer', 'open'], values: { answer: 'Yes.', open: ['a'] } }, 'run')).toBe(
       '# run\n\n## answer\n\nYes.\n\n## open\n\n- a\n',
     )
+    // A run that did not succeed says why first: its result fields may be empty.
+    expect(r.ended).toBeUndefined()
+    const stopped = runResult({
+      ...v,
+      frames: [...v.frames.slice(0, -1), { ...v.frames.at(-1)!, outcome: 'partial' }],
+      performance: { ...v.performance!, outcome: 'partial', reason: "'gatherContext' gave no valid response" },
+    })!
+    expect(stopped.ended).toBe("partial: 'gatherContext' gave no valid response")
+    expect(resultMarkdown({ keys: ['summary'], values: { summary: '' }, ended: 'partial: x' }, 'run')).toBe(
+      '# run\n\n## why it ended\n\npartial: x\n\n## summary\n\n\n',
+    )
   })
 
   it('folds messages into frames, streams and final state', async () => {
