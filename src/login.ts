@@ -6,21 +6,11 @@
 import 'dotenv/config';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { CopilotClient } from '@github/copilot-sdk';
+import { bundledCli } from './runtime/accounts.js';
 import { CopilotProvider } from './runtime/copilot-provider.js';
 import { envConfig } from './runtime/factory.js';
 
-/**
- * The Copilot CLI the SDK itself starts (so sign-in and runs always use the same one).
- * Throws the SDK's own error when no compatible CLI is installed.
- */
-export function bundledCli(): string {
-  const client = new CopilotClient({ useLoggedInUser: true }) as unknown as {
-    resolvedCliPath?: string;
-  };
-  if (!client.resolvedCliPath) throw new Error('the Copilot SDK did not report its CLI');
-  return client.resolvedCliPath;
-}
+export { bundledCli };
 
 async function main(): Promise<number> {
   const cli = bundledCli();
