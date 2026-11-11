@@ -107,9 +107,9 @@ export function withoutTokenVars(env: NodeJS.ProcessEnv): Record<string, string 
 }
 
 /** What to do when Copilot refuses the account that is signed in. */
-/** Sign-ins are off and no model server of your own is set: there is no model to run on. */
+/** Copilot was chosen where no sign-in may be used: say what to choose instead. */
 export const NO_SIGNINS_HELP =
-  'Sign-ins are off (SYMPHONY_SIGNINS=off), so Copilot, which runs as your GitHub account, is not used. Set SYMPHONY_MODEL_URL to your own model server, or use the offline demo.';
+  "Copilot runs as the GitHub account signed in on the computer that runs Symphony, and that account is not used here (SYMPHONY_SIGNINS is off, or 'here' and this run comes from another computer). Choose AI: Local (the model server, SYMPHONY_MODEL_URL) or the offline demo; to use your own Copilot, run Symphony on your computer.";
 
 export function refusedHelp(login?: string): string {
   return `Copilot refused the GitHub account signed in on this machine${login ? ` (${login})` : ''}. Check that it has Copilot (https://github.com/settings/copilot) and that your organization allows Copilot in the CLI, then run \`npm run login\` again. The offline demo (AI: Scripted) works without it.`;

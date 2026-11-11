@@ -44,7 +44,10 @@ import {
   effectiveTiers,
   envConfig,
   isProviderName,
+  localModelFrom,
   makeProvider,
+  NO_LOCAL_MODEL,
+  playsLive,
   runtimeExtras,
   type RuntimeExtras,
 } from '../../../src/runtime/factory.js'
@@ -222,7 +225,8 @@ export function createApi(opts: ApiOptions) {
     dir = workspace,
     here = true,
   ) {
-    if (!isProviderName(name)) throw new CompileError([{ message: 'provider must be scripted or copilot' }])
+    if (!isProviderName(name)) throw new CompileError([{ message: 'provider must be scripted, copilot or local' }])
+    if (name === 'local' && !localModelFrom(env)) throw new CompileError([{ message: NO_LOCAL_MODEL }])
     return makeProvider({
       provider: name,
       ...(pattern ? { pattern } : {}),
@@ -255,7 +259,9 @@ export function createApi(opts: ApiOptions) {
     const { tools, toolContext: shared, mcpServers } = await runtime(settings.here)
     // A real AI editing files plays in its own worktree, so runs can play at once.
     const isolation =
-      settings.provider === 'copilot' && editsFiles(score) ? await isolate(workspace, score.pattern, env) : undefined
+      isProviderName(settings.provider) && playsLive(settings.provider) && editsFiles(score)
+        ? await isolate(workspace, score.pattern, env)
+        : undefined
     // A run that reads a PR plays on the PR's own code, checked out apart (runtime/pr.ts).
     const pr = isolation
       ? undefined
@@ -301,7 +307,7 @@ export function createApi(opts: ApiOptions) {
         autoApprove: settings.autoApprove,
         stepMode: settings.stepMode,
         breakpoints: settings.breakpoints,
-        ...(provider.name === 'copilot'
+        ...(provider.name !== 'scripted'
           ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace), sandbox: sandboxFor(dir) }
           : {}),
         ...(isolation ? { isolation } : {}),
@@ -550,6 +556,28 @@ export function createApi(opts: ApiOptions) {
           send(res, 200, { signedIn: false, message: `Copilot could not start: ${(e as Error).message}` })
         } finally {
           await copilot.dispose?.()
+        }
+        return true
+      }
+      if (method === 'GET' && path === '/api/local/status') {
+        // Your model server (SYMPHONY_MODEL_URL): whether one is set, and whether it answers now.
+        const local = localModelFrom(env)
+        if (!local) {
+          send(res, 200, { configured: false })
+          return true
+        }
+        const probe = makeProvider({ provider: 'local', localModel: { ...local, fallback: false } })
+        try {
+          const status = await (probe as { authStatus?: () => Promise<{ signedIn: boolean; message: string }> }).authStatus?.()
+          send(res, 200, {
+            configured: true,
+            url: local.baseUrl,
+            ...(local.model ? { model: local.model } : {}),
+            reachable: status?.signedIn === true,
+            message: status?.message ?? '',
+          })
+        } finally {
+          await probe.dispose?.()
         }
         return true
       }

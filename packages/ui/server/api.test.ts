@@ -72,6 +72,13 @@ async function readSse(res: Response, onMessage?: (m: Record<string, unknown>) =
 }
 
 describe('studio api', () => {
+  it('your local AI is a choice only when a model server is set', async () => {
+    expect(await (await fetch(`${base}/api/local/status`)).json()).toEqual({ configured: false })
+    const refused = await post('/api/runs', { pattern: data(hangman), provider: 'local' })
+    expect(refused.status).toBe(400)
+    expect(JSON.stringify(await refused.json())).toMatch(/SYMPHONY_MODEL_URL/)
+  })
+
   it('lists the pattern library with graphs and demo inputs', async () => {
     const list = (await (await fetch(`${base}/api/patterns`)).json()) as { name: string; graph: { nodes: unknown[] }; demo?: { context: unknown } }[]
     const fixItem = list.find((p) => p.name === 'fix')!
@@ -306,7 +313,7 @@ describe('runs a chat plays (the MCP server, another process)', () => {
 })
 
 describe('sign-ins only here (SYMPHONY_SIGNINS=here)', () => {
-  it('a browser on another machine never falls back to your Copilot account', async () => {
+  it('a browser on another machine never uses your Copilot account, and sees your model server', async () => {
     const api = createApi({
       repoRoot: root,
       importer: (f) => import(pathToFileURL(f).href),
@@ -326,10 +333,14 @@ describe('sign-ins only here (SYMPHONY_SIGNINS=here)', () => {
     })
     await new Promise<void>((r) => remote.listen(0, r))
     try {
-      const url = `http://127.0.0.1:${(remote.address() as AddressInfo).port}/api/copilot/status`
-      const status = (await (await fetch(url)).json()) as { signedIn: boolean; message: string }
-      expect(status.signedIn).toBe(false)
-      expect(status.message).toMatch(/did not answer/)
+      const base = `http://127.0.0.1:${(remote.address() as AddressInfo).port}`
+      const copilot = (await (await fetch(`${base}/api/copilot/status`)).json()) as { signedIn: boolean; message: string }
+      expect(copilot.signedIn).toBe(false)
+      expect(copilot.message).toMatch(/Choose AI: Local/)
+      // Your model server: set, and down here (no fallback to Copilot behind its back).
+      const local = (await (await fetch(`${base}/api/local/status`)).json()) as Record<string, unknown>
+      expect(local).toMatchObject({ configured: true, model: 'm', reachable: false })
+      expect(local.message).toMatch(/did not answer/)
     } finally {
       remote.close()
     }
