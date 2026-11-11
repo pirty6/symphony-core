@@ -80,12 +80,16 @@ are Copilot's). Each run first checks the server answers (5 s): when it does not
 once with that reason, or, with `SYMPHONY_MODEL_FALLBACK=copilot`, plays on GitHub Copilot instead
 and says so (only where your sign-ins are allowed, see below).
 
-**Someone else's Copilot.** Copilot runs as the GitHub account signed in on the computer that
-runs Symphony. To use their own Copilot, a teammate clones this repository and runs Symphony on
-their computer (`npm install`, `npm run login` once, `npm start`); to also use your model server,
-they put the same `SYMPHONY_MODEL_*` lines in their `.env` and choose Local AI or Copilot per run.
-A browser on another computer that opens *your* studio can use your model server, never your
-Copilot account (with `SYMPHONY_SIGNINS=here` or `off`).
+**Someone else's Copilot.** A teammate who opens your studio from another computer chooses
+**AI → GitHub Copilot** and **Sign in with GitHub**: the studio shows a code, they enter it at
+github.com/login/device in their own browser, and from then on their runs use *their* Copilot
+(nothing to install on their computer). The sign-in is the Copilot CLI's own device flow, kept
+per browser in `~/.symphony/accounts/` (an HttpOnly cookie says which browser it is), with the
+token in this computer's keychain; their runs get none of your other sign-ins (gh, az, git, MCP).
+**Sign out** removes it. Until they sign in, they get your Copilot only if your sign-ins are shared
+(`SYMPHONY_SIGNINS` unset); with `here` or `off` they are asked to sign in or choose Local AI.
+The studio is plain HTTP: on a network you do not trust, anyone who can read the traffic could
+reuse that browser's cookie, so keep it on your own network (or put HTTPS in front of it).
 
 **Sharing it on your network.** `SYMPHONY_SIGNINS=here` keeps your sign-ins (and the Copilot
 fallback) for runs started on this computer (a browser on localhost, the CLI, a VS Code chat) and
