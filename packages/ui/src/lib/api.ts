@@ -61,6 +61,24 @@ export interface ContinueRunRequest {
   readonly breakpoints: readonly string[]
 }
 
+export interface CopilotStatus {
+  readonly signedIn: boolean
+  readonly login?: string
+  readonly message: string
+  /** A visitor signed in with its own GitHub account. */
+  readonly visitor?: boolean
+  /** A visitor that may sign in with its own GitHub account. */
+  readonly canSignIn?: boolean
+}
+
+export interface AccountView {
+  readonly here: boolean
+  readonly signedIn?: boolean
+  readonly login?: string
+  readonly pending?: { readonly url: string; readonly code: string }
+  readonly error?: string
+}
+
 export interface LocalStatus {
   readonly configured: boolean
   readonly url?: string
@@ -153,9 +171,13 @@ export const api = {
     ),
   run: (runId: string) =>
     fetch(`/api/runs/${runId}`).then((r) => json<{ id: string; status: string; score: ExecutableScore; graph: VisualGraph }>(r)),
-  /** Whether Copilot can run here (a GitHub account is signed in), and how to fix it if not. */
-  copilotStatus: () =>
-    fetch('/api/copilot/status').then((r) => json<{ signedIn: boolean; login?: string; message: string }>(r)),
+  /** Whether Copilot can run for this browser (a GitHub account is signed in), and how to fix it if not. */
+  copilotStatus: () => fetch('/api/copilot/status').then((r) => json<CopilotStatus>(r)),
+  /** A browser on another computer: its own GitHub sign-in for Copilot in this studio. */
+  account: () => fetch('/api/account').then((r) => json<AccountView>(r)),
+  /** Start that sign-in: the code to enter at GitHub, from this browser. */
+  accountLogin: () => post('/api/account/login', {}).then((r) => json<{ url: string; code: string }>(r)),
+  accountLogout: () => post('/api/account/logout', {}).then((r) => json<{ signedIn: false }>(r)),
   /** Your model server (SYMPHONY_MODEL_URL): whether one is set, and whether it answers now. */
   localStatus: () => fetch('/api/local/status').then((r) => json<LocalStatus>(r)),
   tiers: () => fetch('/api/tiers').then((r) => json<Record<Complexity, { model: string; effort?: string }>>(r)),

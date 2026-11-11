@@ -13,6 +13,8 @@ import { useSidebar } from '../lib/sidebar'
 import { describeEvent } from '../lib/events'
 import { Timeline } from './Timeline'
 import { Toolbar } from './Toolbar'
+import { VisitorSignIn } from './VisitorSignIn'
+import { api } from '../lib/api'
 
 const approvalPause: ApprovalPause = {
   kind: 'approval',
@@ -493,5 +495,37 @@ describe('sidebar toggles', () => {
     render(<Side side="left" />)
     expect(screen.getByTestId('toggle-left')).toHaveAccessibleName('Show the library')
     localStorage.clear()
+  })
+})
+
+describe('VisitorSignIn', () => {
+  it('this computer: nothing to show', async () => {
+    vi.spyOn(api, 'account').mockResolvedValue({ here: true })
+    const { container } = render(<VisitorSignIn />)
+    await act(async () => {})
+    expect(container).toBeEmptyDOMElement()
+    vi.restoreAllMocks()
+  })
+
+  it('a visitor signs in with GitHub: the code, then its own account, and signs out', async () => {
+    vi.useFakeTimers()
+    const account = vi.spyOn(api, 'account').mockResolvedValue({ here: false, signedIn: false })
+    vi.spyOn(api, 'accountLogin').mockResolvedValue({ url: 'https://github.com/login/device', code: 'WXYZ-9876' })
+    const logout = vi.spyOn(api, 'accountLogout').mockResolvedValue({ signedIn: false })
+    const onChange = vi.fn()
+    render(<VisitorSignIn onChange={onChange} />)
+    await act(async () => {})
+    await act(async () => fireEvent.click(screen.getByText('Sign in with GitHub')))
+    expect(screen.getByText('WXYZ-9876')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'https://github.com/login/device' })).toHaveAttribute('target', '_blank')
+    account.mockResolvedValue({ here: false, signedIn: true, login: 'octocat' })
+    await act(async () => vi.advanceTimersByTime(3000))
+    expect(screen.getByTestId('visitor-account')).toHaveTextContent('GitHub Copilot as octocat')
+    expect(onChange).toHaveBeenCalledWith(true)
+    await act(async () => fireEvent.click(screen.getByText('Sign out')))
+    expect(logout).toHaveBeenCalled()
+    expect(screen.getByText('Sign in with GitHub')).toBeInTheDocument()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 })
