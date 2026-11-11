@@ -18,8 +18,10 @@ import type { SavedRun } from './types.js';
  * only the merged answer (an empty part beside a full one was accepted).
  * 1.6.0: a subset() check's entries are first written in its list's spelling ("./src/a.ts",
  * "src\\a.ts", an absolute path → "src/a.ts"), so a right answer spelled another way passes.
+ * 1.7.0: an applied verdict asking to terminate goes on to the next step: only a failed or
+ * skipped step ends a run early (an AI that found the answer at the plan stopped the run there).
  */
-export const ENGINE_VERSION = '1.6.0';
+export const ENGINE_VERSION = '1.7.0';
 
 /** The run format this engine writes. */
 export const RUN_SCHEMA_VERSION = 3;
