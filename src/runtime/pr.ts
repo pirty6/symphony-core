@@ -139,7 +139,7 @@ export async function prForRun(
   opts: { readonly provider: string; readonly env?: NodeJS.ProcessEnv },
 ): Promise<Checkout | undefined> {
   const target = pattern.checkout ? context[pattern.checkout] : undefined;
-  if (opts.provider !== 'copilot' || typeof target !== 'string') return undefined;
+  if (opts.provider === 'scripted' || typeof target !== 'string') return undefined;
   // Without sign-ins, the fetch uses none of your credentials: a private repository's PR fails.
   const base = opts.env ?? process.env;
   const env = signInsOff(base) ? signInFreeEnv(base) : opts.env;

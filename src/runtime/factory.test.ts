@@ -2,7 +2,14 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { envConfig, parseNodeModels, runtimeExtras } from './factory.js';
+import {
+  defaultProvider,
+  envConfig,
+  isProviderName,
+  makeProvider,
+  parseNodeModels,
+  runtimeExtras,
+} from './factory.js';
 
 describe('envConfig', () => {
   it('takes the most specific token variable and says which one it was', () => {
@@ -73,6 +80,24 @@ describe('a local model, and no sign-ins', () => {
     ).toEqual({ baseUrl: 'http://tt:8000/v1', model: 'openai/gpt-oss-120b', apiKey: 'k' });
     expect(envConfig({ SYMPHONY_SIGNINS: 'off' }).signIns).toBe(false);
     expect(envConfig({}).signIns).toBeUndefined();
+  });
+
+  it('you choose per run: copilot is always Copilot, local is your model server', () => {
+    const env = { SYMPHONY_MODEL_URL: 'http://tt:8000/v1', SYMPHONY_MODEL_ID: 'q' };
+    const served = (provider: 'copilot' | 'local') =>
+      (
+        makeProvider({ provider, ...envConfig(env) }) as unknown as {
+          opts: { localModel?: unknown };
+        }
+      ).opts.localModel;
+    expect(served('local')).toEqual({ baseUrl: 'http://tt:8000/v1', model: 'q' });
+    expect(served('copilot')).toBeUndefined();
+    expect(() => makeProvider({ provider: 'local' })).toThrow(/SYMPHONY_MODEL_URL/);
+    // Unchosen: the model server when there is one, else Copilot.
+    expect(defaultProvider(env)).toBe('local');
+    expect(defaultProvider({})).toBe('copilot');
+    expect(['scripted', 'copilot', 'local'].every(isProviderName)).toBe(true);
+    expect(isProviderName('gpt')).toBe(false);
   });
 
   it('without sign-ins: no MCP servers, and no GitHub or Azure source', async () => {

@@ -9,7 +9,13 @@ import type { Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
 import { signInsOff } from './signins.js';
 
-export type ProviderName = 'scripted' | 'copilot';
+/**
+ * Who plays the AI steps: the offline demo's canned answers, GitHub Copilot (this machine's
+ * sign-in), or your own model server (SYMPHONY_MODEL_URL).
+ */
+export type ProviderName = 'scripted' | 'copilot' | 'local';
+
+export const PROVIDER_NAMES: readonly ProviderName[] = ['scripted', 'copilot', 'local'];
 
 export interface ProviderConfig {
   readonly provider: ProviderName;
@@ -29,7 +35,7 @@ export interface ProviderConfig {
   readonly headerInSystem?: boolean;
   readonly endOnSubmit?: boolean;
   readonly effortCaps?: boolean;
-  /** Every step on your own model server instead of Copilot (SYMPHONY_MODEL_URL). */
+  /** Your own model server (SYMPHONY_MODEL_URL): what the 'local' provider plays on. */
   readonly localModel?: LocalModel;
   /** false: steps run with none of your credentials (SYMPHONY_SIGNINS=off). */
   readonly signIns?: boolean;
@@ -44,13 +50,27 @@ export interface LocalModel {
 }
 
 export function isProviderName(v: unknown): v is ProviderName {
-  return v === 'scripted' || v === 'copilot';
+  return PROVIDER_NAMES.includes(v as ProviderName);
 }
+
+/** A real AI plays (not the offline demo): runs get worktrees, PR checkouts and sandboxes. */
+export function playsLive(name: ProviderName): boolean {
+  return name !== 'scripted';
+}
+
+/** The provider when none is chosen: your model server when one is set, else Copilot. */
+export function defaultProvider(env: NodeJS.ProcessEnv): ProviderName {
+  return localModelFrom(env) ? 'local' : 'copilot';
+}
+
+export const NO_LOCAL_MODEL =
+  "provider 'local' needs your model server: set SYMPHONY_MODEL_URL (and SYMPHONY_MODEL_KEY, SYMPHONY_MODEL_ID) in .env, or choose 'copilot'";
 
 const clock = (): string => new Date().toISOString();
 
 export function makeProvider(cfg: ProviderConfig): Provider {
-  if (cfg.provider === 'copilot') {
+  if (cfg.provider === 'local' && !cfg.localModel) throw new Error(NO_LOCAL_MODEL);
+  if (playsLive(cfg.provider)) {
     return new CopilotProvider({
       ...(cfg.model ? { model: cfg.model } : {}),
       ...(cfg.gitHubToken ? { gitHubToken: cfg.gitHubToken } : {}),
@@ -64,7 +84,8 @@ export function makeProvider(cfg: ProviderConfig): Provider {
       ...(cfg.headerInSystem ? { headerInSystem: true } : {}),
       ...(cfg.endOnSubmit ? { endOnSubmit: true } : {}),
       ...(cfg.effortCaps === false ? { effortCaps: false } : {}),
-      ...(cfg.localModel ? { localModel: cfg.localModel } : {}),
+      // Copilot is always Copilot: the model server plays only when 'local' is chosen.
+      ...(cfg.provider === 'local' && cfg.localModel ? { localModel: cfg.localModel } : {}),
       ...(cfg.signIns === false ? { signIns: false } : {}),
       clock,
     });
