@@ -898,6 +898,64 @@ describe('runs in their own worktree', () => {
   });
 });
 
+type Seen = { complexity: number; feedback: readonly string[] };
+/** Answers pick with nothing valid until its tier is 3 or more, then with a word. */
+const smarterOnly = (seen: Seen[]): Provider => ({
+  name: 'tiers',
+  runAgent: async (req) => {
+    seen.push({ complexity: req.pause.complexity, feedback: req.pause.feedback ?? [] });
+    const ok = req.pause.complexity >= 3;
+    return {
+      result: ok
+        ? {
+            updates: { word: 'planet' },
+            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+          }
+        : { nonsense: true },
+      transcript: { provider: 'tiers', prompt: '', output: '', toolCalls: [] },
+    };
+  },
+  draft: () => Promise.reject(new Error('n/a')),
+});
+
+describe('unattended stuck steps (autoApprove)', () => {
+  it('retries a stuck step one tier up, told what was rejected, while retries remain', async () => {
+    const seen: Seen[] = [];
+    const run = new Run({
+      score: hangmanScore,
+      provider: smarterOnly(seen),
+      autoApprove: true,
+      stuckRetries: 1,
+      clock,
+    });
+    const done = run.start();
+    await waitFor(run, () => run.engine.state.word === 'planet');
+    const recovery = run.engine.events.find((e) => e.type === 'recovered');
+    expect(recovery).toMatchObject({ recovery: { action: 'retry', by: 'auto', complexity: 3 } });
+    // Told what was rejected, and nothing presented as a person's words.
+    expect(seen.at(-1)!.complexity).toBe(3);
+    expect(seen.at(-1)!.feedback.length).toBeGreaterThan(0);
+    expect(seen.at(-1)!.feedback.join(' ')).not.toMatch(/A human looked/);
+    expect(JSON.stringify(run.messages)).toContain('retrying it unattended at tier 3');
+    run.stop();
+    await done;
+  });
+
+  it('without retries left, the step fails as before: the run stops', async () => {
+    const run = new Run({
+      score: hangmanScore,
+      provider: smarterOnly([]),
+      autoApprove: true,
+      clock,
+    });
+    const perf = await run.start();
+    expect(perf.outcome).toBe('partial');
+    expect(run.engine.events.find((e) => e.type === 'recovered')).toMatchObject({
+      recovery: { action: 'stop' },
+    });
+  });
+});
+
 describe('step time limit', () => {
   it('a step that never answers is stopped, retried, and then waits for a human like any stuck step', async () => {
     let calls = 0;
