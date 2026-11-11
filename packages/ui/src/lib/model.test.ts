@@ -145,6 +145,7 @@ describe('offline demo', () => {
   it('keeps the AI choice, flags canned results and inputs the demo ignores', async () => {
     expect(parseStoredSettings('{"provider":"copilot","model":"m","x":1}')).toEqual({ provider: 'copilot', model: 'm' })
     expect(parseStoredSettings('{"provider":"gpt"}')).toEqual({})
+    expect(parseStoredSettings('{"provider":"local"}')).toEqual({ provider: 'local' })
     expect(parseStoredSettings('not json')).toEqual({})
     expect(parseStoredSettings(null)).toEqual({})
     const { messages } = await liveMessages()

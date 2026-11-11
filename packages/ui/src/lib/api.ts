@@ -3,6 +3,7 @@ import type { Complexity, ExecutableScore, Improvisation, Pattern, SavedRun, Sta
 import type { VisualGraph } from '@core/graph'
 import type { NextPerformance, RunMessage } from '../../../../src/runtime/driver'
 import type { ProviderEvent } from '../../../../src/runtime/provider'
+import type { ProviderChoice } from './model'
 
 export type PatternData = Omit<Pattern, 'demo'>
 
@@ -60,11 +61,19 @@ export interface ContinueRunRequest {
   readonly breakpoints: readonly string[]
 }
 
+export interface LocalStatus {
+  readonly configured: boolean
+  readonly url?: string
+  readonly model?: string
+  readonly reachable?: boolean
+  readonly message?: string
+}
+
 export interface StartRunRequest {
   readonly pattern: PatternData
   readonly goal: string
   readonly context: Record<string, unknown>
-  readonly provider: 'scripted' | 'copilot'
+  readonly provider: ProviderChoice
   readonly model?: string
   readonly autoApprove: boolean
   readonly stepMode: boolean
@@ -147,6 +156,8 @@ export const api = {
   /** Whether Copilot can run here (a GitHub account is signed in), and how to fix it if not. */
   copilotStatus: () =>
     fetch('/api/copilot/status').then((r) => json<{ signedIn: boolean; login?: string; message: string }>(r)),
+  /** Your model server (SYMPHONY_MODEL_URL): whether one is set, and whether it answers now. */
+  localStatus: () => fetch('/api/local/status').then((r) => json<LocalStatus>(r)),
   tiers: () => fetch('/api/tiers').then((r) => json<Record<Complexity, { model: string; effort?: string }>>(r)),
   /** Delete one saved run (refused while it is still playing). */
   deleteSaved: (file: string) => post('/api/saved/delete', { path: file }).then((r) => json<{ deleted: string }>(r)),
@@ -192,7 +203,7 @@ export function subscribeRun(runId: string, onMessage: (m: RunMessage) => void, 
 
 /** Stream an AI draft (POST + SSE body). */
 export async function streamDraft(
-  body: { request: string; provider: 'scripted' | 'copilot'; model?: string; priorDraft?: unknown; feedback?: string[] },
+  body: { request: string; provider: ProviderChoice; model?: string; priorDraft?: unknown; feedback?: string[] },
   onMessage: (m: DraftMessage) => void,
   signal?: AbortSignal,
 ): Promise<void> {

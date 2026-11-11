@@ -598,8 +598,11 @@ export function originSummary(perf: Performance): string {
 
 // ── settings and the offline demo ─────────────────────────────────────
 
+/** Who plays the AI steps: the offline demo, GitHub Copilot, or your own model server. */
+export type ProviderChoice = 'scripted' | 'copilot' | 'local'
+
 export interface StoredSettings {
-  provider: 'scripted' | 'copilot'
+  provider: ProviderChoice
   model: string
   /** Optional patterns shown in the library (unset: as the server's SYMPHONY_EXTRAS says). */
   extras: boolean
@@ -612,7 +615,7 @@ export function parseStoredSettings(raw: string | null): Partial<StoredSettings>
   try {
     const v = JSON.parse(raw ?? '{}') as Record<string, unknown>
     return {
-      ...(v.provider === 'scripted' || v.provider === 'copilot' ? { provider: v.provider } : {}),
+      ...(v.provider === 'scripted' || v.provider === 'copilot' || v.provider === 'local' ? { provider: v.provider } : {}),
       ...(typeof v.model === 'string' ? { model: v.model } : {}),
       ...(typeof v.extras === 'boolean' ? { extras: v.extras } : {}),
       ...(v.features && typeof v.features === 'object' && !Array.isArray(v.features)
