@@ -72,11 +72,20 @@ SYMPHONY_MODEL_ID=openai/gpt-oss-120b              # optional: default, the firs
 SYMPHONY_MODEL_KEY=...                             # optional: if the server needs a key
 ```
 
-Then choose **AI → GitHub Copilot** as usual: the runs go to your server. One model plays every
-step (complexity tiers and reasoning efforts are Copilot's). Each run first checks the server
-answers (5 s): when it does not, the run stops at once with that reason, or, with
-`SYMPHONY_MODEL_FALLBACK=copilot`, plays on GitHub Copilot instead and says so (only where your
-sign-ins are allowed, see below).
+Then choose per run: **AI → Local AI** in the studio (it shows the model, and whether the server
+answers), `--provider local` in the CLI, or `provider: "local"` from a chat; **GitHub Copilot**
+(`copilot`) stays Copilot. When you choose neither, runs go to your server whenever
+`SYMPHONY_MODEL_URL` is set. One model plays every step (complexity tiers and reasoning efforts
+are Copilot's). Each run first checks the server answers (5 s): when it does not, the run stops at
+once with that reason, or, with `SYMPHONY_MODEL_FALLBACK=copilot`, plays on GitHub Copilot instead
+and says so (only where your sign-ins are allowed, see below).
+
+**Someone else's Copilot.** Copilot runs as the GitHub account signed in on the computer that
+runs Symphony. To use their own Copilot, a teammate clones this repository and runs Symphony on
+their computer (`npm install`, `npm run login` once, `npm start`); to also use your model server,
+they put the same `SYMPHONY_MODEL_*` lines in their `.env` and choose Local AI or Copilot per run.
+A browser on another computer that opens *your* studio can use your model server, never your
+Copilot account (with `SYMPHONY_SIGNINS=here` or `off`).
 
 **Sharing it on your network.** `SYMPHONY_SIGNINS=here` keeps your sign-ins (and the Copilot
 fallback) for runs started on this computer (a browser on localhost, the CLI, a VS Code chat) and
