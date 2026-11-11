@@ -71,6 +71,7 @@ import { Library } from './panels/Library'
 import { ResultPreview, ResultReader } from './panels/Result'
 import { PatternPanel } from './panels/PatternPanel'
 import { Timeline } from './panels/Timeline'
+import { VisitorSignIn } from './panels/VisitorSignIn'
 import { Toolbar, type RunSettings, type Tiers } from './panels/Toolbar'
 import { RunTimer } from './panels/RunTimer'
 
@@ -160,7 +161,8 @@ export default function Studio() {
     if (settings.provider !== 'copilot') return
     let cancelled = false
     void api.copilotStatus().then(
-      (s) => !cancelled && !s.signedIn && setError(s.message),
+      // A visitor that may sign in with its own GitHub gets the sign-in card instead.
+      (s) => !cancelled && !s.signedIn && !s.canSignIn && setError(s.message),
       () => undefined,
     )
     return () => {
@@ -924,6 +926,7 @@ export default function Studio() {
             ⚠ Can't reach the studio server (stopped, or restarting after a code change). Reconnecting…
           </div>
         )}
+        {settings.provider === 'copilot' && <VisitorSignIn onChange={(signedIn) => signedIn && setError(null)} />}
         {error && (
           <div className="card issue dismissable" role="alert">
             <span>{error}</span>
