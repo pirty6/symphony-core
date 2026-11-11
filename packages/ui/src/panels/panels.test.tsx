@@ -166,6 +166,17 @@ describe('Toolbar', () => {
     expect(handlers.onStep).toHaveBeenCalled()
   })
 
+  it('offers your local AI only when a model server is set, and says when it is down', () => {
+    const { rerender } = render(<Toolbar title="t" mode="idle" status="idle" settings={settings} canRun {...handlers} />)
+    expect(screen.queryByRole('option', { name: /Local AI/ })).toBeNull()
+    rerender(
+      <Toolbar title="t" mode="idle" status="idle" settings={settings} canRun {...handlers} local={{ configured: true, model: 'Qwen/Qwen3.6-27B', reachable: false }} />,
+    )
+    expect(screen.getByRole('option', { name: 'Local AI (Qwen/Qwen3.6-27B) · not answering' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('provider'), { target: { value: 'local' } })
+    expect(handlers.onSettings).toHaveBeenCalledWith(expect.objectContaining({ provider: 'local' }))
+  })
+
   it('disables run with problems and shows the model box for copilot', () => {
     render(<Toolbar title="t" mode="idle" status="idle" settings={{ ...settings, provider: 'copilot' }} canRun={false} {...handlers} />)
     expect(screen.getByText('▶ Run')).toBeDisabled()
