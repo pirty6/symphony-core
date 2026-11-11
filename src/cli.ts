@@ -68,7 +68,15 @@ import { loadRepertoire, runsDirFor } from './runtime/store.js';
 import { editsFiles, isolate, sandboxFor } from './runtime/worktree.js';
 import { prForRun } from './runtime/pr.js';
 import { IMPROVISATION_LEVELS, isImprovisation, playsFromRepertoire } from './core/jazz.js';
-import { Run, type NextPerformance, type RunMessage, type RunOptions } from './runtime/driver.js';
+import {
+  Run,
+  unattendedRecovery,
+  type NextPerformance,
+  type RunMessage,
+  type RunOptions,
+} from './runtime/driver.js';
+
+export { unattendedRecovery };
 import { draftPattern } from './runtime/drafting.js';
 import {
   envConfig,
@@ -220,6 +228,11 @@ interface PlayOptions {
   readonly restore?: RunOptions['restore'];
   /** --complexity as given: backlog items otherwise rate their own complexity. */
   readonly complexity?: Complexity;
+  /**
+   * --stuck-retries: unattended (--auto-approve, or no terminal), a step that gave no valid answer is retried this
+   * many times (one tier up, with what was rejected as the hint) before the run stops. 0: stop.
+   */
+  readonly stuckRetries?: number;
 }
 
 /**
@@ -297,6 +310,8 @@ async function play(
         ? { repertoire: await loadRepertoire(runsDir, score.id) }
         : {}),
       autoApprove: o.autoApprove,
+      // With --auto-approve the run answers stuck steps itself; these are its retries.
+      ...(o.stuckRetries ? { stuckRetries: o.stuckRetries } : {}),
       stepMode: o.step,
       breakpoints: o.breakpoints,
       ...(playsLive(o.providerName)
@@ -328,6 +343,7 @@ async function play(
   const rl = o.rl;
   // The terminal is often a CI log: what the AI says is scrubbed as the live feed is.
   const print = scrubbedFeed((m) => printMessage(m, (s) => process.stdout.write(s)));
+  let stuckRetriesLeft = o.stuckRetries ?? 0;
   run.subscribe(async (m) => {
     if (!o.quiet) print(m);
     if (m.type === 'status' && m.status === 'paused') {
@@ -339,7 +355,16 @@ async function play(
       const pause = run.engine.pause;
       if (pause?.kind === 'stuck') {
         if (!rl) {
-          run.answerRecovery({ action: 'stop', by: 'cli' });
+          const answer = unattendedRecovery(pause, stuckRetriesLeft);
+          if (answer.action === 'retry') {
+            stuckRetriesLeft -= 1;
+            console.log(
+              c.yellow(
+                `  ⚠ '${pause.label}' gave no valid answer: retrying it unattended${answer.complexity ? ` at tier ${answer.complexity}` : ''}`,
+              ),
+            );
+          }
+          run.answerRecovery({ ...answer, by: 'cli' });
           return;
         }
         console.log(
@@ -442,6 +467,12 @@ function complexityOf(raw: string | undefined): Complexity | undefined {
   return n;
 }
 
+function stuckRetriesOf(v: string): number {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 0 || n > 5) throw new Error('--stuck-retries must be 0 to 5');
+  return n;
+}
+
 const RUN_OPTIONS = {
   provider: { type: 'string', default: 'scripted' },
   model: { type: 'string' },
@@ -451,6 +482,7 @@ const RUN_OPTIONS = {
   break: { type: 'string', multiple: true },
   step: { type: 'boolean', default: false },
   'no-save': { type: 'boolean', default: false },
+  'stuck-retries': { type: 'string' },
 } as const;
 
 const SCORE_OPTIONS = {
@@ -607,6 +639,9 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
         save: !values['no-save'],
         ...(complexityOf(values.complexity)
           ? { complexity: complexityOf(values.complexity)! }
+          : {}),
+        ...(values['stuck-retries']
+          ? { stuckRetries: stuckRetriesOf(values['stuck-retries']) }
           : {}),
         ...(rl ? { rl } : {}),
       },
@@ -1238,6 +1273,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       --goal "..."  -c key=value  --provider scripted|copilot|local  --model <id>
       --complexity 1-4  -i classical|cool|swing|bebop|free (or 0-4)
       --auto-approve  --step  --break <nodeId>  --no-save
+      --stuck-retries 0-5  unattended (--auto-approve or no terminal): retry a step with no valid answer, one tier up
   draft "<request>"            AI drafts a pattern (--provider copilot, --save)
   verify <run.json>            integrity + deterministic replay check
   cost <run.json>...           each step's share of input tokens and AI time (parts, retries included)

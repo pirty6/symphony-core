@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { main as runCli, parseContext, unattendedApproval } from './cli.js';
+import { main as runCli, parseContext, unattendedApproval, unattendedRecovery } from './cli.js';
 import { fix, hangman } from './patterns/index.js';
 import { LiveRuns } from './runtime/live.js';
 
@@ -235,6 +235,18 @@ describe('main', () => {
       vi.unstubAllEnvs();
       rmSync(live, { recursive: true, force: true });
     }
+  });
+
+  it('retries a stuck step unattended one tier up (up to the top), while retries remain', () => {
+    expect(unattendedRecovery({ complexity: 2 }, 1)).toEqual({ action: 'retry', complexity: 3 });
+    expect(unattendedRecovery({ complexity: 4 }, 1)).toEqual({ action: 'retry' });
+    expect(unattendedRecovery({ complexity: 2 }, 0)).toEqual({ action: 'stop' });
+  });
+
+  it('rejects a --stuck-retries that is not 0 to 5', async () => {
+    await expect(main(['run', 'fix', '--stuck-retries', '9'], cwd)).rejects.toThrow(
+      /--stuck-retries must be 0 to 5/,
+    );
   });
 
   it('never approves for a real AI when nobody is at a terminal', () => {
