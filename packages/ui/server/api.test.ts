@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { createServer, type Server } from 'node:http'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -11,6 +11,7 @@ import { compileScore } from '../../../src/core/compile.js'
 import { Run } from '../../../src/runtime/driver.js'
 import { publishLive } from '../../../src/runtime/live.js'
 import { ScriptedProvider } from '../../../src/runtime/scripted-provider.js'
+import { VisitorAccounts } from '../../../src/runtime/accounts.js'
 import { createApi } from './api.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'symphony-api-'))
@@ -336,7 +337,7 @@ describe('sign-ins only here (SYMPHONY_SIGNINS=here)', () => {
       const base = `http://127.0.0.1:${(remote.address() as AddressInfo).port}`
       const copilot = (await (await fetch(`${base}/api/copilot/status`)).json()) as { signedIn: boolean; message: string }
       expect(copilot.signedIn).toBe(false)
-      expect(copilot.message).toMatch(/Choose AI: Local/)
+      expect(copilot.message).toMatch(/Sign in with GitHub.*AI: Local/)
       // Your model server: set, and down here (no fallback to Copilot behind its back).
       const local = (await (await fetch(`${base}/api/local/status`)).json()) as Record<string, unknown>
       expect(local).toMatchObject({ configured: true, model: 'm', reachable: false })
@@ -344,5 +345,59 @@ describe('sign-ins only here (SYMPHONY_SIGNINS=here)', () => {
     } finally {
       remote.close()
     }
+  })
+})
+
+describe('a visitor signs in with its own GitHub for Copilot', () => {
+  it('signs in from its browser, gets its own Copilot, and signs out; your account is never used', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'symphony-api-accounts-'))
+    // Stands in for `copilot login`: a device code, then the login recorded in its Copilot home.
+    const cli = join(home, 'cli.js')
+    writeFileSync(
+      cli,
+      `process.stdout.write('To authenticate, visit https://github.com/login/device and enter code WXYZ-9876.\\n');
+setTimeout(() => { require('fs').writeFileSync(require('path').join(process.env.COPILOT_HOME, 'config.json'), '{ "lastLoggedInUser": { "login": "octocat" } }'); process.exit(0) }, 30)`,
+    )
+    const api = createApi({
+      repoRoot: root,
+      importer: (f) => import(pathToFileURL(f).href),
+      env: { SYMPHONY_LIVE_DIR: live, SYMPHONY_SIGNINS: 'here' },
+      accounts: new VisitorAccounts(join(home, 'accounts'), () => cli, join(home, 'host')),
+    })
+    const remote = createServer((req, res) => {
+      Object.defineProperty(req.socket, 'remoteAddress', { value: '198.168.10.7' })
+      void api.handle(req, res)
+    })
+    await new Promise<void>((r) => remote.listen(0, r))
+    const at = `http://127.0.0.1:${(remote.address() as AddressInfo).port}`
+    let cookie = ''
+    const get = async (path: string) => (await fetch(at + path, { headers: { cookie } })).json() as Promise<Record<string, unknown>>
+    const send = (path: string, body: unknown) =>
+      fetch(at + path, { method: 'POST', headers: { 'Content-Type': 'application/json', cookie }, body: JSON.stringify(body) })
+    try {
+      // Not signed in, and your sign-ins are not shared: Copilot is refused, with how to sign in.
+      expect(await get('/api/copilot/status')).toMatchObject({ signedIn: false, canSignIn: true, message: expect.stringMatching(/Sign in with GitHub/) })
+      const refused = await send('/api/runs', { pattern: data(hangman), provider: 'copilot' })
+      expect(refused.status).toBe(400)
+      // Sign in: the code to enter at GitHub, and a cookie only this browser holds.
+      const login = await send('/api/account/login', {})
+      expect(await login.json()).toEqual({ url: 'https://github.com/login/device', code: 'WXYZ-9876' })
+      const setCookie = login.headers.get('set-cookie') ?? ''
+      expect(setCookie).toMatch(/symphony_account=[a-f0-9]{64}; Path=\/; HttpOnly; SameSite=Strict/)
+      cookie = setCookie.split(';')[0]!
+      await expect.poll(() => get('/api/account')).toMatchObject({ here: false, signedIn: true, login: 'octocat' })
+      expect(await get('/api/copilot/status')).toMatchObject({ signedIn: true, login: 'octocat', visitor: true })
+      // Signed out: back to not signed in.
+      await send('/api/account/logout', {})
+      expect(await get('/api/account')).toMatchObject({ signedIn: false })
+    } finally {
+      remote.close()
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('this computer uses its own sign-in, never a visitor one', async () => {
+    expect(await (await fetch(`${base}/api/account`)).json()).toEqual({ here: true })
+    expect((await post('/api/account/login', {})).status).toBe(400)
   })
 })

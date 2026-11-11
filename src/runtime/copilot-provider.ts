@@ -113,7 +113,7 @@ export const NO_SIGNINS_HELP =
 
 /** A studio visitor's own GitHub account is not signed in (or no longer). */
 export const VISITOR_SIGN_IN_HELP =
-  'Your GitHub account is not signed in to Copilot in this studio: choose AI: GitHub Copilot and "Sign in with GitHub", then run again.';
+  'Your GitHub account is not signed in to Copilot in this studio: choose AI: GitHub Copilot and "Sign in with GitHub", then run again (or choose AI: Local, the model server, when there is one).';
 
 export function refusedHelp(login?: string): string {
   return `Copilot refused the GitHub account signed in on this machine${login ? ` (${login})` : ''}. Check that it has Copilot (https://github.com/settings/copilot) and that your organization allows Copilot in the CLI, then run \`npm run login\` again. The offline demo (AI: Scripted) works without it.`;

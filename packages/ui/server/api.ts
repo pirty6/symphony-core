@@ -14,7 +14,10 @@
  *   POST /api/runs/:id/approval {approved, updates, scripted}
  *   POST /api/runs {…, chain: [pattern…]}: patterns to play after it with its result
  *   POST /api/runs/:id/recovery {action: retry|stop, hint?, complexity?}  (a stuck AI step)
- *   GET  /api/copilot/status               { signedIn, login?, message }: can Copilot run here
+ *   GET  /api/copilot/status               { signedIn, login?, message, visitor? }: can Copilot run for this browser
+ *   GET  /api/account                      a browser on another computer: its own GitHub sign-in for Copilot
+ *   POST /api/account/login                start it: { url, code } to enter at GitHub from that browser
+ *   POST /api/account/logout               sign that browser's GitHub account out of this studio
  *   GET  /api/saved                        saved runs
  *   POST /api/saved/prune {dryRun?}        retention: delete old demo runs, compact old runs
  *   POST /api/saved/delete {path}           delete one saved run (not one still playing)
@@ -39,7 +42,10 @@ import { enabledExtras } from '../../../src/patterns/extras/index.js'
 import { draftPattern } from '../../../src/runtime/drafting.js'
 import { Run, type RunOptions } from '../../../src/runtime/driver.js'
 import { liveRoot, LiveRuns, scrubbedFeed, type RunLike } from '../../../src/runtime/live.js'
-import { envForRun, fromThisComputer } from '../../../src/runtime/signins.js'
+import { envForRun, fromThisComputer, signInsOff } from '../../../src/runtime/signins.js'
+import { ACCOUNT_ID, newAccountId, VisitorAccounts } from '../../../src/runtime/accounts.js'
+import { VISITOR_SIGN_IN_HELP } from '../../../src/runtime/copilot-provider.js'
+import { symphonyHome } from '../../../src/runtime/state.js'
 import {
   effectiveTiers,
   envConfig,
@@ -74,6 +80,29 @@ export interface ApiOptions {
   readonly env?: NodeJS.ProcessEnv
   /** Shared run table, so live runs survive an API reload in dev. */
   readonly runs?: Map<string, Run>
+  /** Visitors' own GitHub sign-ins (default: under ~/.symphony/accounts). */
+  readonly accounts?: VisitorAccounts
+}
+
+/** Who asks: this computer (your sign-ins, per SYMPHONY_SIGNINS) or a visitor, with its own Copilot. */
+export interface Caller {
+  readonly here: boolean
+  /** A visitor signed in with its own GitHub account: Copilot plays as it. */
+  readonly copilotHome?: string
+}
+
+const ACCOUNT_COOKIE = 'symphony_account'
+const YEAR_S = 365 * 24 * 3600
+
+/** The browser's visitor id, from its cookie; undefined when it has none (or a malformed one). */
+export function accountIdOf(req: IncomingMessage): string | undefined {
+  const cookie = String(req.headers.cookie ?? '')
+  const m = new RegExp(`(?:^|;\\s*)${ACCOUNT_COOKIE}=([^;]+)`).exec(cookie)
+  return m && ACCOUNT_ID.test(m[1]!) ? m[1] : undefined
+}
+
+function accountCookie(id: string): string {
+  return `${ACCOUNT_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${YEAR_S}`
 }
 
 export const RUNS_DIR = '.symphony/runs'
@@ -110,8 +139,8 @@ export function refuseCrossSite(req: IncomingMessage): string | undefined {
   return undefined
 }
 
-function send(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' })
+function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  res.writeHead(status, { 'Content-Type': 'application/json', ...headers })
   res.end(JSON.stringify(body))
 }
 
@@ -223,19 +252,50 @@ export function createApi(opts: ApiOptions) {
     pattern?: Pattern,
     mcpServers?: RuntimeExtras['mcpServers'],
     dir = workspace,
-    here = true,
+    caller: Caller = { here: true },
   ) {
     if (!isProviderName(name)) throw new CompileError([{ message: 'provider must be scripted, copilot or local' }])
     if (name === 'local' && !localModelFrom(env)) throw new CompileError([{ message: NO_LOCAL_MODEL }])
+    // A visitor who has not signed in with GitHub, where your sign-ins are not shared.
+    if (name === 'copilot' && !caller.here && !caller.copilotHome && signInsOff(envForRun(env, false)))
+      throw new CompileError([{ message: VISITOR_SIGN_IN_HELP }])
     return makeProvider({
       provider: name,
       ...(pattern ? { pattern } : {}),
       workingDirectory: dir,
       delayMs: opts.scriptedDelayMs ?? 0,
       ...(mcpServers ? { mcpServers } : {}),
-      ...envConfig(envForRun(env, here)),
+      ...envConfig(envForRun(env, caller.here)),
+      // A visitor's Copilot is its own account; nothing of yours comes with it.
+      ...(caller.copilotHome ? { signIns: false, gitHubToken: undefined, copilotHome: caller.copilotHome } : {}),
       ...(typeof model === 'string' && model ? { model } : {}),
     })
+  }
+
+  const accounts = opts.accounts ?? new VisitorAccounts(join(symphonyHome(env), 'accounts'))
+
+  /** Who asks: this computer, or a visitor (with its own Copilot when it signed in here). */
+  async function callerOf(req: IncomingMessage): Promise<Caller> {
+    if (fromThisComputer(req.socket.remoteAddress)) return { here: true }
+    const id = accountIdOf(req)
+    const signedIn = id ? (await accounts.status(id)).signedIn : false
+    return id && signedIn ? { here: false, copilotHome: accounts.home(id) } : { here: false }
+  }
+
+  /**
+   * A visitor not signed in with GitHub here: it may sign in. Until then Copilot is yours only
+   * when your sign-ins are shared (SYMPHONY_SIGNINS unset), else refused.
+   */
+  async function visitorSignedOut(caller: Caller): Promise<Record<string, unknown>> {
+    const shared = !signInsOff(envForRun(env, caller.here))
+    if (!shared) return { signedIn: false, canSignIn: true, message: VISITOR_SIGN_IN_HELP }
+    const copilot = makeProvider({ provider: 'copilot', workingDirectory: workspace, ...envConfig(env) })
+    try {
+      const status = (await (copilot as { authStatus?: () => Promise<Record<string, unknown>> }).authStatus?.()) ?? { signedIn: true, message: '' }
+      return { ...status, canSignIn: true }
+    } finally {
+      await copilot.dispose?.()
+    }
   }
 
   interface Settings {
@@ -244,8 +304,8 @@ export function createApi(opts: ApiOptions) {
     readonly autoApprove: boolean
     readonly stepMode: boolean
     readonly breakpoints: string[]
-    /** Started from this computer (a browser on localhost), not from another machine. */
-    readonly here: boolean
+    /** Who started it: this computer, or a visitor (with its own Copilot when signed in). */
+    readonly caller: Caller
     readonly restore?: RunOptions['restore']
     /** Patterns (or backlog items) to play after this one. */
     readonly chain?: readonly ChainStep[]
@@ -256,7 +316,7 @@ export function createApi(opts: ApiOptions) {
   async function launch(score: ExecutableScore, pattern: Pattern, settings: Settings): Promise<Run> {
     const demo = pattern.demo ?? (await demoFor(pattern.name))
     const withDemo: Pattern = demo ? { ...pattern, demo } : pattern
-    const { tools, toolContext: shared, mcpServers } = await runtime(settings.here)
+    const { tools, toolContext: shared, mcpServers } = await runtime(settings.caller.here)
     // A real AI editing files plays in its own worktree, so runs can play at once.
     const isolation =
       isProviderName(settings.provider) && playsLive(settings.provider) && editsFiles(score)
@@ -267,7 +327,7 @@ export function createApi(opts: ApiOptions) {
       ? undefined
       : await prForRun(pattern, score.context, workspace, {
           provider: String(settings.provider ?? 'scripted'),
-          env: envForRun(env, settings.here),
+          env: envForRun(env, settings.caller.here),
         })
     const dir = isolation?.dir ?? pr?.dir ?? workspace
     // In a worktree, memory stays in your workspace: what the run learns outlives the worktree.
@@ -276,7 +336,7 @@ export function createApi(opts: ApiOptions) {
       ...(dir !== workspace ? { workspace: dir, memoryRoot: shared.workspace } : {}),
       ...(pr?.info ? { pr: pr.info } : {}),
     }
-    const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir, settings.here)
+    const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir, settings.caller)
     const id = `run-${Date.now().toString(36)}-${(counter++).toString(36)}`
     const next = concertNext({
       maestroScore: score,
@@ -338,7 +398,7 @@ export function createApi(opts: ApiOptions) {
     return run
   }
 
-  async function startRun(body: Record<string, unknown>, here: boolean): Promise<Run> {
+  async function startRun(body: Record<string, unknown>, caller: Caller): Promise<Run> {
     const pattern = asPattern(body.pattern)
     const complexity = [1, 2, 3, 4].includes(body.complexity as number) ? (body.complexity as Complexity) : undefined
     const improvisation = isImprovisation(body.improvisation) ? body.improvisation : undefined
@@ -358,12 +418,12 @@ export function createApi(opts: ApiOptions) {
       breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
       chain: Array.isArray(body.chain) ? body.chain.filter((t): t is string => typeof t === 'string' && t !== 'maestro') : [],
       features,
-      here,
+      caller,
     })
   }
 
   /** Resume an interrupted run in place, or fork a saved run from a step as a new run. */
-  async function continueRun(body: Record<string, unknown>, here: boolean): Promise<Run> {
+  async function continueRun(body: Record<string, unknown>, caller: Caller): Promise<Run> {
     const file = runPath(runsDir, typeof body.file === 'string' ? body.file : '')
     if (!file) throw new CompileError([{ message: 'invalid run file' }])
     const { run: saved, issues } = await loadRun(file)
@@ -410,7 +470,7 @@ export function createApi(opts: ApiOptions) {
       stepMode: body.stepMode === true,
       breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
       restore: { result, basedOn: { kind, from: relative(runsDir, file), throughStep } },
-      here,
+      caller,
     })
   }
 
@@ -446,10 +506,10 @@ export function createApi(opts: ApiOptions) {
     })
   }
 
-  async function draft(body: Record<string, unknown>, res: ServerResponse, here: boolean): Promise<void> {
+  async function draft(body: Record<string, unknown>, res: ServerResponse, caller: Caller): Promise<void> {
     const request = typeof body.request === 'string' ? body.request.trim() : ''
     if (!request) return send(res, 400, { error: 'request is required' })
-    const provider = providerFor(body.provider ?? 'scripted', body.model, undefined, undefined, workspace, here)
+    const provider = providerFor(body.provider ?? 'scripted', body.model, undefined, undefined, workspace, caller)
     const ctrl = new AbortController()
     res.on('close', () => {
       if (!res.writableEnded) ctrl.abort()
@@ -521,16 +581,16 @@ export function createApi(opts: ApiOptions) {
         return true
       }
       if (method === 'POST' && path === '/api/draft') {
-        await draft(await readJson(req), res, fromThisComputer(req.socket.remoteAddress))
+        await draft(await readJson(req), res, await callerOf(req))
         return true
       }
       if (method === 'POST' && path === '/api/runs') {
-        const run = await startRun(await readJson(req), fromThisComputer(req.socket.remoteAddress))
+        const run = await startRun(await readJson(req), await callerOf(req))
         send(res, 200, { runId: run.id, score: run.score })
         return true
       }
       if (method === 'POST' && path === '/api/runs/continue') {
-        const run = await continueRun(await readJson(req), fromThisComputer(req.socket.remoteAddress))
+        const run = await continueRun(await readJson(req), await callerOf(req))
         send(res, 200, { runId: run.id, score: run.score })
         return true
       }
@@ -547,8 +607,15 @@ export function createApi(opts: ApiOptions) {
       }
       if (method === 'GET' && path === '/api/copilot/status') {
         // Whether a GitHub account is signed in for Copilot here, so the studio can say how to fix it.
-        const here = fromThisComputer(req.socket.remoteAddress)
-        const copilot = makeProvider({ provider: 'copilot', workingDirectory: workspace, ...envConfig(envForRun(env, here)) })
+        const caller = await callerOf(req)
+        if (!caller.here) {
+          // A visitor: its own sign-in in this studio, if any (signed in with GitHub, or not yet).
+          const id = accountIdOf(req)
+          const status = id ? await accounts.status(id) : undefined
+          send(res, 200, status?.signedIn ? { signedIn: true, login: status.login, message: status.login, visitor: true } : await visitorSignedOut(caller))
+          return true
+        }
+        const copilot = makeProvider({ provider: 'copilot', workingDirectory: workspace, ...envConfig(envForRun(env, caller.here)) })
         try {
           const status = await (copilot as { authStatus?: () => Promise<unknown> }).authStatus?.()
           send(res, 200, status ?? { signedIn: true, message: '' })
@@ -579,6 +646,30 @@ export function createApi(opts: ApiOptions) {
         } finally {
           await probe.dispose?.()
         }
+        return true
+      }
+      if (method === 'GET' && path === '/api/account') {
+        if (fromThisComputer(req.socket.remoteAddress)) {
+          send(res, 200, { here: true })
+          return true
+        }
+        const id = accountIdOf(req)
+        send(res, 200, { here: false, ...(id ? await accounts.status(id) : { signedIn: false }) })
+        return true
+      }
+      if (method === 'POST' && path === '/api/account/login') {
+        if (fromThisComputer(req.socket.remoteAddress)) {
+          send(res, 400, { error: 'this computer uses its own sign-in: npm run login' })
+          return true
+        }
+        const id = accountIdOf(req) ?? newAccountId()
+        send(res, 200, await accounts.login(id), { 'Set-Cookie': accountCookie(id) })
+        return true
+      }
+      if (method === 'POST' && path === '/api/account/logout') {
+        const id = accountIdOf(req)
+        if (id) await accounts.logout(id)
+        send(res, 200, { signedIn: false })
         return true
       }
       if (method === 'GET' && path === '/api/tiers') {
