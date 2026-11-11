@@ -537,31 +537,27 @@ describe('engine: approvals, termination, cancel', () => {
     expect(r.state).toMatchObject({ kind: 'done', outcome: 'cancelled' });
   });
 
-  it('honours verdict.shouldTerminate from a step that could not do its work, never as success', () => {
-    const r = answerAgent(
-      score,
-      createEngine(score),
-      ok({ word: 'cat' }, { outcome: 'skipped', shouldTerminate: true }),
-    );
-    expect(r.state).toMatchObject({ kind: 'done', outcome: 'partial' });
-    expect(r.state.reason).toMatch(/'pick' terminated/);
+  it('honours verdict.shouldTerminate from a step that failed, never as success', () => {
     const failed = answerAgent(
       score,
       createEngine(score),
       ok({ word: 'cat' }, { outcome: 'failed', shouldTerminate: true }),
     );
     expect(failed.state).toMatchObject({ kind: 'done', outcome: 'failed' });
+    expect(failed.state.reason).toMatch(/'pick' terminated/);
   });
 
-  it('a step that did its work and asks to stop goes on: the steps ahead still run', () => {
-    const r = answerAgent(
-      score,
-      createEngine(score),
-      ok({ word: 'cat' }, { shouldTerminate: true }),
-    );
-    expect(r.state.kind).not.toBe('done');
-    expect(r.state.pause?.nodeId).toBe('ask');
-    expect(r.state.steps.at(-1)?.verdict).toMatchObject({ shouldTerminate: true });
+  it('a step that did its work, or skipped it, and asks to stop goes on: the steps ahead still run', () => {
+    for (const outcome of ['applied', 'skipped']) {
+      const r = answerAgent(
+        score,
+        createEngine(score),
+        ok({ word: 'cat' }, { outcome, shouldTerminate: true }),
+      );
+      expect(r.state.kind).not.toBe('done');
+      expect(r.state.pause?.nodeId).toBe('ask');
+      expect(r.state.steps.at(-1)?.verdict).toMatchObject({ outcome, shouldTerminate: true });
+    }
   });
 
   it('supports cancel resolutions', () => {
