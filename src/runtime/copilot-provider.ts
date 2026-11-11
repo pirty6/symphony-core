@@ -268,6 +268,19 @@ const DEFAULT_ALTERNATE = 'gpt-6.1-sol';
 const family = (model: string) => model.split('-')[0];
 
 /** System prompt for sessions with only Symphony's own tools (no workspace, files or shell). */
+/**
+ * CLI tools no Symphony step uses. A local model gets every request with each tool's schema,
+ * and a smaller model picks from a shorter list more reliably.
+ */
+export const LOCAL_EXCLUDED_TOOLS = [
+  'task',
+  'list_agents',
+  'read_agent',
+  'skill',
+  'sql',
+  'list_bash',
+] as const;
+
 export const ISOLATED_SYSTEM = [
   'You work on one step of a deterministic workflow, inside a session with no workspace, files or shell.',
   'Use only the tools you are given (always submit_result; web_search and web_fetch when listed).',
@@ -635,7 +648,7 @@ export class CopilotProvider implements Provider {
             },
           }
         : {
-            excludedTools: ['task'],
+            excludedTools: local ? [...LOCAL_EXCLUDED_TOOLS] : ['task'],
             ...(run.system ? { systemMessage: { mode: 'append', content: run.system } } : {}),
           }),
       ...(run.mcpServers && Object.keys(run.mcpServers).length > 0

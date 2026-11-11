@@ -1714,6 +1714,7 @@ describe('a local model server instead of Copilot', () => {
       for (const s of sessions) {
         expect(s.cfg.model).toBe('openai/gpt-oss-120b');
         expect(s.cfg.reasoningEffort).toBeUndefined();
+        expect(s.cfg.excludedTools).toEqual(expect.arrayContaining(['task', 'sql', 'skill']));
         expect(s.cfg.provider).toEqual({
           type: 'openai',
           baseUrl: server.url,
