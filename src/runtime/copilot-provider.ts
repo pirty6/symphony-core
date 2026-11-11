@@ -111,6 +111,10 @@ export function withoutTokenVars(env: NodeJS.ProcessEnv): Record<string, string 
 export const NO_SIGNINS_HELP =
   "Copilot runs as the GitHub account signed in on the computer that runs Symphony, and that account is not used here (SYMPHONY_SIGNINS is off, or 'here' and this run comes from another computer). Choose AI: Local (the model server, SYMPHONY_MODEL_URL) or the offline demo; to use your own Copilot, run Symphony on your computer.";
 
+/** A studio visitor's own GitHub account is not signed in (or no longer). */
+export const VISITOR_SIGN_IN_HELP =
+  'Your GitHub account is not signed in to Copilot in this studio: choose AI: GitHub Copilot and "Sign in with GitHub", then run again.';
+
 export function refusedHelp(login?: string): string {
   return `Copilot refused the GitHub account signed in on this machine${login ? ` (${login})` : ''}. Check that it has Copilot (https://github.com/settings/copilot) and that your organization allows Copilot in the CLI, then run \`npm run login\` again. The offline demo (AI: Scripted) works without it.`;
 }
@@ -206,6 +210,11 @@ export interface CopilotProviderOptions {
    * which uses your Azure sign-in, is not offered.
    */
   readonly signIns?: boolean;
+  /**
+   * Copilot as the account signed in at this Copilot home (a studio visitor's own sign-in,
+   * runtime/accounts.ts), never the host's: with sign-ins off, only Copilot itself is allowed.
+   */
+  readonly copilotHome?: string;
   /** Where the token was set (e.g. TOKEN), named in messages when Copilot refuses it. */
   readonly gitHubTokenSource?: string;
   /** Safety net per call; default a minute after the step limit the driver enforces (limits.ts). */
@@ -536,11 +545,14 @@ export class CopilotProvider implements Provider {
     if (this.client) return Promise.resolve(this.client);
     this.starting ??= (async () => {
       const local = (await this.local()) !== undefined;
-      const token = this.tokenRejected || local ? undefined : this.opts.gitHubToken;
+      const home = this.opts.copilotHome;
+      // A visitor's runs never use a token of the host's.
+      const token = this.tokenRejected || local || home ? undefined : this.opts.gitHubToken;
       const auth = token ? { gitHubToken: token } : {};
       // What the steps' commands inherit: none of the host's credentials when sign-ins are off.
-      const env =
+      const base =
         this.opts.signIns === false ? signInFreeEnv(process.env) : withoutTokenVars(process.env);
+      const env = home ? { ...base, COPILOT_HOME: home } : base;
       const client =
         this.opts.clientFactory?.(auth) ??
         (new CopilotClient(
@@ -555,6 +567,12 @@ export class CopilotProvider implements Provider {
       return client;
     })();
     return this.starting;
+  }
+
+  /** How to get Copilot working for whoever this run plays as. */
+  private signInHelp(): string {
+    if (this.opts.copilotHome) return VISITOR_SIGN_IN_HELP;
+    return this.opts.signIns === false ? NO_SIGNINS_HELP : SIGN_IN_HELP;
   }
 
   private signInChecked = false;
@@ -578,7 +596,8 @@ export class CopilotProvider implements Provider {
       // It did not answer: Copilot instead, as below.
     }
     // Sign-ins off means nobody's account: Copilot would run as whoever is signed in here.
-    if (this.opts.signIns === false) return { signedIn: false, message: NO_SIGNINS_HELP };
+    if (this.opts.signIns === false && !this.opts.copilotHome)
+      return { signedIn: false, message: NO_SIGNINS_HELP };
     const client = await this.ensureClient();
     const source =
       this.opts.gitHubToken && !this.tokenRejected && this.opts.gitHubTokenSource
@@ -616,8 +635,7 @@ export class CopilotProvider implements Provider {
         await this.dropClient();
         status = await this.authStatus().catch(() => undefined);
       }
-      if (status && !status.signedIn)
-        throw new SetupError(this.opts.signIns === false ? NO_SIGNINS_HELP : SIGN_IN_HELP);
+      if (status && !status.signedIn) throw new SetupError(this.signInHelp());
       this.signInChecked = status !== undefined;
     }
     const client = await this.ensureClient();
@@ -1103,7 +1121,7 @@ export class CopilotProvider implements Provider {
         (e: Error) => `did not answer (${e.name === 'TimeoutError' ? 'timed out' : e.message})`,
       );
       if (typeof why !== 'string') return why;
-      if (local.fallback && this.opts.signIns !== false) {
+      if (local.fallback && (this.opts.signIns !== false || this.opts.copilotHome)) {
         this.fellBack = `The model server at ${local.baseUrl} ${why}: using GitHub Copilot for this run.`;
         return undefined;
       }

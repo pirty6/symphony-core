@@ -1764,6 +1764,35 @@ describe('a local model server instead of Copilot', () => {
     expect(sessions).toHaveLength(0);
   });
 
+  it("a studio visitor's own Copilot account plays, never your token, even with sign-ins off", async () => {
+    const { client, sessions } = submitting();
+    const auths: unknown[] = [];
+    let signedIn = true;
+    const p = new CopilotProvider({
+      clientFactory: (auth) => (
+        auths.push(auth),
+        { ...client, getAuthStatus: async () => ({ isAuthenticated: signedIn }) }
+      ),
+      signIns: false,
+      copilotHome: '/tmp/visitor-home',
+      gitHubToken: 'host-token',
+    });
+    await p.runAgent(localReq());
+    expect(sessions).toHaveLength(1);
+    expect(auths).toEqual([{}]);
+    // Not (or no longer) signed in: say how, in the studio, rather than use anyone else's account.
+    signedIn = false;
+    const again = new CopilotProvider({
+      clientFactory: () => ({
+        ...client,
+        getAuthStatus: async () => ({ isAuthenticated: signedIn }),
+      }),
+      signIns: false,
+      copilotHome: '/tmp/visitor-home',
+    });
+    await expect(again.runAgent(localReq())).rejects.toThrow(/Sign in with GitHub/);
+  });
+
   it('without sign-ins, the Kusto tool (your Azure sign-in) is not offered', async () => {
     const server = await modelServer('m1');
     const web = { ...pause, capabilities: ['web'] as AgentPause['capabilities'] };

@@ -39,6 +39,8 @@ export interface ProviderConfig {
   readonly localModel?: LocalModel;
   /** false: steps run with none of your credentials (SYMPHONY_SIGNINS=off). */
   readonly signIns?: boolean;
+  /** Copilot as a studio visitor's own account (runtime/accounts.ts), never yours. */
+  readonly copilotHome?: string;
 }
 
 export interface LocalModel {
@@ -87,6 +89,7 @@ export function makeProvider(cfg: ProviderConfig): Provider {
       // Copilot is always Copilot: the model server plays only when 'local' is chosen.
       ...(cfg.provider === 'local' && cfg.localModel ? { localModel: cfg.localModel } : {}),
       ...(cfg.signIns === false ? { signIns: false } : {}),
+      ...(cfg.copilotHome ? { copilotHome: cfg.copilotHome } : {}),
       clock,
     });
   }
