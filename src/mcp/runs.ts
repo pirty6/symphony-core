@@ -39,7 +39,14 @@ import { concertNext } from '../runtime/concert.js';
 import { Run } from '../runtime/driver.js';
 import { liveRoot, publishLive } from '../runtime/live.js';
 import type { Provider } from '../runtime/provider.js';
-import { envConfig, makeProvider, runtimeExtras, type ProviderName } from '../runtime/factory.js';
+import {
+  defaultProvider,
+  envConfig,
+  makeProvider,
+  playsLive,
+  runtimeExtras,
+  type ProviderName,
+} from '../runtime/factory.js';
 import {
   autoPrune,
   gitFingerprint,
@@ -352,10 +359,10 @@ export class RunManager {
     const runsDir = runsDirFor(workspace, this.opts.env);
     void autoPrune(workspace, runsDir, this.opts.env);
     const extras = await runtimeExtras(workspace, this.opts.repoRoot, this.opts.env);
-    const providerName = req.provider ?? 'copilot';
+    const providerName = req.provider ?? defaultProvider(this.opts.env);
     // A real AI editing files plays in its own worktree, so several can play at once.
     const isolation =
-      providerName === 'copilot' && this.opts.editsAllowed && editsFiles(score)
+      playsLive(providerName) && this.opts.editsAllowed && editsFiles(score)
         ? await isolate(workspace, score.pattern, this.opts.env)
         : undefined;
     // A run that reads a PR plays on the PR's own code, checked out apart (runtime/pr.ts).
@@ -416,7 +423,7 @@ export class RunManager {
           ? { repertoire: await loadRepertoire(runsDir, score.id) }
           : {}),
         autoApprove: req.autoApprove === true,
-        ...(providerName === 'copilot'
+        ...(playsLive(providerName)
           ? {
               envHash: () => gitFingerprint(dir),
               scratch: await runScratch(workspace),
