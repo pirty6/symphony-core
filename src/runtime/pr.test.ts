@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { checkoutPr, prForRun, prNumber, repoKey } from './pr.js';
+import { checkoutBranch, checkoutPr, prForRun, prNumber, repoKey } from './pr.js';
 
 const tmp = mkdtempSync(join(tmpdir(), 'symphony-pr-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -152,5 +152,39 @@ describe('checkoutPr', () => {
       error: expect.stringMatching(/could not fetch refs\/pull\/8\/merge from 'origin'/),
     });
     expect(await checkoutPr(ws, 'main', { root })).toBeUndefined();
+  });
+
+  it('a branch the workspace has not checked out plays in its own worktree', async () => {
+    // Only on the remote, never fetched by the workspace: fetched, then its ref dropped.
+    git(join(tmp, 'author'), 'push', '-q', 'origin', 'feature:refs/heads/user/x/feature');
+    const remote = await checkoutBranch(ws, 'user/x/feature', { root });
+    expect(readFileSync(join(remote!.dir!, 'a.js'), 'utf8').trim()).toBe('export const a = 2;');
+    expect(existsSync(join(remote!.dir!, 'b.js'))).toBe(true);
+    expect(existsSync(join(ws, 'b.js'))).toBe(false);
+    expect(git(ws, 'for-each-ref', 'refs/symphony')).toBe('');
+    expect(git(ws, 'rev-parse', 'origin/user/x/feature')).toBe(
+      git(remote!.dir!, 'rev-parse', 'HEAD'),
+    );
+    await remote!.finish();
+    expect(existsSync(remote!.dir!)).toBe(false);
+    // A local branch.
+    git(ws, 'checkout', '-qb', 'mine');
+    writeFileSync(join(ws, 'c.js'), 'export const c = 1;\n');
+    git(ws, 'add', '-A');
+    git(ws, 'commit', '-qm', 'mine');
+    git(ws, 'checkout', '-q', 'elsewhere');
+    const local = await checkoutBranch(ws, 'mine', { root });
+    expect(existsSync(join(local!.dir!, 'c.js'))).toBe(true);
+    await local!.finish();
+    // What is checked out already, a missing branch, a range: the workspace as it is.
+    expect(await checkoutBranch(ws, 'main', { root })).toBeUndefined();
+    expect(await checkoutBranch(ws, 'no/such-branch', { root })).toBeUndefined();
+    expect(await checkoutBranch(ws, 'main..mine', { root })).toBeUndefined();
+    const run = await prForRun({ checkout: 'target' }, { target: 'mine' }, ws, {
+      provider: 'copilot',
+    });
+    expect(run?.info).toBeUndefined();
+    expect(existsSync(join(run!.dir!, 'c.js'))).toBe(true);
+    await run!.finish();
   });
 });

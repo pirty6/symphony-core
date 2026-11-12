@@ -27,9 +27,11 @@ const improvisation = z
   .optional()
   .describe('0 classical (replays recorded answers) to 4 free jazz. Default 0.');
 const provider = z
-  .enum(['copilot', 'scripted'])
+  .enum(['copilot', 'local', 'scripted'])
   .optional()
-  .describe("'copilot' (default) for real AI; 'scripted' plays the offline demo's canned answers.");
+  .describe(
+    "Who plays the AI steps: 'copilot' (GitHub Copilot, this machine's sign-in), 'local' (your own model server, SYMPHONY_MODEL_URL) or 'scripted' (the offline demo's canned answers). Default: copilot; local only when the user asks for their local AI.",
+  );
 const workspace = z
   .string()
   .optional()

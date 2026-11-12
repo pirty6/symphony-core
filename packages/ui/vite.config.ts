@@ -9,7 +9,15 @@ const core = fileURLToPath(new URL('../../src/core', import.meta.url))
 export default defineConfig({
   plugins: [react(), symphonyPlugin()],
   resolve: { alias: { '@core': core } },
-  server: { fs: { allow: ['../..'] } },
+  server: {
+    fs: { allow: ['../..'] },
+    // Names the studio may be reached by on your network (e.g. symphony.example.org), besides
+    // localhost and IP addresses: SYMPHONY_STUDIO_HOSTS=name1,name2.
+    allowedHosts: (process.env.SYMPHONY_STUDIO_HOSTS ?? '')
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean),
+  },
   test: {
     globals: true,
     // Tests never read or publish the runs of other processes (src/runtime/live.ts).

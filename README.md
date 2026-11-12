@@ -59,6 +59,50 @@ can explore every feature without credentials.
 2. In the studio choose **AI → GitHub Copilot** and run. Each agent call uses the model for its
    complexity tier (see below); typing a model in the toolbar forces one model for every tier.
 
+### Use your own models (Tenstorrent, vLLM, Ollama)
+
+Every step can run on a model server of your own instead of Copilot: no GitHub account is used.
+Any OpenAI-compatible server works, e.g. `tt-inference-server` or vLLM on a Tenstorrent machine.
+The model must support tool calling: steps read files, run read-only commands and submit their
+result through tools. In `.env`:
+
+```bash
+SYMPHONY_MODEL_URL=http://tt.example.org:8000/v1   # the server's OpenAI-compatible base URL
+SYMPHONY_MODEL_ID=openai/gpt-oss-120b              # optional: default, the first it lists
+SYMPHONY_MODEL_KEY=...                             # optional: if the server needs a key
+```
+
+Then choose per run: **AI → Local AI** in the studio (it shows the model, and whether the server
+answers), `--provider local` in the CLI, or `provider: "local"` from a chat; **GitHub Copilot**
+(`copilot`) stays Copilot. When you choose neither, runs use Copilot: your server only plays
+when chosen. One model plays every step (complexity tiers and reasoning efforts
+are Copilot's). Each run first checks the server answers (5 s): when it does not, the run stops at
+once with that reason, or, with `SYMPHONY_MODEL_FALLBACK=copilot`, plays on GitHub Copilot instead
+and says so (only where your sign-ins are allowed, see below).
+
+**Someone else's Copilot.** A teammate who opens your studio from another computer chooses
+**AI → GitHub Copilot** and **Sign in with GitHub**: the studio shows a code, they enter it at
+github.com/login/device in their own browser, and from then on their runs use *their* Copilot
+(nothing to install on their computer). The sign-in is the Copilot CLI's own device flow, kept
+per browser in `~/.symphony/accounts/` (an HttpOnly cookie says which browser it is), with the
+token in this computer's keychain; their runs get none of your other sign-ins (gh, az, git, MCP).
+**Sign out** removes it. Until they sign in, they get your Copilot only if your sign-ins are shared
+(`SYMPHONY_SIGNINS` unset); with `here` or `off` they are asked to sign in or choose Local AI.
+The studio is plain HTTP: on a network you do not trust, anyone who can read the traffic could
+reuse that browser's cookie, so keep it on your own network (or put HTTPS in front of it).
+
+**Sharing it on your network.** `SYMPHONY_SIGNINS=here` keeps your sign-ins (and the Copilot
+fallback) for runs started on this computer (a browser on localhost, the CLI, a VS Code chat) and
+treats every other machine as below. `SYMPHONY_SIGNINS=off` runs every step with none of your
+credentials: no GitHub, Copilot or Azure token, empty `gh` and `az` sign-ins, no git credential
+helper or SSH agent, no MCP servers and no Kusto tool, whatever command a step runs. Then start
+the studio for the network with `npm run studio -- --host 0.0.0.0` (to reach it by a name, e.g.
+`symphony.example.org`, also set `SYMPHONY_STUDIO_HOSTS=symphony.example.org`). Without
+`SYMPHONY_MODEL_URL`, runs with sign-ins off stop at once rather than use your Copilot account.
+The studio has no sign-in of
+its own: anyone who can reach it can start runs (on your model server) and read the workspace and
+saved runs, so keep it on a network you trust.
+
 Agents work in the repository folder by default; set `SYMPHONY_WORKSPACE=/path/to/project` in `.env`
 to point them at another project. **Executor nodes can edit files and run commands there**;
 assessor nodes are held read-only by the permission policy (reads, URLs and read-only shell

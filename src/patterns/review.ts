@@ -94,6 +94,12 @@ const PLACE = '^[^ ]+:[0-9]+(-[0-9]+)? — [[][A-Z]+]';
 const SEVERITY = '[[](HIGH|MEDIUM|LOW)]';
 /** Files that are only documentation: no test needs to run for them. */
 const DOC_FILE = '[.](md|mdx|txt|rst|adoc)$';
+/**
+ * Files nothing needs comparing with: documentation, and release-note change files (beachball's
+ * change/*.json; changesets are Markdown). Seen live: a review stopped because the AI kept
+ * leaving out context for a change/*.json among 19 files.
+ */
+const NO_CONTEXT_FILE = `${DOC_FILE}|^change/[^/]+[.]json$`;
 
 /** A review comment: the finding's id, then each part, in order (`[^]` spans lines). */
 const COMMENT_SHAPE =
@@ -533,7 +539,7 @@ export const review: Pattern = {
       label: 'Collect diff',
       // A PR can change on GitHub, which the workspace fingerprint does not see: never replayed.
       fresh: true,
-      directive: `Read the diff for \`target\` (use \`hint\` if set). When \`prBase\` is set, this workspace is the PR's code (its merge into the target branch, checked out by the engine): its change is exactly \`git diff <prBase> HEAD\`, and \`prFiles\` lists every changed file; read it that way, never from another source, and leave \`diffRange\` empty. Otherwise use git diff, or gh pr diff and gh pr view for a GitHub PR, and set \`diffRange\` to the git range the change is (e.g. "main...HEAD", "HEAD~1..HEAD"; "" for uncommitted changes). List every changed file to review in \`files\` (paths only), and every file the change deletes in \`deleted\` (the reviewers see the deletion in the diff). List in \`skipped\` every other changed file you leave out, with why ("path — lockfile", "— generated", "— binary"): leave out only lockfiles, generated and binary files. Summarize what changed per file in \`diffSummary\`, and in \`claims\` what the change says it does (the PR description or the commit messages, quoted briefly; "" if none). Set \`agents\` to how many reviewers should read in parallel (1 to ${MAX_AGENTS}): 1 for a few small files, more for a large diff. If there is no diff, leave \`files\` and \`deleted\` empty and say why in \`diffSummary\`.`,
+      directive: `Read the diff for \`target\` (use \`hint\` if set). When \`prBase\` is set, this workspace is the PR's code (its merge into the target branch, checked out by the engine): its change is exactly \`git diff <prBase> HEAD\`, and \`prFiles\` lists every changed file; read it that way, never from another source, and leave \`diffRange\` empty. Otherwise use git diff, or gh pr diff and gh pr view for a GitHub PR (a branch \`target\` is checked out by the engine: HEAD is its tip, and a branch only on a remote is \`origin/<target>\`; never fetch), and set \`diffRange\` to the git range the change is (e.g. "main...HEAD", "HEAD~1..HEAD"; "" for uncommitted changes). List every changed file to review in \`files\` (paths only), and every file the change deletes in \`deleted\` (the reviewers see the deletion in the diff). List in \`skipped\` every other changed file you leave out, with why ("path — lockfile", "— generated", "— binary"): leave out only lockfiles, generated and binary files. Summarize what changed per file in \`diffSummary\`, and in \`claims\` what the change says it does (the PR description or the commit messages, quoted briefly; "" if none). Set \`agents\` to how many reviewers should read in parallel (1 to ${MAX_AGENTS}): 1 for a few small files, more for a large diff. If there is no diff, leave \`files\` and \`deleted\` empty and say why in \`diffSummary\`.`,
       reads: ['target', 'hint', 'prBase', 'prFiles'],
       writes: ['diffSummary', 'claims', 'files', 'deleted', 'skipped', 'agents', 'diffRange'],
       retries: 2,
@@ -593,7 +599,7 @@ export const review: Pattern = {
       label: 'Gather context',
       directive: `Before anyone judges the change, gather what it must be judged against. You see the whole change (\`diff\`; read more with git diff \`diffRange\`, or git diff HEAD when it is empty) and can read the whole workspace (read-only). Write:
 - \`claimList\`: what \`claims\` says the change does and what \`intent\` asks for, split into separate claims, one per entry: "C1 …", "C2 …" (empty only when both are empty).
-- \`context\`: for each file of \`files\`, 1 to 3 entries of what a reviewer should compare it with, each citing that code or rule (not the changed file) and naming the changed file it is for: "path:line — [CONVENTION|SIMILAR|CALLER] (for: changed path) why \`exact quote\`", e.g. "src/api.ts:40 — [SIMILAR] (for: src/client.ts) fetchUser already retries this way \`await retry(() => get(url))\`" or "AGENTS.md:3 — [CONVENTION] (for: db/schema.sql) a schema change needs a migration \`needs a new numbered migration\`". CONVENTION: a rule in AGENTS.md, the docs or a linter config; SIMILAR: existing code that does similar work (how the codebase already does it); CALLER: code that calls what changed. For each file of \`deleted\`, give the CALLER entries that still use what it deleted, "(for: the deleted path)" (none when nothing does).
+- \`context\`: for each file of \`files\` (documentation and change/*.json release notes need none), 1 to 3 entries of what a reviewer should compare it with, each citing that code or rule (not the changed file) and naming the changed file it is for: "path:line — [CONVENTION|SIMILAR|CALLER] (for: changed path) why \`exact quote\`", e.g. "src/api.ts:40 — [SIMILAR] (for: src/client.ts) fetchUser already retries this way \`await retry(() => get(url))\`" or "AGENTS.md:3 — [CONVENTION] (for: db/schema.sql) a schema change needs a migration \`needs a new numbered migration\`". CONVENTION: a rule in AGENTS.md, the docs or a linter config; SIMILAR: existing code that does similar work (how the codebase already does it); CALLER: code that calls what changed. For each file of \`deleted\`, give the CALLER entries that still use what it deleted, "(for: the deleted path)" (none when nothing does).
 - \`behaviours\`: each behaviour the change adds or changes: "B1 path:line — the behaviour \`exact quote\`", path:line at the changed line.
 - \`obligations\`: each other change this codebase requires for this one to be complete, and only those: one a rule asks for (AGENTS.md, the docs, a linter), one every similar change includes (cite such a change), or one without which code breaks (a caller of a renamed or removed name). Not what would merely be nice: a new function nobody calls yet, docs or tooling the project does not have. Write each as "O1 [CALLER|MIGRATION|CONFIG|DOCS|ERRPATH] path:line — what must exist \`exact quote\`". e.g. "O1 [CALLER] src/greet.js:1 — greet.js must import the new name \`import { fullName }\`". path:line is the changed line (or a line that still uses deleted code) that creates the need; name what must exist in words, without a line number (it may not exist).
 Every path:line must be a real line in this workspace with its quote: code the change deletes is not here, so cite the line that still uses it.${MEMORY_NOTE}`,
@@ -641,9 +647,9 @@ Every path:line must be a real line in this workspace with its quote: code the c
           // Documentation needs no comparison; every code file does. An entry cites what the file is
           // compared with and says which file it is for (seen live: tying the citation to the
           // changed file made models cite it while quoting the rule).
-          expr: `len(without(without(files, pick(files, positions(files, "${DOC_FILE}"))), heads(context, "${FOR_FILE}"))) == 0`,
+          expr: `len(without(without(files, pick(files, positions(files, "${NO_CONTEXT_FILE}"))), heads(context, "${FOR_FILE}"))) == 0`,
           message:
-            'Give each file of files (documentation apart) at least one context entry tagged "(for: <that path>)", exactly as written in files.',
+            'Give each file of files (documentation and change/*.json release notes apart) at least one context entry tagged "(for: <that path>)", exactly as written in files.',
         }),
       ],
     },

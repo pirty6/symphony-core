@@ -47,7 +47,14 @@ import {
 } from '../runtime/live.js';
 import { restoreEngine } from '../core/replay.js';
 import type { Provider } from '../runtime/provider.js';
-import { envConfig, makeProvider, runtimeExtras, type ProviderName } from '../runtime/factory.js';
+import {
+  DEFAULT_PROVIDER,
+  envConfig,
+  makeProvider,
+  playsLive,
+  runtimeExtras,
+  type ProviderName,
+} from '../runtime/factory.js';
 import {
   autoPrune,
   gitFingerprint,
@@ -390,10 +397,10 @@ export class RunManager {
     const runsDir = runsDirFor(workspace, this.opts.env);
     void autoPrune(workspace, runsDir, this.opts.env);
     const extras = await runtimeExtras(workspace, this.opts.repoRoot, this.opts.env);
-    const providerName = req.provider ?? 'copilot';
+    const providerName = req.provider ?? DEFAULT_PROVIDER;
     // A real AI editing files plays in its own worktree, so several can play at once.
     const isolation =
-      providerName === 'copilot' && this.opts.editsAllowed && editsFiles(score)
+      playsLive(providerName) && this.opts.editsAllowed && editsFiles(score)
         ? await isolate(workspace, score.pattern, this.opts.env)
         : undefined;
     // A run that reads a PR plays on the PR's own code, checked out apart (runtime/pr.ts).
@@ -448,7 +455,7 @@ export class RunManager {
           ...(dir !== workspace
             ? { workspace: dir, memoryRoot: extras.toolContext.workspace }
             : {}),
-          ...(pr ? { pr: pr.info } : {}),
+          ...(pr?.info ? { pr: pr.info } : {}),
           // Remote callers read only: no command (tests, lint) runs on this machine for them.
           ...(this.opts.editsAllowed ? {} : { runsCode: false }),
         },
@@ -459,7 +466,7 @@ export class RunManager {
         autoApprove: req.autoApprove === true,
         // Someone relays the run: at the time limit, ask them rather than cut the step off.
         askOnOvertime: req.autoApprove !== true,
-        ...(providerName === 'copilot'
+        ...(playsLive(providerName)
           ? {
               envHash: () => gitFingerprint(dir),
               scratch: await runScratch(workspace),

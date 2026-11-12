@@ -27,7 +27,7 @@ import { FlowNode } from './canvas/FlowNode'
 import { FrameNode, PhaseNode } from './canvas/PhaseNode'
 import { SubAgentNode } from './canvas/SubAgentNode'
 import { Home } from './panels/Home'
-import { api, errorText, isNetworkError, isRunGone, RUN_GONE, subscribeRun, type LibraryItem, type LiveRun, type SavedSummary, type StartRunRequest } from './lib/api'
+import { api, errorText, isNetworkError, isRunGone, RUN_GONE, subscribeRun, type LibraryItem, type LiveRun, type LocalStatus, type SavedSummary, type StartRunRequest } from './lib/api'
 import { savedToList, someRunEnded } from './lib/saved'
 import { subAgentItems, subAgentNodes,
   chooseFeature,
@@ -71,6 +71,7 @@ import { Library } from './panels/Library'
 import { ResultPreview, ResultReader } from './panels/Result'
 import { PatternPanel } from './panels/PatternPanel'
 import { Timeline } from './panels/Timeline'
+import { VisitorSignIn } from './panels/VisitorSignIn'
 import { Toolbar, type RunSettings, type Tiers } from './panels/Toolbar'
 import { RunTimer } from './panels/RunTimer'
 
@@ -160,7 +161,26 @@ export default function Studio() {
     if (settings.provider !== 'copilot') return
     let cancelled = false
     void api.copilotStatus().then(
-      (s) => !cancelled && !s.signedIn && setError(s.message),
+      // A visitor that may sign in with its own GitHub gets the sign-in card instead.
+      (s) => !cancelled && !s.signedIn && !s.canSignIn && setError(s.message),
+      () => undefined,
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [settings.provider])
+  // Your model server: offered as "Local AI" when set; chosen and not answering, say so before a run fails.
+  const [local, setLocal] = useState<LocalStatus | undefined>()
+  useEffect(() => {
+    let cancelled = false
+    void api.localStatus().then(
+      (s) => {
+        if (cancelled) return
+        setLocal(s)
+        if (settings.provider !== 'local') return
+        if (!s.configured) setError("AI: Local needs a model server: set SYMPHONY_MODEL_URL in this studio's .env, or choose GitHub Copilot.")
+        else if (!s.reachable) setError(s.message ?? `The model server at ${s.url} is not answering.`)
+      },
       () => undefined,
     )
     return () => {
@@ -751,6 +771,7 @@ export default function Studio() {
         canRun={report.errors.length === 0}
         onSettings={changeSettings}
         {...(tiers ? { tiers } : {})}
+        {...(local ? { local } : {})}
         onRun={() => void run()}
         onPause={() => control('pause')}
         onResume={() => control('resume')}
@@ -905,6 +926,7 @@ export default function Studio() {
             ⚠ Can't reach the studio server (stopped, or restarting after a code change). Reconnecting…
           </div>
         )}
+        {settings.provider === 'copilot' && <VisitorSignIn onChange={(signedIn) => signedIn && setError(null)} />}
         {error && (
           <div className="card issue dismissable" role="alert">
             <span>{error}</span>

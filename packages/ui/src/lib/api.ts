@@ -3,6 +3,7 @@ import type { Complexity, ExecutableScore, Improvisation, Pattern, SavedRun, Sta
 import type { VisualGraph } from '@core/graph'
 import type { NextPerformance, RunMessage } from '../../../../src/runtime/driver'
 import type { ProviderEvent } from '../../../../src/runtime/provider'
+import type { ProviderChoice } from './model'
 
 export type PatternData = Omit<Pattern, 'demo'>
 
@@ -22,6 +23,8 @@ export interface LiveRun {
   /** The score it plays: matches its saved checkpoint while it plays (absent from older servers). */
   scoreId?: string
   workspace?: string
+  /** A name for people, e.g. the PR a review reads ("PR 5997156: Add hourly schedules"). */
+  title?: string
   /** When it started playing (ISO); absent from older servers. */
   startedAt?: string
   /** How long it has waited for a person so far (answers it has had), in ms. */
@@ -60,11 +63,37 @@ export interface ContinueRunRequest {
   readonly breakpoints: readonly string[]
 }
 
+export interface CopilotStatus {
+  readonly signedIn: boolean
+  readonly login?: string
+  readonly message: string
+  /** A visitor signed in with its own GitHub account. */
+  readonly visitor?: boolean
+  /** A visitor that may sign in with its own GitHub account. */
+  readonly canSignIn?: boolean
+}
+
+export interface AccountView {
+  readonly here: boolean
+  readonly signedIn?: boolean
+  readonly login?: string
+  readonly pending?: { readonly url: string; readonly code: string }
+  readonly error?: string
+}
+
+export interface LocalStatus {
+  readonly configured: boolean
+  readonly url?: string
+  readonly model?: string
+  readonly reachable?: boolean
+  readonly message?: string
+}
+
 export interface StartRunRequest {
   readonly pattern: PatternData
   readonly goal: string
   readonly context: Record<string, unknown>
-  readonly provider: 'scripted' | 'copilot'
+  readonly provider: ProviderChoice
   readonly model?: string
   readonly autoApprove: boolean
   readonly stepMode: boolean
@@ -144,9 +173,15 @@ export const api = {
     ),
   run: (runId: string) =>
     fetch(`/api/runs/${runId}`).then((r) => json<{ id: string; status: string; score: ExecutableScore; graph: VisualGraph }>(r)),
-  /** Whether Copilot can run here (a GitHub account is signed in), and how to fix it if not. */
-  copilotStatus: () =>
-    fetch('/api/copilot/status').then((r) => json<{ signedIn: boolean; login?: string; message: string }>(r)),
+  /** Whether Copilot can run for this browser (a GitHub account is signed in), and how to fix it if not. */
+  copilotStatus: () => fetch('/api/copilot/status').then((r) => json<CopilotStatus>(r)),
+  /** A browser on another computer: its own GitHub sign-in for Copilot in this studio. */
+  account: () => fetch('/api/account').then((r) => json<AccountView>(r)),
+  /** Start that sign-in: the code to enter at GitHub, from this browser. */
+  accountLogin: () => post('/api/account/login', {}).then((r) => json<{ url: string; code: string }>(r)),
+  accountLogout: () => post('/api/account/logout', {}).then((r) => json<{ signedIn: false }>(r)),
+  /** Your model server (SYMPHONY_MODEL_URL): whether one is set, and whether it answers now. */
+  localStatus: () => fetch('/api/local/status').then((r) => json<LocalStatus>(r)),
   tiers: () => fetch('/api/tiers').then((r) => json<Record<Complexity, { model: string; effort?: string }>>(r)),
   /** Delete one saved run (refused while it is still playing). */
   deleteSaved: (file: string) => post('/api/saved/delete', { path: file }).then((r) => json<{ deleted: string }>(r)),
@@ -192,7 +227,7 @@ export function subscribeRun(runId: string, onMessage: (m: RunMessage) => void, 
 
 /** Stream an AI draft (POST + SSE body). */
 export async function streamDraft(
-  body: { request: string; provider: 'scripted' | 'copilot'; model?: string; priorDraft?: unknown; feedback?: string[] },
+  body: { request: string; provider: ProviderChoice; model?: string; priorDraft?: unknown; feedback?: string[] },
   onMessage: (m: DraftMessage) => void,
   signal?: AbortSignal,
 ): Promise<void> {

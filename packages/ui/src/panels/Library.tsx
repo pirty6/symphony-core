@@ -1,5 +1,6 @@
 import { useState, type DragEvent, type ReactNode } from 'react'
 import { TERMINAL, type LibraryItem, type LiveRun, type SavedSummary } from '../lib/api'
+import { runHover } from '../lib/saved'
 import type { FeatureRow, PaletteKind } from '../lib/model'
 import { Collapsible } from './Collapsible'
 import { PromptBox } from './PromptBox'
@@ -201,7 +202,7 @@ export function Library(p: Props) {
                 key={r.id}
                 className={`lib-item saved${r.id === p.liveId ? ' active' : ''}`}
                 onClick={() => p.onOpenLive?.(r.id)}
-                title={r.source ? `${r.goal}\n\nPlayed by ${r.source === 'cli' ? 'the symphony CLI' : 'a chat session'}${r.workspace ? ` in ${r.workspace}` : ''}: you can watch it and answer it here.` : r.goal}
+                title={runHover(r)}
                 disabled={r.id === p.liveId}
               >
                 <b>{r.pattern}</b> <span className={`tag status-${r.status}`}>{r.status}</span>
@@ -217,7 +218,7 @@ export function Library(p: Props) {
                 )}
                 {r.id === p.liveId && <span className="tag">on screen</span>}
                 <RunTimer run={r} history={p.saved} />
-                <small>{r.goal}</small>
+                <small>{r.title ?? r.goal}</small>
               </button>
             ))}
           </Collapsible>

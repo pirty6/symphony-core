@@ -26,6 +26,7 @@ import { scriptedResolution } from '../core/scripted.js';
 import type {
   AgentPause,
   AiTranscript,
+  Complexity,
   EditsResult,
   PerformanceOutcome,
   ApprovalPause,
@@ -139,6 +140,11 @@ export interface RunOptions {
   /** Used for "scripted answer" at approvals and by autoApprove. */
   readonly demo?: DemoScript;
   readonly autoApprove?: boolean;
+  /**
+   * With autoApprove (nobody to ask), a step that gave no valid answer is retried this many times
+   * in the run, one tier up each time and told what was rejected, before the run stops. Default 0.
+   */
+  readonly stuckRetries?: number;
   readonly stepMode?: boolean;
   readonly breakpoints?: readonly string[];
   /** Workspace fingerprint after each agent node (e.g. gitFingerprint). */
@@ -238,6 +244,7 @@ export class Run {
   private release: (() => void) | undefined;
   private approvalWaiter: ((a: HumanAnswer | undefined) => void) | undefined;
   private autoApproving: boolean;
+  private stuckRetriesLeft: number;
   private recoveryWaiter: ((a: RecoveryAnswer | undefined) => void) | undefined;
   private abort: AbortController | undefined;
   private overtimeWaiter: ((a: 'wait' | 'stop') => void) | undefined;
@@ -253,6 +260,7 @@ export class Run {
     this.stepMode = opts.stepMode ?? false;
     this.breakpoints = new Set(opts.breakpoints ?? []);
     this.autoApproving = opts.autoApprove === true;
+    this.stuckRetriesLeft = opts.stuckRetries ?? 0;
     this.engine = undefined as unknown as EngineState;
   }
 
@@ -916,9 +924,17 @@ export class Run {
   }
 
   private async runRecovery(pause: StuckPause): Promise<Resolution | undefined> {
-    // Unattended runs have nobody to ask: the step fails as it always did.
+    // Unattended runs have nobody to ask: retry while retries remain, else the step fails.
     if (this.opts.autoApprove) {
-      return scriptedResolution(this.opts.demo, pause, this.engine, this.now());
+      const answer = unattendedRecovery(pause, this.stuckRetriesLeft);
+      if (answer.action === 'stop')
+        return scriptedResolution(this.opts.demo, pause, this.engine, this.now());
+      this.stuckRetriesLeft -= 1;
+      this.emitInfo(
+        pause.nodeId,
+        `'${pause.label}' gave no valid answer: retrying it unattended${answer.complexity ? ` at tier ${answer.complexity}` : ''}, told what was rejected`,
+      );
+      return { kind: 'recovery', pauseId: pause.pauseId, ...answer, by: 'auto', at: this.now() };
     }
     const answered = new Promise<RecoveryAnswer | undefined>((resolve) => {
       this.recoveryWaiter = resolve;
@@ -1044,6 +1060,23 @@ export function performScore(
   opts: Omit<RunOptions, 'score' | 'provider'> = {},
 ): Promise<Performance> {
   return new Run({ ...opts, score, provider }).start();
+}
+
+/** The highest complexity tier. */
+const TOP_TIER: Complexity = 4;
+
+/**
+ * What an unattended run does with a step that gave no valid answer: retry it one tier up (to the
+ * top) while retries remain, else stop. The retry is told what was rejected (the engine passes the
+ * feedback on); no hint, which the AI would read as a person's.
+ */
+export function unattendedRecovery(
+  pause: { readonly complexity: Complexity },
+  retriesLeft: number,
+): { action: 'stop' } | { action: 'retry'; complexity?: Complexity } {
+  if (retriesLeft <= 0) return { action: 'stop' };
+  const up = Math.min(pause.complexity + 1, TOP_TIER) as Complexity;
+  return { action: 'retry', ...(up !== pause.complexity ? { complexity: up } : {}) };
 }
 
 /** An answer from a step stopped at its time limit: with no result, it says it was the limit. */

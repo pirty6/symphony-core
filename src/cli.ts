@@ -68,11 +68,21 @@ import { loadRepertoire, runsDirFor } from './runtime/store.js';
 import { editsFiles, isolate, sandboxFor } from './runtime/worktree.js';
 import { prForRun } from './runtime/pr.js';
 import { IMPROVISATION_LEVELS, isImprovisation, playsFromRepertoire } from './core/jazz.js';
-import { Run, type NextPerformance, type RunMessage, type RunOptions } from './runtime/driver.js';
+import {
+  Run,
+  unattendedRecovery,
+  type NextPerformance,
+  type RunMessage,
+  type RunOptions,
+} from './runtime/driver.js';
+
+export { unattendedRecovery };
 import { draftPattern } from './runtime/drafting.js';
 import {
   envConfig,
+  DEFAULT_PROVIDER,
   isProviderName,
+  playsLive,
   makeProvider,
   runtimeExtras,
   type ProviderName,
@@ -218,6 +228,13 @@ interface PlayOptions {
   readonly restore?: RunOptions['restore'];
   /** --complexity as given: backlog items otherwise rate their own complexity. */
   readonly complexity?: Complexity;
+  /** --title: a name for people in the studio (e.g. the PR's title), not part of the score. */
+  readonly title?: string;
+  /**
+   * --stuck-retries: unattended (--auto-approve, or no terminal), a step that gave no valid answer is retried this
+   * many times (one tier up, with what was rejected as the hint) before the run stops. 0: stop.
+   */
+  readonly stuckRetries?: number;
 }
 
 /**
@@ -262,14 +279,13 @@ async function play(
   const demo = pattern.demo ?? (await allPatterns(cwd)).find((p) => p.name === pattern.name)?.demo;
   // A real AI editing files plays in its own worktree; its edits come back when it ends.
   const isolation =
-    o.providerName === 'copilot' && editsFiles(score)
-      ? await isolate(cwd, score.pattern)
-      : undefined;
+    playsLive(o.providerName) && editsFiles(score) ? await isolate(cwd, score.pattern) : undefined;
   // A run that reads a PR plays on the PR's own code, checked out apart (runtime/pr.ts).
   const pr = isolation
     ? undefined
     : await prForRun(pattern, score.context, cwd, { provider: o.providerName });
-  if (pr && 'error' in pr.info) console.log(c.yellow(`PR ${pr.info.number}: ${pr.info.error}`));
+  if (pr?.info && 'error' in pr.info)
+    console.log(c.yellow(`PR ${pr.info.number}: ${pr.info.error}`));
   const dir = isolation?.dir ?? pr?.dir ?? cwd;
   if (dir !== cwd) console.log(c.dim(`playing in its own worktree: ${dir}`));
   // Until the run owns the PR checkout (cleanup), a failure here must remove it.
@@ -281,7 +297,7 @@ async function play(
       toolContext: {
         ...extras.toolContext,
         ...(dir !== cwd ? { workspace: dir, memoryRoot: extras.toolContext.workspace } : {}),
-        ...(pr ? { pr: pr.info } : {}),
+        ...(pr?.info ? { pr: pr.info } : {}),
       },
       provider: makeProvider({
         provider: o.providerName,
@@ -296,9 +312,11 @@ async function play(
         ? { repertoire: await loadRepertoire(runsDir, score.id) }
         : {}),
       autoApprove: o.autoApprove,
+      // With --auto-approve the run answers stuck steps itself; these are its retries.
+      ...(o.stuckRetries ? { stuckRetries: o.stuckRetries } : {}),
       stepMode: o.step,
       breakpoints: o.breakpoints,
-      ...(o.providerName === 'copilot'
+      ...(playsLive(o.providerName)
         ? {
             envHash: () => gitFingerprint(dir),
             scratch: await runScratch(cwd),
@@ -327,6 +345,7 @@ async function play(
   const rl = o.rl;
   // The terminal is often a CI log: what the AI says is scrubbed as the live feed is.
   const print = scrubbedFeed((m) => printMessage(m, (s) => process.stdout.write(s)));
+  let stuckRetriesLeft = o.stuckRetries ?? 0;
   run.subscribe(async (m) => {
     if (!o.quiet) print(m);
     if (m.type === 'status' && m.status === 'paused') {
@@ -338,7 +357,16 @@ async function play(
       const pause = run.engine.pause;
       if (pause?.kind === 'stuck') {
         if (!rl) {
-          run.answerRecovery({ action: 'stop', by: 'cli' });
+          const answer = unattendedRecovery(pause, stuckRetriesLeft);
+          if (answer.action === 'retry') {
+            stuckRetriesLeft -= 1;
+            console.log(
+              c.yellow(
+                `  ⚠ '${pause.label}' gave no valid answer: retrying it unattended${answer.complexity ? ` at tier ${answer.complexity}` : ''}`,
+              ),
+            );
+          }
+          run.answerRecovery({ ...answer, by: 'cli' });
           return;
         }
         console.log(
@@ -390,7 +418,11 @@ async function play(
   // chat's (src/runtime/live.ts). Published before it starts, so it is seen from its first message.
   const live = liveRoot(process.env);
   const unpublish = live
-    ? await publishLive(run, { source: 'cli', workspace: cwd }, live).catch(() => undefined)
+    ? await publishLive(
+        run,
+        { source: 'cli', workspace: cwd, ...(o.title ? { title: o.title } : {}) },
+        live,
+      ).catch(() => undefined)
     : undefined;
   let perf: Performance;
   try {
@@ -441,6 +473,12 @@ function complexityOf(raw: string | undefined): Complexity | undefined {
   return n;
 }
 
+function stuckRetriesOf(v: string): number {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 0 || n > 5) throw new Error('--stuck-retries must be 0 to 5');
+  return n;
+}
+
 const RUN_OPTIONS = {
   provider: { type: 'string', default: 'scripted' },
   model: { type: 'string' },
@@ -450,11 +488,13 @@ const RUN_OPTIONS = {
   break: { type: 'string', multiple: true },
   step: { type: 'boolean', default: false },
   'no-save': { type: 'boolean', default: false },
+  'stuck-retries': { type: 'string' },
 } as const;
 
 const SCORE_OPTIONS = {
   ...RUN_OPTIONS,
   goal: { type: 'string' },
+  title: { type: 'string' },
   context: { type: 'string', short: 'c', multiple: true },
   // oxlint-disable-next-line unicorn/no-thenable -- the --then flag; parseArgs config, never awaited
   then: { type: 'string', multiple: true },
@@ -557,7 +597,7 @@ async function scoreFromArgs(
     return 1;
   }
   if (!isProviderName(values.provider)) {
-    console.error(`--provider must be scripted or copilot`);
+    console.error(`--provider must be scripted, copilot or local`);
     return 1;
   }
   const { own } = splitContext(values.context, thenList(values.then));
@@ -607,6 +647,10 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
         ...(complexityOf(values.complexity)
           ? { complexity: complexityOf(values.complexity)! }
           : {}),
+        ...(values['stuck-retries']
+          ? { stuckRetries: stuckRetriesOf(values['stuck-retries']) }
+          : {}),
+        ...(values.title?.trim() ? { title: values.title.trim() } : {}),
         ...(rl ? { rl } : {}),
       },
       splitContext(values.context, then).chained,
@@ -620,7 +664,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
   const args = parseArgs({
     args: argv,
     options: {
-      provider: { type: 'string', default: 'copilot' },
+      provider: { type: 'string' },
       model: { type: 'string' },
       task: { type: 'string' },
       repeat: { type: 'string', short: 'n', default: '1' },
@@ -631,9 +675,9 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
       complexity: { type: 'string' },
     },
   });
-  const providerName = args.values.provider;
+  const providerName = args.values.provider ?? DEFAULT_PROVIDER;
   if (!isProviderName(providerName)) {
-    console.error('--provider must be scripted or copilot');
+    console.error('--provider must be scripted, copilot or local');
     return 1;
   }
   const wanted = args.values.task?.split(',').map((t) => t.trim());
@@ -780,10 +824,13 @@ async function cmdRehearse(argv: string[], cwd: string): Promise<number> {
 
 /** The provider a saved run was played with, from its AI transcripts. */
 function recordedProvider(run: SavedRun): ProviderName {
-  const live = run.performance.steps.some(
-    (s) => s.transcript && s.transcript.provider !== 'scripted' && !s.transcript.fromRepertoire,
+  const live = run.performance.steps.flatMap((s) =>
+    s.transcript && s.transcript.provider !== 'scripted' && !s.transcript.fromRepertoire
+      ? [s.transcript.provider]
+      : [],
   );
-  return live ? 'copilot' : 'scripted';
+  if (live.length === 0) return 'scripted';
+  return live.includes('local') ? 'local' : 'copilot';
 }
 
 async function cmdContinue(
@@ -805,7 +852,7 @@ async function cmdContinue(
   const usage = kind === 'resumed' ? 'resume <run.json>' : 'fork <run.json> --at <step>';
   if (!file || (kind === 'forked' && values.at === undefined)) {
     console.error(
-      `usage: symphony ${usage} [--provider scripted|copilot] [--model id] [--auto-approve]`,
+      `usage: symphony ${usage} [--provider scripted|copilot|local] [--model id] [--auto-approve]`,
     );
     return 1;
   }
@@ -831,7 +878,7 @@ async function cmdContinue(
   const throughStep = kind === 'forked' ? at - 1 : last;
   const provider = values.provider ?? recordedProvider(run);
   if (!isProviderName(provider)) {
-    console.error('--provider must be scripted or copilot');
+    console.error('--provider must be scripted, copilot or local');
     return 1;
   }
   let result;
@@ -892,7 +939,7 @@ async function cmdMaestro(argv: string[], cwd: string): Promise<number> {
   const request = positionals.join(' ').trim();
   if (!request || !isProviderName(values.provider)) {
     console.error(
-      'usage: symphony maestro "<what you want done>" [--provider copilot] [--complexity 1-4] [-i classical|cool|swing|bebop|free]',
+      'usage: symphony maestro "<what you want done>" [--provider copilot|local] [--complexity 1-4] [-i classical|cool|swing|bebop|free]',
     );
     return 1;
   }
@@ -981,7 +1028,7 @@ async function cmdDraft(argv: string[], cwd: string): Promise<number> {
   const request = positionals.join(' ');
   if (!request || !isProviderName(values.provider)) {
     console.error(
-      'usage: symphony draft "<what the flow should do>" [--provider copilot] [--save]',
+      'usage: symphony draft "<what the flow should do>" [--provider copilot|local] [--save]',
     );
     return 1;
   }
@@ -1231,9 +1278,11 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
   maestro "<request>"          compose the right score (debate by complexity), then perform it
       --compose-only  --save (write the composed score to src/patterns/drafts)
   run <pattern>                run in the terminal
-      --goal "..."  -c key=value  --provider scripted|copilot  --model <id>
+      --goal "..."  -c key=value  --provider scripted|copilot|local  --model <id>
       --complexity 1-4  -i classical|cool|swing|bebop|free (or 0-4)
       --auto-approve  --step  --break <nodeId>  --no-save
+      --title "..."  a name for the run in the studio (e.g. the PR's title)
+      --stuck-retries 0-5  unattended (--auto-approve or no terminal): retry a step with no valid answer, one tier up
   draft "<request>"            AI drafts a pattern (--provider copilot, --save)
   verify <run.json>            integrity + deterministic replay check
   cost <run.json>...           each step's share of input tokens and AI time (parts, retries included)
@@ -1244,7 +1293,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       (takes the same options as run; approvals are auto-approved)
   resume <run.json>            continue an interrupted or stopped run from its last checkpoint
   fork <run.json> --at <step>  keep steps before <step>, play the rest again as a new run
-      --provider scripted|copilot (default: the one the run used)  --model <id>  --auto-approve
+      --provider scripted|copilot|local (default: the one the run used)  --model <id>  --auto-approve
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
   where [runs|evals|memory]    where this workspace's saved runs, memory and reports are kept (outside it)
   eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time

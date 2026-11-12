@@ -529,6 +529,8 @@ export interface RunResult {
   /** Keys the run delivered: the score's declared result, else the last data carried toward its end. */
   readonly keys: readonly string[]
   readonly values: Readonly<Record<string, unknown>>
+  /** Why it ended, when it did not succeed (e.g. the step it stopped at, and why). */
+  readonly ended?: string
 }
 
 /** What a finished run produced, read from its final frames. Undefined while it runs. */
@@ -544,8 +546,16 @@ export function runResult(v: RunView): RunResult | undefined {
       break
     }
   }
-  return { keys, values: Object.fromEntries(keys.map((k) => [k, final[k]])) }
+  const completed = last.event?.type === 'run-completed' ? last.event.reason : undefined
+  const reason = v.performance?.reason ?? completed
+  return {
+    keys,
+    values: Object.fromEntries(keys.map((k) => [k, final[k]])),
+    ...(last.outcome !== 'success' && reason ? { ended: `${last.outcome}: ${reason}` } : {}),
+  }
 }
+
+export const ENDED_HEADING = 'why it ended'
 
 /** The result as Markdown, for copying and downloading. */
 export function resultMarkdown(r: RunResult, title: string): string {
@@ -561,7 +571,8 @@ export function resultMarkdown(r: RunResult, title: string): string {
           : '```json\n' + JSON.stringify(v, null, 2) + '\n```'
     return `## ${k}\n\n${text}`
   })
-  return [`# ${title}`, ...body].join('\n\n') + '\n'
+  const why = r.ended ? [`## ${ENDED_HEADING}\n\n${r.ended}`] : []
+  return [`# ${title}`, ...why, ...body].join('\n\n') + '\n'
 }
 
 // ── origins ─────────────────────────────────────────────────────────
@@ -598,8 +609,11 @@ export function originSummary(perf: Performance): string {
 
 // ── settings and the offline demo ─────────────────────────────────────
 
+/** Who plays the AI steps: the offline demo, GitHub Copilot, or your own model server. */
+export type ProviderChoice = 'scripted' | 'copilot' | 'local'
+
 export interface StoredSettings {
-  provider: 'scripted' | 'copilot'
+  provider: ProviderChoice
   model: string
   /** Optional patterns shown in the library (unset: as the server's SYMPHONY_EXTRAS says). */
   extras: boolean
@@ -612,7 +626,7 @@ export function parseStoredSettings(raw: string | null): Partial<StoredSettings>
   try {
     const v = JSON.parse(raw ?? '{}') as Record<string, unknown>
     return {
-      ...(v.provider === 'scripted' || v.provider === 'copilot' ? { provider: v.provider } : {}),
+      ...(v.provider === 'scripted' || v.provider === 'copilot' || v.provider === 'local' ? { provider: v.provider } : {}),
       ...(typeof v.model === 'string' ? { model: v.model } : {}),
       ...(typeof v.extras === 'boolean' ? { extras: v.extras } : {}),
       ...(v.features && typeof v.features === 'object' && !Array.isArray(v.features)

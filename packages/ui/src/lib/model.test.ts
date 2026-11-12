@@ -145,6 +145,7 @@ describe('offline demo', () => {
   it('keeps the AI choice, flags canned results and inputs the demo ignores', async () => {
     expect(parseStoredSettings('{"provider":"copilot","model":"m","x":1}')).toEqual({ provider: 'copilot', model: 'm' })
     expect(parseStoredSettings('{"provider":"gpt"}')).toEqual({})
+    expect(parseStoredSettings('{"provider":"local"}')).toEqual({ provider: 'local' })
     expect(parseStoredSettings('not json')).toEqual({})
     expect(parseStoredSettings(null)).toEqual({})
     const { messages } = await liveMessages()
@@ -193,6 +194,17 @@ describe('live run view', () => {
     expect(Object.keys(declared.values)).toEqual(['tries', 'missing'])
     expect(resultMarkdown({ keys: ['answer', 'open'], values: { answer: 'Yes.', open: ['a'] } }, 'run')).toBe(
       '# run\n\n## answer\n\nYes.\n\n## open\n\n- a\n',
+    )
+    // A run that did not succeed says why first: its result fields may be empty.
+    expect(r.ended).toBeUndefined()
+    const stopped = runResult({
+      ...v,
+      frames: [...v.frames.slice(0, -1), { ...v.frames.at(-1)!, outcome: 'partial' }],
+      performance: { ...v.performance!, outcome: 'partial', reason: "'gatherContext' gave no valid response" },
+    })!
+    expect(stopped.ended).toBe("partial: 'gatherContext' gave no valid response")
+    expect(resultMarkdown({ keys: ['summary'], values: { summary: '' }, ended: 'partial: x' }, 'run')).toBe(
+      '# run\n\n## why it ended\n\npartial: x\n\n## summary\n\n\n',
     )
   })
 
