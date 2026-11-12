@@ -64,7 +64,9 @@ describe('install:vscode', () => {
     expect(description.length).toBeLessThanOrEqual(1024);
     expect(description).toContain('/maestrov2');
     // The relay rules come from the agent file, without its frontmatter (tools: is agent-only).
-    expect(skill).toContain('NEVER answer an approval or a stuck step on the user');
+    expect(skill).toContain(
+      'NEVER answer an approval, a stuck step or a step over its time limit on the user',
+    );
     expect(skill).not.toMatch(/^tools:/m);
     expect(skill.match(/^---$/gm)).toHaveLength(2);
     expect(skillFromAgent(agent.replaceAll('\n', '\r\n'))).not.toMatch(/^tools:/m);

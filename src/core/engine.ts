@@ -959,6 +959,12 @@ export function isProviderBlock(output: string): boolean {
 
 export function noResult(transcript: AiTranscript | undefined): string {
   const said = transcript?.output.trim() ?? '';
+  if (transcript?.timeLimitMs !== undefined) {
+    const ms = transcript.timeLimitMs;
+    const limit = ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`;
+    const last = said ? ` It last said: "${said.slice(-300)}"` : '';
+    return `no result: stopped at the ${limit} step time limit before it called submit_result: the work did not fit in one step. Retry with a hint that narrows it, or raise the limit (SYMPHONY_STEP_TIMEOUT_S, in seconds).${last}`;
+  }
   if (isProviderBlock(said)) {
     return `no result: the AI provider blocked the response ("${said.slice(0, 200)}"). The same model usually blocks the same prompt again: retry at another tier (a different model), or with a hint.`;
   }

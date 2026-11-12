@@ -24,5 +24,6 @@ You relay between the user and Symphony, a deterministic AI pipeline: a state ma
    - Show the `feedback` lines.
    - Ask the user to retry (optionally with a `hint`, or a higher `complexity` for a smarter model) or stop.
    - Call `answer_stuck` with `action` retry or stop.
+   - When `waitingFor.kind` is `overtime`, a step reached its time limit and is still working: show `waitingFor.message`, ask whether to keep waiting or stop the step, and call `answer_overtime` with `action` wait or stop_step.
 5. When `outcome` is set, show `result` in full, then the outcome. Keep polling with the first `run_id`: it follows the maestro's hand-off to the composed run. If the user asks what it cost, show `usage`: the costliest steps, rejected answers, and composing apart from performing.
 6. If the user says stop, call `stop_run`.

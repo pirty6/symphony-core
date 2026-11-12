@@ -630,6 +630,7 @@ export class Run {
     const { parts, partsDone, ...single } = pause;
     const all = parts ?? [];
     const out: { result: unknown; transcript: AiTranscript }[] = [];
+    const limit = this.opts.stepTimeoutMs ?? stepTimeLimitMs();
     const note = (output: string): AiTranscript => ({
       provider: this.opts.provider.name,
       prompt: pause.directive,
@@ -677,16 +678,12 @@ export class Run {
           take: i + 1,
           state: { ...this.engine.state, ...part },
         })
+          .then((r) => (ctrl.signal.reason === KEEP_ANSWER ? overTime(r, limit) : r))
           .catch((e: Error) => {
             if (e.name === 'AbortError' && ctrl.signal.reason !== KEEP_ANSWER) throw e;
-            return {
-              result: undefined,
-              transcript: note(
-                e.name === 'AbortError'
-                  ? 'stopped at the time limit before it submitted'
-                  : `provider error: ${e.message}`,
-              ),
-            };
+            return e.name === 'AbortError'
+              ? overTime({ result: undefined, transcript: note('') }, limit)
+              : { result: undefined, transcript: note(`provider error: ${e.message}`) };
           })
           .finally(() => {
             unwatch();
@@ -814,8 +811,7 @@ export class Run {
           : pause.takes > 1
             ? await this.playTakes(pause, signal)
             : await this.play(pause, signal));
-      result = res.result;
-      transcript = res.transcript;
+      ({ result, transcript } = timedOut ? overTime(res, limit) : res);
     } catch (e) {
       if (this.stopRequested || ((e as Error).name === 'AbortError' && !timedOut)) return undefined;
       // The provider cannot work as configured (e.g. not signed in): stop now and say why.
@@ -834,6 +830,7 @@ export class Run {
           ? `timed out: the step took longer than ${Math.round(limit / 1000)}s and was stopped before it submitted`
           : `provider error: ${(e as Error).message}`,
         toolCalls: [],
+        ...(timedOut ? { timeLimitMs: limit } : {}),
       };
       this.emitFor(pause)({ type: 'info', text: transcript.output });
     } finally {
@@ -1080,4 +1077,14 @@ export function unattendedRecovery(
   if (retriesLeft <= 0) return { action: 'stop' };
   const up = Math.min(pause.complexity + 1, TOP_TIER) as Complexity;
   return { action: 'retry', ...(up !== pause.complexity ? { complexity: up } : {}) };
+}
+
+/** An answer from a step stopped at its time limit: with no result, it says it was the limit. */
+function overTime<T extends { result: unknown; transcript: AiTranscript }>(
+  res: T,
+  limit: number,
+): T {
+  return res.result === undefined
+    ? { ...res, transcript: { ...res.transcript, timeLimitMs: limit } }
+    : res;
 }

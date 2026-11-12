@@ -1018,6 +1018,32 @@ describe('time limit: keep what it has, or ask', () => {
     await done;
   });
 
+  it('stopped at the limit with nothing submitted, it says it was the limit', async () => {
+    // Like the Copilot provider: stopped to keep its answer, it returns what it had: none.
+    const busy: Provider = {
+      name: 'busy',
+      runAgent: (req) =>
+        new Promise<AgentResponse>((resolve) => {
+          req.signal.addEventListener('abort', () =>
+            resolve({
+              result: undefined,
+              transcript: { provider: 'busy', prompt: '', output: 'Still reading.', toolCalls: [] },
+            }),
+          );
+        }),
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const run = new Run({ score: hangmanScore, provider: busy, stepTimeoutMs: 20, clock });
+    const done = run.start();
+    await waitFor(run, statusIs('awaiting-approval'));
+    const pause = run.engine.pause!;
+    expect(pause.kind === 'stuck' && pause.feedback[0]).toMatch(
+      /^no result: stopped at the 0 s step time limit before it called submit_result.*SYMPHONY_STEP_TIMEOUT_S.*It last said: "Still reading\."/,
+    );
+    run.stop();
+    await done;
+  });
+
   it('with someone watching, it asks: keep waiting, or stop and keep what it has', async () => {
     const calls = { n: 0 };
     const run = new Run({
@@ -1112,6 +1138,44 @@ describe('fan-out retry', () => {
     expect(most).toBe(2);
     expect(perf.finalState.read).toEqual(['a', 'b', 'c', 'd']);
     expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
+  });
+
+  it('a part stopped at the time limit with nothing submitted says it was the limit', async () => {
+    const provider: Provider = {
+      name: 'parts',
+      runAgent: (req) =>
+        new Promise<AgentResponse>((resolve) => {
+          const file = (req.pause.input.files as string[])[0]!;
+          const answer = (read: string[]) => ({
+            result: {
+              updates: { read },
+              verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: file },
+            },
+            transcript: { provider: 'parts', prompt: '', output: file, toolCalls: [] },
+          });
+          if (file === 'a') resolve(answer([file]));
+          // b never submits: at the limit it returns what it had (nothing).
+          else
+            req.signal.addEventListener('abort', () =>
+              resolve({ ...answer([]), result: undefined }),
+            );
+        }),
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    const score = compileScore(reader, {
+      goal: 'g',
+      context: { files: ['a', 'b'] },
+      generatedAt: 't',
+    });
+    const run = new Run({ score, provider, stepTimeoutMs: 20, clock });
+    const done = run.start();
+    await waitFor(run, statusIs('awaiting-approval'));
+    const pause = run.engine.pause!;
+    expect(pause.kind === 'stuck' && pause.feedback.join('\n')).toMatch(
+      /stopped at the 0 s step time limit before it called submit_result/,
+    );
+    run.stop();
+    await done;
   });
 
   it('a pause holds the parts not yet started; those playing finish; resume plays the rest', async () => {
