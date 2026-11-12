@@ -30,3 +30,11 @@ export function someRunEnded(before: readonly LiveRun[], after: readonly LiveRun
   const still = new Set(after.filter((run) => ACTIVE_STATUSES.has(run.status)).map((run) => run.id))
   return before.some((run) => ACTIVE_STATUSES.has(run.status) && !still.has(run.id))
 }
+
+/** A running run's hover: its name (e.g. the PR's title), what it was asked, and who plays it. */
+export function runHover(r: Pick<LiveRun, 'goal' | 'title' | 'source' | 'workspace'>): string {
+  const what = r.title && r.title !== r.goal ? `${r.title}\n${r.goal}` : r.goal
+  if (!r.source) return what
+  const who = r.source === 'cli' ? 'the symphony CLI' : 'a chat session'
+  return `${what}\n\nPlayed by ${who}${r.workspace ? ` in ${r.workspace}` : ''}: you can watch it and answer it here.`
+}

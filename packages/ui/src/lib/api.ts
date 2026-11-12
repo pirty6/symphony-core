@@ -23,6 +23,8 @@ export interface LiveRun {
   /** The score it plays: matches its saved checkpoint while it plays (absent from older servers). */
   scoreId?: string
   workspace?: string
+  /** A name for people, e.g. the PR a review reads ("PR 5997156: Add hourly schedules"). */
+  title?: string
   /** When it started playing (ISO); absent from older servers. */
   startedAt?: string
   /** How long it has waited for a person so far (answers it has had), in ms. */

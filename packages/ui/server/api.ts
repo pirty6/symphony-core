@@ -601,7 +601,7 @@ export function createApi(opts: ApiOptions) {
         const theirs = (await shared?.list())?.filter((r) => !runs.has(r.id)) ?? []
         send(res, 200, [
           ...mine,
-          ...theirs.map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, scoreId: r.score.id, status: r.status, source: r.source, workspace: r.workspace, startedAt: r.startedAt })),
+          ...theirs.map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, scoreId: r.score.id, status: r.status, source: r.source, workspace: r.workspace, ...(r.title ? { title: r.title } : {}), startedAt: r.startedAt })),
         ])
         return true
       }
