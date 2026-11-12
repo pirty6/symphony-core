@@ -60,10 +60,11 @@ export function playsLive(name: ProviderName): boolean {
   return name !== 'scripted';
 }
 
-/** The provider when none is chosen: your model server when one is set, else Copilot. */
-export function defaultProvider(env: NodeJS.ProcessEnv): ProviderName {
-  return localModelFrom(env) ? 'local' : 'copilot';
-}
+/**
+ * The provider when none is chosen: GitHub Copilot. Your model server plays only when chosen
+ * ('local'): it is far slower, and a run that did not ask for it should not end up there.
+ */
+export const DEFAULT_PROVIDER: ProviderName = 'copilot';
 
 export const NO_LOCAL_MODEL =
   "provider 'local' needs your model server: set SYMPHONY_MODEL_URL (and SYMPHONY_MODEL_KEY, SYMPHONY_MODEL_ID) in .env, or choose 'copilot'";

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  defaultProvider,
+  DEFAULT_PROVIDER,
   envConfig,
   isProviderName,
   makeProvider,
@@ -96,9 +96,8 @@ describe('a local model, and no sign-ins', () => {
     expect(makeProvider({ provider: 'local', ...envConfig(env) }).name).toBe('local');
     expect(makeProvider({ provider: 'copilot', ...envConfig(env) }).name).toBe('copilot');
     expect(() => makeProvider({ provider: 'local' })).toThrow(/SYMPHONY_MODEL_URL/);
-    // Unchosen: the model server when there is one, else Copilot.
-    expect(defaultProvider(env)).toBe('local');
-    expect(defaultProvider({})).toBe('copilot');
+    // Unchosen: Copilot, even with a model server set.
+    expect(DEFAULT_PROVIDER).toBe('copilot');
     expect(['scripted', 'copilot', 'local'].every(isProviderName)).toBe(true);
     expect(isProviderName('gpt')).toBe(false);
   });

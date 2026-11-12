@@ -80,7 +80,7 @@ export { unattendedRecovery };
 import { draftPattern } from './runtime/drafting.js';
 import {
   envConfig,
-  defaultProvider,
+  DEFAULT_PROVIDER,
   isProviderName,
   playsLive,
   makeProvider,
@@ -667,7 +667,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
       complexity: { type: 'string' },
     },
   });
-  const providerName = args.values.provider ?? defaultProvider(process.env);
+  const providerName = args.values.provider ?? DEFAULT_PROVIDER;
   if (!isProviderName(providerName)) {
     console.error('--provider must be scripted, copilot or local');
     return 1;
