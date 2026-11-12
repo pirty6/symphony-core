@@ -227,9 +227,18 @@ describe('main', () => {
     vi.stubEnv('SYMPHONY_LIVE', '');
     vi.stubEnv('SYMPHONY_LIVE_DIR', live);
     try {
-      expect(await main(['run', 'fix', '--auto-approve'], cwd)).toBe(0);
+      expect(await main(['run', 'fix', '--auto-approve', '--title', 'PR 7: Fix paging'], cwd)).toBe(
+        0,
+      );
       const [run] = await new LiveRuns(live).list();
-      expect(run).toMatchObject({ source: 'cli', workspace: cwd, status: 'done' });
+      // Named for people in the studio; the score, and so its id, does not change.
+      expect(run).toMatchObject({
+        source: 'cli',
+        workspace: cwd,
+        status: 'done',
+        title: 'PR 7: Fix paging',
+      });
+      expect(JSON.stringify(run?.score)).not.toContain('PR 7: Fix paging');
       expect(run?.score.pattern).toBe('fix');
     } finally {
       vi.unstubAllEnvs();

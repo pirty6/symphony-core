@@ -228,6 +228,8 @@ interface PlayOptions {
   readonly restore?: RunOptions['restore'];
   /** --complexity as given: backlog items otherwise rate their own complexity. */
   readonly complexity?: Complexity;
+  /** --title: a name for people in the studio (e.g. the PR's title), not part of the score. */
+  readonly title?: string;
   /**
    * --stuck-retries: unattended (--auto-approve, or no terminal), a step that gave no valid answer is retried this
    * many times (one tier up, with what was rejected as the hint) before the run stops. 0: stop.
@@ -416,7 +418,11 @@ async function play(
   // chat's (src/runtime/live.ts). Published before it starts, so it is seen from its first message.
   const live = liveRoot(process.env);
   const unpublish = live
-    ? await publishLive(run, { source: 'cli', workspace: cwd }, live).catch(() => undefined)
+    ? await publishLive(
+        run,
+        { source: 'cli', workspace: cwd, ...(o.title ? { title: o.title } : {}) },
+        live,
+      ).catch(() => undefined)
     : undefined;
   let perf: Performance;
   try {
@@ -488,6 +494,7 @@ const RUN_OPTIONS = {
 const SCORE_OPTIONS = {
   ...RUN_OPTIONS,
   goal: { type: 'string' },
+  title: { type: 'string' },
   context: { type: 'string', short: 'c', multiple: true },
   // oxlint-disable-next-line unicorn/no-thenable -- the --then flag; parseArgs config, never awaited
   then: { type: 'string', multiple: true },
@@ -643,6 +650,7 @@ async function cmdRun(argv: string[], cwd: string): Promise<number> {
         ...(values['stuck-retries']
           ? { stuckRetries: stuckRetriesOf(values['stuck-retries']) }
           : {}),
+        ...(values.title?.trim() ? { title: values.title.trim() } : {}),
         ...(rl ? { rl } : {}),
       },
       splitContext(values.context, then).chained,
@@ -1273,6 +1281,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       --goal "..."  -c key=value  --provider scripted|copilot|local  --model <id>
       --complexity 1-4  -i classical|cool|swing|bebop|free (or 0-4)
       --auto-approve  --step  --break <nodeId>  --no-save
+      --title "..."  a name for the run in the studio (e.g. the PR's title)
       --stuck-retries 0-5  unattended (--auto-approve or no terminal): retry a step with no valid answer, one tier up
   draft "<request>"            AI drafts a pattern (--provider copilot, --save)
   verify <run.json>            integrity + deterministic replay check

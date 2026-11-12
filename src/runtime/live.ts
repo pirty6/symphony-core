@@ -93,6 +93,8 @@ export interface LiveMeta {
   /** Who plays it: 'chat' (the MCP server, e.g. a VS Code chat) or 'cli' (the symphony CLI). */
   readonly source: string;
   readonly workspace: string;
+  /** A name for people (e.g. "PR 5997156: Add hourly schedules"), not part of the score. */
+  readonly title?: string;
   readonly pid: number;
   readonly startedAt: string;
   readonly score: ExecutableScore;
@@ -294,7 +296,7 @@ function apply(run: Run, c: LiveCommand): void {
  */
 export async function publishLive(
   run: Run,
-  info: { readonly source: string; readonly workspace: string },
+  info: { readonly source: string; readonly workspace: string; readonly title?: string },
   root: string,
 ): Promise<() => void> {
   void pruneLive(root);
@@ -306,6 +308,7 @@ export async function publishLive(
     goal: run.score.goal,
     source: info.source,
     workspace: info.workspace,
+    ...(info.title ? { title: info.title } : {}),
     pid: process.pid,
     startedAt: new Date().toISOString(),
     score: run.score,
@@ -390,6 +393,7 @@ export class LiveRun implements RunLike {
   readonly score: ExecutableScore;
   readonly source: string;
   readonly workspace: string;
+  readonly title?: string;
   readonly startedAt: string;
   readonly messages: RunMessage[] = [];
   status: RunStatus = 'running';
@@ -407,6 +411,7 @@ export class LiveRun implements RunLike {
     this.score = meta.score;
     this.source = meta.source;
     this.workspace = meta.workspace;
+    if (meta.title) this.title = meta.title;
     this.startedAt = meta.startedAt;
     this.pid = meta.pid;
   }
