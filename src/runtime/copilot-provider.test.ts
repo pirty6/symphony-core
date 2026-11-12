@@ -1695,6 +1695,19 @@ describe('a local model server instead of Copilot', () => {
       emit('session.idle');
     });
 
+  it('trials: every session leaves out the unused CLI tools; big tool output goes to a file', async () => {
+    const { client, sessions } = submitting();
+    await new CopilotProvider({
+      clientFactory: () => client,
+      leanTools: true,
+      toolOutputBytes: 16000,
+    }).runAgent(localReq());
+    expect(sessions[0]!.cfg.excludedTools).toEqual(
+      expect.arrayContaining(['task', 'sql', 'skill']),
+    );
+    expect(sessions[0]!.cfg.largeOutput).toEqual({ enabled: true, maxSizeBytes: 16000 });
+  });
+
   it('every step plays on its model, through its endpoint, with no sign-in and no effort', async () => {
     const server = await modelServer();
     try {

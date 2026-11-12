@@ -183,6 +183,17 @@ export interface CopilotProviderOptions {
   readonly endOnSubmit?: boolean;
   /** false: ignore the steps' maxEffort and play each tier's own effort. */
   readonly effortCaps?: boolean;
+  /**
+   * Leave out the CLI tools no step uses (LOCAL_EXCLUDED_TOOLS) on every session: each call sends
+   * every tool's schema, and the whole conversation is sent again on each call of a step.
+   */
+  readonly leanTools?: boolean;
+  /**
+   * Tool output above this many bytes goes to a temp file the AI reads in parts, not into the
+   * conversation (the SDK's largeOutput; its default is 51200). Each later call of the step sends
+   * what earlier tools returned again, so a big file view is paid for on every call after it.
+   */
+  readonly toolOutputBytes?: number;
   readonly workingDirectory?: string;
   /** MCP servers connected to nodes with the 'mcp' capability. */
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
@@ -669,13 +680,16 @@ export class CopilotProvider implements Provider {
             },
           }
         : {
-            excludedTools: local ? [...LOCAL_EXCLUDED_TOOLS] : ['task'],
+            excludedTools: local || this.opts.leanTools ? [...LOCAL_EXCLUDED_TOOLS] : ['task'],
             ...(run.system ? { systemMessage: { mode: 'append', content: run.system } } : {}),
           }),
       ...(run.mcpServers && Object.keys(run.mcpServers).length > 0
         ? { mcpServers: { ...run.mcpServers } }
         : {}),
       skipCustomInstructions: true,
+      ...(this.opts.toolOutputBytes
+        ? { largeOutput: { enabled: true, maxSizeBytes: this.opts.toolOutputBytes } }
+        : {}),
       onPermissionRequest: (request) => {
         const decision = decidePermission(
           run.role,
