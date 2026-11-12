@@ -30,7 +30,7 @@ const provider = z
   .enum(['copilot', 'local', 'scripted'])
   .optional()
   .describe(
-    "Who plays the AI steps: 'copilot' (GitHub Copilot, this machine's sign-in), 'local' (your own model server, SYMPHONY_MODEL_URL) or 'scripted' (the offline demo's canned answers). Default: local when a model server is set, else copilot.",
+    "Who plays the AI steps: 'copilot' (GitHub Copilot, this machine's sign-in), 'local' (your own model server, SYMPHONY_MODEL_URL) or 'scripted' (the offline demo's canned answers). Default: copilot; local only when the user asks for their local AI.",
   );
 const workspace = z
   .string()

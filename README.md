@@ -74,8 +74,8 @@ SYMPHONY_MODEL_KEY=...                             # optional: if the server nee
 
 Then choose per run: **AI → Local AI** in the studio (it shows the model, and whether the server
 answers), `--provider local` in the CLI, or `provider: "local"` from a chat; **GitHub Copilot**
-(`copilot`) stays Copilot. When you choose neither, runs go to your server whenever
-`SYMPHONY_MODEL_URL` is set. One model plays every step (complexity tiers and reasoning efforts
+(`copilot`) stays Copilot. When you choose neither, runs use Copilot: your server only plays
+when chosen. One model plays every step (complexity tiers and reasoning efforts
 are Copilot's). Each run first checks the server answers (5 s): when it does not, the run stops at
 once with that reason, or, with `SYMPHONY_MODEL_FALLBACK=copilot`, plays on GitHub Copilot instead
 and says so (only where your sign-ins are allowed, see below).

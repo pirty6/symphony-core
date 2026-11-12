@@ -40,7 +40,7 @@ import { Run } from '../runtime/driver.js';
 import { liveRoot, publishLive } from '../runtime/live.js';
 import type { Provider } from '../runtime/provider.js';
 import {
-  defaultProvider,
+  DEFAULT_PROVIDER,
   envConfig,
   makeProvider,
   playsLive,
@@ -359,7 +359,7 @@ export class RunManager {
     const runsDir = runsDirFor(workspace, this.opts.env);
     void autoPrune(workspace, runsDir, this.opts.env);
     const extras = await runtimeExtras(workspace, this.opts.repoRoot, this.opts.env);
-    const providerName = req.provider ?? defaultProvider(this.opts.env);
+    const providerName = req.provider ?? DEFAULT_PROVIDER;
     // A real AI editing files plays in its own worktree, so several can play at once.
     const isolation =
       playsLive(providerName) && this.opts.editsAllowed && editsFiles(score)
