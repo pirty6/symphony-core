@@ -7,7 +7,7 @@ import { scrubbingOn, scrubValue } from '../core/scrub.js';
 import './native-hash.js';
 import { humanWaits, performanceUsage } from '../core/usage.js';
 import { execFile } from 'node:child_process';
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { compactPerformance, expandPerformance } from '../core/compact.js';
@@ -126,9 +126,24 @@ export async function saveRun(
   const stamp = safe(run.performance.startedAt || new Date().toISOString());
   const file = join(folder, `${stamp}-${run.score.id.slice(0, 12)}.json`);
   // A checkpoint is rewritten after every step until the final save: unindented, faster.
-  await writeFile(file, `${opts.compact ? JSON.stringify(run) : JSON.stringify(run, null, 2)}\n`);
-  await writeFile(summaryFile(file), JSON.stringify(summaryOf(run)));
+  await writeWhole(file, `${opts.compact ? JSON.stringify(run) : JSON.stringify(run, null, 2)}\n`);
+  await writeWhole(summaryFile(file), JSON.stringify(summaryOf(run)));
   return file;
+}
+
+/**
+ * Write a file whole or not at all: a process ended mid-write (seen live: VS Code restarted a
+ * chat's MCP server during a checkpoint) left a run's only record empty. A rename replaces it at once.
+ */
+async function writeWhole(file: string, text: string): Promise<void> {
+  const tmp = `${file}.${process.pid}-${Date.now().toString(36)}.tmp`;
+  try {
+    await writeFile(tmp, text);
+    await rename(tmp, file);
+  } catch (e) {
+    await rm(tmp, { force: true });
+    throw e;
+  }
 }
 
 export async function loadRun(
