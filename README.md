@@ -496,9 +496,13 @@ runs edit the workspace directly. A resumed editing run starts again from your w
 ## Use it from VS Code chat and Copilot Studio
 
 Symphony is also an MCP server (`src/mcp-server.ts`) with the same pipeline as tools: `maestro`,
-`run_pattern` (with `chain`), `get_run`, `answer_approval`, `answer_stuck`, `stop_run`,
-`list_patterns`. Runs go on in the background; the chat polls them and relays every approval and
-stuck step to you. Each run is saved and replayable as usual.
+`run_pattern` (with `chain`), `get_run`, `answer_approval`, `answer_stuck`, `answer_overtime`,
+`set_auto_approve`, `stop_run`, `list_patterns`. Runs go on in the background; the chat polls them
+and relays every approval and stuck step to you. A step that reaches its time limit
+(`SYMPHONY_STEP_TIMEOUT_S`, 15 minutes by default) asks you whether to keep waiting or stop it,
+unless the run is auto-approved. If the chat's Symphony server is restarted mid-run (VS Code restarts a
+chat's MCP servers, e.g. when you change its model), the next `get_run` or answer with the same
+run id resumes the run from its last checkpoint, saying so in `note`. Each run is saved and replayable as usual.
 
 ### VS Code: `/maestrov2`
 

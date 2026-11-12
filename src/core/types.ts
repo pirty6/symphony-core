@@ -422,6 +422,8 @@ export interface AiTranscript {
   readonly context?: ContextSplit;
   /** Files the engine read whole into the prompt (AgentNode.preload): which, how much, what failed. */
   readonly preloaded?: readonly PreloadRecord[];
+  /** The step's time limit (ms), when it was stopped there before it submitted. */
+  readonly timeLimitMs?: number;
 }
 
 export interface CallUsage {
