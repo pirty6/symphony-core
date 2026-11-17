@@ -7,6 +7,11 @@ read-write). Algorithms live in a library of Patterns written in TypeScript.
 Flow: Pattern -> compileScore -> ExecutableScore -> performScore or
 createEngine+advance -> Performance (JSON audit record).
 
+## Core pillars
+Correctness, determinism and auditability, speed, token cost, memory (learning and
+footprint), visibility, ease of use. Definitions and measures: README "Core pillars".
+A feature must serve one of them without making another measurably worse.
+
 ## Rules
 - Score is the read-only plan; Performance is what happened. Never mutate a Score at runtime.
 - advance(score, state, resolution) is pure: no I/O inside the state machine.

@@ -166,18 +166,8 @@ time in one recorded run; this says whether it pays.
 
 ## 10. Calibrating the support judge (shadow)
 
-`investigate-misread-quote` has a real quote attached to a wrong claim, and its `-judged` twin
-plays the judge in `enforce`. Run the pair, then the other investigate tasks with the judge in
-`shadow`, so that false rejections on correct findings show up.
-
-```sh
-npm run cli -- eval --task investigate-misread-quote,investigate-misread-quote-judged -n 3
-npm run cli -- eval --task investigate-default-port,investigate-multi-hop,investigate-false-hint -n 3 --with supportJudge=shadow --compare $BASE
-```
-
-Compare: whether the judged twin is solved and the plain one is not (recall), what shadow marks
-unsupported on tasks whose findings are right (false rejections), and the judge's tokens
-(`judgeSupport` in `costliest steps`).
+Measured on 2026-11-17 and removed: see [Feature measurements](#feature-measurements-2026-11-17).
+`investigate-misread-quote` stays, as a check that a real quote does not lead to a wrong claim.
 
 ## 11. One sub-agent per gap vs one call for all gaps
 
@@ -264,7 +254,7 @@ the effort that was sent is recorded under `musician`.
 
 ```sh
 npm run cli -- eval --task maestro-planted-concern -n 3
-SYMPHONY_NODE_MODELS=propose=claude-opus-5.5:high,skeptic=claude-opus-5.5:high,pragmatist=claude-opus-5.5:high \
+SYMPHONY_NODE_MODELS=propose=claude-opus-5.5:high,skeptic=claude-opus-5.5:high \
   npm run cli -- eval --task maestro-planted-concern -n 3 --compare <evals>/<baseline>.json
 ```
 
@@ -317,15 +307,15 @@ npm run cli -- eval --task investigate-planted-flaw,investigate-false-premise,in
 
 ## Waiting on these trials
 
-- Hypotheses block: trim it only after an A/B. `--with readerHypotheses=false` is the ablation.
+Measured on 2026-11-17 (see [Feature measurements](#feature-measurements-2026-11-17)): the hypotheses
+block, delta repair, the header in the system message, `lean`, the pragmatist, the support judge,
+the stability gate and memory. Still waiting:
+
 - singlePass: enable by default only after trial 3.
-- Delta repair and the header in the system message are on by default; trials 4 and 5 now
-  measure them off (`=0`), to turn them off if they make things worse.
-- `lean` (investigate, on by default): run the lean A/B below; turn it off if it loses answers.
 - The narrowed read (`narrowRead`) is opt-in for good. Files that are neither matched by the
   search nor among the next `narrowBudget` (20) are never read, and the coverage names each
   one. In one recorded run, files ranked 90–150 were still 57% relevant.
-- The stability gate (fix): `autoStabilityRuns` stays 0 until the flaky trial below.
+- The header in the system message: a time trial with both arms running at the same time (see below).
 
 ## Flaky tests: does fix stop a false "Fixed"?
 
@@ -402,4 +392,49 @@ Read:
 
 Also open: the answer's first call has stopped at 32,000 output tokens without submitting, and
 been resubmitted twice (32–36% of each answer visit). The cap is not set in this repository.
+
+## Feature measurements, 2026-11-17
+
+Each feature against the [core pillars](../README.md#core-pillars). Live on Copilot, n=3 per task
+(fix n=5), 15 arms and 172 runs (9,092 premium requests). Investigate arms are pinned to
+`--complexity 3` on `investigate-many-files, -multi-hop, -history, -planted-flaw, -false-premise`
+(delta repair and header: the first two only). The bracket is a 95% bootstrap interval of the
+cost per run against the baseline, task by task. Time is the weakest measure: arms ran four at a
+time, and the later ones shared the provider with fewer others.
+
+| Feature | Switched off (or on) | Correctness | Cost | Verdict |
+|---|---|---|---|---|
+| `lean` | `lean=false` | 15/15 vs 15/15 | PR +11% [+2, +22], input +9% | Keep: it saves premium requests |
+| `readerHypotheses` | `=false` | 15/15 vs 15/15 | PR +8% [0, +19], time +8% [0, +18] | Keep |
+| Pragmatist, investigate | `pragmatistFrom=4` | 15/15 vs 15/15 | time +12% [+2, +26], PR +9% | Keep: without it every objection is researched |
+| Pragmatist, maestro | `pragmatistFrom=5` | 6/6 vs 6/6, planted concern caught in all | input −27% [−30, −23], PR −23% [−26, −19] | Removed: a quarter of composing for nothing measured |
+| Pragmatist, review | `pragmatistFrom=5` | 15/18 vs 15/18 | input +10% [−8, +30], PR +6% [−9, +24] | No effect either way |
+| Delta repair | `SYMPHONY_DELTA_REPAIR=0` | 6/6 vs 6/6 | PR +6% [0, +11], uncached input +22% | Keep |
+| Header in system | `SYMPHONY_HEADER_IN_SYSTEM=0` | 6/6 vs 6/6 | cached share 78% off vs 75% on, PR −4% [−16, +7] | No caching gain; time −25% off is likely load, re-run both arms together |
+| Support judge, enforce | `investigate-misread-quote(-judged)` | 1/3 judged vs 3/3 plain | PR +43%, time +28% | Removed (below) |
+| Support judge, shadow | `supportJudge=shadow` | 8/9 vs 9/9 (the miss: an open sub-question) | time +13% [−2, +28]; 49% of rulings UNSUPPORTED on right answers | Removed |
+| Stability gate | `fix-flaky-gated` vs `fix-flaky` | 5/5 vs 5/5, no false Fixed either way | time +10% (control, then 49 runs per patch) | Unproven: this model never gives a lucky green |
+| Memory (facts, lessons) | `--carry-memory` | 14/15 vs 15/15 (the miss: an open sub-question) | input +2%, PR +4%; takes 2–3 used 21% more input than take 1 | Removed: no learning gain, even on the same question (composition memory stays) |
+
+**The support judge's false rejections.** It sees only a finding's quote. 23 of 30 rejections
+sampled by hand from three real shadow runs were right claims whose proof was a line or two
+away (a test title, a comment, the constant's value) or came from git history or an experiment.
+In the enforce twin, correct answers ("2 calls, not 3") were rejected because `MAX_TRIES = 3`
+was on line 1. In the three real shadow runs it ruled 92% of 717 findings unsupported, and
+shadow keeps those out of memory.
+
+**Not measured with an A/B, from the 352 saved real runs instead:**
+- Clarify (hint) fired in 5 of 55 investigate runs. Three got no hint (a pause only).
+- Patterns: review 157, maestro 97, investigate 55, fix 10, analyze 2; backlog, refactor and
+  implement 0; `hangman` 0 (a test fixture). Extras: 4 runs.
+- Web search 128 calls and web fetch 716 in 15–16 runs; Kusto 1 call (removed); visitor accounts: 1.
+- Footprint: an eval process tree averages 290–530 MB of RAM, peaking at 1.2 GB; each saved run
+  is 1.7 MB on average (eval runs); `memory.json` is 740 KB at 1,999 of 2,000 facts; the live
+  folders take 3.1 GB for a week of runs (up to 450 MB each).
+
+**Also seen:** `review-migration-present` (a migration that is there) failed in both review arms
+(1/3, 0/3): review flags it anyway.
+
+To repeat the memory arm: `eval --carry-memory` carries each task's memory from one take to the
+next, so take 1 starts empty and later takes recall what earlier ones learned.
 

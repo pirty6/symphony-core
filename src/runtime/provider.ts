@@ -117,11 +117,6 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
           '- Web: web_search(query) to find pages, then web_fetch(url) to read them. Cite every URL you rely on.',
         ]
       : []),
-    ...(pause.capabilities.includes('web') || pause.capabilities.includes('mcp')
-      ? [
-          '- Data: kusto_query(cluster, database, query) runs a read-only Kusto query (or .show) with your Azure sign-in, e.g. test health or pipeline tables.',
-        ]
-      : []),
     ...(pause.capabilities.includes('mcp')
       ? [
           sources.mcpServers?.length
@@ -144,7 +139,7 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
     '- `verdict`: { outcome: "applied" | "failed" | "skipped", confidence: 0..1, shouldTerminate: boolean, reason: one sentence }.',
     // Seen live: a reviewer that found broken code answered "failed", and its verdicts were lost.
     '- `outcome` says whether YOU did this step: "applied" when you did it, whatever you found (broken code, a failing build or a refuted claim is a result, not a failure); "failed" only when you could not do the step (you could not read what you needed, or your tools broke).',
-    '- `shouldTerminate` is almost always false: the workflow moves on to its next step by itself. Set it to true ONLY to abort the entire workflow because continuing would be impossible or harmful.',
+    '- `shouldTerminate` is almost always false: the workflow moves on to its next step by itself. Set it to true ONLY to abort the entire workflow because continuing would be impossible or harmful, with outcome "failed". Never to finish early: with any other outcome the workflow goes on, even when you already know the answer or find the premise of the question false (the later steps write that answer).',
   );
   if (pause.outputSchema.length === 0)
     lines.push('- This step writes no state: send `updates: {}`.');

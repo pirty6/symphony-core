@@ -50,6 +50,14 @@ const collecting =
     verdict: v,
   });
 
+/** A change with code, a release-note change file and documentation, and more. */
+const withChangeFile = (more: string[]) => [
+  'src/core/engine.ts',
+  'change/@fluidx-html-canvas-container-a21ebdb4.json',
+  'docs/guide.md',
+  ...more,
+];
+
 describe('review', () => {
   it("never runs tests or lint (the change's CI does), and gives the reviewers the changed tests", () => {
     const { ran, state, end } = play({
@@ -714,6 +722,33 @@ describe('review: what live runs taught', () => {
     ]);
   });
 
+  it('release-note change files, like documentation, need no context; code elsewhere named change/ does', () => {
+    const tagged: Agent = (s) => {
+      const base = demo.agents!.gatherContext!(s, 0) as { updates: Record<string, unknown> };
+      return {
+        updates: {
+          ...base.updates,
+          context: [
+            'AGENTS.md:3 — [CONVENTION] (for: src/core/engine.ts) a change needs a test `needs a test`',
+          ],
+        },
+        verdict: v,
+      };
+    };
+    const covered = play({
+      agents: { ...quiet, collect: collecting(withChangeFile([])), gatherContext: tagged },
+    });
+    expect(rejections(covered.r, 'gatherContext')).toEqual([]);
+    const nested = play({
+      agents: {
+        ...quiet,
+        collect: collecting(withChangeFile(['packages/x/change/y.json'])),
+        gatherContext: tagged,
+      },
+    });
+    expect(rejections(nested.r, 'gatherContext')[0]).toMatch(/release notes apart/);
+  });
+
   it('the skeptic may drop a finding as a duplicate of another, without a quote', () => {
     const { r, state } = play({
       agents: {
@@ -731,7 +766,7 @@ describe('review: what live runs taught', () => {
   });
 });
 
-describe('review reuses investigate: the chase, the debate and memory', () => {
+describe('review reuses investigate: the chase and the debate', () => {
   /** A whole-change step that cannot settle the claim until research has found something. */
   const unclearUntilEvidence: Agent = (s) => {
     const ok = soundWhole(s, 0) as { updates: Record<string, unknown> };
@@ -943,23 +978,6 @@ describe('review reuses investigate: the chase, the debate and memory', () => {
       expect.stringMatching(/^F3 src\/core\/engine\.ts:118 — \[ERRPATH\]/),
     );
     expect((at4.state.findings as string[]).filter((f) => f.includes('[BUG]'))).toHaveLength(1);
-  });
-
-  it('what earlier runs learned is recalled, and the steps that judge read it as leads', () => {
-    const { state } = play({
-      tools: {
-        recall: () => ({ facts: ['src/core/engine.ts:120 — retries are per visit'], lessons: [] }),
-      },
-    });
-    expect(state.knownFacts).toEqual(['src/core/engine.ts:120 — retries are per visit']);
-    for (const step of ['gatherContext', 'analyze', 'wholeChange', 'skeptic', 'chase', 'second']) {
-      const node = review.nodes.find((n) => n.id === step) as unknown as {
-        reads: string[];
-        directive: string;
-      };
-      expect(node.reads).toContain('knownFacts');
-      expect(node.directive).toContain('use them as leads to check, never as evidence');
-    }
   });
 });
 

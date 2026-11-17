@@ -29,7 +29,6 @@ describe('featureInputs', () => {
   it("types the chosen switches for the pattern's own fields and drops the rest", () => {
     expect(
       featureInputs(investigate, {
-        supportJudge: 'shadow',
         singlePass: 'true',
         readerHypotheses: 'false',
         pragmatistFrom: '2',
@@ -37,15 +36,14 @@ describe('featureInputs', () => {
         notAFeature: 'x',
       }),
     ).toEqual({
-      supportJudge: 'shadow',
       singlePass: true,
       readerHypotheses: false,
       pragmatistFrom: 2,
       gapsPerChase: 1,
     });
     // A value the switch does not offer, and a pattern without the field: nothing.
-    expect(featureInputs(investigate, { supportJudge: 'always', singlePass: 'yes' })).toEqual({});
-    expect(featureInputs({ state: [] }, { supportJudge: 'shadow' })).toEqual({});
+    expect(featureInputs(investigate, { pragmatistFrom: '7', singlePass: 'yes' })).toEqual({});
+    expect(featureInputs({ state: [] }, { pragmatistFrom: '2' })).toEqual({});
   });
 
   it('the score the maestro composes plays with the switches you chose', () => {
@@ -63,8 +61,8 @@ describe('featureInputs', () => {
         },
       },
     }).state.state;
-    const composed = composedScore(score, s, { features: { supportJudge: 'shadow' } });
+    const composed = composedScore(score, s, { features: { pragmatistFrom: '2' } });
     expect(composed?.pattern.name).toBe('investigate');
-    expect(composed!.score.context.supportJudge).toBe('shadow');
+    expect(composed!.score.context.pragmatistFrom).toBe(2);
   });
 });

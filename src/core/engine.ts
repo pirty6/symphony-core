@@ -1178,11 +1178,11 @@ function resolveAgent(
     verdict,
     stateHash: stateHashOf(ctx.state, ctx.env),
   });
-  if (verdict.shouldTerminate) {
-    // Success is the pattern's to declare, at an end: stopping early skips the steps and
-    // checks still ahead, so the run is at best partial.
-    const outcome = verdict.outcome === 'failed' ? 'failed' : 'partial';
-    finish(ctx, outcome, `'${node.id}' terminated: ${verdict.reason}`, res.at);
+  // Only a step that failed ends the run early. One that did its work, or had nothing to do,
+  // goes on: an answer it already has (a false premise included) still goes through the steps
+  // and checks ahead, and the pattern has its own ends for "nothing to do".
+  if (verdict.shouldTerminate && verdict.outcome === 'failed') {
+    finish(ctx, 'failed', `'${node.id}' terminated: ${verdict.reason}`, res.at);
     return;
   }
   ctx.completedAt = res.at ?? ctx.completedAt;

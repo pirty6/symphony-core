@@ -3,9 +3,11 @@
  * GitHub and Azure DevOps both publish as refs/pull/<n>/merge, fetched with the user's own git
  * credentials and checked out in a temporary worktree outside the workspace. The run plays
  * there, so the diff, the files the AI reads and the citations it makes are the PR's own,
- * whatever branch the workspace is on. No AI step needs network or CLI access for it.
+ * whatever branch the workspace is on. No AI step needs network or CLI access for it. A review of
+ * a branch that is not checked out plays in a worktree of that branch the same way.
  */
 import { spawn } from 'node:child_process';
+import { signInFreeEnv, signInsOff } from './signins.js';
 import { randomBytes } from 'node:crypto';
 import { mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -135,10 +137,81 @@ export async function prForRun(
   context: Readonly<Record<string, unknown>>,
   workspace: string,
   opts: { readonly provider: string; readonly env?: NodeJS.ProcessEnv },
-): Promise<PrCheckout | undefined> {
+): Promise<Checkout | undefined> {
   const target = pattern.checkout ? context[pattern.checkout] : undefined;
-  if (opts.provider !== 'copilot' || typeof target !== 'string') return undefined;
-  return checkoutPr(workspace, target, opts.env ? { env: opts.env } : {});
+  if (opts.provider === 'scripted' || typeof target !== 'string') return undefined;
+  // Without sign-ins, the fetch uses none of your credentials: a private repository's PR fails.
+  const base = opts.env ?? process.env;
+  const env = signInsOff(base) ? signInFreeEnv(base) : opts.env;
+  const pr = await checkoutPr(workspace, target, env ? { env } : {});
+  return pr ?? checkoutBranch(workspace, target, env ? { env } : {});
+}
+
+/** Where a run plays: a PR's checkout (with what was fetched), or a branch's. */
+export interface Checkout {
+  readonly info?: PrInfo;
+  readonly dir?: string;
+  readonly finish: () => Promise<void>;
+}
+
+/**
+ * A branch a review names that is not what the workspace has checked out (local, on a remote,
+ * or fetched from one), in a temporary worktree: the files the AI reads and the quotes it cites
+ * are that branch's, not the workspace's. Undefined when the target is no branch, or is HEAD.
+ */
+export async function checkoutBranch(
+  workspace: string,
+  target: string,
+  opts: { readonly env?: NodeJS.ProcessEnv; readonly root?: string } = {},
+): Promise<Checkout | undefined> {
+  const name = target.trim();
+  // A range, a path or prose is no branch name.
+  if (!name || /\.\.|\s|^-/.test(name) || prNumber(name) !== undefined) return undefined;
+  const top = (
+    await git(workspace, ['rev-parse', '--show-toplevel']).catch(() => undefined)
+  )?.out.trim();
+  if (!top) return undefined;
+  const commit = async (ref: string) =>
+    (await git(top, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).out.trim() ||
+    undefined;
+  const remotes = (await git(top, ['remote'])).out.split('\n').filter(Boolean);
+  let sha = await commit(name);
+  for (const r of remotes) sha ??= await commit(`${r}/${name}`);
+  let fetchedRef: string | undefined;
+  if (!sha) {
+    const remote = remotes.includes('origin') ? 'origin' : remotes[0];
+    const got = remote ? await fetchRef(top, remote, `refs/heads/${name}`, opts.env) : undefined;
+    if (got?.ok) {
+      [sha, fetchedRef] = [got.sha, got.ref];
+      // What a plain git fetch leaves: the branch is <remote>/<name> to the AI's git commands.
+      await git(top, ['update-ref', `refs/remotes/${remote}/${name}`, sha]);
+    }
+  }
+  if (!sha || sha === (await commit('HEAD'))) return undefined;
+  const root = opts.root ?? join(tmpdir(), 'symphony-worktrees');
+  const wt = join(root, `branch-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`);
+  const remove = async () => {
+    await git(top, ['worktree', 'remove', '--force', wt]);
+    await rm(wt, { recursive: true, force: true });
+  };
+  try {
+    await mkdir(root, { recursive: true });
+    await sweep(root, top);
+    await must(top, ['worktree', 'add', '--detach', '--quiet', wt, sha]);
+    await linkDependencies(top, wt).catch(() => undefined);
+    const env = opts.env ?? process.env;
+    return {
+      dir: join(wt, relative(top, await realpath(workspace))),
+      finish: async () => {
+        if (env.SYMPHONY_KEEP_WORKTREE !== '1') await remove();
+      },
+    };
+  } catch (e) {
+    await remove().catch(() => undefined);
+    throw e;
+  } finally {
+    if (fetchedRef) await git(top, ['update-ref', '-d', fetchedRef]);
+  }
 }
 
 /**

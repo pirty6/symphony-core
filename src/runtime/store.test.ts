@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -42,6 +44,34 @@ const root = mkdtempSync(join(tmpdir(), 'symphony-store-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe('run store', () => {
+  it.skipIf(process.platform === 'win32')(
+    'a save that cannot finish leaves the record before it whole, and no partial file',
+    async () => {
+      const dir = join(root, 'runs-whole');
+      const score = compileScore(fix, { goal: 'g', context: fix.demo!.context!, generatedAt: 't' });
+      const performance = toPerformance(
+        runScripted(score, fix.demo, { at: '2026-01-01T00:00:00Z' }).state,
+      );
+      const file = await saveRun(dir, { schemaVersion: 3, score, performance });
+      const before = readFileSync(file, 'utf8');
+      // The folder cannot take the new copy (as when the process ends mid-write).
+      chmodSync(join(dir, 'fix'), 0o500);
+      try {
+        await expect(
+          saveRun(dir, {
+            schemaVersion: 3,
+            score,
+            performance: { ...performance, outcome: 'failed' },
+          }),
+        ).rejects.toThrow();
+      } finally {
+        chmodSync(join(dir, 'fix'), 0o700);
+      }
+      expect(readFileSync(file, 'utf8')).toBe(before);
+      expect(readdirSync(join(dir, 'fix')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    },
+  );
+
   it('reads only the runs of the score being played for its repertoire, not the whole store', async () => {
     const dir = join(root, 'runs-repertoire');
     const played = async (p: typeof fix) => {

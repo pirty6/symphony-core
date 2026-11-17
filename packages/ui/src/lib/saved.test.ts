@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LiveRun, SavedSummary } from './api'
-import { savedToList, someRunEnded } from './saved'
+import { runHover, savedToList, someRunEnded } from './saved'
 
 const saved = (file: string, more: Partial<SavedSummary> = {}): SavedSummary => ({
   file,
@@ -46,5 +46,16 @@ describe('saved runs list', () => {
     expect(someRunEnded([live('r1')], [])).toBe(true)
     expect(someRunEnded([live('r1')], [live('r1'), live('r2')])).toBe(false)
     expect(someRunEnded([live('r1', { status: 'done' })], [])).toBe(false)
+  })
+})
+
+describe('runHover', () => {
+  it("names a running run first (e.g. the PR's title), then what it was asked and who plays it", () => {
+    const url = 'https://dev.azure.com/office/OC/_git/office-bohemia/pullrequest/5997156'
+    expect(runHover({ goal: url, title: 'PR 5997156: Add hourly schedules', source: 'cli', workspace: '/w' })).toBe(
+      `PR 5997156: Add hourly schedules\n${url}\n\nPlayed by the symphony CLI in /w: you can watch it and answer it here.`,
+    )
+    expect(runHover({ goal: url })).toBe(url)
+    expect(runHover({ goal: 'g', title: 'g' })).toBe('g')
   })
 })

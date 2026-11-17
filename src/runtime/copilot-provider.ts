@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultKustoDeps, kustoQuery, type KustoDeps } from './kusto.js';
+import { signInFreeEnv } from './signins.js';
 import { CopilotClient, defineTool, ToolSet } from '@github/copilot-sdk';
 import type { MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
 import { webSearch, type SearchResult } from './web-search.js';
@@ -48,7 +48,6 @@ import {
 
 export const DRAFT_TOOL = 'submit_draft';
 export const WEB_SEARCH_TOOL = 'web_search';
-export const KUSTO_TOOL = 'kusto_query';
 
 export interface SessionLike {
   on(handler: (event: { type: string; data?: unknown }) => void): () => void;
@@ -106,6 +105,14 @@ export function withoutTokenVars(env: NodeJS.ProcessEnv): Record<string, string 
 }
 
 /** What to do when Copilot refuses the account that is signed in. */
+/** Copilot was chosen where no sign-in may be used: say what to choose instead. */
+export const NO_SIGNINS_HELP =
+  "Copilot runs as the GitHub account signed in on the computer that runs Symphony, and that account is not used here (SYMPHONY_SIGNINS is off, or 'here' and this run comes from another computer). Choose AI: Local (the model server, SYMPHONY_MODEL_URL) or the offline demo; to use your own Copilot, run Symphony on your computer.";
+
+/** A studio visitor's own GitHub account is not signed in (or no longer). */
+export const VISITOR_SIGN_IN_HELP =
+  'Your GitHub account is not signed in to Copilot in this studio: choose AI: GitHub Copilot and "Sign in with GitHub", then run again (or choose AI: Local, the model server, when there is one).';
+
 export function refusedHelp(login?: string): string {
   return `Copilot refused the GitHub account signed in on this machine${login ? ` (${login})` : ''}. Check that it has Copilot (https://github.com/settings/copilot) and that your organization allows Copilot in the CLI, then run \`npm run login\` again. The offline demo (AI: Scripted) works without it.`;
 }
@@ -174,14 +181,46 @@ export interface CopilotProviderOptions {
   readonly endOnSubmit?: boolean;
   /** false: ignore the steps' maxEffort and play each tier's own effort. */
   readonly effortCaps?: boolean;
+  /**
+   * Leave out the CLI tools no step uses (LOCAL_EXCLUDED_TOOLS) on every session: each call sends
+   * every tool's schema, and the whole conversation is sent again on each call of a step.
+   */
+  readonly leanTools?: boolean;
+  /**
+   * Tool output above this many bytes goes to a temp file the AI reads in parts, not into the
+   * conversation (the SDK's largeOutput; its default is 51200). Each later call of the step sends
+   * what earlier tools returned again, so a big file view is paid for on every call after it.
+   */
+  readonly toolOutputBytes?: number;
   readonly workingDirectory?: string;
   /** MCP servers connected to nodes with the 'mcp' capability. */
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
   /** Backend for the web_search tool (nodes with the 'web' capability). */
   readonly webSearch?: (query: string, signal: AbortSignal) => Promise<readonly SearchResult[]>;
-  /** Backend for the kusto_query tool (nodes with the 'web' or 'mcp' capability). */
-  readonly kusto?: KustoDeps;
   readonly gitHubToken?: string;
+  /**
+   * Every step on a model server of your own (OpenAI-compatible, e.g. vLLM on a Tenstorrent
+   * machine) instead of Copilot: no GitHub sign-in is used. `model` unset: the first one the
+   * server lists (GET {baseUrl}/models).
+   */
+  readonly localModel?: {
+    readonly baseUrl: string;
+    readonly apiKey?: string;
+    readonly model?: string;
+    /** Copilot when the server does not answer (only with sign-ins allowed). */
+    readonly fallback?: boolean;
+    /** How long to wait for it to answer GET /models (default 5 s). */
+    readonly probeMs?: number;
+  };
+  /**
+   * false: steps run with none of the host's credentials (runtime/signins.ts).
+   */
+  readonly signIns?: boolean;
+  /**
+   * Copilot as the account signed in at this Copilot home (a studio visitor's own sign-in,
+   * runtime/accounts.ts), never the host's: with sign-ins off, only Copilot itself is allowed.
+   */
+  readonly copilotHome?: string;
   /** Where the token was set (e.g. TOKEN), named in messages when Copilot refuses it. */
   readonly gitHubTokenSource?: string;
   /** Safety net per call; default a minute after the step limit the driver enforces (limits.ts). */
@@ -244,6 +283,19 @@ const DEFAULT_ALTERNATE = 'gpt-6.1-sol';
 const family = (model: string) => model.split('-')[0];
 
 /** System prompt for sessions with only Symphony's own tools (no workspace, files or shell). */
+/**
+ * CLI tools no Symphony step uses. A local model gets every request with each tool's schema,
+ * and a smaller model picks from a shorter list more reliably.
+ */
+export const LOCAL_EXCLUDED_TOOLS = [
+  'task',
+  'list_agents',
+  'read_agent',
+  'skill',
+  'sql',
+  'list_bash',
+] as const;
+
 export const ISOLATED_SYSTEM = [
   'You work on one step of a deterministic workflow, inside a session with no workspace, files or shell.',
   'Use only the tools you are given (always submit_result; web_search and web_fetch when listed).',
@@ -481,7 +533,10 @@ const MAX_SUBMIT_CORRECTIONS = 2;
 const abortError = () => new DOMException('aborted', 'AbortError');
 
 export class CopilotProvider implements Provider {
-  readonly name = 'copilot';
+  /** 'local' on your model server: its recorded answers are never replayed as Copilot's. */
+  get name(): 'copilot' | 'local' {
+    return this.opts.localModel ? 'local' : 'copilot';
+  }
   private readonly opts: CopilotProviderOptions;
   private client: ClientLike | undefined;
   private starting: Promise<ClientLike> | undefined;
@@ -495,21 +550,35 @@ export class CopilotProvider implements Provider {
   private ensureClient(): Promise<ClientLike> {
     if (this.client) return Promise.resolve(this.client);
     this.starting ??= (async () => {
-      const token = this.tokenRejected ? undefined : this.opts.gitHubToken;
+      const local = (await this.local()) !== undefined;
+      const home = this.opts.copilotHome;
+      // A visitor's runs never use a token of the host's.
+      const token = this.tokenRejected || local || home ? undefined : this.opts.gitHubToken;
       const auth = token ? { gitHubToken: token } : {};
+      // What the steps' commands inherit: none of the host's credentials when sign-ins are off.
+      const base =
+        this.opts.signIns === false ? signInFreeEnv(process.env) : withoutTokenVars(process.env);
+      const env = home ? { ...base, COPILOT_HOME: home } : base;
       const client =
         this.opts.clientFactory?.(auth) ??
         (new CopilotClient(
           token
-            ? auth
+            ? { ...auth, env: this.opts.signIns === false ? env : process.env }
             : // The CLI prefers token variables over a sign-in: hide them so the sign-in is used.
-              { useLoggedInUser: true, env: withoutTokenVars(process.env) },
+              // A local model needs no sign-in at all.
+              { useLoggedInUser: !local, env },
         ) as unknown as ClientLike);
       await client.start();
       this.client = client;
       return client;
     })();
     return this.starting;
+  }
+
+  /** How to get Copilot working for whoever this run plays as. */
+  private signInHelp(): string {
+    if (this.opts.copilotHome) return VISITOR_SIGN_IN_HELP;
+    return this.opts.signIns === false ? NO_SIGNINS_HELP : SIGN_IN_HELP;
   }
 
   private signInChecked = false;
@@ -522,6 +591,19 @@ export class CopilotProvider implements Provider {
     /** The token variable used instead of the signed-in account, when one is set. */
     tokenSource?: string;
   }> {
+    const local = this.opts.localModel;
+    if (local) {
+      try {
+        if (await this.local())
+          return { signedIn: true, message: `local model server ${local.baseUrl}` };
+      } catch (e) {
+        return { signedIn: false, message: (e as Error).message };
+      }
+      // It did not answer: Copilot instead, as below.
+    }
+    // Sign-ins off means nobody's account: Copilot would run as whoever is signed in here.
+    if (this.opts.signIns === false && !this.opts.copilotHome)
+      return { signedIn: false, message: NO_SIGNINS_HELP };
     const client = await this.ensureClient();
     const source =
       this.opts.gitHubToken && !this.tokenRejected && this.opts.gitHubTokenSource
@@ -542,6 +624,11 @@ export class CopilotProvider implements Provider {
 
   private async runSession(run: SessionRun): Promise<SessionOutput> {
     if (run.signal.aborted) throw abortError();
+    const onLocal = await this.local();
+    if (this.fellBack) {
+      run.onEvent({ type: 'info', text: this.fellBack });
+      this.fellBack = undefined;
+    }
     if (!this.signInChecked) {
       let status = await this.authStatus().catch(() => undefined);
       // A configured token that is not accepted: try the account signed in on this machine.
@@ -554,15 +641,25 @@ export class CopilotProvider implements Provider {
         await this.dropClient();
         status = await this.authStatus().catch(() => undefined);
       }
-      if (status && !status.signedIn) throw new SetupError(SIGN_IN_HELP);
+      if (status && !status.signedIn) throw new SetupError(this.signInHelp());
       this.signInChecked = status !== undefined;
     }
     const client = await this.ensureClient();
     if (run.signal.aborted) throw abortError();
     const toolCalls: ToolCallRecord[] = [];
+    const local = onLocal ? this.opts.localModel : undefined;
     const config: SessionConfig = {
       ...(run.model ? { model: run.model } : {}),
-      ...(run.effort ? { reasoningEffort: run.effort } : {}),
+      ...(run.effort && !local ? { reasoningEffort: run.effort } : {}),
+      ...(local
+        ? {
+            provider: {
+              type: 'openai' as const,
+              baseUrl: local.baseUrl,
+              ...(local.apiKey ? { apiKey: local.apiKey } : {}),
+            },
+          }
+        : {}),
       ...((run.cwd ?? this.opts.workingDirectory)
         ? { workingDirectory: run.cwd ?? this.opts.workingDirectory }
         : {}),
@@ -578,13 +675,16 @@ export class CopilotProvider implements Provider {
             },
           }
         : {
-            excludedTools: ['task'],
+            excludedTools: local || this.opts.leanTools ? [...LOCAL_EXCLUDED_TOOLS] : ['task'],
             ...(run.system ? { systemMessage: { mode: 'append', content: run.system } } : {}),
           }),
       ...(run.mcpServers && Object.keys(run.mcpServers).length > 0
         ? { mcpServers: { ...run.mcpServers } }
         : {}),
       skipCustomInstructions: true,
+      ...(this.opts.toolOutputBytes
+        ? { largeOutput: { enabled: true, maxSizeBytes: this.opts.toolOutputBytes } }
+        : {}),
       onPermissionRequest: (request) => {
         const decision = decidePermission(
           run.role,
@@ -845,6 +945,10 @@ export class CopilotProvider implements Provider {
   async modelFor(
     complexity: Complexity,
   ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
+    {
+      const onLocal = await this.local();
+      if (onLocal) return { model: onLocal.model };
+    }
     const available = await this.availableModels();
     const forced = this.opts.model;
     if (forced && (!available || available.has(forced))) return { model: forced };
@@ -876,6 +980,11 @@ export class CopilotProvider implements Provider {
   private async tierFor(
     pause: AgentPause,
   ): Promise<{ model?: string; effort?: ReasoningEffort; note?: string }> {
+    // One model serves every step: tiers, step overrides and efforts are Copilot's.
+    {
+      const onLocal = await this.local();
+      if (onLocal) return { model: onLocal.model };
+    }
     const spec = this.opts.nodeModels?.[pause.nodeId];
     const t = spec ? await this.ownModel(pause, spec) : await this.tierModel(pause);
     // An effort named for the step is played as named; any other is capped by its maxEffort.
@@ -994,6 +1103,44 @@ export class CopilotProvider implements Provider {
   }
 
   private models: Promise<Map<string, readonly string[]> | undefined> | undefined;
+  private localState: Promise<{ readonly model: string } | undefined> | undefined;
+  /** Set once a run fell back to Copilot, so it is said once. */
+  private fellBack: string | undefined;
+
+  /**
+   * The local model server, checked once: its model when it answers (configured, else the first
+   * it lists). When it does not, Copilot (fallback, sign-ins allowed), else a setup error at once,
+   * rather than a session retrying a server that is not there.
+   */
+  private local(): Promise<{ readonly model: string } | undefined> {
+    const local = this.opts.localModel;
+    if (!local) return Promise.resolve(undefined);
+    this.localState ??= (async () => {
+      const why = await fetch(`${local.baseUrl.replace(/\/+$/, '')}/models`, {
+        headers: local.apiKey ? { Authorization: `Bearer ${local.apiKey}` } : {},
+        signal: AbortSignal.timeout(local.probeMs ?? 5000),
+      }).then(
+        async (res) => {
+          const list = res.ok ? ((await res.json()) as { data?: { id?: string }[] }) : undefined;
+          const listed = list?.data?.find((m) => typeof m.id === 'string')?.id;
+          const model = local.model ?? listed;
+          if (res.ok && model) return { model };
+          return res.ok ? 'lists no model (set SYMPHONY_MODEL_ID)' : `answered ${res.status}`;
+        },
+        (e: Error) => `did not answer (${e.name === 'TimeoutError' ? 'timed out' : e.message})`,
+      );
+      if (typeof why !== 'string') return why;
+      if (local.fallback && (this.opts.signIns !== false || this.opts.copilotHome)) {
+        this.fellBack = `The model server at ${local.baseUrl} ${why}: using GitHub Copilot for this run.`;
+        return undefined;
+      }
+      throw new SetupError(`The model server at ${local.baseUrl} ${why}.`);
+    })();
+    this.localState.catch(() => {
+      this.localState = undefined;
+    });
+    return this.localState;
+  }
 
   private availableModels(): Promise<Map<string, readonly string[]> | undefined> {
     this.models ??= (async () => {
@@ -1129,15 +1276,11 @@ export class CopilotProvider implements Provider {
         ].join('\n');
       },
     });
-    const external =
-      (pause.capabilities.includes('web') || pause.capabilities.includes('mcp')) && !integrating;
     const tools = [
       tool,
       ...(pause.capabilities.includes('web') && !integrating
         ? [this.webSearchTool(req.signal)]
         : []),
-      // Read-only data the change's own systems hold (test health, pipeline metrics).
-      ...(external ? [this.kustoTool(req.signal)] : []),
     ];
     const play = (m: { model?: string; effort?: ReasoningEffort }) =>
       this.runSession({
@@ -1264,36 +1407,6 @@ export class CopilotProvider implements Provider {
         ...(out.usage ? { usage: out.usage } : {}),
       },
     };
-  }
-
-  private kustoTool(signal: AbortSignal): ReturnType<typeof defineTool> {
-    const deps = this.opts.kusto ?? defaultKustoDeps;
-    return defineTool(KUSTO_TOOL, {
-      description:
-        'Run a read-only Kusto (Azure Data Explorer) query with your Azure sign-in: a KQL query or a .show command (no other control commands). Returns at most 200 rows as tab-separated text.',
-      parameters: {
-        type: 'object',
-        properties: {
-          cluster: { type: 'string', description: 'Cluster name or https URL' },
-          database: { type: 'string', description: 'Database name' },
-          query: { type: 'string', description: 'KQL query, or a .show command' },
-        },
-        required: ['cluster', 'database', 'query'],
-      },
-      skipPermission: true,
-      handler: async (args: unknown) => {
-        const a = (args ?? {}) as Record<string, unknown>;
-        return kustoQuery(
-          {
-            cluster: String(a.cluster ?? ''),
-            database: String(a.database ?? ''),
-            query: String(a.query ?? ''),
-          },
-          deps,
-          signal,
-        );
-      },
-    });
   }
 
   private webSearchTool(signal: AbortSignal): ReturnType<typeof defineTool> {

@@ -20,10 +20,6 @@ export const TOOL_OUTPUTS: Readonly<Record<string, readonly string[]>> = {
   'diff.scan': ['diff', 'smells', 'masking', 'error'],
   'files.read': ['files'],
   'evidence.check': ['valid', 'invalid', 'checked'],
-  'evidence.context': ['items'],
-  'memory.facts': ['saved'],
-  'memory.recall': ['facts', 'lessons'],
-  'memory.lesson': ['saved'],
   'patterns.list': ['names', 'summaries', 'catalog'],
   'patterns.route': ['suggested', 'matches'],
   'pattern.validate': ['errors', 'valid', 'pattern', 'inputs'],
@@ -65,17 +61,6 @@ export const FEATURES: readonly Feature[] = [
     label: 'Lean run',
     description:
       'On by default: single-pass triage, gap-aimed research, unchallenged sub-answers kept, a sub-agent per gap, and an AI-rated complexity (by the investigation or the maestro) capped at 3; one you set stays. About a third less time and a quarter fewer tokens (estimated). Turn it off if answers get worse; the switches below then apply one by one.',
-  },
-  {
-    field: 'supportJudge',
-    label: 'Support judge',
-    description:
-      "Another model family checks that each cited finding's quote backs its claim. Shadow reports and keeps unsupported findings out of memory; enforce also makes the answer partial. Off until calibrated.",
-    choices: [
-      { value: 'off', label: 'off' },
-      { value: 'shadow', label: 'shadow' },
-      { value: 'enforce', label: 'enforce' },
-    ],
   },
   {
     field: 'singlePass',

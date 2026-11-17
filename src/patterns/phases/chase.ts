@@ -22,8 +22,6 @@ export interface ChaseConfig {
   readonly checks?: readonly AcceptanceCheck[];
   readonly capabilities?: AgentNode['capabilities'];
   readonly fanOut?: AgentNode['fanOut'];
-  /** Whether what held is remembered for later runs as it is checked. */
-  readonly remember?: boolean;
   /** A bound on the research step's visits, when the pattern's loop needs one there. */
   readonly bound?: { readonly maxVisits: number; readonly visitsFrom?: string };
   /** How what held is recorded (the merge step's assignments). */
@@ -65,7 +63,7 @@ export function chaseSteps(cfg: ChaseConfig): Chase {
         },
       ],
     },
-    check: checkFindings(cfg.ids.check, cfg.notes, cfg.remember ?? true),
+    check: checkFindings(cfg.ids.check, cfg.notes),
     merge: { id: cfg.ids.merge, kind: 'compute', label: cfg.mergeLabel, assign: cfg.merge },
   };
 }

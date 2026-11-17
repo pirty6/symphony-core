@@ -575,24 +575,6 @@ describe('what the skeptic and the gap research see', () => {
     // With gapAimed the gaps are notes; the questions they belong to stay in view.
     expect(reads('chase')).toEqual(expect.arrayContaining(['subQuestions', 'chaseGaps']));
   });
-
-  it('the support judge reads each quote with the lines around it', () => {
-    const r = runScripted(
-      compileInvestigate({ context: { ...demo.context!, supportJudge: 'shadow' } }),
-      demo,
-    );
-    const order = r.state.steps.map((x) => x.nodeId);
-    expect(order.indexOf('judgeContext')).toBeGreaterThan(order.indexOf('takeJudgeItems'));
-    expect(order.indexOf('judgeContext')).toBeLessThan(order.indexOf('judgeSupport'));
-    const node = compileInvestigate({ context: demo.context! }).nodes.find(
-      (n) => n.id === 'judgeContext',
-    );
-    expect(node).toMatchObject({
-      tool: 'evidence.context',
-      inputs: { findings: 'judgeItems' },
-      output: { items: 'judgeItems' },
-    });
-  });
 });
 
 describe('gap-aimed research (a pilot, off by default)', () => {
@@ -1115,7 +1097,7 @@ describe('investigate always tries: the web and targeted experiments', () => {
 const right = (st: Readonly<Record<string, unknown>>) =>
   ((st.openQuestions as string[]) ?? []).map((q, i) =>
     i === 0
-      ? `V${i + 1} QUERY — kusto_query cluster bohemiahealth, database Health: TestHealthV2 | where Timestamp > ago(30d) | summarize retried=countif(Retried) by Package — the flake rate per package`
+      ? `V${i + 1} QUERY — az pipelines runs list --top 50 -o table — how often the build failed`
       : `V${i + 1} QUERY — az repos policy list --branch master -o table — which policies apply`,
   );
 
@@ -1155,7 +1137,7 @@ describe('investigate says how to verify what is still open', () => {
     expect(open.length).toBeGreaterThanOrEqual(2);
     expect(r.state.state.verification).toHaveLength(open.length);
     expect(String(r.state.state.handoff)).toContain('## How to verify what is still open');
-    expect(String(r.state.state.handoff)).toContain('V1 QUERY — kusto_query cluster bohemiahealth');
+    expect(String(r.state.state.handoff)).toContain('V1 QUERY — az pipelines runs list');
   });
 
   it('a missing line, or one that is not a read, a query or a run, is sent back', () => {
@@ -1199,23 +1181,6 @@ describe('investigate searches sources side by side', () => {
     expect(sweeps).toHaveLength(1);
     expect(sweeps[0]!.input?.currentSources).toEqual(['git-history', 'prior-runs']);
     expect(r.state.state.consulted).toEqual(['git-history', 'prior-runs']);
-  });
-});
-
-describe('investigate remembers what its answer used', () => {
-  it('checks do not remember as they go; a settled answer remembers its cited findings', () => {
-    const score = compileInvestigate({ goal: 'g', context: demo.context! });
-    const checks = score.nodes.filter((n) => n.kind === 'tool' && n.tool === 'evidence.check');
-    expect(checks.length).toBeGreaterThan(5);
-    for (const c of checks) expect(c).toMatchObject({ args: { remember: false } });
-    const { r } = runWith(['workspace']);
-    expect(r.state.outcome).toBe('success');
-    const node = score.nodes.find((n) => n.id === 'rememberCited');
-    expect(node).toMatchObject({ tool: 'memory.facts', inputs: { findings: 'factsToKeep' } });
-    expect(r.state.state.factsToKeep).toEqual(r.state.state.citedFindings);
-    const cited = (r.state.state.citedFindings as string[]).length;
-    expect(cited).toBeGreaterThan(0);
-    expect(r.state.state.factsSaved).toBe(cited);
   });
 });
 
@@ -1324,32 +1289,6 @@ describe('investigate answers every sub-question', () => {
         expect.stringMatching(new RegExp(`^S${i + 1}: `)),
       ),
     );
-  });
-});
-
-/** n checkable facts about files named <p><i>.ts. */
-const facts = (p: string, n: number) =>
-  Array.from({ length: n }, (_, i) => `${p}${i}.ts:1 — f \`a b\``);
-
-describe('investigate recalls for the sub-questions too', () => {
-  it('a second recall uses the sub-questions; leads are merged within the usual caps', () => {
-    const { r } = runWith(['workspace'], demo.approvals, {
-      tools: {
-        recall: () => ({ facts: facts('a', 8), lessons: ['l1', 'l2'] }),
-        recallPlan: () => ({
-          facts: [...facts('a', 2), ...facts('b', 8)],
-          lessons: ['l2', 'l3', 'l4', 'l5', 'l6', 'l7'],
-        }),
-      },
-    });
-    const s = r.state.state;
-    const node = compileInvestigate({ goal: 'g', context: demo.context! }).nodes.find(
-      (n) => n.id === 'recallPlan',
-    );
-    expect(node).toMatchObject({ tool: 'memory.recall', inputs: { query: 'subQuestions' } });
-    expect(s.knownFacts).toHaveLength(12);
-    expect((s.knownFacts as string[]).slice(0, 8)).toEqual(facts('a', 8));
-    expect(s.pastLessons).toEqual(['l1', 'l2', 'l3', 'l4', 'l5', 'l6']);
   });
 });
 
@@ -1535,153 +1474,6 @@ describe('investigate holds "read completely" to what the engine gave', () => {
     }
     // The demo's triage calls cli.ts irrelevant; it was not shown whole, so it is read in depth.
     expect(r.state.state.relevantFiles).toContain('src/cli.ts');
-  });
-});
-
-describe('the support judge (off by default)', () => {
-  /** The demo, answering with these citations and judging with this responder. */
-  const judged = (
-    cites: string,
-    judge?: NonNullable<DemoScript['agents']>[string],
-    context: Record<string, unknown> = {},
-  ) => {
-    const script: DemoScript = {
-      ...demo,
-      agents: {
-        ...demo.agents,
-        answer: (s, v) => {
-          const good = demo.agents!.answer!(s, v);
-          const subAnswers = ((s.subQuestions as string[]) ?? []).map(
-            (_, i) => `S${i + 1}: so ${cites}`,
-          );
-          return {
-            ...good,
-            updates: {
-              ...good.updates,
-              answer: `It is checked ${cites}.`,
-              subAnswers,
-              // Resolutions too, so these are the only findings cited.
-              objectionResolutions: ((s.realObjections as string[]) ?? []).map(
-                (o) => `${o.split(':')[0]}: RESOLVED — so ${cites}`,
-              ),
-            },
-          };
-        },
-        ...(judge ? { judgeSupport: judge } : {}),
-      },
-    };
-    const r = runScripted(
-      compileInvestigate({ goal: 'g', context: { ...demo.context!, ...context } }),
-      script,
-    );
-    const ran = (id: string) => r.state.steps.filter((x) => x.nodeId === id).length;
-    return { r, s: r.state.state, ran };
-  };
-  const verdict = {
-    outcome: 'applied' as const,
-    confidence: 1,
-    shouldTerminate: false,
-    reason: 'r',
-  };
-  /** Rules these ids UNSUPPORTED, the rest SUPPORTED. */
-  const ruling =
-    (bad: string[]): NonNullable<DemoScript['agents']>[string] =>
-    (s) => ({
-      updates: {
-        supportRulings: ((s.judgeItems as string[]) ?? []).map((f) => {
-          const id = f.split(' ')[0]!;
-          return `${id}: ${bad.includes(id) ? 'UNSUPPORTED — the quote does not say it' : 'SUPPORTED — it does'}`;
-        }),
-      },
-      verdict,
-    });
-
-  it('off: no judge runs, and everything cited is remembered', () => {
-    const { s, ran } = judged('[F1] [F2]');
-    expect(ran('judgeSupport')).toBe(0);
-    expect(s.factsToKeep).toEqual(s.citedFindings);
-  });
-
-  it('(a) enforce: a finding the judge rules unsupported makes the answer partial, with the reason', () => {
-    const { r, s, ran } = judged('[F1] [F2]', ruling(['F1']), { supportJudge: 'enforce' });
-    expect(ran('judgeSupport')).toBe(1);
-    expect(r.state.outcome).toBe('partial');
-    expect(s.unsupportedIds).toEqual(['F1']);
-    expect(s.doubts).toEqual([
-      'The support judge found these cited findings unsupported by their own quotes: F1: UNSUPPORTED — the quote does not say it',
-    ]);
-    expect((s.factsToKeep as string[]).map((f) => f.split(' ')[0])).toEqual(['F2']);
-  });
-
-  it('shadow: the rulings are reported and the unsupported finding is not remembered; the outcome is unchanged', () => {
-    const { r, s, ran } = judged('[F1] [F2]', ruling(['F1']), { supportJudge: 'shadow' });
-    expect(r.state.outcome).toBe('success');
-    expect(String(s.doubts)).toMatch(
-      /\(shadow mode: reported, the outcome unchanged\): F1: UNSUPPORTED/,
-    );
-    expect(ran('rememberCited')).toBe(1);
-    expect((s.factsToKeep as string[]).map((f) => f.split(' ')[0])).toEqual(['F2']);
-  });
-
-  it('(b) a ruling counts by the id it starts with: an id named inside a reason does not cover it', () => {
-    let calls = 0;
-    const { r, s } = judged(
-      '[F1] [F2]',
-      (st, v) => {
-        calls += 1;
-        return calls === 1
-          ? { updates: { supportRulings: ['F1: SUPPORTED — F2 says the same'] }, verdict }
-          : ruling([])(st, v);
-      },
-      { supportJudge: 'enforce' },
-    );
-    const rejected = r.state.events.flatMap((e) =>
-      e.type === 'response-rejected' && e.nodeId === 'judgeSupport' ? e.errors : [],
-    );
-    expect(rejected.join()).toMatch(/one supportRulings entry per entry of judgeItems/);
-    expect(s.unsupportedIds).toEqual([]);
-    expect(r.state.outcome).toBe('success');
-  });
-
-  it('(c) with keepUnchallenged, an unsupported finding still ends partial, never stuck', () => {
-    const { r } = judged('[F1]', ruling(['F1']), {
-      supportJudge: 'enforce',
-      keepUnchallenged: true,
-    });
-    expect(r.state.kind).toBe('done');
-    expect(r.state.outcome).toBe('partial');
-  });
-
-  it('(d) web and other sources are uncheckable: said, never judged, never partial', () => {
-    const { r, s, ran } = judged('[F7] [F8]', ruling(['F7', 'F8']), { supportJudge: 'enforce' });
-    expect(ran('judgeSupport')).toBe(0);
-    expect(r.state.outcome).toBe('success');
-    expect(s.doubts).toEqual([
-      '2 cited findings cite web pages or other sources: the support judge cannot check them',
-    ]);
-  });
-
-  it('(e) judged in parallel parts, the rulings merge in order, one per finding', () => {
-    const { s, r } = judged('[F1] [F2] [F3] [F5]', ruling(['F3']), {
-      supportJudge: 'enforce',
-      judgeBatch: 1,
-    });
-    const pause = r.state.events.flatMap((e) =>
-      e.type === 'paused' && e.pause.kind === 'agent' && e.pause.nodeId === 'judgeSupport'
-        ? [e.pause]
-        : [],
-    )[0]!;
-    expect(pause.parts).toHaveLength(4);
-    expect((s.supportRulings as string[]).map((x) => x.split(':')[0])).toEqual([
-      'F1',
-      'F2',
-      'F3',
-      'F5',
-    ]);
-    expect(s.unsupportedIds).toEqual(['F3']);
-    // The judge sees each finding and its quote, not the question or the answer.
-    expect(pause.isolated).toBe(true);
-    expect(Object.keys(pause.input)).toEqual(['judgeItems']);
   });
 });
 

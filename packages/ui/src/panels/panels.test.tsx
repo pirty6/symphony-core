@@ -13,6 +13,8 @@ import { useSidebar } from '../lib/sidebar'
 import { describeEvent } from '../lib/events'
 import { Timeline } from './Timeline'
 import { Toolbar } from './Toolbar'
+import { VisitorSignIn } from './VisitorSignIn'
+import { api } from '../lib/api'
 
 const approvalPause: ApprovalPause = {
   kind: 'approval',
@@ -164,6 +166,17 @@ describe('Toolbar', () => {
     rerender(<Toolbar title="t" mode="live" status="paused" settings={settings} canRun {...handlers} />)
     fireEvent.click(screen.getByText('⏭ Step'))
     expect(handlers.onStep).toHaveBeenCalled()
+  })
+
+  it('offers your local AI only when a model server is set, and says when it is down', () => {
+    const { rerender } = render(<Toolbar title="t" mode="idle" status="idle" settings={settings} canRun {...handlers} />)
+    expect(screen.queryByRole('option', { name: /Local AI/ })).toBeNull()
+    rerender(
+      <Toolbar title="t" mode="idle" status="idle" settings={settings} canRun {...handlers} local={{ configured: true, model: 'Qwen/Qwen3.6-27B', reachable: false }} />,
+    )
+    expect(screen.getByRole('option', { name: 'Local AI (Qwen/Qwen3.6-27B) · not answering' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('provider'), { target: { value: 'local' } })
+    expect(handlers.onSettings).toHaveBeenCalledWith(expect.objectContaining({ provider: 'local' }))
   })
 
   it('disables run with problems and shows the model box for copilot', () => {
@@ -385,16 +398,16 @@ describe('Library saved runs', () => {
       ...(choices ? { choices } : {}),
     })
     const rows = [
-      { feature: feature('supportJudge', [{ value: 'off', label: 'off' }, { value: 'shadow', label: 'shadow' }]), value: 'shadow', default: 'off', patterns: ['investigate'] },
+      { feature: feature('pragmatistFrom', [{ value: '2', label: '2' }, { value: '3', label: '3' }]), value: '2', default: '3', patterns: ['investigate'] },
       { feature: feature('singlePass'), value: 'false', default: 'false', patterns: ['investigate'] },
     ]
     render(<Library {...props} saved={[]} features={rows} onFeature={(r, v) => changes.push([r.feature.field, v])} />)
-    expect(screen.getByTestId('feature-supportJudge')).toHaveTextContent('changed')
+    expect(screen.getByTestId('feature-pragmatistFrom')).toHaveTextContent('changed')
     expect(screen.getByTestId('feature-singlePass')).not.toHaveTextContent('changed')
-    fireEvent.change(screen.getByLabelText('supportJudge'), { target: { value: 'off' } })
+    fireEvent.change(screen.getByLabelText('pragmatistFrom'), { target: { value: '3' } })
     fireEvent.click(screen.getByLabelText('singlePass'))
     expect(changes).toEqual([
-      ['supportJudge', 'off'],
+      ['pragmatistFrom', '3'],
       ['singlePass', 'true'],
     ])
   })
@@ -482,5 +495,37 @@ describe('sidebar toggles', () => {
     render(<Side side="left" />)
     expect(screen.getByTestId('toggle-left')).toHaveAccessibleName('Show the library')
     localStorage.clear()
+  })
+})
+
+describe('VisitorSignIn', () => {
+  it('this computer: nothing to show', async () => {
+    vi.spyOn(api, 'account').mockResolvedValue({ here: true })
+    const { container } = render(<VisitorSignIn />)
+    await act(async () => {})
+    expect(container).toBeEmptyDOMElement()
+    vi.restoreAllMocks()
+  })
+
+  it('a visitor signs in with GitHub: the code, then its own account, and signs out', async () => {
+    vi.useFakeTimers()
+    const account = vi.spyOn(api, 'account').mockResolvedValue({ here: false, signedIn: false })
+    vi.spyOn(api, 'accountLogin').mockResolvedValue({ url: 'https://github.com/login/device', code: 'WXYZ-9876' })
+    const logout = vi.spyOn(api, 'accountLogout').mockResolvedValue({ signedIn: false })
+    const onChange = vi.fn()
+    render(<VisitorSignIn onChange={onChange} />)
+    await act(async () => {})
+    await act(async () => fireEvent.click(screen.getByText('Sign in with GitHub')))
+    expect(screen.getByText('WXYZ-9876')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'https://github.com/login/device' })).toHaveAttribute('target', '_blank')
+    account.mockResolvedValue({ here: false, signedIn: true, login: 'octocat' })
+    await act(async () => vi.advanceTimersByTime(3000))
+    expect(screen.getByTestId('visitor-account')).toHaveTextContent('GitHub Copilot as octocat')
+    expect(onChange).toHaveBeenCalledWith(true)
+    await act(async () => fireEvent.click(screen.getByText('Sign out')))
+    expect(logout).toHaveBeenCalled()
+    expect(screen.getByText('Sign in with GitHub')).toBeInTheDocument()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 })

@@ -1432,49 +1432,6 @@ describe('CopilotProvider', () => {
     expect(sessions[1]!.cfg.mcpServers).toBeUndefined();
   });
 
-  it('offers kusto_query to steps that may read outside the workspace, read-only', async () => {
-    const asked: string[] = [];
-    const { client, sessions } = fakeClient(async (cfg, emit) => {
-      if (cfg.tools!.some((t) => t.name === 'kusto_query')) {
-        for (const query of ['T | count', '.drop table T'])
-          emit('assistant.message', {
-            content: String(
-              await callTool(cfg, 'kusto_query', { cluster: 'c', database: 'd', query }),
-            ),
-          });
-      }
-      await callTool(cfg, 'submit_result', { updates: { word: 'x' } });
-      emit('session.idle');
-    });
-    const p = new CopilotProvider({
-      clientFactory: () => client,
-      kusto: {
-        token: async () => 'tok',
-        fetch: (async (_url: string, init: RequestInit) => {
-          asked.push(String(init.body));
-          return new Response(
-            JSON.stringify({ Tables: [{ Columns: [{ ColumnName: 'n' }], Rows: [[7]] }] }),
-          );
-        }) as unknown as typeof fetch,
-      },
-    });
-    const go = (capabilities: ('web' | 'mcp')[]) =>
-      p.runAgent({
-        pause: { ...pause, capabilities },
-        state: {},
-        visit: 0,
-        signal: new AbortController().signal,
-        onEvent: () => {},
-      });
-    const out = await go(['mcp']);
-    expect(out.transcript.output).toContain('n\n7');
-    expect(out.transcript.output).toContain('kusto_query refused: `.drop table`');
-    expect(asked).toEqual([JSON.stringify({ db: 'd', csl: 'T | count' })]);
-    expect(out.transcript.prompt).toContain('kusto_query(cluster, database, query)');
-    await go([]);
-    expect(sessions[1]!.cfg.tools!.map((t) => t.name)).toEqual(['submit_result']);
-  });
-
   it('picks the model and effort from the complexity tier, checked against available models', async () => {
     const { client, sessions } = fakeClient(async (cfg, emit) => {
       await callTool(cfg, 'submit_result', { updates: { word: 'x' } });
@@ -1657,5 +1614,187 @@ describe('CopilotProvider + engine: malformed submissions', () => {
     expect(rejected).toHaveLength(3);
     expect(perf.finalState.examined).toEqual([]);
     expect(perf.reason).toMatch(/deepRead.*verdict is missing/);
+  });
+});
+
+const localReq = (p: AgentPause = pause) => ({
+  pause: p,
+  state: {},
+  visit: 0,
+  signal: new AbortController().signal,
+  onEvent: () => {},
+});
+
+/** A model server that lists one model, for the time a test needs it. */
+async function modelServer(id = 'openai/gpt-oss-120b') {
+  const http = await import('node:http');
+  const server = http.createServer((q, r) => {
+    r.writeHead(q.url === '/v1/models' ? 200 : 404, { 'content-type': 'application/json' });
+    r.end(JSON.stringify({ data: [{ id }] }));
+  });
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
+  const { port } = server.address() as { port: number };
+  return { url: `http://127.0.0.1:${port}/v1`, close: () => server.close() };
+}
+/** Nothing listens there: refused at once. */
+const DOWN = 'http://127.0.0.1:1/v1';
+
+describe('a local model server instead of Copilot', () => {
+  /** A session that submits a valid result, on whatever model it was given. */
+  const submitting = () =>
+    fakeClient(async (cfg, emit) => {
+      await callTool(cfg, 'submit_result', {
+        updates: { word: 'cat' },
+        verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+      });
+      emit('assistant.message', { content: 'Done.', model: String(cfg.model) });
+      emit('session.idle');
+    });
+
+  it('trials: every session leaves out the unused CLI tools; big tool output goes to a file', async () => {
+    const { client, sessions } = submitting();
+    await new CopilotProvider({
+      clientFactory: () => client,
+      leanTools: true,
+      toolOutputBytes: 16000,
+    }).runAgent(localReq());
+    expect(sessions[0]!.cfg.excludedTools).toEqual(
+      expect.arrayContaining(['task', 'sql', 'skill']),
+    );
+    expect(sessions[0]!.cfg.largeOutput).toEqual({ enabled: true, maxSizeBytes: 16000 });
+  });
+
+  it('every step plays on its model, through its endpoint, with no sign-in and no effort', async () => {
+    const server = await modelServer();
+    try {
+      const { client, sessions } = submitting();
+      let asked = false;
+      const p = new CopilotProvider({
+        clientFactory: () => ({
+          ...client,
+          // Copilot would say nobody is signed in: a local model never asks.
+          getAuthStatus: async () => ((asked = true), { isAuthenticated: false }),
+        }),
+        localModel: { baseUrl: server.url, apiKey: 'k', model: 'openai/gpt-oss-120b' },
+      });
+      for (const complexity of [1, 4] as const)
+        await p.runAgent(localReq({ ...pause, complexity }));
+      expect(asked).toBe(false);
+      for (const s of sessions) {
+        expect(s.cfg.model).toBe('openai/gpt-oss-120b');
+        expect(s.cfg.reasoningEffort).toBeUndefined();
+        expect(s.cfg.excludedTools).toEqual(expect.arrayContaining(['task', 'sql', 'skill']));
+        expect(s.cfg.provider).toEqual({
+          type: 'openai',
+          baseUrl: server.url,
+          apiKey: 'k',
+        });
+      }
+      expect((await p.authStatus()).message).toBe(`local model server ${server.url}`);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('with no model named, the first the server lists', async () => {
+    const http = await import('node:http');
+    const server = http.createServer((q, r) => {
+      r.writeHead(q.url === '/v1/models' ? 200 : 404, { 'content-type': 'application/json' });
+      r.end(JSON.stringify({ data: [{ id: 'Qwen/Qwen3.8-27B' }] }));
+    });
+    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
+    try {
+      const { port } = server.address() as { port: number };
+      const { client, sessions } = submitting();
+      const p = new CopilotProvider({
+        clientFactory: () => client,
+        localModel: { baseUrl: `http://127.0.0.1:${port}/v1/` },
+      });
+      await p.runAgent(localReq());
+      expect(sessions[0]!.cfg.model).toBe('Qwen/Qwen3.8-27B');
+      // A server that is not there says so, at setup.
+      const gone = new CopilotProvider({
+        clientFactory: () => client,
+        localModel: { baseUrl: 'http://127.0.0.1:1/v1' },
+      });
+      await expect(gone.runAgent(localReq())).rejects.toThrow(/did not answer/);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('without sign-ins and no model server, it refuses rather than run as your Copilot account', async () => {
+    const { client, sessions } = submitting();
+    const p = new CopilotProvider({
+      clientFactory: () => ({ ...client, getAuthStatus: async () => ({ isAuthenticated: true }) }),
+      signIns: false,
+    });
+    await expect(p.runAgent(localReq())).rejects.toThrow(/SYMPHONY_MODEL_URL/);
+    expect(sessions).toHaveLength(0);
+  });
+
+  it("a studio visitor's own Copilot account plays, never your token, even with sign-ins off", async () => {
+    const { client, sessions } = submitting();
+    const auths: unknown[] = [];
+    let signedIn = true;
+    const p = new CopilotProvider({
+      clientFactory: (auth) => (
+        auths.push(auth),
+        { ...client, getAuthStatus: async () => ({ isAuthenticated: signedIn }) }
+      ),
+      signIns: false,
+      copilotHome: '/tmp/visitor-home',
+      gitHubToken: 'host-token',
+    });
+    await p.runAgent(localReq());
+    expect(sessions).toHaveLength(1);
+    expect(auths).toEqual([{}]);
+    // Not (or no longer) signed in: say how, in the studio, rather than use anyone else's account.
+    signedIn = false;
+    const again = new CopilotProvider({
+      clientFactory: () => ({
+        ...client,
+        getAuthStatus: async () => ({ isAuthenticated: signedIn }),
+      }),
+      signIns: false,
+      copilotHome: '/tmp/visitor-home',
+    });
+    await expect(again.runAgent(localReq())).rejects.toThrow(/Sign in with GitHub/);
+  });
+
+  it('a server that does not answer: Copilot when it may fall back, else a setup error at once', async () => {
+    // May fall back (sign-ins allowed): Copilot plays, and the run says why.
+    const { client, sessions } = submitting();
+    const events: ProviderEvent[] = [];
+    const p = new CopilotProvider({
+      clientFactory: () => ({ ...client, getAuthStatus: async () => ({ isAuthenticated: true }) }),
+      model: 'claude-sonnet-5.5',
+      localModel: { baseUrl: DOWN, model: 'openai/gpt-oss-120b', fallback: true },
+    });
+    await p.runAgent({ ...localReq(), onEvent: (e) => events.push(e) });
+    expect(sessions[0]!.cfg.provider).toBeUndefined();
+    expect(sessions[0]!.cfg.model).toBe('claude-sonnet-5.5');
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'info',
+        text: expect.stringMatching(/did not answer.*using GitHub Copilot/),
+      }),
+    );
+    // No fallback: stopped before any session, not left retrying.
+    const none = submitting();
+    const strict = new CopilotProvider({
+      clientFactory: () => none.client,
+      localModel: { baseUrl: DOWN, model: 'openai/gpt-oss-120b' },
+    });
+    await expect(strict.runAgent(localReq())).rejects.toThrow(/did not answer/);
+    expect((await strict.authStatus()).signedIn).toBe(false);
+    // Without sign-ins (a run from another machine), never Copilot, fallback or not.
+    const remote = new CopilotProvider({
+      clientFactory: () => none.client,
+      signIns: false,
+      localModel: { baseUrl: DOWN, model: 'openai/gpt-oss-120b', fallback: true },
+    });
+    await expect(remote.runAgent(localReq())).rejects.toThrow(/did not answer/);
+    expect(none.sessions).toHaveLength(0);
   });
 });

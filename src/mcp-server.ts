@@ -17,6 +17,7 @@ import { config } from 'dotenv';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { mcpHttpHandler } from './mcp/http.js';
 import { RunManager } from './mcp/runs.js';
+import { envForRun } from './runtime/signins.js';
 import { clientWorkspace, createSymphonyServer } from './mcp/server.js';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -43,7 +44,8 @@ if (values.http) {
   const runs = new RunManager({
     workspace: async () => workspace,
     repoRoot,
-    env: process.env,
+    // Remote callers are never this computer: with SYMPHONY_SIGNINS=here, none of your sign-ins.
+    env: envForRun(process.env, false) as NodeJS.ProcessEnv,
     editsAllowed,
   });
   const handle = mcpHttpHandler({ runs, apiKey });

@@ -2,7 +2,8 @@ import { IMPROVISATION_LEVELS } from '@core/jazz'
 import { TIER_NAMES } from '@core/catalog'
 import type { Complexity, Improvisation } from '@core/types'
 import type { ReactNode } from 'react'
-import type { RunStatus } from '../lib/model'
+import type { ProviderChoice, RunStatus } from '../lib/model'
+import type { LocalStatus } from '../lib/api'
 
 function tierHint(tiers?: Tiers): string {
   const lines = ([1, 2, 3, 4] as const).map(
@@ -12,7 +13,7 @@ function tierHint(tiers?: Tiers): string {
 }
 
 export interface RunSettings {
-  provider: 'scripted' | 'copilot'
+  provider: ProviderChoice
   model: string
   autoApprove: boolean
   stepMode: boolean
@@ -37,6 +38,8 @@ interface Props {
   onStop: () => void
   onEdit: () => void
   tiers?: Tiers
+  /** Your model server, when the studio's machine has one set (SYMPHONY_MODEL_URL). */
+  local?: LocalStatus
   /** The opening screen: the AI settings stay (the maestro uses them), nothing to run. */
   home?: boolean
   /** How long the run on screen has played (and its ETA), while it plays. */
@@ -71,6 +74,12 @@ export function Toolbar(p: Props) {
           >
             <option value="scripted">Scripted (offline demo)</option>
             <option value="copilot">GitHub Copilot</option>
+            {(p.local?.configured || p.settings.provider === 'local') && (
+              <option value="local" title={p.local?.url}>
+                Local AI{p.local?.model ? ` (${p.local.model})` : ''}
+                {p.local?.configured && !p.local.reachable ? ' · not answering' : ''}
+              </option>
+            )}
           </select>
         </label>
         {p.settings.provider === 'copilot' && (

@@ -3,15 +3,7 @@ import { TEST_PATH } from './phases/stability.js';
 import { bullets, READER_STATE, readers } from './phases/readers.js';
 import { chaseSteps } from './phases/chase.js';
 import { DEBATE_STATE, MAX_OBJECTIONS } from './phases/debate.js';
-import {
-  checkFindings,
-  CITE_BY_ID,
-  citesFindings,
-  EVIDENCE_STATE,
-  MEMORY_NOTE,
-  MEMORY_STATE,
-  recallMemory,
-} from './phases/evidence.js';
+import { checkFindings, CITE_BY_ID, citesFindings, EVIDENCE_STATE } from './phases/evidence.js';
 import {
   attest,
   ATTESTATION_DIRECTIVE,
@@ -94,6 +86,12 @@ const PLACE = '^[^ ]+:[0-9]+(-[0-9]+)? — [[][A-Z]+]';
 const SEVERITY = '[[](HIGH|MEDIUM|LOW)]';
 /** Files that are only documentation: no test needs to run for them. */
 const DOC_FILE = '[.](md|mdx|txt|rst|adoc)$';
+/**
+ * Files nothing needs comparing with: documentation, and release-note change files (beachball's
+ * change/*.json; changesets are Markdown). Seen live: a review stopped because the AI kept
+ * leaving out context for a change/*.json among 19 files.
+ */
+const NO_CONTEXT_FILE = `${DOC_FILE}|^change/[^/]+[.]json$`;
 
 /** A review comment: the finding's id, then each part, in order (`[^]` spans lines). */
 const COMMENT_SHAPE =
@@ -136,7 +134,7 @@ const REVIEW_CHASE = chaseSteps({
   ids: { chase: 'chase', check: 'checkChase', merge: 'mergeChase' },
   label: 'Settle open points',
   mergeLabel: 'Record what was found',
-  directive: `Settle each entry of \`chaseItems\` (a claim the review could not settle, or a reviewer's objection to the review) by reading the change (git diff \`diffRange\`, or git diff HEAD when it is empty) and the code around it: its callers, tests and docs (read-only). Record every command or read in \`queries\`, and every fact you find, for or against, as "path:line — fact \`exact quote\`" in \`chaseNotes\`. If nothing settles an entry, add a note saying where you looked.${MEMORY_NOTE}`,
+  directive: `Settle each entry of \`chaseItems\` (a claim the review could not settle, or a reviewer's objection to the review) by reading the change (git diff \`diffRange\`, or git diff HEAD when it is empty) and the code around it: its callers, tests and docs (read-only). Record every command or read in \`queries\`, and every fact you find, for or against, as "path:line — fact \`exact quote\`" in \`chaseNotes\`. If nothing settles an entry, add a note saying where you looked.`,
   reads: [
     'target',
     'intent',
@@ -148,7 +146,6 @@ const REVIEW_CHASE = chaseSteps({
     'findingsBrief',
     'context',
     'evidence',
-    'knownFacts',
   ],
   notes: 'chaseNotes',
   bound: { maxVisits: 4, visitsFrom: 'maxChaseRounds + maxDebateRounds' },
@@ -166,7 +163,6 @@ const checkInventory = (id: string, field: string, rejected: string): ScoreNode 
   kind: 'tool',
   label: `Check ${field}`,
   tool: 'evidence.check',
-  args: { remember: false },
   inputs: { findings: field },
   output: { valid: field, invalid: rejected },
 });
@@ -386,7 +382,6 @@ export const review: Pattern = {
       description: 'Steps that answered "failed": what they check was not checked',
     },
     ...EVIDENCE_STATE,
-    ...MEMORY_STATE,
     ...DEBATE_STATE.filter((f) =>
       [
         'objections',
@@ -533,7 +528,7 @@ export const review: Pattern = {
       label: 'Collect diff',
       // A PR can change on GitHub, which the workspace fingerprint does not see: never replayed.
       fresh: true,
-      directive: `Read the diff for \`target\` (use \`hint\` if set). When \`prBase\` is set, this workspace is the PR's code (its merge into the target branch, checked out by the engine): its change is exactly \`git diff <prBase> HEAD\`, and \`prFiles\` lists every changed file; read it that way, never from another source, and leave \`diffRange\` empty. Otherwise use git diff, or gh pr diff and gh pr view for a GitHub PR, and set \`diffRange\` to the git range the change is (e.g. "main...HEAD", "HEAD~1..HEAD"; "" for uncommitted changes). List every changed file to review in \`files\` (paths only), and every file the change deletes in \`deleted\` (the reviewers see the deletion in the diff). List in \`skipped\` every other changed file you leave out, with why ("path — lockfile", "— generated", "— binary"): leave out only lockfiles, generated and binary files. Summarize what changed per file in \`diffSummary\`, and in \`claims\` what the change says it does (the PR description or the commit messages, quoted briefly; "" if none). Set \`agents\` to how many reviewers should read in parallel (1 to ${MAX_AGENTS}): 1 for a few small files, more for a large diff. If there is no diff, leave \`files\` and \`deleted\` empty and say why in \`diffSummary\`.`,
+      directive: `Read the diff for \`target\` (use \`hint\` if set). When \`prBase\` is set, this workspace is the PR's code (its merge into the target branch, checked out by the engine): its change is exactly \`git diff <prBase> HEAD\`, and \`prFiles\` lists every changed file; read it that way, never from another source, and leave \`diffRange\` empty. Otherwise use git diff, or gh pr diff and gh pr view for a GitHub PR (a branch \`target\` is checked out by the engine: HEAD is its tip, and a branch only on a remote is \`origin/<target>\`; never fetch), and set \`diffRange\` to the git range the change is (e.g. "main...HEAD", "HEAD~1..HEAD"; "" for uncommitted changes). List every changed file to review in \`files\` (paths only), and every file the change deletes in \`deleted\` (the reviewers see the deletion in the diff). List in \`skipped\` every other changed file you leave out, with why ("path — lockfile", "— generated", "— binary"): leave out only lockfiles, generated and binary files. Summarize what changed per file in \`diffSummary\`, and in \`claims\` what the change says it does (the PR description or the commit messages, quoted briefly; "" if none). Set \`agents\` to how many reviewers should read in parallel (1 to ${MAX_AGENTS}): 1 for a few small files, more for a large diff. If there is no diff, leave \`files\` and \`deleted\` empty and say why in \`diffSummary\`.`,
       reads: ['target', 'hint', 'prBase', 'prFiles'],
       writes: ['diffSummary', 'claims', 'files', 'deleted', 'skipped', 'agents', 'diffRange'],
       retries: 2,
@@ -577,7 +572,6 @@ export const review: Pattern = {
         { field: 'diffRange', expr: 'if(empty(prBase), diffRange, prBase + "..HEAD")' },
       ],
     },
-    recallMemory('recall', 'diffSummary'),
     {
       id: 'scanDiff',
       kind: 'tool',
@@ -593,10 +587,10 @@ export const review: Pattern = {
       label: 'Gather context',
       directive: `Before anyone judges the change, gather what it must be judged against. You see the whole change (\`diff\`; read more with git diff \`diffRange\`, or git diff HEAD when it is empty) and can read the whole workspace (read-only). Write:
 - \`claimList\`: what \`claims\` says the change does and what \`intent\` asks for, split into separate claims, one per entry: "C1 …", "C2 …" (empty only when both are empty).
-- \`context\`: for each file of \`files\`, 1 to 3 entries of what a reviewer should compare it with, each citing that code or rule (not the changed file) and naming the changed file it is for: "path:line — [CONVENTION|SIMILAR|CALLER] (for: changed path) why \`exact quote\`", e.g. "src/api.ts:40 — [SIMILAR] (for: src/client.ts) fetchUser already retries this way \`await retry(() => get(url))\`" or "AGENTS.md:3 — [CONVENTION] (for: db/schema.sql) a schema change needs a migration \`needs a new numbered migration\`". CONVENTION: a rule in AGENTS.md, the docs or a linter config; SIMILAR: existing code that does similar work (how the codebase already does it); CALLER: code that calls what changed. For each file of \`deleted\`, give the CALLER entries that still use what it deleted, "(for: the deleted path)" (none when nothing does).
+- \`context\`: for each file of \`files\` (documentation and change/*.json release notes need none), 1 to 3 entries of what a reviewer should compare it with, each citing that code or rule (not the changed file) and naming the changed file it is for: "path:line — [CONVENTION|SIMILAR|CALLER] (for: changed path) why \`exact quote\`", e.g. "src/api.ts:40 — [SIMILAR] (for: src/client.ts) fetchUser already retries this way \`await retry(() => get(url))\`" or "AGENTS.md:3 — [CONVENTION] (for: db/schema.sql) a schema change needs a migration \`needs a new numbered migration\`". CONVENTION: a rule in AGENTS.md, the docs or a linter config; SIMILAR: existing code that does similar work (how the codebase already does it); CALLER: code that calls what changed. For each file of \`deleted\`, give the CALLER entries that still use what it deleted, "(for: the deleted path)" (none when nothing does).
 - \`behaviours\`: each behaviour the change adds or changes: "B1 path:line — the behaviour \`exact quote\`", path:line at the changed line.
 - \`obligations\`: each other change this codebase requires for this one to be complete, and only those: one a rule asks for (AGENTS.md, the docs, a linter), one every similar change includes (cite such a change), or one without which code breaks (a caller of a renamed or removed name). Not what would merely be nice: a new function nobody calls yet, docs or tooling the project does not have. Write each as "O1 [CALLER|MIGRATION|CONFIG|DOCS|ERRPATH] path:line — what must exist \`exact quote\`". e.g. "O1 [CALLER] src/greet.js:1 — greet.js must import the new name \`import { fullName }\`". path:line is the changed line (or a line that still uses deleted code) that creates the need; name what must exist in words, without a line number (it may not exist).
-Every path:line must be a real line in this workspace with its quote: code the change deletes is not here, so cite the line that still uses it.${MEMORY_NOTE}`,
+Every path:line must be a real line in this workspace with its quote: code the change deletes is not here, so cite the line that still uses it.`,
       reads: [
         'target',
         'hint',
@@ -607,7 +601,6 @@ Every path:line must be a real line in this workspace with its quote: code the c
         'diff',
         'files',
         'deleted',
-        'knownFacts',
       ],
       writes: ['claimList', 'context', 'behaviours', 'obligations'],
       cites: 'context',
@@ -641,9 +634,9 @@ Every path:line must be a real line in this workspace with its quote: code the c
           // Documentation needs no comparison; every code file does. An entry cites what the file is
           // compared with and says which file it is for (seen live: tying the citation to the
           // changed file made models cite it while quoting the rule).
-          expr: `len(without(without(files, pick(files, positions(files, "${DOC_FILE}"))), heads(context, "${FOR_FILE}"))) == 0`,
+          expr: `len(without(without(files, pick(files, positions(files, "${NO_CONTEXT_FILE}"))), heads(context, "${FOR_FILE}"))) == 0`,
           message:
-            'Give each file of files (documentation apart) at least one context entry tagged "(for: <that path>)", exactly as written in files.',
+            'Give each file of files (documentation and change/*.json release notes apart) at least one context entry tagged "(for: <that path>)", exactly as written in files.',
         }),
       ],
     },
@@ -689,7 +682,7 @@ Every path:line must be a real line in this workspace with its quote: code the c
       directive: `Review the changes to the files in \`files\` (yours only) for \`target\`: each file is given to you whole at the end of this prompt; read its diff hunks (git diff \`diffRange\`, or git diff HEAD when it is empty) against it, and the code it calls and is called by where an issue depends on it. \`context\` lists the conventions, similar code and callers to compare it with; \`behaviours\` and \`obligations\` what the change does and needs; \`smellHints\` and \`maskingFlags\` are leads from the engine's scan of the diff: check each, and report only real issues. Look for, ignoring formatting:
 ${categoryBullets()}
 Write one issue per \`newFindings\` entry as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", only for issues you can point to. List in \`reviewed\` every file of \`files\` you read. An empty \`newFindings\` is right when the changes are sound. If you could not read the changes at all, say so with verdict outcome "failed" (\`reviewed\` may then be empty).
-${ATTESTATION_DIRECTIVE}${MEMORY_NOTE}`,
+${ATTESTATION_DIRECTIVE}`,
       reads: [
         'target',
         'hint',
@@ -704,7 +697,6 @@ ${ATTESTATION_DIRECTIVE}${MEMORY_NOTE}`,
         'obligations',
         'smellHints',
         'maskingFlags',
-        'knownFacts',
       ],
       writes: ['newFindings', 'reviewed', 'attestations'],
       cites: 'newFindings',
@@ -748,7 +740,7 @@ ${ATTESTATION_DIRECTIVE}${MEMORY_NOTE}`,
       // Again after each research round: what was found may settle a verdict.
       maxVisits: 4,
       visitsFrom: 'maxChaseRounds + maxDebateRounds + 1',
-      directive: `You see the whole change at once (\`diff\`; read more with git diff \`diffRange\`, or git diff HEAD when it is empty, and the workspace, read-only). The per-file reviewers' checked findings are in \`findingsBrief\`: do not repeat them. \`evidence\` holds checked facts research found on what was unclear or objected to before: settle verdicts with them.${MEMORY_NOTE}
+      directive: `You see the whole change at once (\`diff\`; read more with git diff \`diffRange\`, or git diff HEAD when it is empty, and the workspace, read-only). The per-file reviewers' checked findings are in \`findingsBrief\`: do not repeat them. \`evidence\` holds checked facts research found on what was unclear or objected to before: settle verdicts with them.
 1. Claims: for each entry of \`claimList\`, in order, write a \`claimVerdicts\` entry "C<n> MET|PARTIAL|NOT MET|UNCLEAR — path:line — why".
 2. Approach: is this the right place and the right approach? Compare it with the SIMILAR and CONVENTION entries of \`context\`; name one alternative and why it is worse; say which callers (CALLER entries) or behaviours could regress. A wrong approach or a likely regression is a finding (BUG or DESIGN).
 3. Tests: for each entry of \`behaviours\`, in order, write a \`testVerdicts\` entry "B<n> TESTED|WEAK|UNTESTED|NA — the test path:line that checks it, or why". WEAK: a test runs it but would pass without the change. Judge the tests' quality with the T and FIRST rules.
@@ -774,7 +766,6 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         'smellHints',
         'maskingFlags',
         'evidence',
-        'knownFacts',
       ],
       writes: [
         'wholeFindings',
@@ -887,7 +878,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       // Another model family: its mistakes are less likely to be the first reviewers'.
       otherModel: true,
       complexityShift: 1,
-      directive: `You are an INDEPENDENT second reviewer. Review the whole change to \`target\` yourself, from scratch: read the diff (git diff \`diffRange\`, or git diff HEAD when it is empty) and the code around it (read-only), without the first reviewers' findings. Compare it with \`context\`. Write each issue you find in \`newFindings\` as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", CATEGORY one of ${CATEGORIES.split('|').join(', ')}. An empty list is right when the change is sound.${MEMORY_NOTE}`,
+      directive: `You are an INDEPENDENT second reviewer. Review the whole change to \`target\` yourself, from scratch: read the diff (git diff \`diffRange\`, or git diff HEAD when it is empty) and the code around it (read-only), without the first reviewers' findings. Compare it with \`context\`. Write each issue you find in \`newFindings\` as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", CATEGORY one of ${CATEGORIES.split('|').join(', ')}. An empty list is right when the change is sound.`,
       reads: [
         'target',
         'intent',
@@ -898,7 +889,6 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         'files',
         'deleted',
         'context',
-        'knownFacts',
       ],
       writes: ['newFindings'],
       cites: 'newFindings',
@@ -939,7 +929,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       visitsFrom: 'maxDebateRounds + 1',
       directive: `You are the SKEPTIC of this review of \`target\`. Read the code each finding cites, and the code around it, in the workspace (read-only).
 1. Write one \`proposedDispositions\` entry per finding, in the order of \`findings\`: "F<n> KEEP — why it holds", "F<n> DOWNGRADE MEDIUM — why it is less severe" (or DOWNGRADE LOW), "F<n> DROP — why it is wrong, with the code that shows it \`exact quote\`", or "F<n> DROP — duplicates F<m>" when an earlier finding already says the same problem. Also DROP a finding that asks for something nothing in the codebase requires (no rule, no similar change, no code that breaks without it), quoting the code or rule it misreads. When unsure, KEEP.
-2. Attack the review's conclusions in \`objections\` (at most ${MAX_OBJECTIONS}, the ones most likely to change the review first): a verdict of \`claimVerdicts\`, \`testVerdicts\` or \`obligationVerdicts\` the code does not support (name it by its id: C2, B1, O3), or an issue every reviewer missed (name the file and line, "path:line"). Each must be concrete and checkable, and say what reading would settle it. An empty list is fine and better than invented concerns. \`pastObjections\` were raised and researched before (the facts found are in \`evidence\`): raise one again only with something new.${MEMORY_NOTE}`,
+2. Attack the review's conclusions in \`objections\` (at most ${MAX_OBJECTIONS}, the ones most likely to change the review first): a verdict of \`claimVerdicts\`, \`testVerdicts\` or \`obligationVerdicts\` the code does not support (name it by its id: C2, B1, O3), or an issue every reviewer missed (name the file and line, "path:line"). Each must be concrete and checkable, and say what reading would settle it. An empty list is fine and better than invented concerns. \`pastObjections\` were raised and researched before (the facts found are in \`evidence\`): raise one again only with something new.`,
       reads: [
         'target',
         'claims',
@@ -952,7 +942,6 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         'evidence',
         'diffRange',
         'pastObjections',
-        'knownFacts',
       ],
       writes: ['proposedDispositions', 'objections'],
       retries: 2,
@@ -1324,8 +1313,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     { id: 'hasDiff-cap', from: 'hasDiff', to: 'capFiles', branch: 'then' },
     { id: 'hasDiff-noDiff', from: 'hasDiff', to: 'noDiffReport', branch: 'else' },
     { id: 'noDiffReport-end', from: 'noDiffReport', to: 'noDiff' },
-    { id: 'cap-recall', from: 'capFiles', to: 'recall' },
-    { id: 'recall-scan', from: 'recall', to: 'scanDiff' },
+    { id: 'cap-scan', from: 'capFiles', to: 'scanDiff' },
     { id: 'scan-context', from: 'scanDiff', to: 'gatherContext' },
     { id: 'context-ok', from: 'gatherContext', to: 'contextOk' },
     { id: 'contextOk-check', from: 'contextOk', to: 'checkContext', branch: 'then' },
