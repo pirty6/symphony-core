@@ -111,6 +111,18 @@ describe('maestro', () => {
     expect(ran).not.toContain('pragmatist');
   });
 
+  it('pragmatistFrom above the tier drops the pragmatist from a tier-3 debate (a trial switch)', () => {
+    const score = compileScore(maestro, {
+      goal: 'compose',
+      context: { request: 'Fix the flaky login test that fails on CI', pragmatistFrom: 4 },
+      generatedAt: 't',
+    });
+    const r = runScripted(score, demo, { at: 't' });
+    expect(r.state.state.complexity).toBe(3);
+    expect(nodesRun(r)).toEqual(expect.arrayContaining(['propose', 'skeptic', 'revise']));
+    expect(nodesRun(r)).not.toContain('pragmatist');
+  });
+
   it('tier 4 adds the template-critic, who can reroute once', () => {
     let critiques = 0;
     const { r } = run('fix the dashboard numbers', {

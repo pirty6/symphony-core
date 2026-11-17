@@ -100,6 +100,13 @@ export const maestro: Pattern = {
       type: 'number',
       description: '1..4; picks the model tier and the debate roster',
     },
+    {
+      name: 'pragmatistFrom',
+      type: 'number',
+      initial: 3,
+      description:
+        'The complexity from which a pragmatist triages the debate (a switch for a trial)',
+    },
     { name: 'classifyReason', type: 'string' },
     {
       name: 'composition',
@@ -415,8 +422,8 @@ ${SCORE_FORMAT}${HOW_RUNS_PLAY}`,
     {
       id: 'hasPragmatist',
       kind: 'condition',
-      label: 'Pragmatist? (≥3)',
-      expression: 'complexity >= 3',
+      label: 'Pragmatist? (≥pragmatistFrom)',
+      expression: 'complexity >= pragmatistFrom',
     },
     {
       id: 'pragmatist',

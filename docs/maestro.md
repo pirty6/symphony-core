@@ -73,7 +73,7 @@ flowchart TD
   n_hasSkeptic{"Skeptic? (≥2)"}
   n_skeptic["🤖 Skeptic"]
   n_concerns{"Anything to change?"}
-  n_hasPragmatist{"Pragmatist? (≥3)"}
+  n_hasPragmatist{"Pragmatist? (≥pragmatistFrom)"}
   n_pragmatist["🤖 Pragmatist"]
   n_hasCritic{"Template-critic? (4)"}
   n_critic["🤖 Template-critic"]
