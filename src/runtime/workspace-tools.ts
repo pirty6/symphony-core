@@ -5,7 +5,7 @@
  * project's own test script, never from the AI.
  */
 import { filesOf, scanDiff, TEST_FILE } from '../core/diffscan.js';
-import { lensLeads, testBodyBreaks } from '../core/lensscan.js';
+import { addedTestBreaks, lensLeads } from '../core/lensscan.js';
 import { CODE_PILLARS, lensBrief } from '../core/pillars.js';
 import { checkCitations } from './evidence.js';
 import { execFile, spawn } from 'node:child_process';
@@ -332,18 +332,16 @@ export async function scanRange(ctx: ToolContext, range: string): Promise<Record
 
 /** What the change's test files hold inside their test bodies that a test must not. */
 async function changedTestBreaks(ctx: ToolContext, diff: string): Promise<string[]> {
-  const paths = filesOf(diff)
-    .filter((f) => !f.deleted && TEST_FILE.test(f.path))
-    .map((f) => f.path);
+  const files = filesOf(diff).filter((f) => !f.deleted && TEST_FILE.test(f.path));
   const texts = await Promise.all(
-    paths.map((p) => readFile(join(ctx.workspace, p), 'utf8').catch(() => '')),
+    files.map((f) => readFile(join(ctx.workspace, f.path), 'utf8').catch(() => '')),
   );
-  return paths.flatMap((p, i) => testBodyBreaks(p, texts[i]!));
+  return files.flatMap((f, i) => addedTestBreaks(f, texts[i]!));
 }
 
 /**
  * The lenses' briefs for a change: per pillar asked for, its rulebook and the scan's leads,
- * with the test-body breaks of every changed test file read whole.
+ * with the test-body breaks on the lines the change adds to its test files (each read whole).
  */
 export async function lensScan(
   ctx: ToolContext,

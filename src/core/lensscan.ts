@@ -39,8 +39,16 @@ const emptyLeads = (): LensLeads => ({
 
 const unquoted = (line: string): string => line.replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '""');
 
-/** Source text without string literals or `//` comments: what keywords and braces are. */
-export const codeOnly = (line: string): string => unquoted(line).replace(/\/\/.*$/, '');
+/** A line inside a block comment (` * …`), which holds no code. */
+const BLOCK_COMMENT_LINE = /^\s*(\*|\/\*)/;
+
+/** Source text without string literals or comments: what keywords and braces are. */
+export const codeOnly = (line: string): string =>
+  BLOCK_COMMENT_LINE.test(line)
+    ? ''
+    : unquoted(line)
+        .replace(/\/\*.*?(\*\/|$)/g, '')
+        .replace(/\/\/.*$/, '');
 
 /** The same for Python, whose comments start with `#`. */
 const pythonCodeOnly = (line: string): string => unquoted(line).replace(/#.*$/, '');
@@ -148,7 +156,8 @@ interface TestBody {
   readonly lines: readonly (readonly [number, string])[];
 }
 
-const testName = (line: string): string => /\(\s*(['"`])(.*?)\1/.exec(line)?.[2] ?? 'a test';
+const testName = (line: string): string =>
+  /\(\s*(['"`])((?:\\.|(?!\1).)*)\1/.exec(line)?.[2]?.replace(/\\(.)/g, '$1') ?? 'a test';
 /** The method a test attribute marks, from the line under it. */
 const methodName = (line: string): string => /(\w+)\s*\(/.exec(line)?.[1] ?? 'a test';
 
@@ -235,4 +244,10 @@ export function testBodyBreaks(path: string, text: string): string[] {
       : [],
   );
   return [...each, ...syntax.tests(lines).flatMap((t) => bodyBreaks(path, t, syntax))];
+}
+
+/** The test-body breaks on the lines a diff adds to a test file: an edit answers for its own. */
+export function addedTestBreaks(file: FileDiff, text: string): string[] {
+  const added = new Set(file.added.map(([line]) => line));
+  return testBodyBreaks(file.path, text).filter((b) => added.has(Number(/:(\d+) — /.exec(b)?.[1])));
 }

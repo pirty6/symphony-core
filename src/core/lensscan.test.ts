@@ -63,6 +63,27 @@ describe('test-body breaks', () => {
     expect(testBodyBreaks('src/c.test.ts', text)).toEqual([]);
   });
 
+  it('does not take a comment that says "it (…" for a test', () => {
+    const text = [
+      '/** Opens it (it then stays open). */',
+      'async function open(page) {',
+      '  if (closed) await toggle();',
+      '}',
+    ].join('\n');
+    expect(testBodyBreaks('e2e/a.spec.ts', text)).toEqual([]);
+  });
+
+  it('keeps a test name whole when it holds an escaped quote', () => {
+    const text = [
+      "it('lists the machine\\'s runs', () => {",
+      '  if (x) expect(x).toBe(1);',
+      '});',
+    ].join('\n');
+    expect(testBodyBreaks('src/f.test.ts', text)).toEqual([
+      "src/f.test.ts:2 — an if inside the test 'lists the machine's runs' (UT-3.2)",
+    ]);
+  });
+
   it('flags test.each: each case is its own named test', () => {
     const text = "it.each([1, 2])('handles %i', (n) => expect(n).toBeGreaterThan(0));";
     expect(testBodyBreaks('src/d.test.ts', text)).toEqual([
