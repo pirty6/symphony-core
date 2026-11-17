@@ -679,6 +679,7 @@ describe('investigate only records evidence that holds', () => {
         answer: (s) => ({
           updates: {
             answer: 'It is validated in the engine [F999].',
+            pillarRatings: [],
             openQuestions: [],
             subAnswers: ((s.subQuestions as string[]) ?? []).map((_, i) => `S${i + 1}: OPEN — x`),
             rulings: ((s.hypotheses as string[]) ?? []).map(
@@ -1848,5 +1849,48 @@ describe('a summary for people that cannot be written does not sink the run', ()
     expect(step.attempts).toHaveLength(3);
     // The record replays to the same end.
     expect(replayPerformance(score, toPerformance(r.state)).divergence.reproduced).toBe(true);
+  });
+});
+
+describe('investigate rates the code pillars a question bears on', () => {
+  const agents = demo.agents!;
+  /** The plan tags its first sub-question with the Security pillar. */
+  const taggedPlan: NonNullable<DemoScript['agents']>[string] = (s, visit) => {
+    const good = agents.plan!(s, visit);
+    const [first, ...rest] = good.updates.subQuestions as string[];
+    return {
+      ...good,
+      updates: { ...good.updates, subQuestions: [`[SECURITY] ${first}`, ...rest] },
+    };
+  };
+  /** The demo's answer, with these pillar ratings. */
+  const answerRating =
+    (ratings: string[]): NonNullable<DemoScript['agents']>[string] =>
+    (s, visit) => {
+      const good = agents.answer!(s, visit);
+      return { ...good, updates: { ...good.updates, pillarRatings: ratings } };
+    };
+  const playWith = (answer: NonNullable<DemoScript['agents']>[string]) =>
+    runScripted(compileInvestigate({ goal: 'g', context: demo.context! }), {
+      ...demo,
+      agents: { ...agents, plan: taggedPlan, answer },
+    });
+  const answerErrors = (r: ReturnType<typeof playWith>) =>
+    r.state.events.flatMap((e) =>
+      e.type === 'response-rejected' && e.nodeId === 'answer' ? e.errors : [],
+    );
+
+  it('a tagged sub-question without its pillar rating is sent back', () => {
+    const r = playWith(answerRating([]));
+    expect(answerErrors(r).join()).toMatch(
+      /one pillarRatings entry per sub-question tagged with a pillar/,
+    );
+  });
+
+  it('the rating, citing its findings, closes the answer under Pillars', () => {
+    const rating = '[SECURITY] SOUND — the answer is checked before any state changes [F1]';
+    const r = playWith(answerRating([rating]));
+    expect(answerErrors(r)).toEqual([]);
+    expect(String(r.state.state.answer)).toContain(`## Pillars\n\n${rating}`);
   });
 });

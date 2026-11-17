@@ -1,4 +1,5 @@
 import { itemOf } from '../core/items.js';
+import { CODE_PILLARS } from '../core/pillars.js';
 import { resolvePaths } from '../core/paths.js';
 import {
   bullets,
@@ -49,6 +50,29 @@ const challenge = challengePhase({
   // Each objection names the sub-question it bears on.
   about: 'subQuestions',
 });
+
+/** The code pillars, tagged on sub-questions as "[SECURITY]" etc. */
+const PILLAR_IDS = CODE_PILLARS.map((p) => p.id).join('|');
+
+/** For the plan: a question about code splits along the pillars that bear on it. */
+const PILLAR_PLAN_NOTE = ` If the question asks how good, risky or ready some code is (a change, a module, a pull request: should it merge, what could break, is it well tested, is it secure), add one sub-question per pillar that bears on it, tagged with the pillar after its number ("S3 [SECURITY] …"). The pillars: ${CODE_PILLARS.map((p) => `${p.id} (${p.asks})`).join('; ')}. The TESTS one asks whether the critical path (the code that decides much) has tests that would fail if it broke. Other questions take no pillar tags.`;
+
+/** For the answer: each tagged pillar gets a rating, citing the findings behind it. */
+const PILLAR_ANSWER_NOTE =
+  'For each sub-question tagged with a pillar ("[SECURITY]"), write a `pillarRatings` entry, in the same order: "[PILLAR] SOUND|AT RISK|POOR — why [F…]", citing the findings by id; leave it empty when no sub-question is tagged. ';
+
+const PILLAR_RATING_CHECKS = [
+  {
+    expr: `heads(pillarRatings, "^[[][A-Z]+]") == heads(pick(subQuestions, positions(subQuestions, "[[](${PILLAR_IDS})]")), "[[](${PILLAR_IDS})]")`,
+    message:
+      'Write one pillarRatings entry per sub-question tagged with a pillar, in order, starting with its tag ("[SECURITY] …").',
+  },
+  {
+    expr: `len(unmatched(pillarRatings, "^[[](${PILLAR_IDS})] (SOUND|AT RISK|POOR) — .*[[]F[0-9]+")) == 0`,
+    message:
+      'Write each pillarRatings entry as "[PILLAR] SOUND|AT RISK|POOR — why [F…]", citing findings.',
+  },
+];
 
 /** Most independent parts one investigation answers side by side. */
 export const MAX_PARTS = 8;
@@ -353,6 +377,12 @@ export const investigate: Pattern = {
         name: 'subAnswers',
         type: 'string[]',
         description: 'One per sub-question, in order: "S1: answer [F3]" or "S1: OPEN — why"',
+      },
+      {
+        name: 'pillarRatings',
+        type: 'string[]',
+        description:
+          'Per sub-question tagged with a code pillar: "[PILLAR] SOUND|AT RISK|POOR — why [F…]"',
       },
       {
         name: 'keepUnchallenged',
@@ -957,7 +987,7 @@ export const investigate: Pattern = {
       kind: 'agent',
       role: 'assessor',
       label: 'Plan research',
-      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; why-questions about code usually need \`git-history\`. Always use \`web\` (docs and write-ups check what the code suggests) and \`experiment\` (try the hypotheses with targeted runs: a test file or test name, repeated with retries off, never the whole suite). Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side; the overall answer then writes what holds across them, so never add a part for that (a synthesis, summary, overview or conclusion). Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): ${MAX_AGENTS} unless the question is narrow, 1-3 for one about a few files; parallel calls finish sooner at the same total reading, and an idle slot only costs time.`,
+      directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; why-questions about code usually need \`git-history\`. Always use \`web\` (docs and write-ups check what the code suggests) and \`experiment\` (try the hypotheses with targeted runs: a test file or test name, repeated with retries off, never the whole suite). Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side; the overall answer then writes what holds across them, so never add a part for that (a synthesis, summary, overview or conclusion). Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): ${MAX_AGENTS} unless the question is narrow, 1-3 for one about a few files; parallel calls finish sooner at the same total reading, and an idle slot only costs time.${PILLAR_PLAN_NOTE}`,
       reads: ['question', 'hint', 'sourceNames', 'sourceInfo'],
       writes: [
         'subQuestions',
@@ -1841,6 +1871,7 @@ export const investigate: Pattern = {
       label: 'Write answer',
       directive:
         'Answer `question` using only `findings`. ' +
+        PILLAR_ANSWER_NOTE +
         CITE_BY_ID +
         ' Findings the engine could not verify are in `unverified`: do not rely on them. Do not write a coverage section: the engine adds one from its record (files excluded, pages, experiments, sources, what could not be read). In `subAnswers`, give one entry per entry of `subQuestions`, in order: "S<n>: <its answer in one or two sentences> [F…]" citing the findings it rests on, or "S<n>: OPEN — <what is missing>" when the findings do not answer it. Put anything still unknown in `openQuestions`, in your own words (remaining `gaps` are added for you). In `rulings`, give one entry per hypothesis, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — the evidence"; never confirm one without evidence for it or refute one without evidence against it, and say why when a ruling goes against the tally in `hypothesisStatus`. If `realObjections` is set, the answer was challenged: in `objectionResolutions` give one entry per objection, in order, starting with its S tag: "S<n>: RESOLVED — what the evidence now shows [F…]", "S<n>: REBUTTED — why it does not hold [F…]", or "S<n>: OPEN — what is still missing" (open ones are reported as open questions); leave it empty when nothing was challenged. When `keepUnchallenged` is true, keep word for word every `prevSubAnswers` entry no objection names by its S tag. Before you finish, read your answer as its skeptic will: every claim backed by a cited finding, no hypothesis dismissed without evidence against it, no alternative explanation the evidence also fits left unsaid, no path nobody followed (a caller, a config, a version, an environment) presented as settled. If `partAnswers` is set, each answers one subject of `parts` and is attached after your answer, verbatim: do not repeat them. Write what holds across them instead: the most important points first (e.g. a short ranked list naming the subjects), then anything shared; correct a part here if newer findings contradict it.',
       reads: [
@@ -1870,7 +1901,14 @@ export const investigate: Pattern = {
         'prevRulings',
         'keepUnchallenged',
       ],
-      writes: ['answer', 'openQuestions', 'rulings', 'subAnswers', 'objectionResolutions'],
+      writes: [
+        'answer',
+        'openQuestions',
+        'rulings',
+        'subAnswers',
+        'objectionResolutions',
+        'pillarRatings',
+      ],
       verifyBelow: 0.6,
       retries: 2,
       // One tier up, but Opus only on a complexity-4 run: in 20 eval runs per arm a Sonnet answer
@@ -1885,6 +1923,7 @@ export const investigate: Pattern = {
           expr: 'len(subAnswers) == len(subQuestions)',
           message: 'Give exactly one subAnswers entry per sub-question, in order.',
         },
+        ...PILLAR_RATING_CHECKS,
         {
           // (No backslashes in expressions: "[[]" is a literal "[".)
           expr: 'len(unmatched(subAnswers, "^S[0-9]+: (OPEN([^A-Za-z]|$)|.*[[]F[0-9]+)")) == 0',
@@ -1980,7 +2019,7 @@ export const investigate: Pattern = {
         },
         {
           field: 'answer',
-          expr: `if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer) + "\n\n" + ${COVERAGE}`,
+          expr: `if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer) + if(len(pillarRatings) > 0, "\n\n## Pillars\n\n" + join(pillarRatings, "\n"), "") + "\n\n" + ${COVERAGE}`,
         },
       ],
     },
@@ -2462,6 +2501,7 @@ Find real paths, test names and table names with read-only tools first. Use the 
       }),
       answer: (s) => ({
         updates: {
+          pillarRatings: [],
           answer: [
             "**AI answers are validated in the engine, before any state changes.** `resolveAgent` in `src/core/engine.ts` calls `checkAgentResult` (`src/core/schema.ts`), which checks the shape of `{ updates, verdict }`, that every key is one the node may write, and the solo route; then the node's acceptance checks run on the merged state [F1].",
             '',
