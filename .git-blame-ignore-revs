@@ -1,0 +1,3 @@
+# Formatter-only commits, skipped by git blame (git config blame.ignoreRevsFile .git-blame-ignore-revs) and GitHub.
+# Format the studio with the root oxfmt config
+bd37491da009918e0fbf78456b3bc305476e2caf
