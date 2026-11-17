@@ -551,6 +551,20 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
       findings: ['F1 src/cart.js:4 — [TEST] [MEDIUM] the discount has no test `if (sum > 100)`'],
     },
   }),
+  'review-if-in-test': () => ({
+    state: {
+      findings: [
+        'F1 test/discount.test.js:7 — [TEST] [MEDIUM] [UT-3.2] the test branches on its input: one named test per case `if (total > 100) assert.equal(discount(total), total * 0.1);`',
+      ],
+    },
+  }),
+  'review-sql-injection': () => ({
+    state: {
+      findings: [
+        "F1 src/users.js:4 — [SECURITY] [HIGH] [SEC-1] the name goes into the query unescaped: pass it as a parameter `WHERE name = '${name}'`",
+      ],
+    },
+  }),
   'review-weakened-test': () => ({
     state: {
       findings: [
