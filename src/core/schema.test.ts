@@ -20,26 +20,28 @@ const writes: StateField[] = [
 ];
 
 describe('checkValue', () => {
-  it.each([
-    ['string', 'x', true],
-    ['string', 1, false],
-    ['number', 1.5, true],
-    ['number', Number.NaN, false],
-    ['boolean', false, true],
-    ['string[]', ['a'], true],
-    ['string[]', ['a', 1], false],
-    ['number[]', [1, 2], true],
-    ['object', {}, true],
-    ['object', [], false],
-    ['object', null, false],
-  ] as const)('%s accepts %j = %s', (type, value, ok) => {
-    expect(checkValue(type, value) === undefined).toBe(ok);
+  it('accepts exactly the values of each type', () => {
+    const cases = [
+      ['string', 'x', true],
+      ['string', 1, false],
+      ['number', 1.5, true],
+      ['number', Number.NaN, false],
+      ['boolean', false, true],
+      ['string[]', ['a'], true],
+      ['string[]', ['a', 1], false],
+      ['number[]', [1, 2], true],
+      ['object', {}, true],
+      ['object', [], false],
+      ['object', null, false],
+    ] as const;
+    expect(
+      cases.map(([type, value]) => [type, value, checkValue(type, value) === undefined]),
+    ).toEqual(cases);
   });
 
   it('zero values pass their own type', () => {
-    for (const t of ['string', 'number', 'boolean', 'string[]', 'number[]', 'object'] as const) {
-      expect(checkValue(t, zeroValue(t))).toBeUndefined();
-    }
+    const types = ['string', 'number', 'boolean', 'string[]', 'number[]', 'object'] as const;
+    expect(types.map((t) => checkValue(t, zeroValue(t)))).toEqual(types.map(() => undefined));
   });
 });
 
@@ -159,18 +161,19 @@ describe('resultJsonSchema', () => {
 });
 
 describe('parseFieldInput / formatFieldInput', () => {
-  it.each([
-    ['number', ' 3 ', 3],
-    ['number', '', 0],
-    ['boolean', 'yes', true],
-    ['boolean', 'no', false],
-    ['string[]', 'a, b,,c', ['a', 'b', 'c']],
-    ['string[]', '["x y"]', ['x y']],
-    ['number[]', '1,2', [1, 2]],
-    ['object', '{"a":1}', { a: 1 }],
-    ['string', ' keep ', ' keep '],
-  ] as const)('%s %j', (type, raw, expected) => {
-    expect(parseFieldInput(type, raw)).toEqual(expected);
+  it('parses typed input text into values', () => {
+    const cases = [
+      ['number', ' 3 ', 3],
+      ['number', '', 0],
+      ['boolean', 'yes', true],
+      ['boolean', 'no', false],
+      ['string[]', 'a, b,,c', ['a', 'b', 'c']],
+      ['string[]', '["x y"]', ['x y']],
+      ['number[]', '1,2', [1, 2]],
+      ['object', '{"a":1}', { a: 1 }],
+      ['string', ' keep ', ' keep '],
+    ] as const;
+    expect(cases.map(([type, raw]) => [type, raw, parseFieldInput(type, raw)])).toEqual(cases);
   });
 
   it('formats values back', () => {

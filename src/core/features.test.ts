@@ -1,28 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { featureInputs, FEATURES } from './catalog.js';
+import { type Feature, featureInputs, FEATURES } from './catalog.js';
 import { compileScore } from './compile.js';
 import { runScripted } from './scripted.js';
+import type { StateField } from './types.js';
 import { composedScore, investigate, maestro, PATTERNS } from '../patterns/index.js';
 
+/** Why a library field does not fit its switch: the wrong type, or a default or choice that cannot be. */
+function fieldMisfits(f: Feature, s: StateField): string[] {
+  if (!f.choices) return s.type === 'boolean' ? [] : [`${f.field} is ${s.type}, not boolean`];
+  if (s.type !== 'string' && s.type !== 'number') return [`${f.field} is ${s.type}`];
+  const values = f.choices.map((c) => c.value);
+  const initial = String(s.initial ?? (s.type === 'number' ? 0 : ''));
+  const badDefault = values.includes(initial) ? [] : [`${f.field} defaults to ${initial}`];
+  const badNumbers = s.type === 'number' ? values.filter((v) => !Number.isFinite(Number(v))) : [];
+  return [...badDefault, ...badNumbers.map((v) => `${f.field} offers ${v}, not a number`)];
+}
+
+/** Every way a switch fails to be a field of a library pattern, of the right type and default. */
+function switchMisfits(f: Feature): string[] {
+  const fields = PATTERNS.flatMap((p) => p.state.filter((s) => s.name === f.field));
+  return fields.length
+    ? fields.flatMap((s) => fieldMisfits(f, s))
+    : [`${f.field} is in no pattern`];
+}
+
 describe('feature switches', () => {
-  it.each(FEATURES.map((f) => [f.field, f] as const))(
-    '%s is a field of a library pattern, of the right type, defaulting to one of its choices',
-    (_field, f) => {
-      const fields = PATTERNS.flatMap((p) => p.state.filter((s) => s.name === f.field));
-      expect(fields.length).toBeGreaterThan(0);
-      for (const s of fields) {
-        if (!f.choices) {
-          expect(s.type).toBe('boolean');
-          continue;
-        }
-        expect(['string', 'number']).toContain(s.type);
-        const values = f.choices.map((c) => c.value);
-        expect(values).toContain(String(s.initial ?? (s.type === 'number' ? 0 : '')));
-        if (s.type === 'number')
-          for (const v of values) expect(Number.isFinite(Number(v))).toBe(true);
-      }
-    },
-  );
+  it('each is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(FEATURES.length).toBeGreaterThan(0);
+    expect(FEATURES.flatMap(switchMisfits)).toEqual([]);
+  });
 });
 
 describe('featureInputs', () => {
