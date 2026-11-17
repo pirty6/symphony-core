@@ -142,6 +142,9 @@ export function lensPhase(cfg: LensConfig): {
       writes: ['lensFindings', 'lensNotes', 'criticalUnits', 'unitVerdicts'],
       cites: 'lensFindings',
       fanOut: { over: 'lenses', per: 1, agents: 'lensAgents' },
+      // Each lens judges one pillar against a written rulebook, with the scan's leads: a tier
+      // cheaper than the change's reviewers (trial: about +12 premium requests a review on theirs).
+      complexityShift: -1,
       maxVisits: 1,
       retries: 2,
       checks: [...LENS_CHECKS],
