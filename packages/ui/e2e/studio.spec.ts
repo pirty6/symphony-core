@@ -67,12 +67,10 @@ test('step mode halts before and after the AI; the proposed result is visible be
   await page.getByLabel('step mode').check()
   await startRun(page)
   const gate = page.getByTestId('gate-card')
-  // First the tool steps (the tests before any edit, snapshot, recall), then the first AI step.
+  // First the tool steps (the tests before any edit, the snapshot), then the first AI step.
   await expect(gate).toContainText('Paused before “baseline”')
   await gate.getByRole('button', { name: '⏭ Step' }).click()
   await expect(gate).toContainText('Paused before “snapshot”')
-  await gate.getByRole('button', { name: '⏭ Step' }).click()
-  await expect(gate).toContainText('Paused before “recall”')
   await gate.getByRole('button', { name: '⏭ Step' }).click()
   await expect(gate).toContainText('Paused before “hypothesize”')
   await gate.getByRole('button', { name: '⏭ Step' }).click()
@@ -507,33 +505,31 @@ test('library sections fold away, and a feature switch reaches the run it starts
   await expect(page.getByText('+ Blank pattern')).toHaveCount(0)
   await patterns.click()
   await expect(page.getByText('+ Blank pattern')).toBeVisible()
-  // The switches this pattern has; the judge in shadow mode for the next run.
-  const judge = page.getByTestId('feature-supportJudge')
-  await expect(judge).toBeVisible()
-  await judge.getByLabel('Support judge').selectOption('shadow')
-  await expect(judge).toContainText('changed')
+  // The switches this pattern has; the pragmatist from complexity 2 for the next run.
+  const pragmatist = page.getByTestId('feature-pragmatistFrom')
+  await expect(pragmatist).toBeVisible()
+  await pragmatist.getByLabel('Pragmatist from complexity').selectOption('2')
+  await expect(pragmatist).toContainText('changed')
   await page.getByText('auto-approve').click()
   await startRun(page)
   await waitForRunEnd(page)
   await page.getByRole('button', { name: 'State', exact: true }).click()
-  await expect(page.getByTestId('state-supportJudge')).toContainText('shadow')
-  // The judge played (the demo's rulings): every cited workspace finding was ruled on.
-  await expect(page.getByTestId('state-supportRulings')).toContainText('SUPPORTED')
+  await expect(page.getByTestId('state-pragmatistFrom')).toContainText('2')
   // Kept for the next visit, and the section says how many switches are changed.
   await page.reload()
-  await expect(page.getByTestId('feature-supportJudge').getByLabel('Support judge')).toHaveValue('shadow')
+  await expect(page.getByTestId('feature-pragmatistFrom').getByLabel('Pragmatist from complexity')).toHaveValue('2')
   await expect(page.getByTestId('features-changed')).toHaveText('1 changed')
   // Set back to its default, it is no longer marked.
-  await page.getByTestId('feature-supportJudge').getByLabel('Support judge').selectOption('off')
-  await expect(page.getByTestId('feature-supportJudge')).not.toContainText('changed')
+  await page.getByTestId('feature-pragmatistFrom').getByLabel('Pragmatist from complexity').selectOption('3')
+  await expect(page.getByTestId('feature-pragmatistFrom')).not.toContainText('changed')
   await expect(page.getByTestId('features-changed')).toHaveCount(0)
   // Reset puts every switch back at once.
-  await page.getByTestId('feature-supportJudge').getByLabel('Support judge').selectOption('shadow')
+  await page.getByTestId('feature-pragmatistFrom').getByLabel('Pragmatist from complexity').selectOption('2')
   await page.getByTestId('feature-singlePass').getByRole('checkbox').check()
   await expect(page.getByTestId('features-changed')).toHaveText('2 changed')
   await page.getByTestId('section-features').getByRole('button', { name: 'Reset' }).click()
   await expect(page.getByTestId('features-changed')).toHaveCount(0)
-  await expect(page.getByTestId('feature-supportJudge').getByLabel('Support judge')).toHaveValue('off')
+  await expect(page.getByTestId('feature-pragmatistFrom').getByLabel('Pragmatist from complexity')).toHaveValue('3')
 })
 
 test('the opening screen asks the maestro; inside a pattern or a run the sidebar does', async ({ page }) => {
