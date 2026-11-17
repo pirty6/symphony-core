@@ -9,7 +9,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { CopilotClient } from '@github/copilot-sdk';
 import { signInFreeEnv } from './signins.js';
 
@@ -124,7 +124,7 @@ export class VisitorAccounts {
         ...signInFreeEnv(process.env),
         COPILOT_HOME: home,
         BROWSER: join(quiet, 'noop'),
-        PATH: `${quiet}:${process.env.PATH ?? ''}`,
+        PATH: `${quiet}${delimiter}${process.env.PATH ?? ''}`,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

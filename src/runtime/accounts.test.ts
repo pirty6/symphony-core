@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { newAccountId, signedInLogin, VisitorAccounts } from './accounts.js';
 
@@ -51,7 +51,7 @@ describe('visitor accounts', () => {
     expect(seen.env.COPILOT_HOME).toBe(accounts.home(id));
     // Nothing opens a browser or copies the code on this machine; none of the host's tokens.
     expect(seen.env.BROWSER).toMatch(/[.]quiet[/\\]noop$/);
-    expect(seen.env.PATH!.split(':')[0]).toMatch(/[.]quiet$/);
+    expect(seen.env.PATH!.split(delimiter)[0]).toMatch(/[.]quiet$/);
     expect(seen.env.GH_TOKEN).toBeUndefined();
     vi.unstubAllEnvs();
   });
