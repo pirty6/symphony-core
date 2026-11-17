@@ -14,6 +14,7 @@ import {
   emptiedFields,
   hasContent,
   normalizeSubmission,
+  withoutAnnotations,
   retryAfterMs,
   withoutTokenVars,
   parseTiers,
@@ -1796,5 +1797,30 @@ describe('a local model server instead of Copilot', () => {
     });
     await expect(remote.runAgent(localReq())).rejects.toThrow(/did not answer/);
     expect(none.sessions).toHaveLength(0);
+  });
+});
+
+describe('withoutAnnotations', () => {
+  const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+
+  it('drops a note a model adds beside the fields it may write (seen live)', () => {
+    const raw = {
+      updates: { lensFindings: [], lensFindings_note: 'none found', _check: 'ok' },
+      verdict,
+    };
+    expect(withoutAnnotations(raw, ['lensFindings'])).toEqual({
+      updates: { lensFindings: [] },
+      verdict,
+    });
+  });
+
+  it('keeps a writable field even when its name ends like a note', () => {
+    const raw = { updates: { reviewNotes: ['a'] }, verdict };
+    expect(withoutAnnotations(raw, ['reviewNotes'])).toEqual(raw);
+  });
+
+  it('leaves any other unknown field for the schema to reject', () => {
+    const raw = { updates: { findings: [], answer: 'x' }, verdict };
+    expect(withoutAnnotations(raw, ['findings'])).toEqual(raw);
   });
 });

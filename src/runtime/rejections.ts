@@ -10,7 +10,7 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { checkAgentResult } from '../core/schema.js';
 import type { SavedRun, StateField } from '../core/types.js';
-import { normalizeSubmission } from './copilot-provider.js';
+import { normalizeSubmission, withoutAnnotations } from './copilot-provider.js';
 
 export interface Rejection {
   /** "<run file>#<step>.<attempt>": stable while the run file is kept. */
@@ -50,7 +50,13 @@ export function runRejections(run: SavedRun, name: string): Rejection[] {
         out.push(base);
         continue;
       }
-      const now = checkAgentResult(normalizeSubmission(a.result), writes);
+      const now = checkAgentResult(
+        withoutAnnotations(
+          normalizeSubmission(a.result),
+          writes.map((f) => f.name),
+        ),
+        writes,
+      );
       out.push(
         now.ok ? { ...base, passesNow: true } : { ...base, passesNow: false, why: now.errors[0] },
       );
