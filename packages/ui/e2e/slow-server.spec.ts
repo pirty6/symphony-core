@@ -36,7 +36,7 @@ test('an approval answered slowly still clears its card', async ({ page }) => {
 })
 
 test('a saved run opens and verifies even when the server answers slowly', async ({ page }) => {
-  test.setTimeout(120_000)
+  test.slow()
   await open(page, 'review')
   await page.getByText('auto-approve').click()
   await startRun(page)
