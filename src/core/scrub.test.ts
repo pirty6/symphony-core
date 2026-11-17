@@ -8,54 +8,80 @@ const aws = `AKIA${'ABCDEFGHIJKLMNOP'}`;
 const jwt = `eyJ${'hbGciOiJIUzI1'}.eyJ${'zdWIiOiIxMjM0'}.${'SflKxwRJSMeKKF2QT4fwpM'}`;
 const key = `-----BEGIN RSA PRIVATE KEY-----\nMIIEow${'x'.repeat(40)}\n-----END RSA PRIVATE KEY-----`;
 
+/** The text scrubs to what is wanted, and a scrubbed record scrubs to itself. */
+function expectScrubbedTo(text: string, want: string): void {
+  expect(scrubText(text)).toBe(want);
+  expect(scrubText(want)).toBe(want);
+}
+
 describe('scrubText', () => {
-  const secretCases: readonly (readonly [string, string, string])[] = [
-    ['a GitHub token', `token: ${gh} here`, 'token: [REDACTED:github-token] here'],
-    ['a fine-grained GitHub token', `GH=${pat}`, 'GH=[REDACTED:github-token]'],
-    ['an AWS key id', `id ${aws}.`, 'id [REDACTED:aws-key].'],
-    ['a JWT', `jwt ${jwt}`, 'jwt [REDACTED:jwt]'],
-    ['a private key block', `a\n${key}\nb`, 'a\n[REDACTED:private-key]\nb'],
-    [
-      'a storage connection string',
+  it('replaces a GitHub token', () => {
+    expectScrubbedTo(`token: ${gh} here`, 'token: [REDACTED:github-token] here');
+  });
+
+  it('replaces a fine-grained GitHub token', () => {
+    expectScrubbedTo(`GH=${pat}`, 'GH=[REDACTED:github-token]');
+  });
+
+  it('replaces an AWS key id', () => {
+    expectScrubbedTo(`id ${aws}.`, 'id [REDACTED:aws-key].');
+  });
+
+  it('replaces a JWT', () => {
+    expectScrubbedTo(`jwt ${jwt}`, 'jwt [REDACTED:jwt]');
+  });
+
+  it('replaces a private key block', () => {
+    expectScrubbedTo(`a\n${key}\nb`, 'a\n[REDACTED:private-key]\nb');
+  });
+
+  it('replaces a storage connection string', () => {
+    expectScrubbedTo(
       'DefaultEndpointsProtocol=https;AccountName=x;AccountKey=abcdEFGH1234+/==;EndpointSuffix=core',
       'DefaultEndpointsProtocol=https;AccountName=x;AccountKey=[REDACTED:connection-key];EndpointSuffix=core',
-    ],
-    [
-      'a SAS signature',
+    );
+  });
+
+  it('replaces a SAS signature', () => {
+    expectScrubbedTo(
       'https://x.blob.core.windows.net/c?sv=2020&sig=AbCdEfGhIjKlMnOpQrStUv%3D',
       'https://x.blob.core.windows.net/c?sv=2020&sig=[REDACTED:sas-signature]',
-    ],
-    [
-      'a bearer token',
+    );
+  });
+
+  it('replaces a bearer token', () => {
+    expectScrubbedTo(
       'Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345',
       'Authorization: Bearer [REDACTED:bearer-token]',
-    ],
-    [
-      'a password in a URL',
+    );
+  });
+
+  it('replaces a password in a URL', () => {
+    expectScrubbedTo(
       'git clone https://me:hunter2secret@dev.azure.com/o/p/_git/r',
       'git clone https://me:[REDACTED:url-password]@dev.azure.com/o/p/_git/r',
-    ],
-    [
-      'a quoted secret assignment',
+    );
+  });
+
+  it('replaces a quoted secret assignment', () => {
+    expectScrubbedTo(
       'const config = { password: "Tr0ub4dor&3x", apiKey: \'k-1234567890\' }',
       'const config = { password: "[REDACTED:secret-value]", apiKey: \'[REDACTED:secret-value]\' }',
-    ],
-    [
-      'a .env line quoted in prose',
+    );
+  });
+
+  it('replaces a .env line quoted in prose', () => {
+    expectScrubbedTo(
       'deploy.sh:2 — hard-coded `export DB_PASSWORD=abcdefgh123`',
       'deploy.sh:2 — hard-coded `export DB_PASSWORD=[REDACTED:secret-env]`',
-    ],
-    [
-      'a .env line',
+    );
+  });
+
+  it('replaces a .env line', () => {
+    expectScrubbedTo(
       'PORT=3000\nDB_PASSWORD=supersecret99\nexport GITHUB_TOKEN_X=abcdefgh12',
       'PORT=3000\nDB_PASSWORD=[REDACTED:secret-env]\nexport GITHUB_TOKEN_X=[REDACTED:secret-env]',
-    ],
-  ];
-  it('replaces each kind of secret with its label', () => {
-    const wanted = secretCases.map(([name, , want]) => [name, want]);
-    expect(secretCases.map(([name, text]) => [name, scrubText(text)])).toEqual(wanted);
-    // Idempotent: a scrubbed record scrubs to itself.
-    expect(secretCases.map(([name, , want]) => [name, scrubText(want)])).toEqual(wanted);
+    );
   });
 
   it('a secret two rules match is redacted once, and stays so', () => {

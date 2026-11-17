@@ -20,23 +20,48 @@ const writes: StateField[] = [
 ];
 
 describe('checkValue', () => {
-  it('accepts exactly the values of each type', () => {
-    const cases = [
-      ['string', 'x', true],
-      ['string', 1, false],
-      ['number', 1.5, true],
-      ['number', Number.NaN, false],
-      ['boolean', false, true],
-      ['string[]', ['a'], true],
-      ['string[]', ['a', 1], false],
-      ['number[]', [1, 2], true],
-      ['object', {}, true],
-      ['object', [], false],
-      ['object', null, false],
-    ] as const;
-    expect(
-      cases.map(([type, value]) => [type, value, checkValue(type, value) === undefined]),
-    ).toEqual(cases);
+  it('a string accepts text', () => {
+    expect(checkValue('string', 'x')).toBeUndefined();
+  });
+
+  it('a string refuses a number', () => {
+    expect(checkValue('string', 1)).toBeDefined();
+  });
+
+  it('a number accepts a fraction', () => {
+    expect(checkValue('number', 1.5)).toBeUndefined();
+  });
+
+  it('a number refuses NaN', () => {
+    expect(checkValue('number', Number.NaN)).toBeDefined();
+  });
+
+  it('a boolean accepts false', () => {
+    expect(checkValue('boolean', false)).toBeUndefined();
+  });
+
+  it('a string list accepts a list of text', () => {
+    expect(checkValue('string[]', ['a'])).toBeUndefined();
+  });
+
+  it('a string list refuses a list with a number in it', () => {
+    expect(checkValue('string[]', ['a', 1])).toBeDefined();
+  });
+
+  it('a number list accepts a list of numbers', () => {
+    expect(checkValue('number[]', [1, 2])).toBeUndefined();
+  });
+
+  it('an object accepts {}', () => {
+    expect(checkValue('object', {})).toBeUndefined();
+  });
+
+  it('an object refuses a list', () => {
+    expect(checkValue('object', [])).toBeDefined();
+  });
+
+  it('an object refuses null', () => {
+    expect(checkValue('object', null)).toBeDefined();
   });
 
   it('zero values pass their own type', () => {
@@ -161,19 +186,40 @@ describe('resultJsonSchema', () => {
 });
 
 describe('parseFieldInput / formatFieldInput', () => {
-  it('parses typed input text into values', () => {
-    const cases = [
-      ['number', ' 3 ', 3],
-      ['number', '', 0],
-      ['boolean', 'yes', true],
-      ['boolean', 'no', false],
-      ['string[]', 'a, b,,c', ['a', 'b', 'c']],
-      ['string[]', '["x y"]', ['x y']],
-      ['number[]', '1,2', [1, 2]],
-      ['object', '{"a":1}', { a: 1 }],
-      ['string', ' keep ', ' keep '],
-    ] as const;
-    expect(cases.map(([type, raw]) => [type, raw, parseFieldInput(type, raw)])).toEqual(cases);
+  it('reads a number, ignoring the spaces around it', () => {
+    expect(parseFieldInput('number', ' 3 ')).toEqual(3);
+  });
+
+  it('reads an empty number as 0', () => {
+    expect(parseFieldInput('number', '')).toEqual(0);
+  });
+
+  it('reads yes as true', () => {
+    expect(parseFieldInput('boolean', 'yes')).toEqual(true);
+  });
+
+  it('reads no as false', () => {
+    expect(parseFieldInput('boolean', 'no')).toEqual(false);
+  });
+
+  it('reads a comma list of text, dropping empty items', () => {
+    expect(parseFieldInput('string[]', 'a, b,,c')).toEqual(['a', 'b', 'c']);
+  });
+
+  it('reads a list of text written as JSON', () => {
+    expect(parseFieldInput('string[]', '["x y"]')).toEqual(['x y']);
+  });
+
+  it('reads a comma list of numbers', () => {
+    expect(parseFieldInput('number[]', '1,2')).toEqual([1, 2]);
+  });
+
+  it('reads an object written as JSON', () => {
+    expect(parseFieldInput('object', '{"a":1}')).toEqual({ a: 1 });
+  });
+
+  it('keeps text as typed, spaces and all', () => {
+    expect(parseFieldInput('string', ' keep ')).toEqual(' keep ');
   });
 
   it('formats values back', () => {
