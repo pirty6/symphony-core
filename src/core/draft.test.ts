@@ -17,6 +17,7 @@ import {
   patternToTypeScript,
   summarizeComposed,
 } from './draft.js';
+import type { Checked } from './schema.js';
 import type { Pattern } from './types.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'symphony-draft-'));
@@ -24,24 +25,36 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const asJson = (p: Pattern) => JSON.parse(JSON.stringify({ ...p, demo: undefined })) as unknown;
 
+/** The pattern a draft parsed into; throws its errors when it was refused. */
+function parsedPattern(r: Checked<Pattern>): Pattern {
+  if (!r.ok) throw new Error(`draft refused: ${r.errors.join('; ')}`);
+  return r.value;
+}
+
+/** Why a draft was refused, one error a line; throws when it was accepted. */
+function refusal(r: Checked<Pattern>): string {
+  if (r.ok) throw new Error('draft accepted');
+  return r.errors.join('\n');
+}
+
+/** A library pattern after the maestro's round trip: to JSON, parsed back, to JSON again. */
+const roundTrip = (p: Pattern) =>
+  JSON.parse(JSON.stringify(parsedPattern(parseDraft(asJson(p))))) as unknown;
+
 describe('parseDraft', () => {
   it('accepts a JSON round-trip of a valid pattern', () => {
     const r = parseDraft(asJson(fix));
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.value.nodes).toEqual(fix.nodes);
+    expect(parsedPattern(r).nodes).toEqual(fix.nodes);
   });
 
   // The maestro re-parses every score it composes: a field dropped here silently changes how
   // the composed run plays (fewer sub-agents, no warm-up, no engine record of partial reads).
-  it.each(PATTERNS.map((p) => [p.name, p] as const))(
-    '%s survives the round trip the maestro gives it, field for field',
-    (_n, p) => {
-      const json = asJson(p);
-      const r = parseDraft(json);
-      expect(r.ok).toBe(true);
-      if (r.ok) expect(JSON.parse(JSON.stringify(r.value))).toEqual(json);
-    },
-  );
+  it('every library pattern survives the round trip the maestro gives it, field for field', () => {
+    expect(PATTERNS.map((p) => [p.name, roundTrip(p)])).toEqual(
+      PATTERNS.map((p) => [p.name, asJson(p)]),
+    );
+  });
 
   it('collects structural and graph errors', () => {
     const r = parseDraft({
@@ -51,14 +64,12 @@ describe('parseDraft', () => {
       edges: [{ from: 's' }],
     });
     expect(r.ok).toBe(false);
-    if (!r.ok) {
-      const m = r.errors.join('\n');
-      expect(m).toMatch(/state\[0\] needs name and a type/);
-      expect(m).toMatch(/unknown kind 'robot'/);
-      expect(m).toMatch(/nodes\[2\].id is required/);
-      expect(m).toMatch(/edges\[0\] needs from and to/);
-      expect(m).toMatch(/kebab-case/);
-    }
+    const m = refusal(r);
+    expect(m).toMatch(/state\[0\] needs name and a type/);
+    expect(m).toMatch(/unknown kind 'robot'/);
+    expect(m).toMatch(/nodes\[2\].id is required/);
+    expect(m).toMatch(/edges\[0\] needs from and to/);
+    expect(m).toMatch(/kebab-case/);
   });
 
   it('rejects non-objects', () => {
@@ -67,8 +78,8 @@ describe('parseDraft', () => {
 
   it('documents every node kind in the drafting instructions', () => {
     const text = draftInstructions();
-    for (const k of ['start', 'agent', 'compute', 'condition', 'approval', 'end'])
-      expect(text).toContain(`kind:"${k}"`);
+    const kinds = ['start', 'agent', 'compute', 'condition', 'approval', 'end'];
+    expect(kinds.filter((k) => !text.includes(`kind:"${k}"`))).toEqual([]);
   });
 });
 
@@ -131,19 +142,23 @@ describe('adaptPattern', () => {
     expect(adaptPattern(p, {}).errors).toEqual([]);
     // Guidance may bound experiments and web research, never rule them out (seen live: a run
     // told "do not plan experiments" left every runtime question unverified).
-    for (const text of [
+    const guidanceErrors = (text: string) =>
+      adaptPattern(p, { directives: { [agent.id]: text } }).errors;
+    const rulingOut = [
       'Do not plan experiments that rerun the test suite to measure the flake rate.',
       'Skip web research; the code says enough.',
       'Avoid any experiments.',
-    ])
-      expect(adaptPattern(p, { directives: { [agent.id]: text } }).errors).toEqual([
+    ];
+    expect(rulingOut.map(guidanceErrors)).toEqual(
+      rulingOut.map(() => [
         expect.stringMatching(/must not rule out experiments or web research \("/),
-      ]);
-    for (const text of [
+      ]),
+    );
+    const bounding = [
       'Run only the three flaky specs, 30 times each with retries off; never the whole suite.',
       'No need to read the vendor docs twice.',
-    ])
-      expect(adaptPattern(p, { directives: { [agent.id]: text } }).errors).toEqual([]);
+    ];
+    expect(bounding.map(guidanceErrors)).toEqual([[], []]);
     // Too long is refused by name, never cut silently.
     const long = 'x'.repeat(MAX_GUIDANCE + 1);
     expect(adaptPattern(p, { directives: { [agent.id]: long } }).errors).toEqual([
@@ -287,19 +302,18 @@ describe('patternToTypeScript', () => {
       ],
     });
     expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.value.nodes[1]).toEqual({
-        id: 'list',
-        kind: 'tool',
-        label: 'L',
-        tool: 'repo.files',
-        output: { files: 'files' },
-      });
-      expect(r.value.nodes[2]).toMatchObject({
-        capabilities: ['web'],
-        checks: [{ expr: 'subset(files, seen)', message: 'all' }],
-      });
-    }
+    const nodes = parsedPattern(r).nodes;
+    expect(nodes[1]).toEqual({
+      id: 'list',
+      kind: 'tool',
+      label: 'L',
+      tool: 'repo.files',
+      output: { files: 'files' },
+    });
+    expect(nodes[2]).toMatchObject({
+      capabilities: ['web'],
+      checks: [{ expr: 'subset(files, seen)', message: 'all' }],
+    });
   });
 });
 
