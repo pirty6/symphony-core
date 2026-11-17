@@ -58,6 +58,11 @@ const withChangeFile = (more: string[]) => [
   ...more,
 ];
 
+/** The parts a text leaves out. */
+const missingFrom = (text: string, parts: readonly string[]) =>
+  parts.filter((part) => !text.includes(part));
+const nodeOf = (nodeId: string) => review.nodes.find((n) => n.id === nodeId);
+
 describe('review', () => {
   it("never runs tests or lint (the change's CI does), and gives the reviewers the changed tests", () => {
     const { ran, state, end } = play({
@@ -265,16 +270,22 @@ describe('review: a version for people and a brief for an AI agent', () => {
   it('the brief has the findings, what not to rely on, the coverage and what to do; people come first', () => {
     const { state } = play();
     const brief = String(state.handoff);
-    for (const h of [
-      '## Task',
-      '## Instructions for the next agent',
-      '## Findings (checked against the code)',
-      '## Do not rely on',
-      '## Coverage',
-      '## The review as written',
-    ])
-      expect(brief).toContain(h);
-    for (const f of state.findings as string[]) expect(brief).toContain(`- ${f}`);
+    expect(
+      missingFrom(brief, [
+        '## Task',
+        '## Instructions for the next agent',
+        '## Findings (checked against the code)',
+        '## Do not rely on',
+        '## Coverage',
+        '## The review as written',
+      ]),
+    ).toEqual([]);
+    expect(
+      missingFrom(
+        brief,
+        (state.findings as string[]).map((f) => `- ${f}`),
+      ),
+    ).toEqual([]);
     expect(review.result).toEqual(['summary', 'handoff']);
     const off = play({}, { plainSummary: false });
     expect(off.ran).not.toContain('explain');
@@ -669,14 +680,14 @@ describe('review: the skeptic (S11)', () => {
 
 describe('review: intent', () => {
   it('intent and the engine scan reach the steps that judge', () => {
-    for (const step of ['gatherContext', 'analyze', 'wholeChange'])
-      expect(review.nodes.find((n) => n.id === step)).toMatchObject({
-        reads: expect.arrayContaining(['intent']),
-      });
-    for (const step of ['analyze', 'wholeChange'])
-      expect(review.nodes.find((n) => n.id === step)).toMatchObject({
-        reads: expect.arrayContaining(['smellHints', 'maskingFlags', 'context']),
-      });
+    const readsIntent = { reads: expect.arrayContaining(['intent']) };
+    expect(['gatherContext', 'analyze', 'wholeChange'].map(nodeOf)).toMatchObject([
+      readsIntent,
+      readsIntent,
+      readsIntent,
+    ]);
+    const readsScan = { reads: expect.arrayContaining(['smellHints', 'maskingFlags', 'context']) };
+    expect(['analyze', 'wholeChange'].map(nodeOf)).toMatchObject([readsScan, readsScan]);
     const { state } = play(
       {
         tools: {
