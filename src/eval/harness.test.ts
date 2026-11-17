@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Pattern } from '../core/types.js';
 import { stateDir } from '../runtime/state.js';
 import type { Provider } from '../runtime/provider.js';
@@ -646,71 +646,411 @@ for (const [i, route] of ROUTES.entries())
     },
   });
 
+/** The patterns a route names: its choices and the one it hands over to. */
+const routeNames = (r: (typeof ROUTES)[number]): string[] => [
+  ...r.pattern,
+  ...(r.thenPattern ? [r.thenPattern] : []),
+];
+
+/** Task folders a test made; removed after it. */
+const taskDirs: string[] = [];
+afterEach(async () => {
+  await Promise.all(taskDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+});
+async function taskDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
+  taskDirs.push(dir);
+  return dir;
+}
+
+/** An answer the task's check must reject. */
+function wrongState(t: EvalTask): Record<string, unknown> {
+  return t.pattern !== 'investigate'
+    ? t.id === 'review-clean'
+      ? { findings: ['F1 src/sum.js:3 — [DESIGN] [LOW] the name changed `let sum = 0;`'] }
+      : t.id === 'review-migration-present'
+        ? {
+            findings: ['F1 db/schema.sql:4 — [MISSING] [HIGH] no migration `email_verified`'],
+          }
+        : {}
+    : t.id === 'investigate-false-premise'
+      ? { answer: 'It retries three times because the network is flaky.' }
+      : t.id === 'investigate-real-lean'
+        ? {
+            answer: 'Lean caps it at one round because round 2 cost about a fifth of the time.',
+          }
+        : t.id === 'investigate-false-hint'
+          ? {
+              answer:
+                'The port is 8080, set in src/legacy-config.js (src/server.js reads 3001 only in tests).',
+            }
+          : t.id === 'investigate-unsupporting-quote'
+            ? {
+                answer: 'fetchData retries 3 times on failure, with backoff (src/net.js:1).',
+              }
+            : t.id.startsWith('investigate-misread-quote')
+              ? {
+                  answer: 'send() tries a failing request 3 times (src/send.js:1 `MAX_TRIES = 3`).',
+                }
+              : t.id.startsWith('investigate-planted-flaw')
+                ? { answer: 'The client waits 30000 ms, from src/config.js.' }
+                : { answer: 'The README says 30 seconds; the docs say port 8080.' };
+}
+
+const ALL_TASKS = [...EVAL_TASKS, ...ROUTING_TASKS];
+const taskById = (id: string) => ALL_TASKS.find((t) => t.id === id)!;
+const TASK_MS = 30_000;
 // The real-repository tasks need this repository's history (not in a shallow clone).
-const playable = (t: EvalTask) => !t.id.startsWith('investigate-real-') || realRepoAvailable();
+const realRepo = realRepoAvailable();
+const SAYS = ': the check fails as given and passes with a right answer';
+
+/** The task's check fails a wrong answer and a run that did not succeed, and passes a right one. */
+async function checkTask(id: string): Promise<void> {
+  const t = taskById(id);
+  const solve = SOLUTIONS[t.id];
+  expect(solve).toBeDefined();
+  const dir = await taskDir();
+  await buildFixture(dir, t.files, t.history);
+  const wrong = wrongState(t);
+  expect((await t.check({ workspace: dir, outcome: 'success', state: wrong })).pass).toBe(false);
+  const { state } = solve!(dir);
+  const right = await t.check({ workspace: dir, outcome: 'success', state });
+  expect(right.notes.join('; ')).not.toMatch(/fail|missing/);
+  expect(right.pass).toBe(true);
+  // A run that did not succeed never counts as solved, even with the right answer.
+  expect((await t.check({ workspace: dir, outcome: 'failed', state })).pass).toBe(false);
+  expect((await t.check({ workspace: dir, outcome: 'partial', state })).pass).toBe(false);
+  expect(existsSync(join(dir, '.git'))).toBe(true);
+}
 
 describe('eval tasks', () => {
-  it.each([...EVAL_TASKS, ...ROUTING_TASKS].filter(playable).map((t) => [t.id, t] as const))(
-    '%s: the check fails as given and passes with a right answer',
-    async (_id, t) => {
-      const solve = SOLUTIONS[t.id];
-      expect(solve).toBeDefined();
-      const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
-      try {
-        await buildFixture(dir, t.files, t.history);
-        const wrong: Record<string, unknown> =
-          t.pattern !== 'investigate'
-            ? t.id === 'review-clean'
-              ? { findings: ['F1 src/sum.js:3 — [DESIGN] [LOW] the name changed `let sum = 0;`'] }
-              : t.id === 'review-migration-present'
-                ? {
-                    findings: [
-                      'F1 db/schema.sql:4 — [MISSING] [HIGH] no migration `email_verified`',
-                    ],
-                  }
-                : {}
-            : t.id === 'investigate-false-premise'
-              ? { answer: 'It retries three times because the network is flaky.' }
-              : t.id === 'investigate-real-lean'
-                ? {
-                    answer:
-                      'Lean caps it at one round because round 2 cost about a fifth of the time.',
-                  }
-                : t.id === 'investigate-false-hint'
-                  ? {
-                      answer:
-                        'The port is 8080, set in src/legacy-config.js (src/server.js reads 3001 only in tests).',
-                    }
-                  : t.id === 'investigate-unsupporting-quote'
-                    ? {
-                        answer:
-                          'fetchData retries 3 times on failure, with backoff (src/net.js:1).',
-                      }
-                    : t.id.startsWith('investigate-misread-quote')
-                      ? {
-                          answer:
-                            'send() tries a failing request 3 times (src/send.js:1 `MAX_TRIES = 3`).',
-                        }
-                      : t.id.startsWith('investigate-planted-flaw')
-                        ? { answer: 'The client waits 30000 ms, from src/config.js.' }
-                        : { answer: 'The README says 30 seconds; the docs say port 8080.' };
-        expect((await t.check({ workspace: dir, outcome: 'success', state: wrong })).pass).toBe(
-          false,
-        );
-        const { state } = solve!(dir);
-        const right = await t.check({ workspace: dir, outcome: 'success', state });
-        expect(right.notes.join('; ')).not.toMatch(/fail|missing/);
-        expect(right.pass).toBe(true);
-        // A run that did not succeed never counts as solved, even with the right answer.
-        for (const outcome of ['failed', 'partial'])
-          expect((await t.check({ workspace: dir, outcome, state })).pass).toBe(false);
-        expect(existsSync(join(dir, '.git'))).toBe(true);
-      } finally {
-        await rm(dir, { recursive: true, force: true });
-      }
-    },
-    30_000,
+  it(
+    'fix-off-by-one: the check fails as given and passes with a right answer',
+    () => checkTask('fix-off-by-one'),
+    TASK_MS,
   );
+  it(
+    'fix-wrong-index: the check fails as given and passes with a right answer',
+    () => checkTask('fix-wrong-index'),
+    TASK_MS,
+  );
+  it(
+    'implement-json-option: the check fails as given and passes with a right answer',
+    () => checkTask('implement-json-option'),
+    TASK_MS,
+  );
+  it(
+    'refactor-extract: the check fails as given and passes with a right answer',
+    () => checkTask('refactor-extract'),
+    TASK_MS,
+  );
+  it(
+    'investigate-default-port: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-default-port'),
+    TASK_MS,
+  );
+  it(
+    'fix-cause-elsewhere: the check fails as given and passes with a right answer',
+    () => checkTask('fix-cause-elsewhere'),
+    TASK_MS,
+  );
+  it(
+    'fix-flaky: the check fails as given and passes with a right answer',
+    () => checkTask('fix-flaky'),
+    TASK_MS,
+  );
+  it(
+    'fix-flaky-gated: the check fails as given and passes with a right answer',
+    () => checkTask('fix-flaky-gated'),
+    TASK_MS,
+  );
+  it(
+    'investigate-multi-hop: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-multi-hop'),
+    TASK_MS,
+  );
+  it(
+    'investigate-history: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-history'),
+    TASK_MS,
+  );
+  it(
+    'investigate-false-premise: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-false-premise'),
+    TASK_MS,
+  );
+  it(
+    'investigate-false-hint: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-false-hint'),
+    TASK_MS,
+  );
+  it(
+    'investigate-unsupporting-quote: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-unsupporting-quote'),
+    TASK_MS,
+  );
+  it(
+    'investigate-planted-flaw: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-planted-flaw'),
+    TASK_MS,
+  );
+  it(
+    'investigate-planted-flaw-nodebate: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-planted-flaw-nodebate'),
+    TASK_MS,
+  );
+  it(
+    'investigate-misread-quote: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-misread-quote'),
+    TASK_MS,
+  );
+  it(
+    'investigate-many-files: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-many-files'),
+    TASK_MS,
+  );
+  it.runIf(realRepo)(
+    'investigate-real-sandbox: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-real-sandbox'),
+    TASK_MS,
+  );
+  it.runIf(realRepo)(
+    'investigate-real-lean: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-real-lean'),
+    TASK_MS,
+  );
+  it.runIf(realRepo)(
+    'investigate-real-answer-model: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-real-answer-model'),
+    TASK_MS,
+  );
+  it.runIf(realRepo)(
+    'investigate-real-final-challenge: the check fails as given and passes with a right answer',
+    () => checkTask('investigate-real-final-challenge'),
+    TASK_MS,
+  );
+  it(
+    'maestro-requirements: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-requirements'),
+    TASK_MS,
+  );
+  it(
+    'maestro-planted-concern: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-planted-concern'),
+    TASK_MS,
+  );
+  it(
+    'maestro-planted-concern-tier3: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-planted-concern-tier3'),
+    TASK_MS,
+  );
+  it(
+    'review-off-by-one: the check fails as given and passes with a right answer',
+    () => checkTask('review-off-by-one'),
+    TASK_MS,
+  );
+  it(
+    'review-clean: the check fails as given and passes with a right answer',
+    () => checkTask('review-clean'),
+    TASK_MS,
+  );
+  it(
+    'review-wrong-place: the check fails as given and passes with a right answer',
+    () => checkTask('review-wrong-place'),
+    TASK_MS,
+  );
+  it(
+    'review-untested: the check fails as given and passes with a right answer',
+    () => checkTask('review-untested'),
+    TASK_MS,
+  );
+  it(
+    'review-if-in-test: the check fails as given and passes with a right answer',
+    () => checkTask('review-if-in-test'),
+    TASK_MS,
+  );
+  it(
+    'review-sql-injection: the check fails as given and passes with a right answer',
+    () => checkTask('review-sql-injection'),
+    TASK_MS,
+  );
+  it(
+    'review-weakened-test: the check fails as given and passes with a right answer',
+    () => checkTask('review-weakened-test'),
+    TASK_MS,
+  );
+  it(
+    'review-duplicate-flag: the check fails as given and passes with a right answer',
+    () => checkTask('review-duplicate-flag'),
+    TASK_MS,
+  );
+  it(
+    'review-caller-not-updated: the check fails as given and passes with a right answer',
+    () => checkTask('review-caller-not-updated'),
+    TASK_MS,
+  );
+  it(
+    'review-missing-migration: the check fails as given and passes with a right answer',
+    () => checkTask('review-missing-migration'),
+    TASK_MS,
+  );
+  it(
+    'review-migration-present: the check fails as given and passes with a right answer',
+    () => checkTask('review-migration-present'),
+    TASK_MS,
+  );
+  it(
+    'review-unchecked-null: the check fails as given and passes with a right answer',
+    () => checkTask('review-unchecked-null'),
+    TASK_MS,
+  );
+  it(
+    'review-convention: the check fails as given and passes with a right answer',
+    () => checkTask('review-convention'),
+    TASK_MS,
+  );
+  it(
+    'review-unrelated-hunk: the check fails as given and passes with a right answer',
+    () => checkTask('review-unrelated-hunk'),
+    TASK_MS,
+  );
+  it(
+    'analyze-top-region: the check fails as given and passes with a right answer',
+    () => checkTask('analyze-top-region'),
+    TASK_MS,
+  );
+  it(
+    'backlog-extract: the check fails as given and passes with a right answer',
+    () => checkTask('backlog-extract'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-01: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-01'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-02: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-02'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-03: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-03'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-04: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-04'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-05: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-05'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-06: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-06'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-07: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-07'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-08: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-08'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-09: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-09'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-10: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-10'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-11: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-11'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-12: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-12'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-13: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-13'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-14: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-14'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-15: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-15'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-16: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-16'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-17: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-17'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-18: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-18'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-19: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-19'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-20: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-20'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-21: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-21'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-22: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-22'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-23: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-23'),
+    TASK_MS,
+  );
+  it(
+    'maestro-route-24: the check fails as given and passes with a right answer',
+    () => checkTask('maestro-route-24'),
+    TASK_MS,
+  );
+
+  it('every eval and routing task has its own check test here', () => {
+    const source = readFileSync(import.meta.filename, 'utf8');
+    expect(ALL_TASKS.map((t) => t.id).filter((id) => !source.includes(`'${id}${SAYS}'`))).toEqual(
+      [],
+    );
+  });
 });
 
 const right = SOLUTIONS['maestro-requirements']!('').state;
@@ -781,11 +1121,8 @@ describe('routing judge', () => {
   it('every route names a work pattern (or new), never a demo game', () => {
     const known = new Set([...workPatternNames(), 'new']);
     expect(ROUTES.length).toBeGreaterThanOrEqual(20);
-    for (const r of ROUTES) {
-      for (const p of [...r.pattern, ...(r.thenPattern ? [r.thenPattern] : [])])
-        expect(known).toContain(p);
-      expect(r.complexity[0]).toBeLessThanOrEqual(r.complexity[1]);
-    }
+    expect(ROUTES.flatMap(routeNames).filter((p) => !known.has(p))).toEqual([]);
+    expect(ROUTES.filter((r) => r.complexity[0] > r.complexity[1])).toEqual([]);
     expect(new Set(ROUTING_TASKS.map((t) => t.id)).size).toBe(ROUTES.length);
   });
 });
@@ -793,18 +1130,14 @@ describe('routing judge', () => {
 describe('fixtures', () => {
   it('a task can hold history: the reason for a change is only in its commit', async () => {
     const t = EVAL_TASKS.find((x) => x.id === 'investigate-history')!;
-    const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
-    try {
-      await buildFixture(dir, t.files, t.history);
-      const { execFileSync } = await import('node:child_process');
-      const log = execFileSync('git', ['log', '--format=%s'], { cwd: dir, encoding: 'utf8' });
-      expect(log.trim().split('\n')).toEqual(['Lower the upload limit to 5 MB', 'fixture']);
-      expect(readFileSync(join(dir, 'src/upload.js'), 'utf8')).toMatch(/MAX_UPLOAD_MB = 5;/);
-      // Citations are checked against the files as the workspace holds them: the last commit's.
-      expect(finalFiles(t)['src/upload.js']).toMatch(/MAX_UPLOAD_MB = 5;/);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const dir = await taskDir();
+    await buildFixture(dir, t.files, t.history);
+    const { execFileSync } = await import('node:child_process');
+    const log = execFileSync('git', ['log', '--format=%s'], { cwd: dir, encoding: 'utf8' });
+    expect(log.trim().split('\n')).toEqual(['Lower the upload limit to 5 MB', 'fixture']);
+    expect(readFileSync(join(dir, 'src/upload.js'), 'utf8')).toMatch(/MAX_UPLOAD_MB = 5;/);
+    // Citations are checked against the files as the workspace holds them: the last commit's.
+    expect(finalFiles(t)['src/upload.js']).toMatch(/MAX_UPLOAD_MB = 5;/);
   });
 
   it('heavy tasks are only played when named', () => {
@@ -823,27 +1156,23 @@ describe('fixtures', () => {
 describe('the flaky eval task', () => {
   it('a skipped visible test, or a lucky green without the fix, is not a pass (and success then is a false Fixed)', async () => {
     const t = EVAL_TASKS.find((x) => x.id === 'fix-flaky')!;
-    const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
-    try {
-      await buildFixture(dir, t.files);
-      const visible = join(dir, 'test/search.test.js');
-      const original = readFileSync(visible, 'utf8');
-      writeFileSync(visible, original.replace("test('shows", "test.skip('shows"));
-      fixSearch(dir);
-      const skipped = await t.check({ workspace: dir, outcome: 'success', state: {} });
-      expect(skipped.pass).toBe(false);
-      expect(skipped.notes).toContain('FALSE FIXED: success without a real fix');
-      writeFileSync(visible, original);
-      const f = join(dir, 'src/search.js');
-      // The bug back: the visible test may pass by luck, the hidden one replays every order.
-      writeFileSync(
-        f,
-        readFileSync(f, 'utf8').replace('if (q === latest) shown = answer;', 'shown = answer;'),
-      );
-      const unfixed = await t.check({ workspace: dir, outcome: 'success', state: {} });
-      expect(unfixed.pass).toBe(false);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const dir = await taskDir();
+    await buildFixture(dir, t.files);
+    const visible = join(dir, 'test/search.test.js');
+    const original = readFileSync(visible, 'utf8');
+    writeFileSync(visible, original.replace("test('shows", "test.skip('shows"));
+    fixSearch(dir);
+    const skipped = await t.check({ workspace: dir, outcome: 'success', state: {} });
+    expect(skipped.pass).toBe(false);
+    expect(skipped.notes).toContain('FALSE FIXED: success without a real fix');
+    writeFileSync(visible, original);
+    const f = join(dir, 'src/search.js');
+    // The bug back: the visible test may pass by luck, the hidden one replays every order.
+    writeFileSync(
+      f,
+      readFileSync(f, 'utf8').replace('if (q === latest) shown = answer;', 'shown = answer;'),
+    );
+    const unfixed = await t.check({ workspace: dir, outcome: 'success', state: {} });
+    expect(unfixed.pass).toBe(false);
   });
 });

@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -35,6 +35,9 @@ const env = {
   SYMPHONY_HOME: home,
   SYMPHONY_STATE: 'home',
 } as NodeJS.ProcessEnv;
+/** How long a maestro run may take to start its composed run, without and with auto-approve. */
+const COMPOSE_TIMEOUT_MS = 2_500;
+const AUTO_COMPOSE_TIMEOUT_MS = 5_000;
 const manager = (editsAllowed = true) =>
   new RunManager({ workspace: async () => workspace, repoRoot: workspace, env, editsAllowed });
 
@@ -59,6 +62,60 @@ async function settle(client: Client, runId: string): Promise<RunView> {
     if (body.waitingFor || body.outcome) return body as RunView;
   }
   throw new Error('run did not settle');
+}
+
+/** Follow a maestro run without waiting, until its composed run plays `pattern`. */
+function followUntilPattern(client: Client, runId: string, pattern: string, timeout: number) {
+  return vi.waitFor(
+    async () => {
+      const { body } = await call(client, 'get_run', { run_id: runId, wait_seconds: 0 });
+      expect(body.pattern).toBe(pattern);
+      return body as RunView & { chain: unknown[] };
+    },
+    { timeout, interval: 50 },
+  );
+}
+
+/** Folders a test made; removed after it. */
+const madeDirs: string[] = [];
+afterEach(() => {
+  for (const dir of madeDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  madeDirs.push(dir);
+  return dir;
+}
+
+/** Whether run_pattern refuses to work in `workspace`. */
+async function refusesWorkspace(client: Client, folder: string): Promise<boolean> {
+  const started = await call(client, 'run_pattern', {
+    pattern: 'investigate',
+    inputs: { question: 'q' },
+    provider: 'scripted',
+    workspace: folder,
+  });
+  return started.isError === true;
+}
+
+/** What get_run says about a run id. */
+async function getRunBody(client: Client, runId: string): Promise<unknown> {
+  return (await call(client, 'get_run', { run_id: runId, wait_seconds: 0 })).body;
+}
+
+/** The tool names and pattern names an MCP client sees over HTTP with `headers`. */
+async function listOverHttp(base: string, headers: Record<string, string>) {
+  const client = new Client({ name: 'studio', version: '1' });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers } }),
+  );
+  const { tools } = await client.listTools();
+  const { body } = await call(client, 'list_patterns');
+  await client.close();
+  return {
+    tools: tools.map((t) => t.name),
+    patterns: (body as { name: string }[]).map((p) => p.name),
+  };
 }
 
 describe('Symphony MCP server', () => {
@@ -174,11 +231,7 @@ describe('Symphony MCP server', () => {
     });
     await call(client, 'answer_approval', { run_id: body.run_id, approved: true });
     // The composed fix is running its tests (slow on purpose): follow it without waiting.
-    let next = (await call(client, 'get_run', { run_id: body.run_id, wait_seconds: 0 })).body;
-    for (let i = 0; i < 50 && next.pattern !== 'fix'; i++) {
-      await new Promise((done) => setTimeout(done, 50));
-      next = (await call(client, 'get_run', { run_id: body.run_id, wait_seconds: 0 })).body;
-    }
+    const next = await followUntilPattern(client, body.run_id, 'fix', COMPOSE_TIMEOUT_MS);
     expect(next.chain).toHaveLength(2);
     expect(next.pattern).toBe('fix');
     // Stopping by the maestro's id stops the composed run, and says so once it has ended.
@@ -198,53 +251,36 @@ describe('Symphony MCP server', () => {
     const on = await call(client, 'set_auto_approve', { run_id: body.run_id, on: true });
     expect(on.body).toMatchObject({ autoApprove: true });
     // No answer_approval: the go-gate answered itself and the composed fix started, auto-approving.
-    let next = (await call(client, 'get_run', { run_id: body.run_id, wait_seconds: 0 })).body;
-    for (let i = 0; i < 100 && next.pattern !== 'fix'; i++) {
-      await new Promise((done) => setTimeout(done, 50));
-      next = (await call(client, 'get_run', { run_id: body.run_id, wait_seconds: 0 })).body;
-    }
+    const next = await followUntilPattern(client, body.run_id, 'fix', AUTO_COMPOSE_TIMEOUT_MS);
     expect(next).toMatchObject({ pattern: 'fix', autoApprove: true });
     await call(client, 'stop_run', { run_id: body.run_id });
   });
 
   it('a chat may name another folder to work in (e.g. a separate worktree); remote callers may not', async () => {
-    const other = mkdtempSync(join(tmpdir(), 'symphony-mcp-other-'));
-    try {
-      const client = await connect(manager());
-      const started = await call(client, 'run_pattern', {
-        pattern: 'investigate',
-        inputs: { question: 'q' },
-        provider: 'scripted',
-        auto_approve: true,
-        workspace: other,
-      });
-      const view = await settle(client, started.body.run_id);
-      expect(view.outcome).toBe('success');
-      // Saved under that folder's own Symphony folder, outside it, not the open workspace's.
-      expect(view.savedTo).toMatch(/workspaces[/\\]symphony-mcp-other-/);
-      expect(existsSync(join(other, '.symphony'))).toBe(false);
-      for (const bad of ['relative/dir', join(other, 'missing')])
-        expect(
-          (
-            await call(client, 'run_pattern', {
-              pattern: 'investigate',
-              inputs: { question: 'q' },
-              provider: 'scripted',
-              workspace: bad,
-            })
-          ).isError,
-        ).toBe(true);
-      const remote = await connect(manager(false));
-      const refused = await call(remote, 'run_pattern', {
-        pattern: 'investigate',
-        inputs: { question: 'q' },
-        provider: 'scripted',
-        workspace: other,
-      });
-      expect(refused.body).toMatch(/only be chosen from a local chat/);
-    } finally {
-      rmSync(other, { recursive: true, force: true });
-    }
+    const other = tempDir('symphony-mcp-other-');
+    const client = await connect(manager());
+    const started = await call(client, 'run_pattern', {
+      pattern: 'investigate',
+      inputs: { question: 'q' },
+      provider: 'scripted',
+      auto_approve: true,
+      workspace: other,
+    });
+    const view = await settle(client, started.body.run_id);
+    expect(view.outcome).toBe('success');
+    // Saved under that folder's own Symphony folder, outside it, not the open workspace's.
+    expect(view.savedTo).toMatch(/workspaces[/\\]symphony-mcp-other-/);
+    expect(existsSync(join(other, '.symphony'))).toBe(false);
+    expect(await refusesWorkspace(client, 'relative/dir')).toBe(true);
+    expect(await refusesWorkspace(client, join(other, 'missing'))).toBe(true);
+    const remote = await connect(manager(false));
+    const refused = await call(remote, 'run_pattern', {
+      pattern: 'investigate',
+      inputs: { question: 'q' },
+      provider: 'scripted',
+      workspace: other,
+    });
+    expect(refused.body).toMatch(/only be chosen from a local chat/);
   });
 
   it('remote callers may not run patterns that edit files', async () => {
@@ -299,10 +335,8 @@ describe('a chat whose Symphony server was restarted', () => {
     const twice = await call(third, 'get_run', { run_id: id, wait_seconds: 0 });
     expect(twice.isError).toBe(true);
     expect(twice.body).toMatch(/played by another Symphony process/);
-    for (const unknown of ['run-zzz-0', '../home']) {
-      const r = await call(third, 'get_run', { run_id: unknown, wait_seconds: 0 });
-      expect(r.body).toMatch(/unknown run/);
-    }
+    expect(await getRunBody(third, 'run-zzz-0')).toMatch(/unknown run/);
+    expect(await getRunBody(third, '../home')).toMatch(/unknown run/);
   });
 });
 
@@ -348,23 +382,12 @@ describe('Symphony MCP over HTTP (Copilot Studio)', () => {
     });
     expect(wrong.status).toBe(401);
 
-    const variants: Record<string, string>[] = [
-      { 'x-api-key': key },
-      { authorization: `Bearer ${key}` },
-    ];
-    for (const headers of variants) {
-      const client = new Client({ name: 'studio', version: '1' });
-      await client.connect(
-        new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
-          requestInit: { headers },
-        }),
-      );
-      const { tools } = await client.listTools();
-      expect(tools.map((t) => t.name)).toContain('maestro');
-      const { body } = await call(client, 'list_patterns');
-      expect((body as { name: string }[]).map((p) => p.name)).toContain('investigate');
-      await client.close();
-    }
+    const served = {
+      tools: expect.arrayContaining(['maestro']),
+      patterns: expect.arrayContaining(['investigate']),
+    };
+    expect(await listOverHttp(base, { 'x-api-key': key })).toEqual(served);
+    expect(await listOverHttp(base, { authorization: `Bearer ${key}` })).toEqual(served);
     expect(() => mcpHttpHandler({ runs: manager(), apiKey: 'short' })).toThrow(/16 characters/);
   });
 });
