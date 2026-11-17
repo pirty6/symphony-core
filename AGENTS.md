@@ -13,6 +13,7 @@ footprint), visibility, ease of use, security, good practices (Clean Code; valua
 Definitions and measures: README "Core pillars".
 A feature must serve one of them without making another measurably worse.
 Tests: no `if`, `switch`, loop or `try/finally` inside a test body, no `test.each`; one act per test.
+No sleeps or real clock either. `src/testrules.test.ts` scans every test file and fails on a break.
 
 ## Rules
 - Score is the read-only plan; Performance is what happened. Never mutate a Score at runtime.
