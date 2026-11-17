@@ -145,12 +145,6 @@ export interface AgentNode extends NodeBase {
    */
   readonly sandbox?: boolean;
   /**
-   * Split the list in `over` into chunks of `per` items (a number, or a number
-   * field) and play one AI call per chunk at the same time; the answers are
-   * checked one by one and merged in chunk order, so the result does not depend
-   * on which call finished first. Every field the step writes must be a list.
-   */
-  /**
    * A string[] field this step reads that lists workspace files (URLs are left to the
    * AI): the runtime reads each file whole and puts its text, with line numbers, in the
    * prompt. The AI reads everything it was given in one turn instead of paging through
@@ -176,6 +170,12 @@ export interface AgentNode extends NodeBase {
      */
     readonly rest?: string;
   };
+  /**
+   * Split the list in `over` into chunks of `per` items (a number, or a number
+   * field) and play one AI call per chunk at the same time; the answers are
+   * checked one by one and merged in chunk order, so the result does not depend
+   * on which call finished first. Every field the step writes must be a list.
+   */
   readonly fanOut?: {
     readonly over: string;
     readonly per: number | string;

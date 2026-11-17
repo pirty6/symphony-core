@@ -141,7 +141,7 @@ async function readServers(file: string): Promise<Record<string, unknown> | unde
   return servers && typeof servers === 'object' ? servers : {};
 }
 
-/** Name of Symphony's own MCP server entry (see scripts/install-vscode.mjs). */
+/** Name of Symphony's own MCP server entry (see src/install-vscode.ts). */
 export const SYMPHONY_SERVER_NAME = 'symphony';
 
 export async function discoverMcpServers(opts: McpOptions): Promise<McpDiscovery> {

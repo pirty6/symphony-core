@@ -108,10 +108,6 @@ export async function sweep(root: string, top: string): Promise<void> {
   await git(top, ['worktree', 'prune']);
 }
 
-/**
- * A worktree for one run, or undefined when the workspace is not a git repository
- * or SYMPHONY_WORKTREES=off (the run then edits the workspace directly).
- */
 /** Link the workspace's installed dependencies into a worktree, so its tests run as they do there. */
 export async function linkDependencies(top: string, wt: string): Promise<void> {
   const packages = (await must(top, ['ls-files', '-z', '--', 'package.json', '*/package.json']))
@@ -140,6 +136,10 @@ async function linkEntries(from: string, to: string): Promise<void> {
   }
 }
 
+/**
+ * A worktree for one run, or undefined when the workspace is not a git repository
+ * or SYMPHONY_WORKTREES=off (the run then edits the workspace directly).
+ */
 export async function isolateRun(
   workspace: string,
   opts: { readonly label: string; readonly env?: NodeJS.ProcessEnv; readonly root?: string },
