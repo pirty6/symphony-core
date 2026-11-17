@@ -76,9 +76,7 @@ end.
   - above 500 MB, the oldest real runs older than 3 days are compacted early.
 
   Compacted runs still replay, and real runs are never deleted.
-- **`memory.json` is count-capped:**
-  - 2,000 facts and 300 lessons;
-  - at most 200 facts per run, or per call when there is no run id.
+- **`memory.json` holds at most 200 approved compositions.**
 - **The engine** grows its lists in place on each call to `advance`. It serializes a frozen state
   value once, not at every step.
 

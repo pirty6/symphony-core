@@ -10,11 +10,7 @@ import {
   CITE_BY_ID,
   citesFindings,
   EVIDENCE_STATE,
-  MEMORY_NOTE,
-  MEMORY_STATE,
   MERGE_FINDINGS,
-  recallMemory,
-  rememberLessonNode,
 } from './phases/evidence.js';
 
 /**
@@ -80,7 +76,7 @@ const MASKING =
 
 const hypotheses = hypothesesPhase({
   subject: 'issue',
-  context: ['hint', 'knownFacts', 'pastLessons'],
+  context: ['hint'],
 });
 const challenge = challengePhase({
   subject: 'issue',
@@ -114,7 +110,7 @@ const edit = editVerifyPhase({
   ],
   // The stability gate (off by default), then with reproduceFirst the locked test, then review.
   success: 'stableGate',
-  giveUp: 'learnFailed',
+  giveUp: 'gaveUp',
   reviewedExit: 'reviewedCertified',
   rediagnose: { node: 'research', gaps: 'gaps' },
 });
@@ -130,7 +126,7 @@ const prReview = prReviewPhase({
   subject: 'issue',
   against: ['rootCause', 'plan'],
   edit: 'apply',
-  approved: 'learnFixed',
+  approved: 'fixed',
   stopped: 'reviewStopped',
   reviewNote: ` When \`stabilityReport\` is set, the engine ran the flaky test again and again: read it and \`maskingFlags\`. ${MASKING[0]!.toUpperCase()}${MASKING.slice(1)}, or removed assertions, make a flaky test pass without fixing it: BLOCKING, unless the change shows the old limit was wrong for work measured to take that long (not merely slower under load).`,
   reviewReads: ['stabilityReport', 'maskingFlags'],
@@ -140,7 +136,7 @@ const stability = stabilityPhases({
   next: 'reproduceFirstOn',
   passed: 'reproduced',
   unstable: 'attemptsLeft',
-  uncertified: 'learnUncertified',
+  uncertified: 'uncertified',
   reviewed: 'acceptAnyway',
 });
 
@@ -216,7 +212,6 @@ export const fix: Pattern = {
         description: 'With reproduceFirst: the tests that reproduce the bug',
       },
       ...EVIDENCE_STATE,
-      ...MEMORY_STATE,
       { name: 'fixStatus', type: 'string', description: 'The end reached (by the engine)' },
       ...READER_STATE,
     ],
@@ -266,7 +261,6 @@ export const fix: Pattern = {
       // Edits must change the workspace from here; changes already there are not a fix.
       output: { hash: 'baseDiffHash' },
     },
-    recallMemory('recall', 'issue'),
     ...hypotheses.nodes,
     {
       id: 'research',
@@ -279,10 +273,9 @@ export const fix: Pattern = {
       directive:
         'Read the code (no edits) for evidence on `issue`: for AND against every entry of `hypotheses`, tagging each finding with the hypotheses it bears on (e.g. "[H2 against]"). Find the code path that produces the symptom, the tests that cover it, and recent changes to it (git log -p, git blame).' +
         NONDETERMINISM +
-        ' If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating the findings so far (`findingsBrief`: each with its id and location, quotes left out).' +
-        MEMORY_NOTE,
+        ' If `gaps` is set, settle those first: they are objections to the last diagnosis or the reason the last fix failed. Record each fact in `newFindings`, without repeating the findings so far (`findingsBrief`: each with its id and location, quotes left out).',
       // The brief, not the full findings: they grow every round; diagnose reads them in full.
-      reads: ['issue', 'hint', 'hypotheses', 'findingsBrief', 'gaps', 'knownFacts'],
+      reads: ['issue', 'hint', 'hypotheses', 'findingsBrief', 'gaps'],
       writes: ['newFindings'],
       cites: 'newFindings',
       retries: 2,
@@ -405,22 +398,6 @@ export const fix: Pattern = {
     ...stability.gate.nodes,
     ...prReview.nodes,
     { id: 'reviewStopped', kind: 'end', label: 'Stopped at review', outcome: 'partial' },
-    rememberLessonNode('learnFixed', 'fixed', {
-      problem: 'issue',
-      cause: 'rootCause',
-      files: 'changedFiles',
-    }),
-    rememberLessonNode('learnFailed', 'failed', {
-      problem: 'issue',
-      failure: 'failureReason',
-      files: 'changedFiles',
-    }),
-    rememberLessonNode(
-      'learnUncertified',
-      'fixed',
-      { problem: 'issue', cause: 'rootCause', files: 'changedFiles' },
-      { outcome: 'partial' },
-    ),
     { id: 'fixed', kind: 'end', label: 'Fixed', outcome: 'success' },
     { id: 'uncertified', kind: 'end', label: 'Not certified', outcome: 'partial' },
     { id: 'gaveUp', kind: 'end', label: 'Gave up', outcome: 'failed' },
@@ -430,11 +407,7 @@ export const fix: Pattern = {
   edges: READERS.route([
     { id: 'start-baseline', from: 'start', to: 'baseline' },
     { id: 'baseline-snapshot', from: 'baseline', to: 'snapshot' },
-    { id: 'snapshot-recall', from: 'snapshot', to: 'recall' },
-    { id: 'recall-hypothesize', from: 'recall', to: hypotheses.entry },
-    { id: 'learnFixed-fixed', from: 'learnFixed', to: 'fixed' },
-    { id: 'learnFailed-gaveUp', from: 'learnFailed', to: 'gaveUp' },
-    { id: 'learnUncertified-end', from: 'learnUncertified', to: 'uncertified' },
+    { id: 'snapshot-hypothesize', from: 'snapshot', to: hypotheses.entry },
     ...hypotheses.edges,
     { id: 'rating-research', from: hypotheses.exit!, to: 'research' },
     { id: 'research-check', from: 'research', to: 'checkResearch' },
@@ -565,10 +538,6 @@ export const fix: Pattern = {
         command: 'npm test',
       }),
       snapshot: () => ({ diff: '', hash: 'base', files: [] }),
-      recall: () => ({ facts: [], lessons: [] }),
-      learnFixed: () => ({ saved: true }),
-      learnFailed: () => ({ saved: true }),
-      learnUncertified: () => ({ saved: true }),
       // The workspace as it is: unpatched before the first edit.
       controlSnapshot: (s) => ({ diff: '', hash: String(s.diffHash || 'base'), files: [] }),
       // With the gate (off in this demo): the flaky test fails once before the edit, never after.

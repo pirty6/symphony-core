@@ -452,9 +452,7 @@ export class RunManager {
         tools: extras.tools,
         toolContext: {
           ...extras.toolContext,
-          ...(dir !== workspace
-            ? { workspace: dir, memoryRoot: extras.toolContext.workspace }
-            : {}),
+          ...(dir !== workspace ? { workspace: dir } : {}),
           ...(pr?.info ? { pr: pr.info } : {}),
           // Remote callers read only: no command (tests, lint) runs on this machine for them.
           ...(this.opts.editsAllowed ? {} : { runsCode: false }),

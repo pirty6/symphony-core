@@ -115,6 +115,6 @@ change mid-run.
 | `src/patterns/` | The pattern library, in TypeScript. |
 | `packages/ui/` | The studio (React Flow) and its dev server (`packages/ui/server/api.ts`). |
 | `~/.symphony/workspaces/<folder>-<hash>/runs/` | Saved runs (Performance records), resumable and replayable; outside the repository (`symphony where runs`). |
-| `~/.symphony/workspaces/<folder>-<hash>/memory.json` | Facts, lessons and approved compositions remembered across runs. |
+| `~/.symphony/workspaces/<folder>-<hash>/memory.json` | The maestro's approved compositions, remembered across runs. |
 
 See also: [the maestro](./maestro.md) and [the algorithm flows](./patterns.md).

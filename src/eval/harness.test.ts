@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Pattern } from '../core/types.js';
-import { recall } from '../runtime/memory.js';
 import { stateDir } from '../runtime/state.js';
 import type { Provider } from '../runtime/provider.js';
 import {
@@ -488,12 +487,6 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
         'It does not retry at all: fetchData calls http once and throws on failure (src/net.js:3). The comment and the README that say 3 times are wrong.',
     },
   }),
-  'investigate-stale-lesson': () => ({
-    state: {
-      answer:
-        'It listens on 3001: src/server.js:3 uses DEFAULT_PORT + 1, and DEFAULT_PORT is 3000. The earlier lesson that said 8080 is wrong.',
-    },
-  }),
   'investigate-planted-flaw': () => ({
     state: {
       answer:
@@ -679,19 +672,14 @@ describe('eval tasks', () => {
                         answer:
                           'fetchData retries 3 times on failure, with backoff (src/net.js:1).',
                       }
-                    : t.id === 'investigate-stale-lesson'
+                    : t.id.startsWith('investigate-misread-quote')
                       ? {
                           answer:
-                            'It listens on 8080, set in src/server.js (also 3001 in some builds).',
+                            'send() tries a failing request 3 times (src/send.js:1 `MAX_TRIES = 3`).',
                         }
-                      : t.id.startsWith('investigate-misread-quote')
-                        ? {
-                            answer:
-                              'send() tries a failing request 3 times (src/send.js:1 `MAX_TRIES = 3`).',
-                          }
-                        : t.id.startsWith('investigate-planted-flaw')
-                          ? { answer: 'The client waits 30000 ms, from src/config.js.' }
-                          : { answer: 'The README says 30 seconds; the docs say port 8080.' };
+                      : t.id.startsWith('investigate-planted-flaw')
+                        ? { answer: 'The client waits 30000 ms, from src/config.js.' }
+                        : { answer: 'The README says 30 seconds; the docs say port 8080.' };
         expect((await t.check({ workspace: dir, outcome: 'success', state: wrong })).pass).toBe(
           false,
         );
@@ -788,20 +776,7 @@ describe('routing judge', () => {
   });
 });
 
-describe('memory fixtures', () => {
-  it('the stale lesson is recalled as a real store would give it (its files are unchanged)', async () => {
-    const t = EVAL_TASKS.find((x) => x.id === 'investigate-stale-lesson')!;
-    const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
-    try {
-      await buildFixture(dir, t.files);
-      expect((await recall(dir, String(t.inputs.question))).lessons).toEqual([
-        expect.stringMatching(/S1: 8080, set by DEFAULT_PORT/),
-      ]);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
+describe('fixtures', () => {
   it('a task can hold history: the reason for a change is only in its commit', async () => {
     const t = EVAL_TASKS.find((x) => x.id === 'investigate-history')!;
     const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));

@@ -766,7 +766,7 @@ describe('review: what live runs taught', () => {
   });
 });
 
-describe('review reuses investigate: the chase, the debate and memory', () => {
+describe('review reuses investigate: the chase and the debate', () => {
   /** A whole-change step that cannot settle the claim until research has found something. */
   const unclearUntilEvidence: Agent = (s) => {
     const ok = soundWhole(s, 0) as { updates: Record<string, unknown> };
@@ -978,23 +978,6 @@ describe('review reuses investigate: the chase, the debate and memory', () => {
       expect.stringMatching(/^F3 src\/core\/engine\.ts:118 — \[ERRPATH\]/),
     );
     expect((at4.state.findings as string[]).filter((f) => f.includes('[BUG]'))).toHaveLength(1);
-  });
-
-  it('what earlier runs learned is recalled, and the steps that judge read it as leads', () => {
-    const { state } = play({
-      tools: {
-        recall: () => ({ facts: ['src/core/engine.ts:120 — retries are per visit'], lessons: [] }),
-      },
-    });
-    expect(state.knownFacts).toEqual(['src/core/engine.ts:120 — retries are per visit']);
-    for (const step of ['gatherContext', 'analyze', 'wholeChange', 'skeptic', 'chase', 'second']) {
-      const node = review.nodes.find((n) => n.id === step) as unknown as {
-        reads: string[];
-        directive: string;
-      };
-      expect(node.reads).toContain('knownFacts');
-      expect(node.directive).toContain('use them as leads to check, never as evidence');
-    }
   });
 });
 

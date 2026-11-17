@@ -751,8 +751,7 @@ solved rate or citation validity.
   those settings and the trial switches, so two reports compare as an A/B
   ([docs/trials.md](docs/trials.md)). What each investigate setting trades, and what backs it:
   [docs/settings.md](docs/settings.md). Investigate
-  fixtures also cover a real quote that does not support the claim, a stale lesson in memory
-  on unchanged files, a false hint, and a planted flaw played with the debate (complexity 3)
+  fixtures also cover a real quote that does not support the claim, a false hint, and a planted flaw played with the debate (complexity 3)
   and without (1), so what the debate catches is measured; `investigate-many-files` (240 files,
   several waves) is heavy and runs only when named, as is
   `maestro-planted-concern` (a concern the request leaves out, which the composed score must
@@ -786,19 +785,11 @@ solved rate or citation validity.
   read in full in batches of 4) and play them at once (at most 6 calls; the plan picks 1-6);
   answers are checked per part and merged in part order,
   so the result does not depend on timing and replays exactly.
-- **Memory across runs** (the workspace's memory, `symphony where memory`). Facts that passed the citation check are
-  remembered; a **Recall earlier runs** step brings back those that share words with the question
-  *and still match the files today* (re-checked at recall), plus lessons from earlier fix and
-  implement runs. They are leads to check, never evidence. The store stays clean: run tags such
-  as `[H2 against]` are stripped, only the newest fact per `path:line` is kept, one run writes at
-  most 200 facts (so a few runs cannot replace the whole store), lessons expire after 90 days (30
-  for one that names no file), when their files are gone or when one of them changes, a newer
-  lesson on the same problem replaces the older, each is shown with its date and commit, and
-  recall weights rare words above common ones. A run never recalls its own facts; investigate
-  recalls again with its sub-questions, and remembers a settled answer as a lesson built from its
-  checked sub-answers (only when it names a workspace file), plus the findings it cited. A run
-  playing in its own worktree reads and adds to your workspace's memory, not a copy deleted with
-  it. Classical replay never reuses an answer about a web page: what the page says may have
+- **Memory across runs** (the workspace's memory, `symphony where memory`) holds the maestro's
+  approved compositions only. Facts and lessons from earlier runs were remembered too, until a
+  measured run showed they did not help: later takes of the same question solved no more and
+  read 21% more ([the measurements](docs/trials.md#feature-measurements-2026-11-17)).
+  Classical replay never reuses an answer about a web page: what the page says may have
   changed, and the replay key only knows the workspace.
 - **Replays know who played.** A recorded answer is reused only for the same move *and* the same
   model settings (tier, requested model, effort); `compare` names "played by different models"

@@ -15,16 +15,12 @@ import {
   CITE_BY_ID,
   citesFindings,
   EVIDENCE_STATE,
-  MEMORY_STATE,
   MERGE_FINDINGS,
-  recallMemory,
-  rememberCitedNode,
-  rememberLessonNode,
 } from './phases/evidence.js';
 
 const hypotheses = hypothesesPhase({
   subject: 'question',
-  context: ['hint', 'subQuestions', 'sourceInfo', 'knownFacts', 'pastLessons'],
+  context: ['hint', 'subQuestions', 'sourceInfo'],
 });
 const challenge = challengePhase({
   subject: 'question',
@@ -52,7 +48,6 @@ const challenge = challengePhase({
   resetOnReopen: 'gapRounds',
   // Each objection names the sub-question it bears on.
   about: 'subQuestions',
-  rememberChecked: false,
 });
 
 /** Most independent parts one investigation answers side by side. */
@@ -139,14 +134,6 @@ const PLAIN_SOURCES = [
   'doubts',
 ] as const;
 
-const LESSON_INPUTS = {
-  problem: 'question',
-  // The checked sub-answers, whole: not answer prose cut at a length.
-  cause: 'subAnswers',
-  files: 'citedFindings',
-  open: 'openQuestions',
-} as const;
-
 /** Re-counted after every merge of findings: the tally the next readers steer by. */
 const STATUS = [
   { field: 'hypothesisStatus', expr: 'stances(findings, hypotheses)' },
@@ -221,7 +208,6 @@ const CHASE = chaseSteps({
       message: 'No hypotheses were given: do not tag findings with [H…].',
     },
   ],
-  remember: false,
   merge: [
     ...MERGE_FINDINGS,
     ...STATUS,
@@ -363,12 +349,6 @@ export const investigate: Pattern = {
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
       { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
-      { name: 'planFacts', type: 'string[]', description: 'Facts recalled for the sub-questions' },
-      {
-        name: 'planLessons',
-        type: 'string[]',
-        description: 'Lessons recalled for the sub-questions',
-      },
       {
         name: 'subAnswers',
         type: 'string[]',
@@ -657,11 +637,6 @@ export const investigate: Pattern = {
           'Files of the triage batch the engine gave whole (engine-filled; empty without a record)',
       },
       {
-        name: 'factsToKeep',
-        type: 'string[]',
-        description: 'Cited findings remembered for later runs',
-      },
-      {
         name: 'readerHypotheses',
         type: 'boolean',
         initial: true,
@@ -717,7 +692,6 @@ export const investigate: Pattern = {
         description: 'All checked evidence, each with its id (F<n>) and location',
       },
       ...EVIDENCE_STATE,
-      ...MEMORY_STATE,
       { name: 'gaps', type: 'string[]', description: 'Sub-questions without enough evidence' },
       {
         name: 'assessment',
@@ -830,7 +804,7 @@ export const investigate: Pattern = {
       id: 'planPhase',
       label: 'Plan research',
       description: 'Available sources, sub-questions, which evidence applies',
-      nodes: ['applyLean', 'catalog', 'plan', 'recallPlan', 'mergeRecall', 'queue'],
+      nodes: ['applyLean', 'catalog', 'plan', 'queue'],
     },
     { ...hypotheses.group, nodes: [...hypotheses.group.nodes, 'leanComplexity'] },
     {
@@ -969,26 +943,6 @@ export const investigate: Pattern = {
           field: 'complexity',
           expr: 'if(lean && !complexityChosen && complexity > 3, 3, complexity)',
         },
-      ],
-    },
-    recallMemory('recall', 'question'),
-    {
-      // Again with the sub-questions: the raw question is a poor query for the parts of it.
-      id: 'recallPlan',
-      kind: 'tool',
-      label: 'Recall for the sub-questions',
-      tool: 'memory.recall',
-      inputs: { query: 'subQuestions' },
-      output: { facts: 'planFacts', lessons: 'planLessons' },
-    },
-    {
-      id: 'mergeRecall',
-      kind: 'compute',
-      label: 'Merge recalled leads',
-      assign: [
-        // The same caps as one recall: more related leads are distractors, not help.
-        { field: 'knownFacts', expr: 'take(unique(knownFacts + planFacts), 12)' },
-        { field: 'pastLessons', expr: 'take(unique(pastLessons + planLessons), 6)' },
       ],
     },
     {
@@ -1168,7 +1122,6 @@ export const investigate: Pattern = {
         'leadHypotheses',
         'repoFileCount',
         'maxTriageFiles',
-        'knownFacts',
         'candidateFiles',
       ],
       writes: ['scopeFiles', 'scopeReasons', 'scopeQueries'],
@@ -1291,7 +1244,7 @@ export const investigate: Pattern = {
     },
     triageStep(false),
     triageStep(true),
-    checkFindings('checkTriage', 'newFindings', false),
+    checkFindings('checkTriage', 'newFindings'),
     {
       id: 'mergeTriage',
       kind: 'compute',
@@ -1408,7 +1361,7 @@ export const investigate: Pattern = {
         { field: 'deepBatchSize', expr: '1' },
       ],
     },
-    checkFindings('checkDeep', 'newFindings', false),
+    checkFindings('checkDeep', 'newFindings'),
     {
       id: 'mergeDeep',
       kind: 'compute',
@@ -1488,7 +1441,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkParallel', 'newFindings', false),
+    checkFindings('checkParallel', 'newFindings'),
     {
       id: 'mergeParallel',
       kind: 'compute',
@@ -1532,7 +1485,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkExperiment', 'newFindings', false),
+    checkFindings('checkExperiment', 'newFindings'),
     {
       id: 'mergeExperiment',
       kind: 'compute',
@@ -1599,7 +1552,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkSource', 'newFindings', false),
+    checkFindings('checkSource', 'newFindings'),
     {
       id: 'mergeSource',
       kind: 'compute',
@@ -1808,7 +1761,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkGapRuns', 'newFindings', false),
+    checkFindings('checkGapRuns', 'newFindings'),
     {
       id: 'mergeGapRuns',
       kind: 'compute',
@@ -2025,7 +1978,6 @@ export const investigate: Pattern = {
           // Whatever the answer rests on, wherever it cites it: summary, parts, sub-answers, resolutions.
           expr: 'withIds(findings, refs(answer + " " + join(partAnswers + subAnswers + objectionResolutions, " ")))',
         },
-        { field: 'factsToKeep', expr: 'citedFindings' },
         {
           field: 'answer',
           expr: `if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer) + "\n\n" + ${COVERAGE}`,
@@ -2106,26 +2058,14 @@ Find real paths, test names and table names with read-only tools first. Use the 
       skipWhenStuck: PLAIN_SKIP,
       checks: [...PLAIN_CHECKS],
     },
-    // Only a settled answer teaches: what was asked and how it ended, a lead for later questions
-    // like it, stale once its cited files change. An unsettled one leaves no lesson.
-    // Only one that names a workspace file: a file-less lesson cannot go stale with the code.
-    rememberLessonNode('learnAnswer', 'answered', LESSON_INPUTS, {
-      outcome: 'success',
-      requireFiles: true,
-    }),
-    // The facts later runs get are the ones this answer used, not everything read on the way.
-    rememberCitedNode('rememberCited', 'factsToKeep'),
     { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
     { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
   ],
   edges: [
     { id: 'start-lean', from: 'start', to: 'applyLean' },
-    { id: 'lean-recall', from: 'applyLean', to: 'recall' },
-    { id: 'recall-catalog', from: 'recall', to: 'catalog' },
+    { id: 'lean-catalog', from: 'applyLean', to: 'catalog' },
     { id: 'catalog-plan', from: 'catalog', to: 'plan' },
-    { id: 'plan-recall', from: 'plan', to: 'recallPlan' },
-    { id: 'recallPlan-merge', from: 'recallPlan', to: 'mergeRecall' },
-    { id: 'mergeRecall-queue', from: 'mergeRecall', to: 'queue' },
+    { id: 'plan-queue', from: 'plan', to: 'queue' },
     { id: 'queue-hypothesize', from: 'queue', to: hypotheses.entry },
     ...hypotheses.edges,
     { id: 'rating-lean', from: hypotheses.exit!, to: 'leanComplexity' },
@@ -2268,15 +2208,12 @@ Find real paths, test names and table names with read-only tools first. Use the 
     { id: 'wantPlain-explain', from: 'wantPlain', to: 'explain', branch: 'then' },
     { id: 'wantPlain-settled', from: 'wantPlain', to: 'settled', branch: 'else' },
     { id: 'explain-settled', from: 'explain', to: 'settled' },
-    { id: 'settled-learn', from: 'settled', to: 'learnAnswer', branch: 'then' },
+    { id: 'settled-done', from: 'settled', to: 'done', branch: 'then' },
     { id: 'settled-doubts', from: 'settled', to: 'doubts', branch: 'else' },
-    { id: 'learn-cited', from: 'learnAnswer', to: 'rememberCited' },
-    { id: 'cited-done', from: 'rememberCited', to: 'done' },
   ],
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
-      recall: () => ({ facts: [], lessons: [] }),
       // The real resolver: pure, so the demo resolves Locate's paths as a live run does.
       resolveScope: (s) => {
         const r = resolvePaths(
@@ -2287,8 +2224,6 @@ Find real paths, test names and table names with read-only tools first. Use the 
         );
         return { files: r.files, reasons: r.reasons, unmatched: r.unmatched, over: r.over };
       },
-      learnAnswer: () => ({ saved: true }),
-      rememberCited: (s) => ({ saved: ((s.citedFindings as string[]) ?? []).length }),
       ...Object.fromEntries(
         [
           'checkTriage',

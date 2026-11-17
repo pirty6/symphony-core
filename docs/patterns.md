@@ -43,9 +43,7 @@ experiments, git history, GitHub, dependencies, Azure DevOps (read-only `az`), M
 Read-only `az` commands (`list`, `show`, `get`, `query`; `az rest` and `az devops invoke` only as
 GET) let research read pipelines and branch policies; nothing that writes is allowed.
 
-1. **Recall and plan.** Facts and lessons from earlier runs are recalled and re-checked
-   against today's files, once for the question and again for the sub-questions (within the
-   same caps: 12 facts, 6 lessons). The planner splits the question into sub-questions, decides for
+1. **Plan.** The planner splits the question into sub-questions, decides for
    every available source whether it can hold evidence (a reason for each skip), chooses
    how many sub-agents to use (1-6), and may split the question into independent parts. The
    web and experiments are always used when they are on offer: a plan that skips either is
@@ -115,10 +113,8 @@ GET) let research read pipelines and branch policies; nothing that writes is all
    `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
    keep word for word the sub-answers no objection named, so it opens no new front.
 9. **Settle.** Settled means no unresolved objection, no OPEN sub-answer or objection
-   resolution, and enough confidence. A settled answer ends `success`, remembers the findings
-   it cited and a lesson built from its checked sub-answers (only when it names a workspace
-   file, so the lesson goes stale with the code). Anything else ends `partial`, with the
-   reasons in `doubts`, and teaches nothing.
+   resolution, and enough confidence. A settled answer ends `success`. Anything else ends
+   `partial`, with the reasons in `doubts`.
 10. **Two versions of the result, one for each reader.**
     - **For people (`summary`).** It comes first, written by the AI from the cited answer in
       Simplified Technical English (ASD-STE100). It has short sentences, one idea in each,
@@ -149,7 +145,6 @@ GET) let research read pipelines and branch policies; nothing that writes is all
 ```mermaid
 flowchart TD
   n_start(["Start"])
-  n_recall[/"🔧 Recall earlier runs"/]
   n_resolveScope[/"🔧 Resolve located paths"/]
   n_multiPart{"Several parts?"}
   n_answerParts["🤖 Answer each part ×N"]
@@ -163,11 +158,9 @@ flowchart TD
   n_handoffDoc["Write the AI version"]
   n_wantPlain{"Plain summary?"}
   n_explain["🤖 Write the version for people"]
-  n_learnAnswer[/"🔧 Remember the outcome"/]
-  n_rememberCited[/"🔧 Remember cited facts"/]
   n_done(["Answered · success"])
   n_doubts(["Answered, with open doubts · partial"])
-  n_planPhase[["Plan research · 6 steps"]]
+  n_planPhase[["Plan research · 4 steps"]]
   n_hypothesesPhase[["Competing hypotheses · 3 steps"]]
   n_listPhase[["List evidence · 13 steps"]]
   n_triagePhase[["Triage files · 7 steps"]]
@@ -177,8 +170,6 @@ flowchart TD
   n_gapPhase[["Close gaps · 25 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
   n_start --> n_planPhase
-  n_planPhase --> n_recall
-  n_recall -.-> n_planPhase
   n_planPhase --> n_hypothesesPhase
   n_hypothesesPhase --> n_listPhase
   n_listPhase --> n_resolveScope
@@ -207,15 +198,13 @@ flowchart TD
   n_wantPlain -->|"yes"| n_explain
   n_wantPlain -->|"no"| n_settled
   n_explain --> n_settled
-  n_settled -->|"yes"| n_learnAnswer
+  n_settled -->|"yes"| n_done
   n_settled -->|"no"| n_doubts
-  n_learnAnswer --> n_rememberCited
-  n_rememberCited --> n_done
 ```
 
 | Phase | What it does | Steps |
 | --- | --- | --- |
-| Plan research | Available sources, sub-questions, which evidence applies | Lean run? → List sources → Plan research → Recall for the sub-questions → Merge recalled leads → Queue sources |
+| Plan research | Available sources, sub-questions, which evidence applies | Lean run? → List sources → Plan research → Queue sources |
 | Competing hypotheses | Every plausible explanation, each with what would confirm or refute it; how hard it is | Propose hypotheses → Set complexity → Cap the rated complexity |
 | List evidence | Only what the plan needs: workspace files, likeliest first (a big repo is searched first), web pages, experiments | Hypotheses for the readers → Workspace? → List every file → Rank files → Count files → Triage every file? → Queue files → Locate files → Queue located files → Web? → List web pages → Experiments? → Design experiments |
 | Triage files | Every listed file, in batches | Files left? → Next batch → Single pass? (pilot) → Triage files → Triage and read in depth → Check citations → Record triage |
@@ -286,7 +275,6 @@ hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
      so weakening the checks is blocking.
    - **Nothing changed.** If no review edit changes the patch the reviewer saw, which passed
      the checks, a person decides on that exact patch.
-   - **Remember.** The outcome is remembered: fixed, or why it failed.
 
 Only the tests the command runs are checked. In this repository the root `npm test` does not
 run `packages/ui`, so set `testCommand` for a fix there.
@@ -332,7 +320,7 @@ passes on a re-run).
 - **Certified** means: under that command, the flaky test's failure rate is below
   `stabilityTolerance` at 95% across `maxEdits` patches. It does not mean "never flaky". The
   report (`stabilityReport`) says so. Anything less ends at "Not certified" (partial): the patch
-  is kept as a file, never applied, and the lesson is remembered with open doubts.
+  is kept as a file, never applied.
 - **Cost.** About three steps per run (about 150 per patch by default); `maxSteps` (1000) fits
   the control and five or so measured patches. A run that reaches the limit ends partial, never
   Fixed.
@@ -356,14 +344,10 @@ flowchart TD
   n_start(["Start"])
   n_baseline[/"🔧 Run tests first"/]
   n_snapshot[/"🔧 Snapshot workspace"/]
-  n_recall[/"🔧 Recall earlier runs"/]
   n_approve{{"👤 Approve plan"}}
   n_reproduceFirstOn{"Reproduce first?"}
   n_reproduced{"Tests locked?"}
   n_reviewStopped(["Stopped at review · partial"])
-  n_learnFixed[/"🔧 Remember the outcome"/]
-  n_learnFailed[/"🔧 Remember the failure"/]
-  n_learnUncertified[/"🔧 Remember the outcome"/]
   n_fixed(["Fixed · success"])
   n_uncertified(["Not certified · partial"])
   n_gaveUp(["Gave up · failed"])
@@ -390,11 +374,7 @@ flowchart TD
   n_prReviewPhase[["PR review · 5 steps"]]
   n_start --> n_baseline
   n_baseline --> n_snapshot
-  n_snapshot --> n_recall
-  n_recall --> n_hypothesesPhase
-  n_learnFixed --> n_mark_fixed
-  n_learnFailed --> n_mark_gaveUp
-  n_learnUncertified --> n_mark_uncertified
+  n_snapshot --> n_hypothesesPhase
   n_hypothesesPhase --> n_diagnosePhase
   n_diagnosePhase --> n_challengePhase
   n_challengePhase --> n_approve
@@ -410,13 +390,13 @@ flowchart TD
   n_testFirstPhase --> n_prReviewPhase
   n_approve -->|"rejected"| n_mark_rejected
   n_editPhase --> n_stabilityPhase
-  n_editPhase --> n_learnFailed
+  n_editPhase --> n_mark_gaveUp
   n_editPhase -.-> n_diagnosePhase
   n_stabilityPhase --> n_reproduced
   n_stabilityPhase -.-> n_editPhase
   n_stabilityPhase --> n_prReviewPhase
-  n_stabilityPhase --> n_learnUncertified
-  n_prReviewPhase --> n_learnFixed
+  n_stabilityPhase --> n_mark_uncertified
+  n_prReviewPhase --> n_mark_fixed
   n_prReviewPhase -.-> n_editPhase
   n_prReviewPhase --> n_mark_reviewStopped
   n_mark_fixed --> n_handoffDoc
@@ -519,12 +499,9 @@ evidence.
 ```mermaid
 flowchart TD
   n_start(["Start"])
-  n_recall[/"🔧 Recall earlier runs"/]
   n_approve{{"👤 Approve design"}}
   n_testFirstStopped(["Stopped at tests · partial"])
   n_reviewStopped(["Stopped at review · partial"])
-  n_learnImplemented[/"🔧 Remember the outcome"/]
-  n_learnFailed[/"🔧 Remember the failure"/]
   n_implemented(["Implemented · success"])
   n_incomplete(["Criteria unmet · partial"])
   n_gaveUp(["Gave up · failed"])
@@ -540,10 +517,7 @@ flowchart TD
   n_acceptancePhase[["Acceptance review · 4 steps"]]
   n_start --> n_baselinePhase
   n_baselinePhase --> n_notGreen
-  n_baselinePhase --> n_recall
-  n_recall --> n_hypothesesPhase
-  n_learnImplemented --> n_implemented
-  n_learnFailed --> n_gaveUp
+  n_baselinePhase --> n_hypothesesPhase
   n_hypothesesPhase --> n_designPhase
   n_designPhase --> n_challengePhase
   n_challengePhase --> n_approve
@@ -554,10 +528,10 @@ flowchart TD
   n_testFirstPhase --> n_editPhase
   n_testFirstPhase --> n_acceptancePhase
   n_editPhase -.-> n_testFirstPhase
-  n_editPhase --> n_learnFailed
+  n_editPhase --> n_gaveUp
   n_editPhase --> n_prReviewPhase
   n_editPhase -.-> n_designPhase
-  n_prReviewPhase --> n_learnImplemented
+  n_prReviewPhase --> n_implemented
   n_prReviewPhase -.-> n_editPhase
   n_prReviewPhase --> n_reviewStopped
   n_acceptancePhase --> n_prReviewPhase
@@ -724,9 +698,7 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    judged again, bounded by `maxDebateRounds` (3), and after the first round only when research
    found new evidence; one raised again word for word is reported as not settled instead of
    researched again.
-9. **Memory.** What earlier runs found true and that still matches the files (`knownFacts`) is
-   recalled at the start; every judging step reads it as leads to check, never as evidence.
-10. **Review comments** (when there are issues): one per finding, in order, in parts of three,
+9. **Review comments** (when there are issues): one per finding, in order, in parts of three,
    each checked to have every part, so that someone new to the code can understand it and act on
    it:
    - **What is wrong**, in plain words, at path:line;
@@ -739,7 +711,7 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
 
    Examples are worked out from the code, not run: a review step has no interpreter and no
    browser, so it shows no screenshots.
-11. **Report**: a short summary citing the findings by id (the comments hold the detail), what is
+10. **Report**: a short summary citing the findings by id (the comments hold the detail), what is
    not settled, and what was not reviewed or not checked. It ends:
    - **Issues reported** (success), or **Issues reported, not all settled** (partial) when
      something is open: an UNCLEAR claim, a context citation that failed, a step that failed (the
@@ -792,7 +764,6 @@ flowchart TD
   n_collect["🤖 Collect diff"]
   n_hasDiff{"Anything changed?"}
   n_capFiles["Files to review"]
-  n_recall[/"🔧 Recall earlier runs"/]
   n_scanDiff[/"🔧 Scan the diff"/]
   n_gatherContext["🤖 Gather context"]
   n_contextOk{"Context gathered?"}
@@ -857,8 +828,7 @@ flowchart TD
   n_hasDiff -->|"yes"| n_capFiles
   n_hasDiff -->|"no"| n_noDiffReport
   n_noDiffReport --> n_noDiff
-  n_capFiles --> n_recall
-  n_recall --> n_scanDiff
+  n_capFiles --> n_scanDiff
   n_scanDiff --> n_gatherContext
   n_gatherContext --> n_contextOk
   n_contextOk -->|"yes"| n_checkContext

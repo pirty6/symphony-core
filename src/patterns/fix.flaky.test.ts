@@ -283,7 +283,7 @@ describe('fix: the stability gate (opt-in)', () => {
     expect(anyway.end).toBe('uncertified');
     expect(anyway.r.state.outcome).toBe('partial');
     expect(anyway.ran('prReview')).toBe(0);
-    expect(anyway.ran('learnUncertified')).toBe(1);
+    expect(anyway.r.state.cursor).toBe('uncertified');
     expect(anyway.state.stabilityReport).toMatch(/did not fail in 3 control runs/);
   });
 

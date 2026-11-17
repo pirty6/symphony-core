@@ -25,14 +25,12 @@ export const EVIDENCE_STATE: readonly StateField[] = [
 ];
 
 /** Check the step's new findings against the workspace; failures go to rejectedFindings. */
-export function checkFindings(id: string, field = 'newFindings', remember = true): ScoreNode {
+export function checkFindings(id: string, field = 'newFindings'): ScoreNode {
   return {
     id,
     kind: 'tool',
     label: 'Check citations',
     tool: 'evidence.check',
-    // remember: false when the pattern keeps only the findings its answer cites (rememberCited).
-    ...(remember ? {} : { args: { remember: false } }),
     inputs: { findings: field },
     output: { valid: field, invalid: 'rejectedFindings' },
     maxVisits: 200,
@@ -58,72 +56,5 @@ export function citesFindings(field: string): AcceptanceCheck {
   return {
     expr: `len(refs(${field})) > 0 && subset(refs(${field}), ids(findings))`,
     message: `Cite findings by their ids in ${field} (e.g. [F3]), using only ids that exist in findings.`,
-  };
-}
-
-// ── memory across runs (runtime/memory.ts) ─────────────────────────
-
-export const MEMORY_STATE: readonly StateField[] = [
-  {
-    name: 'knownFacts',
-    type: 'string[]',
-    description: 'Facts from earlier runs, re-checked against the files today',
-  },
-  {
-    name: 'pastLessons',
-    type: 'string[]',
-    description: 'How earlier runs ended (fix, implement, investigate…), dated, with their commit',
-  },
-  {
-    name: 'lessonSaved',
-    type: 'boolean',
-    description: 'Whether the outcome of this run was remembered',
-  },
-  { name: 'factsSaved', type: 'number', description: 'Cited findings remembered for later runs' },
-];
-
-/** Bring back what earlier runs learned that bears on `query`. */
-export function recallMemory(id: string, query: string): ScoreNode {
-  return {
-    id,
-    kind: 'tool',
-    label: 'Recall earlier runs',
-    tool: 'memory.recall',
-    inputs: { query },
-    output: { facts: 'knownFacts', lessons: 'pastLessons' },
-  };
-}
-
-/** How to treat recalled memory: hints that point somewhere, never evidence. */
-export const MEMORY_NOTE =
-  ' `knownFacts` (when present) were true in earlier runs and still match the files today, and `pastLessons` say how earlier runs ended: use them as leads to check, never as evidence on their own.';
-
-/** Remember how the run ended, for later runs. */
-/** Remember the findings an answer cites, for later runs: only what was used, only on success. */
-export function rememberCitedNode(id: string, field: string): ScoreNode {
-  return {
-    id,
-    kind: 'tool',
-    label: 'Remember cited facts',
-    tool: 'memory.facts',
-    inputs: { findings: field },
-    output: { saved: 'factsSaved' },
-  };
-}
-
-export function rememberLessonNode(
-  id: string,
-  kind: 'fixed' | 'failed' | 'implemented' | 'answered',
-  inputs: Readonly<Record<string, string>>,
-  args: Readonly<Record<string, unknown>> = {},
-): ScoreNode {
-  return {
-    id,
-    kind: 'tool',
-    label: kind === 'failed' ? 'Remember the failure' : 'Remember the outcome',
-    tool: 'memory.lesson',
-    args: { kind, ...args },
-    inputs,
-    output: { saved: 'lessonSaved' },
   };
 }

@@ -297,7 +297,7 @@ async function play(
       tools: extras.tools,
       toolContext: {
         ...extras.toolContext,
-        ...(dir !== cwd ? { workspace: dir, memoryRoot: extras.toolContext.workspace } : {}),
+        ...(dir !== cwd ? { workspace: dir } : {}),
         ...(pr?.info ? { pr: pr.info } : {}),
       },
       provider: makeProvider({

@@ -1184,23 +1184,6 @@ describe('investigate searches sources side by side', () => {
   });
 });
 
-describe('investigate remembers what its answer used', () => {
-  it('checks do not remember as they go; a settled answer remembers its cited findings', () => {
-    const score = compileInvestigate({ goal: 'g', context: demo.context! });
-    const checks = score.nodes.filter((n) => n.kind === 'tool' && n.tool === 'evidence.check');
-    expect(checks.length).toBeGreaterThan(5);
-    for (const c of checks) expect(c).toMatchObject({ args: { remember: false } });
-    const { r } = runWith(['workspace']);
-    expect(r.state.outcome).toBe('success');
-    const node = score.nodes.find((n) => n.id === 'rememberCited');
-    expect(node).toMatchObject({ tool: 'memory.facts', inputs: { findings: 'factsToKeep' } });
-    expect(r.state.state.factsToKeep).toEqual(r.state.state.citedFindings);
-    const cited = (r.state.state.citedFindings as string[]).length;
-    expect(cited).toBeGreaterThan(0);
-    expect(r.state.state.factsSaved).toBe(cited);
-  });
-});
-
 describe('investigate keeps a tally per hypothesis', () => {
   it('the engine counts [H# for/against] tags after each merge; no hypothesis is dropped', () => {
     const { r } = runWith(['workspace']);
@@ -1306,32 +1289,6 @@ describe('investigate answers every sub-question', () => {
         expect.stringMatching(new RegExp(`^S${i + 1}: `)),
       ),
     );
-  });
-});
-
-/** n checkable facts about files named <p><i>.ts. */
-const facts = (p: string, n: number) =>
-  Array.from({ length: n }, (_, i) => `${p}${i}.ts:1 — f \`a b\``);
-
-describe('investigate recalls for the sub-questions too', () => {
-  it('a second recall uses the sub-questions; leads are merged within the usual caps', () => {
-    const { r } = runWith(['workspace'], demo.approvals, {
-      tools: {
-        recall: () => ({ facts: facts('a', 8), lessons: ['l1', 'l2'] }),
-        recallPlan: () => ({
-          facts: [...facts('a', 2), ...facts('b', 8)],
-          lessons: ['l2', 'l3', 'l4', 'l5', 'l6', 'l7'],
-        }),
-      },
-    });
-    const s = r.state.state;
-    const node = compileInvestigate({ goal: 'g', context: demo.context! }).nodes.find(
-      (n) => n.id === 'recallPlan',
-    );
-    expect(node).toMatchObject({ tool: 'memory.recall', inputs: { query: 'subQuestions' } });
-    expect(s.knownFacts).toHaveLength(12);
-    expect((s.knownFacts as string[]).slice(0, 8)).toEqual(facts('a', 8));
-    expect(s.pastLessons).toEqual(['l1', 'l2', 'l3', 'l4', 'l5', 'l6']);
   });
 });
 

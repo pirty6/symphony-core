@@ -4,7 +4,6 @@
  * (hidden tests, exact facts), never by asking an AI.
  */
 import { execFile, execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -212,12 +211,6 @@ export const SUM_CONCERN =
 
 const PKG = '{ "name": "fixture", "type": "module", "scripts": { "test": "node --test" } }\n';
 const IGNORE = '.symphony/\nnode_modules/\n';
-/** Content hash as memory.json stores it for lessons (16 hex characters of sha256). */
-const hash16 = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
-const STALE_CONFIG = 'export const DEFAULT_PORT = 3000;\n';
-const STALE_SERVER =
-  "import { DEFAULT_PORT } from './config.js';\n\nexport const port = Number(process.env.PORT ?? DEFAULT_PORT + 1);\n";
-
 /**
  * A flaw the first reading misses: the timeout is set in config.js, and overridden at boot
  * outside production. Played twice, with the debate (complexity 3) and without (1): how
@@ -1055,49 +1048,6 @@ export const EVAL_TASKS: readonly EvalTask[] = [
           `outcome ${outcome}`,
           denies ? 'says it does not retry' : 'does not say it does not retry',
           ...(trusts ? ['takes the comment or README as the code'] : []),
-        ],
-      };
-    },
-  },
-  {
-    // A wrong lesson from an earlier run, on files that have not changed since: recall brings
-    // it back (the hashes match), and the evidence must still win over it.
-    id: 'investigate-stale-lesson',
-    pattern: 'investigate',
-    inputs: { question: 'Which port does the server listen on when PORT is not set?' },
-    files: {
-      'package.json': PKG,
-      '.gitignore': IGNORE,
-      'src/config.js': STALE_CONFIG,
-      'src/server.js': STALE_SERVER,
-      // Not committed (.symphony is ignored), as a real store is not.
-      '.symphony/memory.json': JSON.stringify({
-        facts: [],
-        lessons: [
-          {
-            text: 'Answered "Which port does the server listen on?": S1: 8080, set by DEFAULT_PORT (files: src/config.js, src/server.js)',
-            files: ['src/config.js', 'src/server.js'],
-            at: new Date().toISOString(),
-            hashes: {
-              'src/config.js': hash16(STALE_CONFIG),
-              'src/server.js': hash16(STALE_SERVER),
-            },
-          },
-        ],
-      }),
-    },
-    // DEFAULT_PORT + 1 = 3001; the lesson's 8080 is wrong.
-    check: async ({ outcome, state }) => {
-      const answer = String(state.answer ?? '');
-      const right = mentions(answer, ['3001', 'src/server.js']);
-      const trusts =
-        /\b8080\b/.test(answer) && !/\b(lesson|earlier run|memory|wrong|stale|not)\b/i.test(answer);
-      return {
-        pass: succeeded(outcome).pass && right.pass && !trusts,
-        notes: [
-          ...succeeded(outcome).notes,
-          ...right.notes,
-          ...(trusts ? ['takes the stale lesson (8080) as the answer'] : []),
         ],
       };
     },
