@@ -2,15 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { FLOW_DOCS, flowBlock, flowchart, readDoc, updateFlows } from './flows.js';
 import { findPattern } from './patterns/index.js';
 
+/** Where a pattern's generated flow starts in a doc. */
+const generatedFlow = (name: string) => `<!-- flow:${name} -->\n<!-- Generated`;
+
 describe('docs flow diagrams', () => {
-  it.each(FLOW_DOCS)('%s is up to date with the patterns (run npm run docs)', (file) => {
-    const doc = readDoc(file);
+  it('docs/patterns.md is up to date with the patterns (run npm run docs)', () => {
+    const doc = readDoc('docs/patterns.md');
     expect(updateFlows(doc)).toBe(doc);
+  });
+
+  it('docs/maestro.md is up to date with the patterns (run npm run docs)', () => {
+    const doc = readDoc('docs/maestro.md');
+    expect(updateFlows(doc)).toBe(doc);
+  });
+
+  it('the flow docs are the two checked above', () => {
+    expect(FLOW_DOCS).toEqual(['docs/patterns.md', 'docs/maestro.md']);
   });
 
   it('every documented algorithm has a generated flow', () => {
     const doc = FLOW_DOCS.map((f) => readDoc(f)).join('\n');
-    for (const name of [
+    const documented = [
       'investigate',
       'fix',
       'refactor',
@@ -19,8 +31,8 @@ describe('docs flow diagrams', () => {
       'review',
       'analyze',
       'maestro',
-    ])
-      expect(doc).toContain(`<!-- flow:${name} -->\n<!-- Generated`);
+    ];
+    expect(documented.filter((name) => !doc.includes(generatedFlow(name)))).toEqual([]);
   });
 
   it('draws phases as one box and loops as dashed arrows, with mermaid-safe ids', () => {
