@@ -1185,7 +1185,9 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
             'if(count(claimVerdicts, "^C[0-9]+ UNCLEAR ") > 0, ["Claims the review could not settle: " + join(pick(claimVerdicts, positions(claimVerdicts, "^C[0-9]+ UNCLEAR ")), "; ")], [])',
             ' + if(len(inventoryRejected) > 0, ["Context the review was to use whose citation did not hold: " + join(inventoryRejected, "; ")], [])',
             ' + if(len(stepsFailed) > 0, ["Steps that failed, so what they check was not checked: " + join(stepsFailed, "; ")], [])',
-            ' + if(len(dismissed) > 0 && len(findings) == 0, ["The skeptic dismissed every finding: check the dismissals"], [])',
+            // Only a HIGH or MEDIUM issue dismissed keeps "looks good" back: LOW nitpicks dropped on
+            // a sound change (seen live on review-migration-present) leave it clean.
+            ' + if(count(dismissed, " — [[][A-Z]+] [[](HIGH|MEDIUM)] ") > 0 && len(findings) == 0, ["The skeptic dismissed every finding, a HIGH or MEDIUM one among them: check the dismissals"], [])',
             ' + if(len(unresolvedObjections) > 0, ["Objections the debate could not settle: " + join(unresolvedObjections, "; ")], [])',
           ].join(''),
         },

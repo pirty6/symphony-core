@@ -608,9 +608,29 @@ describe('review: the skeptic (S11)', () => {
       agents: { wholeChange: soundWhole, skeptic: disposing('DROP') },
     });
     expect(state.findings).toEqual([]);
-    expect(state.openItems).toContain('The skeptic dismissed every finding: check the dismissals');
+    expect(state.openItems).toContain(
+      'The skeptic dismissed every finding, a HIGH or MEDIUM one among them: check the dismissals',
+    );
     expect(end).toBe('openQuestions');
     expect(r.state.outcome).toBe('partial');
+  });
+
+  it('dropping only LOW nitpicks on a sound change leaves it "Looks good"', () => {
+    const nitpick: Agent = (s) => ({
+      updates: {
+        newFindings: [
+          'src/core/engine.ts:120 — [CLEAN] [LOW] [N1] a shorter name would read better `attempts += 1`',
+        ],
+        reviewed: (s.files as string[]) ?? [],
+        attestations: attest(['CLEAN']),
+      },
+      verdict: v,
+    });
+    const { end, state } = play({
+      agents: { analyze: nitpick, wholeChange: soundWhole, skeptic: disposing('DROP') },
+    });
+    expect(state.dismissed).toHaveLength(1);
+    expect(end).toBe('clean');
   });
 
   it('a DROP must quote the code, and every finding gets a disposition, in order', () => {

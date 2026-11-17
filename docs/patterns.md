@@ -760,7 +760,7 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
      skeptic or the whole-change step), or an objection the debate could not settle;
    - with nothing found: **Could not verify** (partial) when findings' quotes are missing from this
      checkout; **Reviewed in part** (partial) when files were over the cap or not read whole;
-     **Not settled** (partial) when something is open, or the skeptic dropped every finding;
+     **Not settled** (partial) when something is open, or the skeptic dropped every finding, a HIGH or MEDIUM one among them;
      **Looks good** (success) only otherwise. An objection the debate could not settle counts
      as something open.
 
