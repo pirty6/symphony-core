@@ -182,7 +182,7 @@ npm run cli -- fork <runs>/fix/<file>.json --at 4    # keep steps 1-3, play the 
 npm run cli -- runs [--all]                          # saved runs (in-progress = resumable); --all adds demo runs
 npm run cli -- where [runs|evals|memory]             # where this workspace's runs are kept: <runs>
 npm run cli -- runs --prune [--dry-run]              # delete old demo runs, compact old runs (see Cleaning up)
-npm run cli -- eval [--task a,b] [-n 3] [--compare <report.json>] [--with key=value]   # tasks with known answers (see Quality, cost and speed)
+npm run cli -- eval [--task a,b] [-n 3] [--compare <report.json>] [--with key=value] [--carry-memory]   # tasks with known answers (see Quality, cost and speed)
 ```
 
 ## Concepts
