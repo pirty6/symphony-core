@@ -25,6 +25,22 @@ are caught, stopping and resuming) · [the maestro](docs/maestro.md) (a search e
 and its log) · [the algorithm flows](docs/patterns.md) (investigate, fix, refactor, implement,
 backlog, review, analyze; diagrams generated from the patterns by `npm run docs`).
 
+## Core pillars
+
+Every feature has to serve at least one of these pillars without making another one measurably
+worse. A feature that serves none, or that costs more than it gives, is removed. Measure with
+`npm run cli -- eval … --compare <baseline>` (see [the trials](docs/trials.md)).
+
+| Pillar | What it means | How it is measured |
+|---|---|---|
+| **Correctness** | Answers are right, cited and checked against the source | eval solved rate, valid citations, review recall and false flags |
+| **Determinism and auditability** | The same score takes the same path; every run is a record you can replay and verify | `verify` and replay of saved runs, the engine's no-repeat and shape checks |
+| **Speed** | A run finishes soon enough to wait for | wall time and model time per run and per step |
+| **Token cost** | As few tokens and premium requests as the answer needs | input, cached and output tokens, premium requests per run |
+| **Memory** | Runs learn from earlier runs, and Symphony stays light on RAM and disk | solved and cost with memory empty vs seeded; saved run and memory sizes |
+| **Visibility** | You can watch the flow and the data live, and stop or answer mid-run | the studio and `get_run` show every step, prompt and answer as it happens |
+| **Ease of use** | Clone, `npm install`, run: no pnpm, no build step, no extra setup | a fresh clone works on Node.js alone (CI's npm job) |
+
 ## Quick start (only Node.js needed)
 
 Requires **Node.js 20.19+ or 22.12+** (npm ships with Node). No pnpm, no build step.
