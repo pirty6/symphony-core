@@ -22,7 +22,9 @@ describe('sign-ins off: nothing a step runs acts as the host', () => {
     );
     expect(env.PATH).toBe('/bin');
     expect(env.HOME).toBe('/h');
-    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK']) expect(env[k]).toBeUndefined();
+    expect(env).not.toHaveProperty('GH_TOKEN');
+    expect(env).not.toHaveProperty('GITHUB_TOKEN');
+    expect(env).not.toHaveProperty('SSH_AUTH_SOCK');
     expect(env.GH_CONFIG_DIR).toBe(join('/tmp/empty', 'gh'));
     expect(env.AZURE_CONFIG_DIR).toBe(join('/tmp/empty', 'azure'));
   });
@@ -63,9 +65,13 @@ describe('sign-ins only here (SYMPHONY_SIGNINS=here)', () => {
     expect(signInsOff(envForRun({}, false))).toBe(false);
   });
   it('this computer is its loopback address', () => {
-    for (const a of ['127.0.0.1', '::1', '::ffff:127.0.0.1'])
-      expect(fromThisComputer(a)).toBe(true);
-    for (const a of ['198.168.10.4', '192.168.1.5', '::ffff:10.0.0.2', undefined])
-      expect(fromThisComputer(a)).toBe(false);
+    expect(['127.0.0.1', '::1', '::ffff:127.0.0.1'].map(fromThisComputer)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(
+      ['198.168.10.4', '192.168.1.5', '::ffff:10.0.0.2', undefined].map(fromThisComputer),
+    ).toEqual([false, false, false, false]);
   });
 });
