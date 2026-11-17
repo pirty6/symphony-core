@@ -73,6 +73,12 @@ const hook = (chain: readonly ChainStep[], from: ExecutableScore = score) => {
   });
   return { next, started };
 };
+/** The request the backlog's next item starts with, after an item that ended so. */
+const nextRequestAfter = async (outcome: string) => {
+  const { next, started } = hook([item('second')]);
+  await next!(end(outcome));
+  return started[0]!.score.context.request;
+};
 
 describe('chainNext with backlog items', () => {
   it('a successful backlog run starts its first item with the others queued behind it', async () => {
@@ -105,11 +111,8 @@ describe('chainNext with backlog items', () => {
   });
 
   it('an item plays after a failed or partial item, with its own request (not the last result)', async () => {
-    for (const outcome of ['failed', 'partial']) {
-      const { next, started } = hook([item('second')]);
-      await next!(end(outcome));
-      expect(started[0]!.score.context.request).toBe('second');
-    }
+    expect(await nextRequestAfter('failed')).toBe('second');
+    expect(await nextRequestAfter('partial')).toBe('second');
   });
 
   it('a chained pattern does not play after a failure, and stopping a run stops every item', async () => {
