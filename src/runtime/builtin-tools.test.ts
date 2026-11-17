@@ -158,6 +158,7 @@ describe('sources.catalog', () => {
       'git.pr',
       'git.diff',
       'diff.scan',
+      'pillars.scan',
       'evidence.check',
       'patterns.list',
       'patterns.route',

@@ -18,6 +18,7 @@ export const TOOL_OUTPUTS: Readonly<Record<string, readonly string[]>> = {
   'git.diff': ['diff', 'hash', 'files'],
   'git.pr': ['number', 'base', 'files', 'paths', 'error'],
   'diff.scan': ['diff', 'smells', 'masking', 'error'],
+  'pillars.scan': ['lenses', 'testBreaks', 'error'],
   'files.read': ['files'],
   'evidence.check': ['valid', 'invalid', 'checked'],
   'patterns.list': ['names', 'summaries', 'catalog'],

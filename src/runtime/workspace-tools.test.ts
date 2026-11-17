@@ -323,4 +323,23 @@ describe('diff.scan', { timeout: 30_000 }, () => {
     const unknown = await tool('diff.scan').run({ range: 'nope..HEAD' }, ctx(d));
     expect(unknown.error).not.toBe('');
   });
+
+  it('briefs each lens asked for, with the branches found inside the changed test bodies', async () => {
+    const d = dir();
+    writeFileSync(join(d, 'a.js'), 'export const a = 1;\n');
+    execFileSync('git', ['-C', d, 'add', '.']);
+    commitAll(d);
+    writeFileSync(
+      join(d, 'a.test.js'),
+      "it('reads a', () => {\n  if (a) expect(a).toBe(1);\n});\n",
+    );
+    const out = await tool('pillars.scan').run(
+      { range: '', pillars: ['TESTS', 'SECURITY'] },
+      ctx(d),
+    );
+    const lenses = out.lenses as string[];
+    expect(lenses.map((l) => l.split(' ')[0])).toEqual(['SECURITY', 'TESTS']);
+    expect(out.testBreaks).toEqual(["a.test.js:2 — an if inside the test 'reads a' (UT-3.2)"]);
+    expect(lenses[1]).toContain("- a.test.js:2 — an if inside the test 'reads a' (UT-3.2)");
+  });
 });

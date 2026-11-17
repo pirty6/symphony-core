@@ -4,7 +4,9 @@
  * facts, not an AI's report. Commands come from the run inputs or the
  * project's own test script, never from the AI.
  */
-import { scanDiff } from '../core/diffscan.js';
+import { filesOf, scanDiff, TEST_FILE } from '../core/diffscan.js';
+import { lensLeads, testBodyBreaks } from '../core/lensscan.js';
+import { CODE_PILLARS, lensBrief } from '../core/pillars.js';
 import { checkCitations } from './evidence.js';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -298,29 +300,65 @@ const GIT_RANGE = /^[\w./~^@{}-]+(\.{2,3}[\w./~^@{}-]+)?$/;
  * empty), cut to MAX_DIFF with what was cut named, and scanned whole for smells and changes that
  * may hide a failing test (core/diffscan).
  */
-export async function scanRange(ctx: ToolContext, range: string): Promise<Record<string, unknown>> {
-  const none = { diff: '', smells: [], masking: [] };
+/** The whole diff of a git revision or range, or of the uncommitted changes when it is empty. */
+async function rangeDiff(
+  ctx: ToolContext,
+  range: string,
+): Promise<{ diff: string; error: string }> {
   try {
-    if (!range.trim()) {
-      const { diff } = await workspaceDiff(ctx);
-      return { ...none, ...scanDiff(diff), diff, error: '' };
-    }
+    if (!range.trim()) return { diff: (await workspaceDiff(ctx)).diff, error: '' };
     if (!GIT_RANGE.test(range) || range.startsWith('-'))
-      return { ...none, error: `not a git revision or range: ${range}` };
+      return { diff: '', error: `not a git revision or range: ${range}` };
     const { stdout } = await git(
       'git',
       ['--no-pager', 'diff', '--no-color', '--no-ext-diff', range, '--', '.', NOT_THE_EDIT],
       { cwd: ctx.workspace, maxBuffer: 64 * 1024 * 1024, signal: ctx.signal },
     );
-    const diff = stdout.trimEnd();
-    return {
-      ...scanDiff(diff),
-      diff: diff.length > MAX_DIFF ? truncateDiff(diff, MAX_DIFF) : diff,
-      error: '',
-    };
+    return { diff: stdout.trimEnd(), error: '' };
   } catch (e) {
-    return { ...none, error: (e as Error).message.split('\n')[0] ?? 'git diff failed' };
+    return { diff: '', error: (e as Error).message.split('\n')[0] ?? 'git diff failed' };
   }
+}
+
+export async function scanRange(ctx: ToolContext, range: string): Promise<Record<string, unknown>> {
+  const { diff, error } = await rangeDiff(ctx, range);
+  if (error) return { diff: '', smells: [], masking: [], error };
+  return {
+    ...scanDiff(diff),
+    diff: diff.length > MAX_DIFF ? truncateDiff(diff, MAX_DIFF) : diff,
+    error: '',
+  };
+}
+
+/** What the change's test files hold inside their test bodies that a test must not. */
+async function changedTestBreaks(ctx: ToolContext, diff: string): Promise<string[]> {
+  const paths = filesOf(diff)
+    .filter((f) => !f.deleted && TEST_FILE.test(f.path))
+    .map((f) => f.path);
+  const texts = await Promise.all(
+    paths.map((p) => readFile(join(ctx.workspace, p), 'utf8').catch(() => '')),
+  );
+  return paths.flatMap((p, i) => testBodyBreaks(p, texts[i]!));
+}
+
+/**
+ * The lenses' briefs for a change: per pillar asked for, its rulebook and the scan's leads,
+ * with the test-body breaks of every changed test file read whole.
+ */
+export async function lensScan(
+  ctx: ToolContext,
+  range: string,
+  pillars: readonly string[],
+): Promise<Record<string, unknown>> {
+  const { diff, error } = await rangeDiff(ctx, range);
+  if (error) return { lenses: [], testBreaks: [], error };
+  const testBreaks = await changedTestBreaks(ctx, diff);
+  const leads = lensLeads(diff);
+  leads.TESTS.push(...testBreaks);
+  const lenses = CODE_PILLARS.filter((p) => pillars.includes(p.id)).map((p) =>
+    lensBrief(p, leads[p.id]),
+  );
+  return { lenses, testBreaks, error: '' };
 }
 
 export function workspaceTools(): ToolSpec[] {
@@ -410,6 +448,18 @@ export function workspaceTools(): ToolSpec[] {
         'The diff of a git revision or range (empty: the uncommitted changes), cut at 30,000 characters with what was cut named, and scanned for smells in added lines and for test changes that may hide a failure: { diff, smells, masking, error }.',
       outputs: ['diff', 'smells', 'masking', 'error'],
       run: (args, ctx) => scanRange(ctx, typeof args.range === 'string' ? args.range : ''),
+    },
+    {
+      name: 'pillars.scan',
+      description:
+        "One brief per pillar lens for a git range (empty: the uncommitted changes): its rulebook and the leads a deterministic scan found, with the branches, loops, sleeps and clocks inside the changed test files' test bodies: { lenses, testBreaks, error }.",
+      outputs: ['lenses', 'testBreaks', 'error'],
+      run: (args, ctx) =>
+        lensScan(
+          ctx,
+          typeof args.range === 'string' ? args.range : '',
+          Array.isArray(args.pillars) ? args.pillars.map(String) : [],
+        ),
     },
     {
       name: 'evidence.check',
