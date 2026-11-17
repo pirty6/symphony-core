@@ -817,6 +817,7 @@ flowchart TD
   n_endIs_notVerified{"Could not verify?"}
   n_endIs_partlyReviewed{"Reviewed in part?"}
   n_endIs_openQuestions{"Not settled?"}
+  n_lensPhase[["Pillar lenses · 7 steps"]]
   n_chasePhase[["Settle open points · 5 steps"]]
   n_debatePhase[["Challenge the review · 16 steps"]]
   n_start --> n_prInfo
@@ -850,7 +851,8 @@ flowchart TD
   n_wholeOk -->|"no"| n_noteWholeFailed
   n_noteWholeFailed --> n_debatePhase
   n_checkWhole --> n_mergeWhole
-  n_mergeWhole --> n_chasePhase
+  n_mergeWhole --> n_lensPhase
+  n_lensPhase --> n_chasePhase
   n_chasePhase --> n_debatePhase
   n_chasePhase -.-> n_wholeChange
   n_debatePhase --> n_summarize
@@ -896,6 +898,7 @@ flowchart TD
 
 | Phase | What it does | Steps |
 | --- | --- | --- |
+| Pillar lenses | Security, clean code, tests (the critical path), performance and determinism: a scan, then one reviewer per pillar | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play |
 | Settle open points | investigate's gap research: unclear claims and objections, then judged again | What to settle → Research them? → Settle open points → Check citations → Record what was found |
 | Challenge the review | A second reviewer (4), the skeptic (≥2) and the pragmatist (≥pragmatistFrom), as in investigate | Second reviewer? (4) → Second reviewer → Check citations → Record its issues → Challenge? (≥2) → Skeptic → Challenged? → Note it → Pragmatist? (≥pragmatistFrom) → Pragmatist → Take the challenge → Apply the challenge → Real objections? → Research them? (rounds left, last one found something) → Research objections → Report open objections |
 

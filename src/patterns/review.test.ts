@@ -1098,3 +1098,64 @@ describe('finding ids across rounds (seen live)', () => {
     ]);
   });
 });
+
+/** Why the lens step's answers were sent back. */
+const lensRejections = (r: ReturnType<typeof play>['r']) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'lens' ? e.errors : [],
+  );
+
+describe('review through the pillar lenses', () => {
+  /** The Tests lens answers with these units, verdicts and findings; the others find nothing. */
+  const testsLens =
+    (units: string[], verdicts: string[], findings: string[] = []): Agent =>
+    (s) => {
+      const pillar = String((s.lenses as string[])[0]).split(' ')[0];
+      const tests = pillar === 'TESTS';
+      return {
+        updates: {
+          lensFindings: tests ? findings : [],
+          lensNotes: [`${pillar}: NONE — read the change`],
+          criticalUnits: tests ? units : [],
+          unitVerdicts: tests ? verdicts : [],
+        },
+        verdict: v,
+      };
+    };
+
+  it('plays after the whole change, and an untested critical unit is a finding and an adverse verdict', () => {
+    const unit =
+      'U1 src/core/engine.ts:120 — DOMAIN — counts the attempts that decide when a step gives up';
+    const finding =
+      'src/core/engine.ts:120 — [TEST] [MEDIUM] [UT-1.1] the retry limit has no test `attempts += 1`';
+    const { ran, state } = play({
+      agents: {
+        lens: testsLens([unit], ['U1 UNTESTED — no test runs a step past its retries'], [finding]),
+      },
+    });
+    expect(ran.indexOf('lens')).toBeGreaterThan(ran.indexOf('mergeWhole'));
+    expect(state.findings).toContainEqual(expect.stringMatching(/\[TEST\] \[MEDIUM\] \[UT-1\.1\]/));
+    expect(state.adverseVerdicts).toContain('U1 UNTESTED — no test runs a step past its retries');
+  });
+
+  it('rejects a Tests lens that leaves a critical unit without a verdict', () => {
+    const unit = 'U1 src/core/engine.ts:120 — DOMAIN — counts the attempts';
+    const { r } = play({ agents: { lens: testsLens([unit], []) } });
+    expect(lensRejections(r).join()).toMatch(/one unitVerdicts entry per criticalUnits entry/);
+  });
+
+  it('rejects an untested unit that is not also a TEST finding', () => {
+    const unit = 'U1 src/core/engine.ts:120 — DOMAIN — counts the attempts';
+    const { r } = play({ agents: { lens: testsLens([unit], ['U1 UNTESTED — none']) } });
+    expect(lensRejections(r).join()).toMatch(/each WEAK or UNTESTED unit as a \[TEST\] finding/);
+  });
+
+  it('rejects a lens that does not say what it examined', () => {
+    const silent: Agent = () => ({
+      updates: { lensFindings: [], lensNotes: [], criticalUnits: [], unitVerdicts: [] },
+      verdict: v,
+    });
+    const { r } = play({ agents: { lens: silent } });
+    expect(lensRejections(r).join()).toMatch(/one lensNotes entry per lens/);
+  });
+});
