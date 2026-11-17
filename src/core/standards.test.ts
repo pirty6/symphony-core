@@ -45,8 +45,9 @@ describe('codeStandardSection', () => {
     const review = codeStandardSection('review');
     const [lastId, lastGloss] = CLEAN_CODE_IDS.at(-1)!;
     expect(review.at(-1)).toBe(`- ${lastId}: ${lastGloss}`);
-    for (const [id] of CLEAN_CODE_IDS)
-      expect(review).toContainEqual(expect.stringMatching(`^- ${id}: `));
+    expect(review).toEqual(
+      expect.arrayContaining(CLEAN_CODE_IDS.map(([id]) => expect.stringMatching(`^- ${id}: `))),
+    );
     expect(codeStandardSection('write').join('\n')).not.toContain('G5');
   });
 });
