@@ -240,7 +240,7 @@ export async function sourceCatalog(
     if (account) {
       entries.push([
         'azure',
-        `Azure DevOps and Azure data, read-only, signed in as ${account}: az list/show/query commands (e.g. az repos policy list, az pipelines runs list/show, az devops invoke GETs for build timelines and test runs) and kusto_query(cluster, database, query) for Kusto tables (e.g. test health)`,
+        `Azure DevOps and Azure data, read-only, signed in as ${account}: az list/show/query commands (e.g. az repos policy list, az pipelines runs list/show, az devops invoke GETs for build timelines and test runs)`,
       ]);
     }
   }

@@ -528,7 +528,7 @@ export class Run {
     return { ...played, transcript: { ...played.transcript, preloaded } };
   }
 
-  /** What tools get: the run's context (memoryRoot too), its id and a signal. */
+  /** What tools get: the run's context, its id and a signal. */
   private toolContext(signal: AbortSignal) {
     return {
       ...this.opts.toolContext,

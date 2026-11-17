@@ -369,7 +369,6 @@ describe('main', () => {
       'classify',
       'propose',
       'skeptic',
-      'pragmatist',
       'critic',
       'revise',
       'cover',

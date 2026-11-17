@@ -25,6 +25,22 @@ are caught, stopping and resuming) · [the maestro](docs/maestro.md) (a search e
 and its log) · [the algorithm flows](docs/patterns.md) (investigate, fix, refactor, implement,
 backlog, review, analyze; diagrams generated from the patterns by `npm run docs`).
 
+## Core pillars
+
+Every feature has to serve at least one of these pillars without making another one measurably
+worse. A feature that serves none, or that costs more than it gives, is removed. Measure with
+`npm run cli -- eval … --compare <baseline>` (see [the trials](docs/trials.md)).
+
+| Pillar | What it means | How it is measured |
+|---|---|---|
+| **Correctness** | Answers are right, cited and checked against the source | eval solved rate, valid citations, review recall and false flags |
+| **Determinism and auditability** | The same score takes the same path; every run is a record you can replay and verify | `verify` and replay of saved runs, the engine's no-repeat and shape checks |
+| **Speed** | A run finishes soon enough to wait for | wall time and model time per run and per step |
+| **Token cost** | As few tokens and premium requests as the answer needs | input, cached and output tokens, premium requests per run |
+| **Memory** | Runs learn from earlier runs, and Symphony stays light on RAM and disk | solved and cost with memory empty vs seeded; saved run and memory sizes |
+| **Visibility** | You can watch the flow and the data live, and stop or answer mid-run | the studio and `get_run` show every step, prompt and answer as it happens |
+| **Ease of use** | Clone, `npm install`, run: no pnpm, no build step, no extra setup | a fresh clone works on Node.js alone (CI's npm job) |
+
 ## Quick start (only Node.js needed)
 
 Requires **Node.js 20.19+ or 22.12+** (npm ships with Node). No pnpm, no build step.
@@ -95,7 +111,7 @@ reuse that browser's cookie, so keep it on your own network (or put HTTPS in fro
 fallback) for runs started on this computer (a browser on localhost, the CLI, a VS Code chat) and
 treats every other machine as below. `SYMPHONY_SIGNINS=off` runs every step with none of your
 credentials: no GitHub, Copilot or Azure token, empty `gh` and `az` sign-ins, no git credential
-helper or SSH agent, no MCP servers and no Kusto tool, whatever command a step runs. Then start
+helper or SSH agent and no MCP servers, whatever command a step runs. Then start
 the studio for the network with `npm run studio -- --host 0.0.0.0` (to reach it by a name, e.g.
 `symphony.example.org`, also set `SYMPHONY_STUDIO_HOSTS=symphony.example.org`). Without
 `SYMPHONY_MODEL_URL`, runs with sign-ins off stop at once rather than use your Copilot account.
@@ -118,7 +134,7 @@ commands only).
 | Result | When a run ends, its result (the last data carried toward the end, e.g. `answer` and `openQuestions`) appears formatted at the top of the inspector. **Read full result** opens a wide reader with Copy and Download .md; long results open it automatically. Esc closes it. |
 | Timeline | Every engine event. Scrub back and forth; the canvas and inspector follow. |
 | Opening screen | With no pattern open (no `#pattern` in the URL) the canvas asks the maestro: describe the work and compose, or open a pattern from the quick links. **⌂ Home** in the sidebar comes back here (a run keeps playing; it stays under **Running now**). |
-| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, **Features** (the open pattern's switches: lean run (on by default), support judge, single-pass triage, hypotheses to readers, keep unchallenged sub-answers, pragmatist from, gap research; kept between visits and applied to every run you start, and to the runs the maestro composes, unless a run input says otherwise; patterns, features, the palette and saved runs fold from their titles and stay as you left them; the maestro box shows here once a pattern or run is open), and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). Offline-demo runs are hidden behind **Show N offline-demo runs**, so the list holds your real runs. **Running now** lists every run the server is playing, and the runs your VS Code chats play (tagged **chat**); click one to switch to it (its stream replays from the start). |
+| Library | **🎼 Ask the maestro** (it composes the score, you approve, then the studio follows the performance), patterns, a drag-and-drop palette, **Features** (the open pattern's switches: lean run (on by default), single-pass triage, hypotheses to readers, keep unchallenged sub-answers, pragmatist from, gap research; kept between visits and applied to every run you start, and to the runs the maestro composes, unless a run input says otherwise; patterns, features, the palette and saved runs fold from their titles and stay as you left them; the maestro box shows here once a pattern or run is open), and **saved runs** (open one to replay it; the studio re-runs the engine on the recorded answers and confirms it reproduces exactly). Offline-demo runs are hidden behind **Show N offline-demo runs**, so the list holds your real runs. **Running now** lists every run the server is playing, and the runs your VS Code chats play (tagged **chat**); click one to switch to it (its stream replays from the start). |
 
 Stop mid-process: **Pause** halts at the next gate, **breakpoints** (the dot on a node) halt
 before and after that node, **step mode** halts at every gate, and **Stop** aborts the live AI call
@@ -166,7 +182,7 @@ npm run cli -- fork <runs>/fix/<file>.json --at 4    # keep steps 1-3, play the 
 npm run cli -- runs [--all]                          # saved runs (in-progress = resumable); --all adds demo runs
 npm run cli -- where [runs|evals|memory]             # where this workspace's runs are kept: <runs>
 npm run cli -- runs --prune [--dry-run]              # delete old demo runs, compact old runs (see Cleaning up)
-npm run cli -- eval [--task a,b] [-n 3] [--compare <report.json>] [--with key=value]   # tasks with known answers (see Quality, cost and speed)
+npm run cli -- eval [--task a,b] [-n 3] [--compare <report.json>] [--with key=value] [--carry-memory]   # tasks with known answers (see Quality, cost and speed)
 ```
 
 ## Concepts
@@ -270,15 +286,14 @@ replayable:
    |---|---|
    | 1 | none if a pattern fits as is (pre-debated); proposer if new |
    | 2 | proposer + skeptic |
-   | 3 | proposer + skeptic + pragmatist |
+   | 3 | proposer + skeptic, on a stronger model |
    | 4 | + template-critic, who can reroute to another pattern once |
 
    A complexity you choose (`--complexity 1-4` in the CLI, the toolbar in the studio, `complexity`
    over MCP) wins over the classifier's rating, which is kept as `ratedComplexity`: you control
    the cost tier on every surface. The go-gate remains the backstop if you under-rate a request.
 
-   Their contracts are enforced, not requested: the pragmatist must triage **every** skeptic concern,
-   the critic's verdict must be CORRECT, WRONG or HYBRID and may only recommend real patterns.
+   Their contracts are enforced, not requested: the critic's verdict must be CORRECT, WRONG or HYBRID and may only recommend real patterns.
 
    **Library patterns are adapted, not rewritten.** The debate reads a compact outline of the chosen
    pattern (6-7x smaller than its definition) and writes an `adaptation`: guidance appended to
@@ -343,8 +358,8 @@ patterns without one (refactor, review, analyze), play at tier 2.
 debaters one tier smarter; `shiftUpTo` keeps a shifted step below a tier unless the run is
 already there (investigate's answer: Sonnet at complexity 3, Opus at 4). A step the run can do
 without (`skipWhenStuck`, the summary for people) says so and the run goes on when it runs out of
-attempts. It may also cap its reasoning effort (`maxEffort`): the maestro's propose,
-skeptic and pragmatist play at most `high`, so on tier 4 they use opus at `high` rather than `xhigh`
+attempts. It may also cap its reasoning effort (`maxEffort`): the maestro's propose
+and skeptic play at most `high`, so on tier 4 they use opus at `high` rather than `xhigh`
 (`SYMPHONY_EFFORT_CAPS=0` lifts the caps).
 
 | Tier | Default model (Copilot) |
@@ -736,8 +751,7 @@ solved rate or citation validity.
   those settings and the trial switches, so two reports compare as an A/B
   ([docs/trials.md](docs/trials.md)). What each investigate setting trades, and what backs it:
   [docs/settings.md](docs/settings.md). Investigate
-  fixtures also cover a real quote that does not support the claim, a stale lesson in memory
-  on unchanged files, a false hint, and a planted flaw played with the debate (complexity 3)
+  fixtures also cover a real quote that does not support the claim, a false hint, and a planted flaw played with the debate (complexity 3)
   and without (1), so what the debate catches is measured; `investigate-many-files` (240 files,
   several waves) is heavy and runs only when named, as is
   `maestro-planted-concern` (a concern the request leaves out, which the composed score must
@@ -771,19 +785,11 @@ solved rate or citation validity.
   read in full in batches of 4) and play them at once (at most 6 calls; the plan picks 1-6);
   answers are checked per part and merged in part order,
   so the result does not depend on timing and replays exactly.
-- **Memory across runs** (the workspace's memory, `symphony where memory`). Facts that passed the citation check are
-  remembered; a **Recall earlier runs** step brings back those that share words with the question
-  *and still match the files today* (re-checked at recall), plus lessons from earlier fix and
-  implement runs. They are leads to check, never evidence. The store stays clean: run tags such
-  as `[H2 against]` are stripped, only the newest fact per `path:line` is kept, one run writes at
-  most 200 facts (so a few runs cannot replace the whole store), lessons expire after 90 days (30
-  for one that names no file), when their files are gone or when one of them changes, a newer
-  lesson on the same problem replaces the older, each is shown with its date and commit, and
-  recall weights rare words above common ones. A run never recalls its own facts; investigate
-  recalls again with its sub-questions, and remembers a settled answer as a lesson built from its
-  checked sub-answers (only when it names a workspace file), plus the findings it cited. A run
-  playing in its own worktree reads and adds to your workspace's memory, not a copy deleted with
-  it. Classical replay never reuses an answer about a web page: what the page says may have
+- **Memory across runs** (the workspace's memory, `symphony where memory`) holds the maestro's
+  approved compositions only. Facts and lessons from earlier runs were remembered too, until a
+  measured run showed they did not help: later takes of the same question solved no more and
+  read 21% more ([the measurements](docs/trials.md#feature-measurements-2026-11-17)).
+  Classical replay never reuses an answer about a web page: what the page says may have
   changed, and the replay key only knows the workspace.
 - **Replays know who played.** A recorded answer is reused only for the same move *and* the same
   model settings (tier, requested model, effort); `compare` names "played by different models"
@@ -797,7 +803,7 @@ solved rate or citation validity.
   On by default, `=0` turns each off if a trial shows it makes things worse:
   `SYMPHONY_END_ON_SUBMIT` ends a step's session at its answer instead of letting the model reply
   to "stop now" (45% fewer premium requests in trial 13); `SYMPHONY_EFFORT_CAPS` applies the
-  steps' `maxEffort` (the maestro's propose, skeptic and pragmatist play at most `high`, so its
+  steps' `maxEffort` (the maestro's propose and skeptic play at most `high`, so its
   tier-4 debate composed 39% faster);
   `SYMPHONY_DELTA_REPAIR` lets a rejected `submit_result` be corrected by resending only the
   fields that change; `SYMPHONY_HEADER_IN_SYSTEM` sends each step's fixed instructions as the

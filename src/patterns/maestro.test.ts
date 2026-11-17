@@ -71,7 +71,7 @@ describe('maestro', () => {
     expect(maestroThen(bad.r.state.state)).toEqual([]);
   });
 
-  it('tier 3 debates with proposer, skeptic and pragmatist, then composes the fix score', () => {
+  it('tier 3 debates with proposer and skeptic, then composes the fix score', () => {
     const { score, r } = run('Fix the flaky login test that fails on CI');
     expect(r.state.outcome).toBe('success');
     const ran = nodesRun(r);
@@ -80,7 +80,6 @@ describe('maestro', () => {
         'classify',
         'propose',
         'skeptic',
-        'pragmatist',
         'revise',
         'validate',
         'context',
@@ -108,7 +107,6 @@ describe('maestro', () => {
     const { r } = run('fix it', { classify: classifyAs('fix', 2) });
     const ran = nodesRun(r);
     expect(ran).toEqual(expect.arrayContaining(['propose', 'skeptic', 'revise']));
-    expect(ran).not.toContain('pragmatist');
   });
 
   it('tier 4 adds the template-critic, who can reroute once', () => {
@@ -222,15 +220,12 @@ describe('maestro', () => {
     const r = feedbackOnce(true);
     expect(nodesRun(r).filter((n) => n === 'propose')).toHaveLength(2);
     expect(r.state.state).toMatchObject({ complexity: 3, round: 2 });
-    expect(nodesRun(r)).toContain('pragmatist');
   });
 
   it('go-gate feedback alone runs another round at the same tier', () => {
     const r = feedbackOnce(false);
     expect(nodesRun(r).filter((n) => n === 'propose')).toHaveLength(2);
     expect(r.state.state).toMatchObject({ complexity: 2, round: 2 });
-    // The same tier keeps the same (smaller) debate: no pragmatist at complexity 2.
-    expect(nodesRun(r)).not.toContain('pragmatist');
     expect(r.state.outcome).toBe('success');
   });
 });
@@ -413,11 +408,10 @@ describe('maestro adapts library patterns instead of rewriting them', () => {
     expect((r.state.state.finalPattern as Pattern).name).toBe('fix-reshaped');
   });
 
-  it('skips the pragmatist and the conductor when the skeptic finds nothing to change', () => {
+  it('skips the conductor when the skeptic finds nothing to change', () => {
     const quiet = () => ({ updates: { failureModes: [], contested: [], edits: [] }, verdict: v });
     const { r } = run('fix it', { classify: classifyAs('fix', 3), skeptic: quiet });
     expect(r.state.outcome).toBe('success');
-    expect(nodesRun(r)).not.toContain('pragmatist');
     expect(nodesRun(r)).not.toContain('revise');
     expect(
       (r.state.state.finalPattern as Pattern).nodes.find((n) => n.id === 'hypothesize'),
@@ -612,7 +606,6 @@ describe('maestro keeps a preset complexity', () => {
     expect(r.state.outcome).toBe('success');
     expect(r.state.state).toMatchObject({ complexity: 2, presetComplexity: 2, ratedComplexity: 3 });
     expect(nodesRun(r)).toContain('skeptic');
-    expect(nodesRun(r)).not.toContain('pragmatist');
   });
 
   it('without a preset the classifier decides; a preset also wins over a remembered composition', () => {

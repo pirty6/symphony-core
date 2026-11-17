@@ -35,6 +35,8 @@ export interface ProviderConfig {
   readonly headerInSystem?: boolean;
   readonly endOnSubmit?: boolean;
   readonly effortCaps?: boolean;
+  readonly leanTools?: boolean;
+  readonly toolOutputBytes?: number;
   /** Your own model server (SYMPHONY_MODEL_URL): what the 'local' provider plays on. */
   readonly localModel?: LocalModel;
   /** false: steps run with none of your credentials (SYMPHONY_SIGNINS=off). */
@@ -87,6 +89,8 @@ export function makeProvider(cfg: ProviderConfig): Provider {
       ...(cfg.headerInSystem ? { headerInSystem: true } : {}),
       ...(cfg.endOnSubmit ? { endOnSubmit: true } : {}),
       ...(cfg.effortCaps === false ? { effortCaps: false } : {}),
+      ...(cfg.leanTools ? { leanTools: true } : {}),
+      ...(cfg.toolOutputBytes ? { toolOutputBytes: cfg.toolOutputBytes } : {}),
       // Copilot is always Copilot: the model server plays only when 'local' is chosen.
       ...(cfg.provider === 'local' && cfg.localModel ? { localModel: cfg.localModel } : {}),
       ...(cfg.signIns === false ? { signIns: false } : {}),
@@ -116,6 +120,8 @@ export function envConfig(env: NodeJS.ProcessEnv): {
   headerInSystem?: boolean;
   endOnSubmit?: boolean;
   effortCaps?: boolean;
+  leanTools?: boolean;
+  toolOutputBytes?: number;
   localModel?: LocalModel;
   signIns?: boolean;
 } {
@@ -142,6 +148,11 @@ export function envConfig(env: NodeJS.ProcessEnv): {
     endOnSubmit: !off(env.SYMPHONY_END_ON_SUBMIT),
     // Steps' maxEffort (the maestro's tier-4 debate on 'high'); 0 plays each tier's own effort.
     effortCaps: !off(env.SYMPHONY_EFFORT_CAPS),
+    // Trials (off unless set): fewer tool schemas per call; big tool output to a file.
+    ...(on(env.SYMPHONY_LEAN_TOOLS) ? { leanTools: true } : {}),
+    ...(Number(env.SYMPHONY_TOOL_OUTPUT_BYTES) > 0
+      ? { toolOutputBytes: Number(env.SYMPHONY_TOOL_OUTPUT_BYTES) }
+      : {}),
   };
 }
 
@@ -165,6 +176,7 @@ export function localModelFrom(env: NodeJS.ProcessEnv): LocalModel | undefined {
 }
 
 const off = (v: string | undefined) => v !== undefined && /^(0|false|off|no)$/i.test(v.trim());
+const on = (v: string | undefined) => v !== undefined && /^(1|true|on|yes)$/i.test(v.trim());
 
 /** "deepRead=claude-opus-4.5,skeptic=claude-opus-5.5:high": a model (and effort) per step id. */
 export function parseNodeModels(text: string): Record<string, string> | undefined {

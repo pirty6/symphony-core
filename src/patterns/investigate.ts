@@ -15,16 +15,12 @@ import {
   CITE_BY_ID,
   citesFindings,
   EVIDENCE_STATE,
-  MEMORY_STATE,
   MERGE_FINDINGS,
-  recallMemory,
-  rememberCitedNode,
-  rememberLessonNode,
 } from './phases/evidence.js';
 
 const hypotheses = hypothesesPhase({
   subject: 'question',
-  context: ['hint', 'subQuestions', 'sourceInfo', 'knownFacts', 'pastLessons'],
+  context: ['hint', 'subQuestions', 'sourceInfo'],
 });
 const challenge = challengePhase({
   subject: 'question',
@@ -52,7 +48,6 @@ const challenge = challengePhase({
   resetOnReopen: 'gapRounds',
   // Each objection names the sub-question it bears on.
   about: 'subQuestions',
-  rememberChecked: false,
 });
 
 /** Most independent parts one investigation answers side by side. */
@@ -139,14 +134,6 @@ const PLAIN_SOURCES = [
   'doubts',
 ] as const;
 
-const LESSON_INPUTS = {
-  problem: 'question',
-  // The checked sub-answers, whole: not answer prose cut at a length.
-  cause: 'subAnswers',
-  files: 'citedFindings',
-  open: 'openQuestions',
-} as const;
-
 /** Re-counted after every merge of findings: the tally the next readers steer by. */
 const STATUS = [
   { field: 'hypothesisStatus', expr: 'stances(findings, hypotheses)' },
@@ -221,7 +208,6 @@ const CHASE = chaseSteps({
       message: 'No hypotheses were given: do not tag findings with [H…].',
     },
   ],
-  remember: false,
   merge: [
     ...MERGE_FINDINGS,
     ...STATUS,
@@ -363,12 +349,6 @@ export const investigate: Pattern = {
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
       { name: 'sourceInfo', type: 'string[]', description: 'How to use each source' },
       { name: 'subQuestions', type: 'string[]', description: 'Parts of the question to answer' },
-      { name: 'planFacts', type: 'string[]', description: 'Facts recalled for the sub-questions' },
-      {
-        name: 'planLessons',
-        type: 'string[]',
-        description: 'Lessons recalled for the sub-questions',
-      },
       {
         name: 'subAnswers',
         type: 'string[]',
@@ -657,32 +637,6 @@ export const investigate: Pattern = {
           'Files of the triage batch the engine gave whole (engine-filled; empty without a record)',
       },
       {
-        name: 'supportJudge',
-        type: 'string',
-        initial: 'off',
-        description:
-          "Does each cited finding's quote support its claim? off; shadow (judged and reported, the outcome unchanged); enforce (unsupported ones make the answer partial). Off until calibrated.",
-      },
-      {
-        name: 'judgeItems',
-        type: 'string[]',
-        description:
-          'Cited findings the judge can check: workspace path:line ones, with their quotes',
-      },
-      {
-        name: 'supportRulings',
-        type: 'string[]',
-        description:
-          'One per judgeItems entry, in order: "F12: SUPPORTED — why" or "F12: UNSUPPORTED — why"',
-      },
-      { name: 'unsupportedIds', type: 'string[]', description: 'Cited findings ruled UNSUPPORTED' },
-      { name: 'judgeBatch', type: 'number', initial: 40, description: 'Findings per judge call' },
-      {
-        name: 'factsToKeep',
-        type: 'string[]',
-        description: 'Cited findings remembered for later runs: all but the ones ruled unsupported',
-      },
-      {
         name: 'readerHypotheses',
         type: 'boolean',
         initial: true,
@@ -738,7 +692,6 @@ export const investigate: Pattern = {
         description: 'All checked evidence, each with its id (F<n>) and location',
       },
       ...EVIDENCE_STATE,
-      ...MEMORY_STATE,
       { name: 'gaps', type: 'string[]', description: 'Sub-questions without enough evidence' },
       {
         name: 'assessment',
@@ -851,7 +804,7 @@ export const investigate: Pattern = {
       id: 'planPhase',
       label: 'Plan research',
       description: 'Available sources, sub-questions, which evidence applies',
-      nodes: ['applyLean', 'catalog', 'plan', 'recallPlan', 'mergeRecall', 'queue'],
+      nodes: ['applyLean', 'catalog', 'plan', 'queue'],
     },
     { ...hypotheses.group, nodes: [...hypotheses.group.nodes, 'leanComplexity'] },
     {
@@ -962,19 +915,6 @@ export const investigate: Pattern = {
       ],
     },
     challenge.group,
-    {
-      id: 'judgePhase',
-      label: 'Support judge',
-      description: "Off by default: does each cited finding's quote back its claim?",
-      nodes: [
-        'useJudge',
-        'takeJudgeItems',
-        'judgeContext',
-        'hasJudgeItems',
-        'judgeSupport',
-        'splitRulings',
-      ],
-    },
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
@@ -1003,26 +943,6 @@ export const investigate: Pattern = {
           field: 'complexity',
           expr: 'if(lean && !complexityChosen && complexity > 3, 3, complexity)',
         },
-      ],
-    },
-    recallMemory('recall', 'question'),
-    {
-      // Again with the sub-questions: the raw question is a poor query for the parts of it.
-      id: 'recallPlan',
-      kind: 'tool',
-      label: 'Recall for the sub-questions',
-      tool: 'memory.recall',
-      inputs: { query: 'subQuestions' },
-      output: { facts: 'planFacts', lessons: 'planLessons' },
-    },
-    {
-      id: 'mergeRecall',
-      kind: 'compute',
-      label: 'Merge recalled leads',
-      assign: [
-        // The same caps as one recall: more related leads are distractors, not help.
-        { field: 'knownFacts', expr: 'take(unique(knownFacts + planFacts), 12)' },
-        { field: 'pastLessons', expr: 'take(unique(pastLessons + planLessons), 6)' },
       ],
     },
     {
@@ -1202,7 +1122,6 @@ export const investigate: Pattern = {
         'leadHypotheses',
         'repoFileCount',
         'maxTriageFiles',
-        'knownFacts',
         'candidateFiles',
       ],
       writes: ['scopeFiles', 'scopeReasons', 'scopeQueries'],
@@ -1325,7 +1244,7 @@ export const investigate: Pattern = {
     },
     triageStep(false),
     triageStep(true),
-    checkFindings('checkTriage', 'newFindings', false),
+    checkFindings('checkTriage', 'newFindings'),
     {
       id: 'mergeTriage',
       kind: 'compute',
@@ -1442,7 +1361,7 @@ export const investigate: Pattern = {
         { field: 'deepBatchSize', expr: '1' },
       ],
     },
-    checkFindings('checkDeep', 'newFindings', false),
+    checkFindings('checkDeep', 'newFindings'),
     {
       id: 'mergeDeep',
       kind: 'compute',
@@ -1522,7 +1441,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkParallel', 'newFindings', false),
+    checkFindings('checkParallel', 'newFindings'),
     {
       id: 'mergeParallel',
       kind: 'compute',
@@ -1566,7 +1485,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkExperiment', 'newFindings', false),
+    checkFindings('checkExperiment', 'newFindings'),
     {
       id: 'mergeExperiment',
       kind: 'compute',
@@ -1633,7 +1552,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkSource', 'newFindings', false),
+    checkFindings('checkSource', 'newFindings'),
     {
       id: 'mergeSource',
       kind: 'compute',
@@ -1842,7 +1761,7 @@ export const investigate: Pattern = {
         },
       ],
     },
-    checkFindings('checkGapRuns', 'newFindings', false),
+    checkFindings('checkGapRuns', 'newFindings'),
     {
       id: 'mergeGapRuns',
       kind: 'compute',
@@ -2059,94 +1978,9 @@ export const investigate: Pattern = {
           // Whatever the answer rests on, wherever it cites it: summary, parts, sub-answers, resolutions.
           expr: 'withIds(findings, refs(answer + " " + join(partAnswers + subAnswers + objectionResolutions, " ")))',
         },
-        { field: 'factsToKeep', expr: 'citedFindings' },
         {
           field: 'answer',
           expr: `if(len(partAnswers) > 0, answer + "\n\n---\n\n" + join(partAnswers, "\n\n"), answer) + "\n\n" + ${COVERAGE}`,
-        },
-      ],
-    },
-    {
-      id: 'useJudge',
-      kind: 'condition',
-      label: 'Support judge?',
-      expression: 'supportJudge != "off" && len(citedFindings) > 0',
-    },
-    {
-      id: 'takeJudgeItems',
-      kind: 'compute',
-      label: 'What the judge can check',
-      // Workspace citations carry a checked quote; web and other sources do not (uncheckable).
-      assign: [
-        {
-          field: 'judgeItems',
-          expr: `pick(citedFindings, positions(citedFindings, "${FILE_CITE}"))`,
-        },
-      ],
-    },
-    {
-      // The lines around each quote: a claim is judged on what the code there shows, so an
-      // honest reading of it is not flagged for using other words, and a misreading is caught
-      // by the line that contradicts it.
-      id: 'judgeContext',
-      kind: 'tool',
-      label: 'Lines around each quote',
-      tool: 'evidence.context',
-      inputs: { findings: 'judgeItems' },
-      output: { items: 'judgeItems' },
-    },
-    {
-      id: 'hasJudgeItems',
-      kind: 'condition',
-      label: 'Any to judge?',
-      expression: 'len(judgeItems) > 0',
-    },
-    {
-      id: 'judgeSupport',
-      kind: 'agent',
-      role: 'assessor',
-      label: 'Support judge',
-      // Isolated and on another family: it sees each quote and its claim, never the question or
-      // the answer, so it judges support, not plausibility.
-      isolated: true,
-      otherModel: true,
-      directive:
-        'For EVERY entry of `judgeItems`, in order, write one `supportRulings` entry. Each entry is a claim, its quote (in backticks) and the numbered lines around the quote in that file (`context`). Write "F<n>: SUPPORTED — <why>" if the quote, read with those lines, shows what the claim says: a claim may describe the code in its own words or draw a conclusion, as long as the lines shown bear it out. Write "F<n>: UNSUPPORTED — <why>" if the lines contradict the claim (e.g. a limit the loop never reaches), are about something else, or the claim adds a number, name or condition they do not show. Do not rule UNSUPPORTED only because the claim uses other words than the quote. Judge each one on its own lines and claim only. Start each entry with the id of its finding and nothing before it.',
-      reads: ['judgeItems'],
-      writes: ['supportRulings'],
-      fanOut: { over: 'judgeItems', per: 'judgeBatch', agents: 'agents' },
-      retries: 2,
-      maxVisits: 1,
-      checks: [
-        {
-          // By the id each ruling starts with, in order: an id named inside a reason does not count.
-          expr: 'heads(supportRulings, "^F[0-9]+") == ids(judgeItems)',
-          message:
-            "Give exactly one supportRulings entry per entry of judgeItems, in the same order, each starting with that finding's id.",
-        },
-        {
-          expr: 'len(unmatched(supportRulings, "^F[0-9]+: (SUPPORTED|UNSUPPORTED)( |$)")) == 0',
-          message: 'Write each entry as "F<n>: SUPPORTED — why" or "F<n>: UNSUPPORTED — why".',
-        },
-      ],
-    },
-    {
-      id: 'splitRulings',
-      kind: 'compute',
-      label: 'Record the rulings',
-      assign: [
-        {
-          field: 'unsupportedIds',
-          expr: 'heads(without(supportRulings, unmatched(supportRulings, "^F[0-9]+: UNSUPPORTED")), "^F[0-9]+")',
-        },
-        // What later runs remember: never a finding whose quote does not back its claim.
-        {
-          field: 'factsToKeep',
-          expr: 'without(citedFindings, withIds(citedFindings, unsupportedIds))',
-        },
-        {
-          field: 'doubts',
-          expr: `doubts + if(len(unsupportedIds) > 0, ["The support judge found these cited findings unsupported by their own quotes" + if(supportJudge == "shadow", " (shadow mode: reported, the outcome unchanged)", "") + ": " + join(without(supportRulings, unmatched(supportRulings, "^F[0-9]+: UNSUPPORTED")), "; ")], []) + if(len(citedFindings) > len(judgeItems), [text(len(citedFindings) - len(judgeItems)) + " cited findings cite web pages or other sources: the support judge cannot check them"], [])`,
         },
       ],
     },
@@ -2156,7 +1990,7 @@ export const investigate: Pattern = {
       label: 'Settled?',
       // Open objections, open sub-questions or low confidence are said in the outcome, not only
       // in the text. Confidence is the assessor's (from before any debate), so it is not enough.
-      expression: `(supportJudge != "enforce" || len(unsupportedIds) == 0) && len(unresolvedObjections) == 0 && len(${OPEN_ENTRIES('subAnswers')}) == 0 && len(${OPEN_ENTRIES('objectionResolutions')}) == 0 && confidence >= 0.5`,
+      expression: `len(unresolvedObjections) == 0 && len(${OPEN_ENTRIES('subAnswers')}) == 0 && len(${OPEN_ENTRIES('objectionResolutions')}) == 0 && confidence >= 0.5`,
     },
     {
       id: 'noteDoubts',
@@ -2182,7 +2016,7 @@ export const investigate: Pattern = {
       label: 'How to verify what is open',
       directive: `For each entry of \`openQuestions\`, in order, write one \`verification\` entry saying exactly how to settle it, so a person or a next run can do it without guessing:
 - "V<n> READ — the files to read or the search to run (e.g. rg -n 'retries' playwright.config.ts) — what it would show";
-- "V<n> QUERY — the exact command or query: an az command (az repos policy list …, az pipelines runs list …) or a Kusto query with its cluster and database (kusto_query: cluster bohemiahealth, database …, query TestHealthV2 | where …) — what it would show";
+- "V<n> QUERY — the exact command or query: an az or gh command (az repos policy list …, az pipelines runs list …, gh run list …) — what it would show";
 - "V<n> RUN — the exact command, targeted: one test file or test name, its repeats, retries off, a timeout (never the whole suite) — what result settles it".
 Find real paths, test names and table names with read-only tools first. Use the sources in \`sourceInfo\`; when settling it needs access this run did not have, say what access, and the query to run once it is there.`,
       reads: ['question', 'openQuestions', 'sourceInfo', 'findingsBrief', 'hint'],
@@ -2224,26 +2058,14 @@ Find real paths, test names and table names with read-only tools first. Use the 
       skipWhenStuck: PLAIN_SKIP,
       checks: [...PLAIN_CHECKS],
     },
-    // Only a settled answer teaches: what was asked and how it ended, a lead for later questions
-    // like it, stale once its cited files change. An unsettled one leaves no lesson.
-    // Only one that names a workspace file: a file-less lesson cannot go stale with the code.
-    rememberLessonNode('learnAnswer', 'answered', LESSON_INPUTS, {
-      outcome: 'success',
-      requireFiles: true,
-    }),
-    // The facts later runs get are the ones this answer used, not everything read on the way.
-    rememberCitedNode('rememberCited', 'factsToKeep'),
     { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
     { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
   ],
   edges: [
     { id: 'start-lean', from: 'start', to: 'applyLean' },
-    { id: 'lean-recall', from: 'applyLean', to: 'recall' },
-    { id: 'recall-catalog', from: 'recall', to: 'catalog' },
+    { id: 'lean-catalog', from: 'applyLean', to: 'catalog' },
     { id: 'catalog-plan', from: 'catalog', to: 'plan' },
-    { id: 'plan-recall', from: 'plan', to: 'recallPlan' },
-    { id: 'recallPlan-merge', from: 'recallPlan', to: 'mergeRecall' },
-    { id: 'mergeRecall-queue', from: 'mergeRecall', to: 'queue' },
+    { id: 'plan-queue', from: 'plan', to: 'queue' },
     { id: 'queue-hypothesize', from: 'queue', to: hypotheses.entry },
     ...hypotheses.edges,
     { id: 'rating-lean', from: hypotheses.exit!, to: 'leanComplexity' },
@@ -2375,15 +2197,7 @@ Find real paths, test names and table names with read-only tools first. Use the 
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
-    { id: 'attachParts-useJudge', from: 'attachParts', to: 'useJudge' },
-    { id: 'useJudge-take', from: 'useJudge', to: 'takeJudgeItems', branch: 'then' },
-    { id: 'useJudge-settled', from: 'useJudge', to: 'noteDoubts', branch: 'else' },
-    { id: 'take-context', from: 'takeJudgeItems', to: 'judgeContext' },
-    { id: 'context-hasItems', from: 'judgeContext', to: 'hasJudgeItems' },
-    { id: 'hasItems-judge', from: 'hasJudgeItems', to: 'judgeSupport', branch: 'then' },
-    { id: 'hasItems-split', from: 'hasJudgeItems', to: 'splitRulings', branch: 'else' },
-    { id: 'judge-split', from: 'judgeSupport', to: 'splitRulings' },
-    { id: 'split-settled', from: 'splitRulings', to: 'noteDoubts' },
+    { id: 'attachParts-noteDoubts', from: 'attachParts', to: 'noteDoubts' },
     // Why it is unsettled is noted first (nothing, when it is settled), so both readers' versions
     // say it; then whether it is settled decides how the run ends.
     { id: 'note-anyOpen', from: 'noteDoubts', to: 'anyOpen' },
@@ -2394,15 +2208,12 @@ Find real paths, test names and table names with read-only tools first. Use the 
     { id: 'wantPlain-explain', from: 'wantPlain', to: 'explain', branch: 'then' },
     { id: 'wantPlain-settled', from: 'wantPlain', to: 'settled', branch: 'else' },
     { id: 'explain-settled', from: 'explain', to: 'settled' },
-    { id: 'settled-learn', from: 'settled', to: 'learnAnswer', branch: 'then' },
+    { id: 'settled-done', from: 'settled', to: 'done', branch: 'then' },
     { id: 'settled-doubts', from: 'settled', to: 'doubts', branch: 'else' },
-    { id: 'learn-cited', from: 'learnAnswer', to: 'rememberCited' },
-    { id: 'cited-done', from: 'rememberCited', to: 'done' },
   ],
   demo: {
     context: { question: 'Where are AI responses validated before they change state, and why?' },
     tools: {
-      recall: () => ({ facts: [], lessons: [] }),
       // The real resolver: pure, so the demo resolves Locate's paths as a live run does.
       resolveScope: (s) => {
         const r = resolvePaths(
@@ -2413,8 +2224,6 @@ Find real paths, test names and table names with read-only tools first. Use the 
         );
         return { files: r.files, reasons: r.reasons, unmatched: r.unmatched, over: r.over };
       },
-      learnAnswer: () => ({ saved: true }),
-      rememberCited: (s) => ({ saved: ((s.citedFindings as string[]) ?? []).length }),
       ...Object.fromEntries(
         [
           'checkTriage',
@@ -2455,8 +2264,6 @@ Find real paths, test names and table names with read-only tools first. Use the 
         const hit = files.filter((f) => RELEVANT.test(f));
         return { ranked: [...hit, ...files.filter((f) => !hit.includes(f))], matched: hit };
       },
-      // The demo's files are not on disk: the items go to the judge as they are.
-      judgeContext: (s) => ({ items: s.judgeItems }),
       // The gap names the command line: the CLI shares its words.
       rankGaps: (s) => {
         const pool = (s.expandPool as string[]) ?? [];
@@ -2692,14 +2499,6 @@ Find real paths, test names and table names with read-only tools first. Use the 
           ],
         },
         verdict: v('hypotheses proposed'),
-      }),
-      judgeSupport: (s) => ({
-        updates: {
-          supportRulings: ((s.judgeItems as string[]) ?? []).map(
-            (f) => `${f.split(' ')[0]}: SUPPORTED — the quote states it`,
-          ),
-        },
-        verdict: v('judged'),
       }),
       challenge: (_s, visit) => ({
         updates: {

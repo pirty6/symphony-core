@@ -10,7 +10,6 @@ import type { AgentPause, Pattern } from '../core/types.js';
 import {
   CopilotProvider,
   ISOLATED_SYSTEM,
-  KUSTO_TOOL,
   SIGN_IN_HELP,
   emptiedFields,
   hasContent,
@@ -1433,49 +1432,6 @@ describe('CopilotProvider', () => {
     expect(sessions[1]!.cfg.mcpServers).toBeUndefined();
   });
 
-  it('offers kusto_query to steps that may read outside the workspace, read-only', async () => {
-    const asked: string[] = [];
-    const { client, sessions } = fakeClient(async (cfg, emit) => {
-      if (cfg.tools!.some((t) => t.name === 'kusto_query')) {
-        for (const query of ['T | count', '.drop table T'])
-          emit('assistant.message', {
-            content: String(
-              await callTool(cfg, 'kusto_query', { cluster: 'c', database: 'd', query }),
-            ),
-          });
-      }
-      await callTool(cfg, 'submit_result', { updates: { word: 'x' } });
-      emit('session.idle');
-    });
-    const p = new CopilotProvider({
-      clientFactory: () => client,
-      kusto: {
-        token: async () => 'tok',
-        fetch: (async (_url: string, init: RequestInit) => {
-          asked.push(String(init.body));
-          return new Response(
-            JSON.stringify({ Tables: [{ Columns: [{ ColumnName: 'n' }], Rows: [[7]] }] }),
-          );
-        }) as unknown as typeof fetch,
-      },
-    });
-    const go = (capabilities: ('web' | 'mcp')[]) =>
-      p.runAgent({
-        pause: { ...pause, capabilities },
-        state: {},
-        visit: 0,
-        signal: new AbortController().signal,
-        onEvent: () => {},
-      });
-    const out = await go(['mcp']);
-    expect(out.transcript.output).toContain('n\n7');
-    expect(out.transcript.output).toContain('kusto_query refused: `.drop table`');
-    expect(asked).toEqual([JSON.stringify({ db: 'd', csl: 'T | count' })]);
-    expect(out.transcript.prompt).toContain('kusto_query(cluster, database, query)');
-    await go([]);
-    expect(sessions[1]!.cfg.tools!.map((t) => t.name)).toEqual(['submit_result']);
-  });
-
   it('picks the model and effort from the complexity tier, checked against available models', async () => {
     const { client, sessions } = fakeClient(async (cfg, emit) => {
       await callTool(cfg, 'submit_result', { updates: { word: 'x' } });
@@ -1695,6 +1651,19 @@ describe('a local model server instead of Copilot', () => {
       emit('session.idle');
     });
 
+  it('trials: every session leaves out the unused CLI tools; big tool output goes to a file', async () => {
+    const { client, sessions } = submitting();
+    await new CopilotProvider({
+      clientFactory: () => client,
+      leanTools: true,
+      toolOutputBytes: 16000,
+    }).runAgent(localReq());
+    expect(sessions[0]!.cfg.excludedTools).toEqual(
+      expect.arrayContaining(['task', 'sql', 'skill']),
+    );
+    expect(sessions[0]!.cfg.largeOutput).toEqual({ enabled: true, maxSizeBytes: 16000 });
+  });
+
   it('every step plays on its model, through its endpoint, with no sign-in and no effort', async () => {
     const server = await modelServer();
     try {
@@ -1791,23 +1760,6 @@ describe('a local model server instead of Copilot', () => {
       copilotHome: '/tmp/visitor-home',
     });
     await expect(again.runAgent(localReq())).rejects.toThrow(/Sign in with GitHub/);
-  });
-
-  it('without sign-ins, the Kusto tool (your Azure sign-in) is not offered', async () => {
-    const server = await modelServer('m1');
-    const web = { ...pause, capabilities: ['web'] as AgentPause['capabilities'] };
-    const tools = async (signIns?: boolean) => {
-      const { client, sessions } = submitting();
-      await new CopilotProvider({
-        clientFactory: () => client,
-        localModel: { baseUrl: server.url, model: 'm1' },
-        ...(signIns === false ? { signIns } : {}),
-      }).runAgent(localReq(web));
-      return sessions[0]!.cfg.tools!.map((t) => t.name);
-    };
-    expect(await tools()).toContain(KUSTO_TOOL);
-    expect(await tools(false)).not.toContain(KUSTO_TOOL);
-    server.close();
   });
 
   it('a server that does not answer: Copilot when it may fall back, else a setup error at once', async () => {

@@ -36,11 +36,11 @@ the final complexity, with your request as its goal.
    |---|---|
    | 1 | Nobody when a library pattern fits as is; a proposer for `new` |
    | 2 | Proposer + skeptic |
-   | 3 | + pragmatist (triages every concern as REAL or THEORETICAL) |
+   | 3 | The same, on a stronger model (a pragmatist was measured and removed: it cost a quarter of composing and changed no result) |
    | 4 | + template-critic (CORRECT, WRONG or HYBRID; may reroute to another pattern once) |
 
    The conductor (`revise`) folds the debate into one adaptation, or one draft for `new`.
-   With no concerns, the pragmatist and the conductor are skipped below tier 4.
+   With no concerns, the conductor is skipped below tier 4.
 4. **Validate.** The adaptation applied to the tested pattern (or the new draft) is checked
    by code. Errors go back to the conductor with the error list, without a new debate.
 5. **Check requirements.** Each requirement (the request's own, plus every piece of go-gate
@@ -73,8 +73,6 @@ flowchart TD
   n_hasSkeptic{"Skeptic? (≥2)"}
   n_skeptic["🤖 Skeptic"]
   n_concerns{"Anything to change?"}
-  n_hasPragmatist{"Pragmatist? (≥3)"}
-  n_pragmatist["🤖 Pragmatist"]
   n_hasCritic{"Template-critic? (4)"}
   n_critic["🤖 Template-critic"]
   n_reroute{"Reroute?"}
@@ -119,11 +117,8 @@ flowchart TD
   n_hasSkeptic -->|"yes"| n_skeptic
   n_hasSkeptic -->|"no"| n_validate
   n_skeptic --> n_concerns
-  n_concerns -->|"yes"| n_hasPragmatist
+  n_concerns -->|"yes"| n_hasCritic
   n_concerns -->|"the proposal stands"| n_validate
-  n_hasPragmatist -->|"yes"| n_pragmatist
-  n_hasPragmatist -->|"no"| n_revise
-  n_pragmatist --> n_hasCritic
   n_hasCritic -->|"yes"| n_critic
   n_hasCritic -->|"no"| n_revise
   n_critic --> n_reroute

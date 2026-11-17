@@ -330,10 +330,9 @@ export function createApi(opts: ApiOptions) {
           env: envForRun(env, settings.caller.here),
         })
     const dir = isolation?.dir ?? pr?.dir ?? workspace
-    // In a worktree, memory stays in your workspace: what the run learns outlives the worktree.
     const toolContext = {
       ...shared,
-      ...(dir !== workspace ? { workspace: dir, memoryRoot: shared.workspace } : {}),
+      ...(dir !== workspace ? { workspace: dir } : {}),
       ...(pr?.info ? { pr: pr.info } : {}),
     }
     const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir, settings.caller)

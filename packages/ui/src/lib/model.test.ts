@@ -320,10 +320,9 @@ describe('sub-agents on the canvas', () => {
 
 describe('feature switches', () => {
   it('lists the switches the open pattern has, with your choice or its default', () => {
-    const rows = featureRows(investigate, PATTERNS, { supportJudge: 'shadow' })
+    const rows = featureRows(investigate, PATTERNS, { pragmatistFrom: '2' })
     expect(rows.map((r) => r.feature.field)).toEqual([
       'lean',
-      'supportJudge',
       'singlePass',
       'readerHypotheses',
       'keepUnchallenged',
@@ -337,7 +336,7 @@ describe('feature switches', () => {
     ])
     expect(rows[0]).toMatchObject({ value: 'true', default: 'true' })
     expect(rows.find((r) => r.feature.field === 'plainSummary')).toMatchObject({ value: 'true', default: 'true' })
-    expect(rows[1]).toMatchObject({ value: 'shadow', default: 'off' })
+    expect(rows.find((r) => r.feature.field === 'pragmatistFrom')).toMatchObject({ value: '2', default: '3' })
     expect(rows.find((r) => r.feature.field === 'maxExpandRounds')).toMatchObject({ value: '2', default: '2' })
     expect(rows.find((r) => r.feature.field === 'narrowRead')).toMatchObject({ value: 'false', default: 'false' })
     expect(rows.find((r) => r.feature.field === 'readerHypotheses')).toMatchObject({ value: 'true', default: 'true' })
@@ -349,20 +348,22 @@ describe('feature switches', () => {
       'plainSummary',
     ])
     expect(featureRows(hangman, PATTERNS, {})).toEqual([])
-    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(15)
-    expect(featureRows(maestro, PATTERNS, {})[5]!.patterns).toEqual(['investigate', 'fix', 'implement', 'review'])
+    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(14)
+    expect(featureRows(maestro, PATTERNS, {})[4]!.patterns).toEqual(['investigate', 'fix', 'implement', 'review'])
   })
 
   it('keeps only choices away from the default, and remembers them between visits', () => {
-    const [lean, judge] = featureRows(investigate, PATTERNS, {})
+    const rows = featureRows(investigate, PATTERNS, {})
+    const lean = rows.find((r) => r.feature.field === 'lean')
+    const pragmatist = rows.find((r) => r.feature.field === 'pragmatistFrom')
     // Lean is on by default: turning it off is the choice kept.
     expect(chooseFeature({}, lean!, 'false')).toEqual({ lean: 'false' })
     expect(chooseFeature({ lean: 'false' }, lean!, 'true')).toEqual({})
-    const on = chooseFeature({}, judge!, 'enforce')
-    expect(on).toEqual({ supportJudge: 'enforce' })
-    expect(chooseFeature(on, judge!, 'off')).toEqual({})
-    expect(parseStoredSettings(JSON.stringify({ features: { supportJudge: 'shadow', bad: 1 } }))).toEqual({
-      features: { supportJudge: 'shadow' },
+    const on = chooseFeature({}, pragmatist!, '2')
+    expect(on).toEqual({ pragmatistFrom: '2' })
+    expect(chooseFeature(on, pragmatist!, '3')).toEqual({})
+    expect(parseStoredSettings(JSON.stringify({ features: { pragmatistFrom: '2', bad: 1 } }))).toEqual({
+      features: { pragmatistFrom: '2' },
     })
   })
 

@@ -398,16 +398,16 @@ describe('Library saved runs', () => {
       ...(choices ? { choices } : {}),
     })
     const rows = [
-      { feature: feature('supportJudge', [{ value: 'off', label: 'off' }, { value: 'shadow', label: 'shadow' }]), value: 'shadow', default: 'off', patterns: ['investigate'] },
+      { feature: feature('pragmatistFrom', [{ value: '2', label: '2' }, { value: '3', label: '3' }]), value: '2', default: '3', patterns: ['investigate'] },
       { feature: feature('singlePass'), value: 'false', default: 'false', patterns: ['investigate'] },
     ]
     render(<Library {...props} saved={[]} features={rows} onFeature={(r, v) => changes.push([r.feature.field, v])} />)
-    expect(screen.getByTestId('feature-supportJudge')).toHaveTextContent('changed')
+    expect(screen.getByTestId('feature-pragmatistFrom')).toHaveTextContent('changed')
     expect(screen.getByTestId('feature-singlePass')).not.toHaveTextContent('changed')
-    fireEvent.change(screen.getByLabelText('supportJudge'), { target: { value: 'off' } })
+    fireEvent.change(screen.getByLabelText('pragmatistFrom'), { target: { value: '3' } })
     fireEvent.click(screen.getByLabelText('singlePass'))
     expect(changes).toEqual([
-      ['supportJudge', 'off'],
+      ['pragmatistFrom', '3'],
       ['singlePass', 'true'],
     ])
   })

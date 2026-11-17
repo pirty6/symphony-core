@@ -27,6 +27,7 @@ import {
   reportRegressions,
   runEval,
   saveReport,
+  evalStamp,
   type EvalReport,
 } from './eval/harness.js';
 import { EVAL_TASKS, ROUTING_TASKS } from './eval/tasks.js';
@@ -296,7 +297,7 @@ async function play(
       tools: extras.tools,
       toolContext: {
         ...extras.toolContext,
-        ...(dir !== cwd ? { workspace: dir, memoryRoot: extras.toolContext.workspace } : {}),
+        ...(dir !== cwd ? { workspace: dir } : {}),
         ...(pr?.info ? { pr: pr.info } : {}),
       },
       provider: makeProvider({
@@ -670,6 +671,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
       repeat: { type: 'string', short: 'n', default: '1' },
       compare: { type: 'string' },
       keep: { type: 'boolean', default: false },
+      'carry-memory': { type: 'boolean', default: false },
       with: { type: 'string', multiple: true },
       improvisation: { type: 'string' },
       complexity: { type: 'string' },
@@ -726,6 +728,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
   const improvisation = levelOf(args.values.improvisation);
   const complexity = complexityOf(args.values.complexity);
   console.log(c.dim(`eval: ${tasks.length} task(s) × ${args.values.repeat} on ${providerName}`));
+  const stamp = evalStamp();
   const report = await runEval({
     tasks,
     library,
@@ -734,6 +737,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     env: process.env,
     repeat: Number(args.values.repeat),
     keep: args.values.keep,
+    carryMemory: args.values['carry-memory'],
     inputs: (p) => parseContext(ownPairs(p), p),
     ...(improvisation !== undefined ? { improvisation } : {}),
     ...(complexity !== undefined ? { complexity } : {}),
@@ -741,9 +745,10 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
       ...pairs,
       ...(improvisation !== undefined ? [`improvisation=${improvisation}`] : []),
       ...(complexity !== undefined ? [`complexity=${complexity}`] : []),
+      ...(args.values['carry-memory'] ? ['carry-memory'] : []),
       ...switches,
     ],
-    runsDir: join(stateDir(cwd), 'evals', `${new Date().toISOString().replace(/[:.]/g, '-')}-runs`),
+    runsDir: join(stateDir(cwd), 'evals', `${stamp}-runs`),
     provider: (workspace, pattern) =>
       makeProvider({
         provider: providerName,
@@ -755,7 +760,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     onResult: (r) =>
       console.log(c.dim(`  ${r.pass ? '✔' : '✘'} ${r.task} ${(r.ms / 1000).toFixed(0)}s`)),
   });
-  const file = await saveReport(join(stateDir(cwd), 'evals'), report);
+  const file = await saveReport(join(stateDir(cwd), 'evals'), report, stamp);
   console.log(`\n${formatReport(report, baseline)}\n${c.dim(`saved ${file}`)}`);
   return baseline && reportRegressions(report, baseline).length > 0 ? 2 : 0;
 }
@@ -1296,7 +1301,7 @@ export async function main(argv: string[], cwd = process.cwd()): Promise<number>
       --provider scripted|copilot|local (default: the one the run used)  --model <id>  --auto-approve
   runs [--all]                 saved runs (in-progress = interrupted, resumable); --all includes demo runs
   where [runs|evals|memory]    where this workspace's saved runs, memory and reports are kept (outside it)
-  eval [--task a,b] [-n 3] [--compare <report.json>] [--keep]   tasks with known answers: solved, citations, tokens, time
+  eval [--task a,b] [-n 3] [--compare <report.json>] [--keep] [--carry-memory]   tasks with known answers: solved, citations, tokens, time
       --with key=value         an input for every task whose pattern has it (a trial: --with deepBatchSize=8)
       --improvisation 0-4      play every task at this improvisation (a trial)
       --task routing           21 maestro requests: right pattern, complexity band and chain (compose only)

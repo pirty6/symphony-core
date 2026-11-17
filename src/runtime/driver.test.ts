@@ -325,7 +325,7 @@ describe('Run', () => {
     expect(perf.finalState).toEqual({ files: ['real-1.ts'] });
   });
 
-  it('tools get the whole tool context: a worktree run keeps memory in your workspace', async () => {
+  it('tools get the whole tool context, as the caller set it', async () => {
     const seen: unknown[] = [];
     const p: Pattern = {
       name: 't',
@@ -349,7 +349,7 @@ describe('Run', () => {
         description: 'd',
         outputs: ['files'],
         run: async (_a, ctx) => {
-          seen.push(ctx.memoryRoot);
+          seen.push(ctx.runsCode);
           return { files: [] };
         },
       },
@@ -363,10 +363,10 @@ describe('Run', () => {
       score: compileScore(p, { goal: 'g', generatedAt: 't' }),
       provider: live,
       tools,
-      toolContext: { workspace: '/tree', repoRoot: '/r', memoryRoot: '/home' },
+      toolContext: { workspace: '/tree', repoRoot: '/r', runsCode: false },
       clock,
     }).start();
-    expect(seen).toEqual(['/home']);
+    expect(seen).toEqual([false]);
   });
 
   it('runs tool nodes through the registry, gated and recorded', async () => {

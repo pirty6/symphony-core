@@ -34,6 +34,20 @@ describe('envConfig', () => {
     expect(envConfig({ TOKEN: '' })).toEqual(defaults);
   });
 
+  it('reads the trials: fewer tool schemas, and big tool output to a file (off unless set)', () => {
+    expect(envConfig({}).leanTools).toBeUndefined();
+    expect(envConfig({}).toolOutputBytes).toBeUndefined();
+    expect(
+      envConfig({ SYMPHONY_LEAN_TOOLS: 'on', SYMPHONY_TOOL_OUTPUT_BYTES: '16000' }),
+    ).toMatchObject({
+      leanTools: true,
+      toolOutputBytes: 16000,
+    });
+    expect(
+      envConfig({ SYMPHONY_LEAN_TOOLS: 'off', SYMPHONY_TOOL_OUTPUT_BYTES: 'x' }).leanTools,
+    ).toBeUndefined();
+  });
+
   it('reads the switches: a model per step; delta repair and the header in the system message (on unless turned off)', () => {
     expect(
       envConfig({

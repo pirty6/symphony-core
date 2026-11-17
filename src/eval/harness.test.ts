@@ -1,10 +1,10 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Pattern } from '../core/types.js';
-import { recall } from '../runtime/memory.js';
+import { stateDir } from '../runtime/state.js';
 import type { Provider } from '../runtime/provider.js';
 import {
   formatReport,
@@ -12,6 +12,7 @@ import {
   reportRegressions,
   runEval,
   saveReport,
+  evalStamp,
   summarize,
   taskRegressions,
   worseThan,
@@ -110,6 +111,28 @@ const evaluate = (fix: boolean, repeat = 1) =>
     repeat,
   });
 
+/** What memory each of three takes found at its start; each take then leaves its own. */
+async function memoriesSeen(carryMemory: boolean): Promise<(string | null)[]> {
+  const seen: (string | null)[] = [];
+  await runEval({
+    tasks: [task],
+    library: [mini],
+    providerName: 'fake',
+    repoRoot: process.cwd(),
+    env: {},
+    repeat: 3,
+    carryMemory,
+    provider: (workspace) => {
+      const file = join(stateDir(workspace, {}, { move: false }), 'memory.json');
+      seen.push(existsSync(file) ? readFileSync(file, 'utf8') : null);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `learned in take ${seen.length}`);
+      return fakeProvider(true)(workspace);
+    },
+  });
+  return seen;
+}
+
 // Git fixtures and scripted runs: 0.2-0.5 s per test alone, over 5 s when the machine is loaded.
 describe('eval harness', { timeout: 30_000 }, () => {
   it('runs each task in a fresh fixture and records solved, citations, tokens and models', async () => {
@@ -152,6 +175,26 @@ describe('eval harness', { timeout: 30_000 }, () => {
     await rm(dir, { recursive: true, force: true });
     expect(text).not.toContain(token);
     expect(text).toContain('token=[REDACTED:github-token]');
+  });
+
+  it('with carryMemory, each take starts from the memory the take before it left', async () => {
+    const seen = await memoriesSeen(true);
+    expect(seen).toEqual([null, 'learned in take 1', 'learned in take 2']);
+  });
+
+  it('without carryMemory, every take starts with empty memory', async () => {
+    const seen = await memoriesSeen(false);
+    expect(seen).toEqual([null, null, null]);
+  });
+
+  it('two evals started in the same millisecond save to different reports', async () => {
+    const at = new Date('2026-01-01T00:00:00.000Z');
+    const report = { startedAt: at.toISOString(), provider: 'fake', results: [] };
+    const dir = await mkdtemp(join(tmpdir(), 'symphony-report-'));
+    const first = await saveReport(dir, report, evalStamp(at, 101));
+    const second = await saveReport(dir, report, evalStamp(at, 102));
+    await rm(dir, { recursive: true, force: true });
+    expect(first).not.toBe(second);
   });
 
   it('scores review tasks per category, with false flags, and says so in the report', async () => {
@@ -444,12 +487,6 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
         'It does not retry at all: fetchData calls http once and throws on failure (src/net.js:3). The comment and the README that say 3 times are wrong.',
     },
   }),
-  'investigate-stale-lesson': () => ({
-    state: {
-      answer:
-        'It listens on 3001: src/server.js:3 uses DEFAULT_PORT + 1, and DEFAULT_PORT is 3000. The earlier lesson that said 8080 is wrong.',
-    },
-  }),
   'investigate-planted-flaw': () => ({
     state: {
       answer:
@@ -463,12 +500,6 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
     },
   }),
   'investigate-misread-quote': () => ({
-    state: {
-      answer:
-        'Twice: the loop in src/send.js:5 runs attempt 1 and 2 and stops before MAX_TRIES (3), so a failing request is tried 2 times.',
-    },
-  }),
-  'investigate-misread-quote-judged': () => ({
     state: {
       answer:
         'Twice: the loop in src/send.js:5 runs attempt 1 and 2 and stops before MAX_TRIES (3), so a failing request is tried 2 times.',
@@ -641,19 +672,14 @@ describe('eval tasks', () => {
                         answer:
                           'fetchData retries 3 times on failure, with backoff (src/net.js:1).',
                       }
-                    : t.id === 'investigate-stale-lesson'
+                    : t.id.startsWith('investigate-misread-quote')
                       ? {
                           answer:
-                            'It listens on 8080, set in src/server.js (also 3001 in some builds).',
+                            'send() tries a failing request 3 times (src/send.js:1 `MAX_TRIES = 3`).',
                         }
-                      : t.id.startsWith('investigate-misread-quote')
-                        ? {
-                            answer:
-                              'send() tries a failing request 3 times (src/send.js:1 `MAX_TRIES = 3`).',
-                          }
-                        : t.id.startsWith('investigate-planted-flaw')
-                          ? { answer: 'The client waits 30000 ms, from src/config.js.' }
-                          : { answer: 'The README says 30 seconds; the docs say port 8080.' };
+                      : t.id.startsWith('investigate-planted-flaw')
+                        ? { answer: 'The client waits 30000 ms, from src/config.js.' }
+                        : { answer: 'The README says 30 seconds; the docs say port 8080.' };
         expect((await t.check({ workspace: dir, outcome: 'success', state: wrong })).pass).toBe(
           false,
         );
@@ -750,20 +776,7 @@ describe('routing judge', () => {
   });
 });
 
-describe('memory fixtures', () => {
-  it('the stale lesson is recalled as a real store would give it (its files are unchanged)', async () => {
-    const t = EVAL_TASKS.find((x) => x.id === 'investigate-stale-lesson')!;
-    const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
-    try {
-      await buildFixture(dir, t.files);
-      expect((await recall(dir, String(t.inputs.question))).lessons).toEqual([
-        expect.stringMatching(/S1: 8080, set by DEFAULT_PORT/),
-      ]);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
+describe('fixtures', () => {
   it('a task can hold history: the reason for a change is only in its commit', async () => {
     const t = EVAL_TASKS.find((x) => x.id === 'investigate-history')!;
     const dir = await mkdtemp(join(tmpdir(), 'symphony-evaltask-'));
