@@ -1,10 +1,11 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Pattern } from '../core/types.js';
 import { recall } from '../runtime/memory.js';
+import { stateDir } from '../runtime/state.js';
 import type { Provider } from '../runtime/provider.js';
 import {
   formatReport,
@@ -111,6 +112,28 @@ const evaluate = (fix: boolean, repeat = 1) =>
     repeat,
   });
 
+/** What memory each of three takes found at its start; each take then leaves its own. */
+async function memoriesSeen(carryMemory: boolean): Promise<(string | null)[]> {
+  const seen: (string | null)[] = [];
+  await runEval({
+    tasks: [task],
+    library: [mini],
+    providerName: 'fake',
+    repoRoot: process.cwd(),
+    env: {},
+    repeat: 3,
+    carryMemory,
+    provider: (workspace) => {
+      const file = join(stateDir(workspace, {}, { move: false }), 'memory.json');
+      seen.push(existsSync(file) ? readFileSync(file, 'utf8') : null);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `learned in take ${seen.length}`);
+      return fakeProvider(true)(workspace);
+    },
+  });
+  return seen;
+}
+
 // Git fixtures and scripted runs: 0.2-0.5 s per test alone, over 5 s when the machine is loaded.
 describe('eval harness', { timeout: 30_000 }, () => {
   it('runs each task in a fresh fixture and records solved, citations, tokens and models', async () => {
@@ -153,6 +176,16 @@ describe('eval harness', { timeout: 30_000 }, () => {
     await rm(dir, { recursive: true, force: true });
     expect(text).not.toContain(token);
     expect(text).toContain('token=[REDACTED:github-token]');
+  });
+
+  it('with carryMemory, each take starts from the memory the take before it left', async () => {
+    const seen = await memoriesSeen(true);
+    expect(seen).toEqual([null, 'learned in take 1', 'learned in take 2']);
+  });
+
+  it('without carryMemory, every take starts with empty memory', async () => {
+    const seen = await memoriesSeen(false);
+    expect(seen).toEqual([null, null, null]);
   });
 
   it('two evals started in the same millisecond save to different reports', async () => {

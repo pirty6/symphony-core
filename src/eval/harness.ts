@@ -4,9 +4,9 @@
  * A change ships only if it keeps the solved count and the citation validity.
  */
 import { scrubbingOn, scrubValue } from '../core/scrub.js';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { compileScore } from '../core/compile.js';
 import { RUN_SCHEMA_VERSION } from '../core/migrate.js';
 import type { Complexity, Improvisation, Pattern, SavedRun, TokenUsage } from '../core/types.js';
@@ -110,6 +110,21 @@ export interface EvalOptions {
   readonly complexity?: Complexity;
   /** Saved in the report: what the runs were played with. */
   readonly settings?: readonly string[];
+  /**
+   * Carry each task's memory from one take to the next (eval --carry-memory): take 1 starts
+   * empty, later takes recall what earlier takes learned. Off, every take starts empty.
+   */
+  readonly carryMemory?: boolean;
+}
+
+/** A task's memory between its takes: the memory.json text the last take left. */
+interface CarriedMemory {
+  text?: string;
+}
+
+async function seedMemory(file: string, text: string): Promise<void> {
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, text);
 }
 
 async function runTask(
@@ -118,12 +133,15 @@ async function runTask(
   take: number,
   /** Told the run as soon as it exists, so an error later still reports what it spent. */
   onRun: (run: Run) => void = () => undefined,
+  carried?: CarriedMemory,
 ): Promise<EvalResult> {
   const pattern = o.library.find((p) => p.name === task.pattern);
   if (!pattern) throw new Error(`eval task '${task.id}': no pattern '${task.pattern}'`);
   const workspace = await mkdtemp(join(tmpdir(), `symphony-eval-${task.id}-`));
+  const memoryFile = join(stateDir(workspace, o.env, { move: false }), 'memory.json');
   try {
     await buildFixture(workspace, task.files, task.history);
+    if (carried?.text !== undefined) await seedMemory(memoryFile, carried.text);
     if (task.changes) await writeFiles(workspace, task.changes);
     // The task's workspace only: no MCP servers, no user configuration.
     const extras = await runtimeExtras(workspace, o.repoRoot, { ...o.env, SYMPHONY_MCP: 'off' });
@@ -157,6 +175,7 @@ async function runTask(
         : record;
       await writeFile(saved, `${JSON.stringify(clean, null, 2)}\n`);
     }
+    if (carried) carried.text = await readFile(memoryFile, 'utf8').catch(() => carried.text);
     const verdict = await task.check({ workspace, outcome: perf.outcome, state });
     const findings = Array.isArray(state.findings)
       ? state.findings.filter((f): f is string => typeof f === 'string')
@@ -225,9 +244,10 @@ export async function runEval(o: EvalOptions): Promise<EvalReport> {
   const startedAt = new Date().toISOString();
   const results: EvalResult[] = [];
   for (const task of o.tasks) {
+    const carried: CarriedMemory | undefined = o.carryMemory ? {} : undefined;
     for (let i = 0; i < (o.repeat ?? 1); i += 1) {
       let played: Run | undefined;
-      const r = await runTask(task, o, i + 1, (run) => (played = run)).catch(
+      const r = await runTask(task, o, i + 1, (run) => (played = run), carried).catch(
         (e: Error): EvalResult => ({
           task: task.id,
           pattern: task.pattern,
