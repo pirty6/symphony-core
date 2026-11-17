@@ -45,6 +45,22 @@ async function liveMessages(): Promise<{ messages: RunMessage[]; run: Run }> {
   return { messages: run.messages, run }
 }
 
+/** The performance a finished run sent. */
+function performanceOf(messages: readonly RunMessage[]) {
+  const done = messages.find((m) => m.type === 'performance')
+  if (done?.type !== 'performance') throw new Error('no performance')
+  return done.performance
+}
+
+const applyAll = (view: RunView, messages: readonly RunMessage[]): RunView =>
+  messages.reduce((v, m) => applyMessage(v, m), view)
+
+/** Applies the messages up to and including the first part that finished. */
+function applyUntilFirstPartDone(view: RunView, messages: readonly RunMessage[]): RunView {
+  const firstDone = messages.findIndex((m) => m.type === 'part' && m.state === 'done')
+  return applyAll(view, messages.slice(0, firstDone + 1))
+}
+
 describe('canvas mapping', () => {
   it('round-trips a pattern through React Flow shapes', () => {
     const { demo: _d, ...data } = fix
@@ -100,10 +116,7 @@ describe('phases on the canvas', () => {
     expect(plan.data).toMatchObject({ status: 'done', ran: 3 })
     expect(list.data).toMatchObject({ status: 'active', current: 'List every file', ran: 2 })
     expect(d.phaseOf.get('inventory')).toBe('listPhase')
-    for (const e of d.edges) {
-      expect(ids).toContain(e.source)
-      expect(ids).toContain(e.target)
-    }
+    expect(ids).toEqual(expect.arrayContaining(d.edges.flatMap((e) => [e.source, e.target])))
     expect(d.edges.some((e) => e.source === 'hypothesesPhase' && e.target === 'listPhase')).toBe(true)
     // Phases can be dragged; where you put one is kept, for this view only.
     const moved = phaseDisplay(data, steps, new Set(), frame, { moved: new Map([['listPhase', { x: 900, y: 7 }]]) })
@@ -130,9 +143,7 @@ describe('phases on the canvas', () => {
 describe('origins', () => {
   it('labels who played each node and summarises the run', async () => {
     const { messages } = await liveMessages()
-    const done = messages.find((m) => m.type === 'performance')
-    const perf = done?.type === 'performance' ? done.performance : undefined
-    if (!perf) throw new Error('no performance')
+    const perf = performanceOf(messages)
     const by = originsByNode(perf)
     const agent = perf.steps.find((s) => s.kind === 'agent')!
     expect(by.get(agent.nodeId)?.origin).toBe('script')
@@ -181,10 +192,9 @@ describe('musician', () => {
 describe('live run view', () => {
   it('exposes the result: what was carried into the end node', async () => {
     const { messages } = await liveMessages()
-    let v: RunView = startLive('r', 'fix it')
-    for (const m of messages.slice(0, 3)) v = applyMessage(v, m)
-    expect(runResult(v)).toBeUndefined()
-    for (const m of messages.slice(3)) v = applyMessage(v, m)
+    const started = applyAll(startLive('r', 'fix it'), messages.slice(0, 3))
+    expect(runResult(started)).toBeUndefined()
+    const v = applyAll(started, messages.slice(3))
     const r = runResult(v)!
     expect(r.keys.length).toBeGreaterThan(0)
     expect(Object.keys(r.values)).toEqual([...r.keys])
@@ -210,8 +220,7 @@ describe('live run view', () => {
 
   it('folds messages into frames, streams and final state', async () => {
     const { messages, run } = await liveMessages()
-    let v: RunView = startLive(run.id)
-    for (const m of messages) v = applyMessage(v, m)
+    const v = applyAll(startLive(run.id), messages)
     expect(v.status).toBe('done')
     expect(currentFrame(v).state).toEqual(run.engine.state)
     expect(v.performance?.outcome).toBe('success')
@@ -236,11 +245,10 @@ describe('live run view', () => {
 describe('replay view and decoration', () => {
   it('builds frames and transcripts from a saved run and decorates the canvas', async () => {
     const { run } = await liveMessages()
-    const perf = run.messages.find((m) => m.type === 'performance')!
-    if (perf.type !== 'performance') throw new Error('no performance')
-    const v = replayView({ schemaVersion: 3, score: run.score, performance: perf.performance }, { reproduced: true, issues: [] })
+    const performance = performanceOf(run.messages)
+    const v = replayView({ schemaVersion: 3, score: run.score, performance }, { reproduced: true, issues: [] })
     expect(v.mode).toBe('replay')
-    expect(v.frames.length).toBe(perf.performance.events.length)
+    expect(v.frames.length).toBe(performance.events.length)
     const frame = currentFrame(v)
     expect(streamFor(v, 'diagnose', frame)?.result).toMatchObject({ updates: { files: ['src/paginate.ts', 'src/paginate.test.ts'] } })
     const flow = toFlow(patternToGraph(fix))
@@ -293,11 +301,7 @@ describe('sub-agents on the canvas', () => {
     const parts = run.messages.filter((m) => m.type === 'part')
     expect(parts.length).toBeGreaterThan(0)
     // Replay the messages up to the first part that finished.
-    let v: RunView = startLive('r')
-    for (const m of run.messages) {
-      v = applyMessage(v, m)
-      if (m.type === 'part' && m.state === 'done') break
-    }
+    const v = applyUntilFirstPartDone(startLive('r'), run.messages)
     expect(v.parts!.nodeId).toBe('triage')
     // Two sub-agents at a time; a wave holds three times as many parts (here every file: 5).
     expect(v.parts!.states).toEqual(['done', 'running', 'waiting', 'waiting', 'waiting'])

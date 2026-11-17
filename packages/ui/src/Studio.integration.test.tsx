@@ -106,6 +106,10 @@ async function guess(letter: string) {
   await waitFor(() => expect(screen.queryByTestId('approval-card')).toBeNull())
 }
 
+async function guessWord(word: string) {
+  for (const letter of word) await guess(letter)
+}
+
 describe('Studio (integration)', () => {
   it('loads the library and the requested pattern', async () => {
     renderStudio()
@@ -119,7 +123,7 @@ describe('Studio (integration)', () => {
     renderStudio()
     await screen.findByPlaceholderText('e.g. Play a round of hangman', {}, { timeout: 5000 })
     fireEvent.click(screen.getByText('▶ Run'))
-    for (const l of ['p', 'l', 'a', 'n', 'e', 't']) await guess(l)
+    await guessWord('planet')
     await waitFor(() => expect(screen.getByTestId('run-status')).toHaveTextContent('done'))
     expect(screen.getByTestId('run-result')).toHaveTextContent(/success/)
     expect(screen.getByTestId('node-win')).toHaveAttribute('data-status', 'done')
