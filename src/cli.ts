@@ -27,6 +27,7 @@ import {
   reportRegressions,
   runEval,
   saveReport,
+  evalStamp,
   type EvalReport,
 } from './eval/harness.js';
 import { EVAL_TASKS, ROUTING_TASKS } from './eval/tasks.js';
@@ -726,6 +727,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
   const improvisation = levelOf(args.values.improvisation);
   const complexity = complexityOf(args.values.complexity);
   console.log(c.dim(`eval: ${tasks.length} task(s) × ${args.values.repeat} on ${providerName}`));
+  const stamp = evalStamp();
   const report = await runEval({
     tasks,
     library,
@@ -743,7 +745,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
       ...(complexity !== undefined ? [`complexity=${complexity}`] : []),
       ...switches,
     ],
-    runsDir: join(stateDir(cwd), 'evals', `${new Date().toISOString().replace(/[:.]/g, '-')}-runs`),
+    runsDir: join(stateDir(cwd), 'evals', `${stamp}-runs`),
     provider: (workspace, pattern) =>
       makeProvider({
         provider: providerName,
@@ -755,7 +757,7 @@ async function cmdEval(argv: string[], cwd: string): Promise<number> {
     onResult: (r) =>
       console.log(c.dim(`  ${r.pass ? '✔' : '✘'} ${r.task} ${(r.ms / 1000).toFixed(0)}s`)),
   });
-  const file = await saveReport(join(stateDir(cwd), 'evals'), report);
+  const file = await saveReport(join(stateDir(cwd), 'evals'), report, stamp);
   console.log(`\n${formatReport(report, baseline)}\n${c.dim(`saved ${file}`)}`);
   return baseline && reportRegressions(report, baseline).length > 0 ? 2 : 0;
 }

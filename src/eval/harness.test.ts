@@ -12,6 +12,7 @@ import {
   reportRegressions,
   runEval,
   saveReport,
+  evalStamp,
   summarize,
   taskRegressions,
   worseThan,
@@ -152,6 +153,16 @@ describe('eval harness', { timeout: 30_000 }, () => {
     await rm(dir, { recursive: true, force: true });
     expect(text).not.toContain(token);
     expect(text).toContain('token=[REDACTED:github-token]');
+  });
+
+  it('two evals started in the same millisecond save to different reports', async () => {
+    const at = new Date('2026-01-01T00:00:00.000Z');
+    const report = { startedAt: at.toISOString(), provider: 'fake', results: [] };
+    const dir = await mkdtemp(join(tmpdir(), 'symphony-report-'));
+    const first = await saveReport(dir, report, evalStamp(at, 101));
+    const second = await saveReport(dir, report, evalStamp(at, 102));
+    await rm(dir, { recursive: true, force: true });
+    expect(first).not.toBe(second);
   });
 
   it('scores review tasks per category, with false flags, and says so in the report', async () => {

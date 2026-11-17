@@ -499,12 +499,24 @@ const label = (r: EvalReport) => (r.settings?.length ? r.settings.join(' ') : 'd
 
 /** One line per result, then the totals; with a baseline, the change against it. */
 /**
- * Write a report to `dir` (named by when it started) and say where. Its settings hold --with
- * values as typed, and its notes errors' text: scrubbed where it is written.
+ * A name for one eval's report and its runs folder: the time, then the process, so evals
+ * started in the same millisecond (in parallel) never overwrite each other.
  */
-export async function saveReport(dir: string, report: EvalReport): Promise<string> {
+export const evalStamp = (at: Date = new Date(), pid: number = process.pid): string =>
+  `${at.toISOString().replace(/[:.]/g, '-')}-${pid}`;
+
+/**
+ * Write a report to `dir` as `<stamp>.json` (by default named by when it started) and say
+ * where. Its settings hold --with values as typed, and its notes errors' text: scrubbed where
+ * it is written.
+ */
+export async function saveReport(
+  dir: string,
+  report: EvalReport,
+  stamp: string = report.startedAt.replace(/[:.]/g, '-'),
+): Promise<string> {
   await mkdir(dir, { recursive: true });
-  const file = join(dir, `${report.startedAt.replace(/[:.]/g, '-')}.json`);
+  const file = join(dir, `${stamp}.json`);
   await writeFile(
     file,
     `${JSON.stringify(scrubbingOn() ? scrubValue(report) : report, null, 2)}\n`,
