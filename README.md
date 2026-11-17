@@ -286,15 +286,14 @@ replayable:
    |---|---|
    | 1 | none if a pattern fits as is (pre-debated); proposer if new |
    | 2 | proposer + skeptic |
-   | 3 | proposer + skeptic + pragmatist |
+   | 3 | proposer + skeptic, on a stronger model |
    | 4 | + template-critic, who can reroute to another pattern once |
 
    A complexity you choose (`--complexity 1-4` in the CLI, the toolbar in the studio, `complexity`
    over MCP) wins over the classifier's rating, which is kept as `ratedComplexity`: you control
    the cost tier on every surface. The go-gate remains the backstop if you under-rate a request.
 
-   Their contracts are enforced, not requested: the pragmatist must triage **every** skeptic concern,
-   the critic's verdict must be CORRECT, WRONG or HYBRID and may only recommend real patterns.
+   Their contracts are enforced, not requested: the critic's verdict must be CORRECT, WRONG or HYBRID and may only recommend real patterns.
 
    **Library patterns are adapted, not rewritten.** The debate reads a compact outline of the chosen
    pattern (6-7x smaller than its definition) and writes an `adaptation`: guidance appended to
@@ -359,8 +358,8 @@ patterns without one (refactor, review, analyze), play at tier 2.
 debaters one tier smarter; `shiftUpTo` keeps a shifted step below a tier unless the run is
 already there (investigate's answer: Sonnet at complexity 3, Opus at 4). A step the run can do
 without (`skipWhenStuck`, the summary for people) says so and the run goes on when it runs out of
-attempts. It may also cap its reasoning effort (`maxEffort`): the maestro's propose,
-skeptic and pragmatist play at most `high`, so on tier 4 they use opus at `high` rather than `xhigh`
+attempts. It may also cap its reasoning effort (`maxEffort`): the maestro's propose
+and skeptic play at most `high`, so on tier 4 they use opus at `high` rather than `xhigh`
 (`SYMPHONY_EFFORT_CAPS=0` lifts the caps).
 
 | Tier | Default model (Copilot) |
@@ -813,7 +812,7 @@ solved rate or citation validity.
   On by default, `=0` turns each off if a trial shows it makes things worse:
   `SYMPHONY_END_ON_SUBMIT` ends a step's session at its answer instead of letting the model reply
   to "stop now" (45% fewer premium requests in trial 13); `SYMPHONY_EFFORT_CAPS` applies the
-  steps' `maxEffort` (the maestro's propose, skeptic and pragmatist play at most `high`, so its
+  steps' `maxEffort` (the maestro's propose and skeptic play at most `high`, so its
   tier-4 debate composed 39% faster);
   `SYMPHONY_DELTA_REPAIR` lets a rejected `submit_result` be corrected by resending only the
   fields that change; `SYMPHONY_HEADER_IN_SYSTEM` sends each step's fixed instructions as the

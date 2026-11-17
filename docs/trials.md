@@ -254,7 +254,7 @@ the effort that was sent is recorded under `musician`.
 
 ```sh
 npm run cli -- eval --task maestro-planted-concern -n 3
-SYMPHONY_NODE_MODELS=propose=claude-opus-5.5:high,skeptic=claude-opus-5.5:high,pragmatist=claude-opus-5.5:high \
+SYMPHONY_NODE_MODELS=propose=claude-opus-5.5:high,skeptic=claude-opus-5.5:high \
   npm run cli -- eval --task maestro-planted-concern -n 3 --compare <evals>/<baseline>.json
 ```
 

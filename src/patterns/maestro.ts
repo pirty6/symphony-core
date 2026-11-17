@@ -19,7 +19,7 @@ import { investigate } from './investigate.js';
  *   route      deterministic verb match, then the AI confirms the pattern (or 'new')
  *              and classifies complexity 1-4
  *   debate     roster by complexity: 1 proposer (skipped when a pattern already fits),
- *              2 + skeptic, 3 + pragmatist, 4 + template-critic (may reroute once)
+ *              2 + skeptic, 4 + template-critic (may reroute once)
  *   revise     the conductor folds the debate into one draft
  *   validate   a tool checks the draft deterministically; errors loop back (max rounds)
  *   go-gate    a human approves, sends feedback (next round, one tier up if they ask) or stops
@@ -60,7 +60,7 @@ const COMPOSITION_LOG = [
 export const maestro: Pattern = {
   name: 'maestro',
   description:
-    'Compose the right score for a request: route to a pattern, classify complexity, debate the algorithm (proposer, skeptic, pragmatist, template-critic by tier), validate it, and get your go.',
+    'Compose the right score for a request: route to a pattern, classify complexity, debate the algorithm (proposer, skeptic, template-critic by tier), validate it, and get your go.',
   verbTriggers: [],
   requiredContext: ['request'],
   goalFrom: 'request',
@@ -99,13 +99,6 @@ export const maestro: Pattern = {
       name: 'complexity',
       type: 'number',
       description: '1..4; picks the model tier and the debate roster',
-    },
-    {
-      name: 'pragmatistFrom',
-      type: 'number',
-      initial: 3,
-      description:
-        'The complexity from which a pragmatist triages the debate (a switch for a trial)',
     },
     { name: 'classifyReason', type: 'string' },
     {
@@ -160,9 +153,6 @@ export const maestro: Pattern = {
     { name: 'failureModes', type: 'string[]', description: 'Skeptic: concrete failure scenarios' },
     { name: 'contested', type: 'string[]', description: 'Skeptic: assumptions likely false here' },
     { name: 'edits', type: 'string[]', description: 'Skeptic: concrete suggested edits' },
-    { name: 'triage', type: 'string[]', description: 'Pragmatist: one entry per failure mode' },
-    { name: 'cuts', type: 'string[]', description: 'Pragmatist: steps that could be cut' },
-    { name: 'leaner', type: 'object', description: 'Pragmatist: leaner candidate ({} if none)' },
     {
       name: 'fit',
       type: 'string',
@@ -354,7 +344,7 @@ export const maestro: Pattern = {
 - If \`chosen\` is 'new', draft a fresh pattern in \`draft\` and leave \`adaptation\` as {}.
 - \`pastCompositions\` are approved compositions of similar earlier requests: when one used the same pattern, start from its adaptation and change only what this request needs.
 - Every entry of \`requirements\` (the request's requirements, then each piece of go-gate feedback, which outranks earlier rounds) must be met by some step. \`draftErrors\` may name requirements a check found not covered.
-- Revise rather than restart when \`adaptation\` or \`draft\` already holds a previous round: address \`draftErrors\`, \`feedback\`, and REAL concerns in \`failureModes\`/\`triage\`, and follow the template-critic's \`fit\`/\`criticReason\`.
+- Revise rather than restart when \`adaptation\` or \`draft\` already holds a previous round: address \`draftErrors\`, \`feedback\`, and concrete concerns in \`failureModes\`, and follow the template-critic's \`fit\`/\`criticReason\`.
 - Start with grounding (observe, reproduce, define) and end with verification (test, confirm). Prefer compute/condition/tool nodes for anything mechanical: AI only where judgement is needed. Bound every loop.
 - Do not investigate the codebase: you plan, you do not diagnose.
 - State 2-4 \`assumptions\`: what you assumed about this problem when choosing the steps. The skeptic attacks them.
@@ -374,7 +364,6 @@ ${SCORE_FORMAT}${HOW_RUNS_PLAY}`,
         'draftErrors',
         'feedback',
         'failureModes',
-        'triage',
         'fit',
         'criticReason',
       ],
@@ -415,45 +404,9 @@ ${SCORE_FORMAT}${HOW_RUNS_PLAY}`,
       id: 'concerns',
       kind: 'condition',
       label: 'Anything to change?',
-      // Nothing to fold in: the proposal stands, skip the pragmatist and the conductor.
+      // Nothing to fold in: the proposal stands, skip the conductor.
       // At tier 4 the template-critic still judges the fit.
       expression: 'len(failureModes) + len(edits) > 0 || complexity >= 4',
-    },
-    {
-      id: 'hasPragmatist',
-      kind: 'condition',
-      label: 'Pragmatist? (≥pragmatistFrom)',
-      expression: 'complexity >= pragmatistFrom',
-    },
-    {
-      id: 'pragmatist',
-      kind: 'agent',
-      role: 'assessor',
-      isolated: true,
-      maxEffort: 'high',
-      label: 'Pragmatist',
-      directive:
-        "You are the PRAGMATIST: enforce the minimum viable score. For EVERY entry of `failureModes` write one `triage` entry, in the same order: '<concern, abbreviated>: REAL | THEORETICAL | WRONG TEMPLATE — <one-sentence reason>'. REAL means the score must change; THEORETICAL means addressing it costs more than ignoring it; WRONG TEMPLATE means the problem does not fit the pattern's shape. `cuts`: steps that add cost without reducing risk here (empty if every step earns its keep; user attention is a cost); for a library pattern (`outline`), cut by lowering its loop bounds in `adaptation.initial`, not by removing steps. `leaner`: a full leaner pattern ONLY if `draft` is a full pattern and it meaningfully tightens it, else {}. You never add steps.",
-      reads: [
-        'request',
-        'requirements',
-        'draft',
-        'outline',
-        'adaptation',
-        'assumptions',
-        'failureModes',
-        'contested',
-        'edits',
-      ],
-      writes: ['triage', 'cuts', 'leaner'],
-      retries: 2,
-      checks: [
-        {
-          expr: 'len(triage) == len(failureModes)',
-          message:
-            'Triage EVERY skeptic failure mode: exactly one triage entry per failureModes entry.',
-        },
-      ],
     },
     {
       id: 'hasCritic',
@@ -479,7 +432,6 @@ ${SCORE_FORMAT}${HOW_RUNS_PLAY}`,
         'outline',
         'adaptation',
         'failureModes',
-        'triage',
       ],
       writes: ['fit', 'criticReason', 'recommended'],
       retries: 2,
@@ -527,7 +479,7 @@ ${SCORE_FORMAT}${HOW_RUNS_PLAY}`,
       label: 'Conductor',
       // Keep the notes' wording neutral: first-person, emotional phrasing ("how I got
       // here", "unsure, cut") made a provider content filter block every answer here.
-      directive: `You are the CONDUCTOR: fold the debate into ONE final score. For a library pattern (\`outline\`), the final score is \`adaptation\` (guidance per agent step, settings in initial; keep \`draft\` as {} unless the proposer rewrote it for a reason the debate upheld); for 'new' it is \`draft\`. If \`draftErrors\` is set, your last score did not validate: fix every error it names and change nothing else. Otherwise start from what the proposer wrote. Apply every concern the pragmatist marked REAL (if no pragmatist ran, every concrete skeptic concern), the skeptic's sound \`edits\`, and the pragmatist's \`cuts\`/\`leaner\` where they do not drop a load-bearing step. Ignore THEORETICAL concerns. Do not add steps nobody argued for, and never drop a step that meets an entry of \`requirements\`. Put the final score in \`adaptation\` or \`draft\` and summarize in \`debateNotes\` (short entries, omit empty ones): 'Approach: ...', 'Debated: ...', 'Open doubts: ...', 'Removed steps: ...'. Refer to agents by what they did.
+      directive: `You are the CONDUCTOR: fold the debate into ONE final score. For a library pattern (\`outline\`), the final score is \`adaptation\` (guidance per agent step, settings in initial; keep \`draft\` as {} unless the proposer rewrote it for a reason the debate upheld); for 'new' it is \`draft\`. If \`draftErrors\` is set, your last score did not validate: fix every error it names and change nothing else. Otherwise start from what the proposer wrote. Apply every concrete skeptic concern and the skeptic's sound \`edits\`. Do not add steps nobody argued for, and never drop a step that meets an entry of \`requirements\`. Put the final score in \`adaptation\` or \`draft\` and summarize in \`debateNotes\` (short entries, omit empty ones): 'Approach: ...', 'Debated: ...', 'Open doubts: ...', 'Removed steps: ...'. Refer to agents by what they did.
 
 Pattern format (for \`draft\`):
 ${SCORE_FORMAT}`,
@@ -544,9 +496,6 @@ ${SCORE_FORMAT}`,
         'failureModes',
         'contested',
         'edits',
-        'triage',
-        'cuts',
-        'leaner',
         'fit',
         'criticReason',
       ],
@@ -753,7 +702,7 @@ ${SCORE_FORMAT}`,
     { id: 'hasSkeptic-skeptic', from: 'hasSkeptic', to: 'skeptic', branch: 'then' },
     { id: 'hasSkeptic-validate', from: 'hasSkeptic', to: 'validate', branch: 'else' },
     { id: 'skeptic-concerns', from: 'skeptic', to: 'concerns' },
-    { id: 'concerns-hasPragmatist', from: 'concerns', to: 'hasPragmatist', branch: 'then' },
+    { id: 'concerns-hasCritic', from: 'concerns', to: 'hasCritic', branch: 'then' },
     {
       id: 'concerns-validate',
       from: 'concerns',
@@ -761,9 +710,6 @@ ${SCORE_FORMAT}`,
       branch: 'else',
       label: 'the proposal stands',
     },
-    { id: 'hasPragmatist-pragmatist', from: 'hasPragmatist', to: 'pragmatist', branch: 'then' },
-    { id: 'hasPragmatist-revise', from: 'hasPragmatist', to: 'revise', branch: 'else' },
-    { id: 'pragmatist-hasCritic', from: 'pragmatist', to: 'hasCritic' },
     { id: 'hasCritic-critic', from: 'hasCritic', to: 'critic', branch: 'then' },
     { id: 'hasCritic-revise', from: 'hasCritic', to: 'revise', branch: 'else' },
     { id: 'critic-reroute', from: 'critic', to: 'reroute' },
@@ -904,16 +850,6 @@ ${SCORE_FORMAT}`,
         },
         verdict: v('one concrete failure mode'),
       }),
-      pragmatist: (s) => ({
-        updates: {
-          triage: ((s.failureModes as string[]) ?? []).map(
-            (f) => `${f.slice(0, 40)}: REAL — flakiness is the problem`,
-          ),
-          cuts: [],
-          leaner: {},
-        },
-        verdict: v('triaged'),
-      }),
       critic: () => ({
         updates: {
           fit: 'CORRECT',
@@ -925,7 +861,7 @@ ${SCORE_FORMAT}`,
       revise: (s) => ({
         updates: {
           draft: s.draft as Record<string, unknown>,
-          // The REAL concern is applied: fix's stability gate, armed when the diagnosis finds a flake.
+          // The skeptic's concern is applied: fix's stability gate, armed when the diagnosis finds a flake.
           adaptation:
             s.chosen === 'fix'
               ? {
@@ -1064,6 +1000,6 @@ export function composedScore(
 }
 
 /** The debaters, by the maestro's own step labels: integrations describe the debate from here. */
-export const DEBATE_ROLES: readonly string[] = ['propose', 'skeptic', 'pragmatist', 'critic'].map(
-  (id) => maestro.nodes.find((n) => n.id === id)!.label.toLowerCase(),
+export const DEBATE_ROLES: readonly string[] = ['propose', 'skeptic', 'critic'].map((id) =>
+  maestro.nodes.find((n) => n.id === id)!.label.toLowerCase(),
 );
