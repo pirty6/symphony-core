@@ -11,8 +11,18 @@ const state = {
   empty: '',
 };
 
+/** The error a call throws, or undefined when it returns. */
+function thrown(call: () => unknown): unknown {
+  try {
+    call();
+    return undefined;
+  } catch (e) {
+    return e;
+  }
+}
+
 describe('evaluateGuard', () => {
-  it.each([
+  const guards: readonly (readonly [string, boolean])[] = [
     ['wrongCount < maxWrong', true],
     ['wrongCount >= maxWrong || won == true', false],
     ['!won && len(guessed) == 2', true],
@@ -26,8 +36,9 @@ describe('evaluateGuard', () => {
     ['lower("ABC") == "abc"', true],
     ['(won || wrongCount > 1) && maxWrong != 5', true],
     ['wrongCount > -1', true],
-  ])('%s -> %s', (src, expected) => {
-    expect(evaluateGuard(src, state)).toBe(expected);
+  ];
+  it('evaluates each guard to true or false', () => {
+    expect(guards.map(([src]) => [src, evaluateGuard(src, state)])).toEqual(guards);
   });
 
   it('is strict about booleans and types', () => {
@@ -38,9 +49,10 @@ describe('evaluateGuard', () => {
   });
 
   it('rejects bad syntax and unknown functions', () => {
-    for (const bad of ['', 'a ==', 'eval(x)', 'a = b', '"open', 'len(a, b)', 'state', 'a b']) {
-      expect(() => parseExpr(bad)).toThrow(ExprError);
-    }
+    const bad = ['', 'a ==', 'eval(x)', 'a = b', '"open', 'len(a, b)', 'state', 'a b'];
+    expect(bad.map((src) => thrown(() => parseExpr(src)))).toEqual(
+      bad.map(() => expect.any(ExprError)),
+    );
   });
 
   it('is deterministic across calls', () => {
@@ -51,7 +63,7 @@ describe('evaluateGuard', () => {
 
 describe('evalExpr values', () => {
   const ev = (src: string) => evalExpr(parseExpr(src), state);
-  it.each([
+  const values: readonly (readonly [string, unknown])[] = [
     ['wrongCount + 1', 3],
     ['maxWrong - wrongCount - 1', 3],
     ['wrongCount -1', 1],
@@ -146,8 +158,9 @@ describe('evalExpr values', () => {
     ['refs("Port 8081 [F2], see F10 and F2; not FF2 or F2x")', ['F2', 'F10']],
     ['refs(["[F1]", "F1 and F3"])', ['F1', 'F3']],
     ['subset(refs("[F1][F2]"), ids(numbered(["a", "b"], 1)))', true],
-  ])('%s', (src, expected) => {
-    expect(ev(src)).toEqual(expected);
+  ];
+  it('evaluates each expression to its value', () => {
+    expect(values.map(([src]) => [src, ev(src)])).toEqual(values);
   });
 
   it('only evaluates the taken if() branch', () => {

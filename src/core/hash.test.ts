@@ -1,20 +1,31 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { canonicalJson, freezeJson, HashError, hashOf, sha256, useSha256 } from './hash.js';
 
 const nodeSha = (s: string) => createHash('sha256').update(s).digest('hex');
 
+/** The error a call throws, or undefined when it returns. */
+function thrown(call: () => unknown): unknown {
+  try {
+    call();
+    return undefined;
+  } catch (e) {
+    return e;
+  }
+}
+
 describe('sha256', () => {
-  it.each([
-    '',
-    'abc',
-    'hello world',
-    'ü✓ unicode',
-    'x'.repeat(55),
-    'y'.repeat(56),
-    'z'.repeat(1000),
-  ])('matches node:crypto for case %#', (input) => {
-    expect(sha256(input)).toBe(nodeSha(input));
+  it('matches node:crypto on empty, short, unicode, block-edge and long input', () => {
+    const inputs = [
+      '',
+      'abc',
+      'hello world',
+      'ü✓ unicode',
+      'x'.repeat(55),
+      'y'.repeat(56),
+      'z'.repeat(1000),
+    ];
+    expect(inputs.map(sha256)).toEqual(inputs.map(nodeSha));
   });
 });
 
@@ -52,9 +63,10 @@ describe('frozen values', () => {
 
 describe('canonicalJson only accepts plain JSON', () => {
   it('refuses values that would collide with null or {}', () => {
-    for (const bad of [NaN, Infinity, -Infinity, undefined, () => 1, 1n]) {
-      expect(() => canonicalJson(bad)).toThrow(HashError);
-    }
+    const bad = [NaN, Infinity, -Infinity, undefined, () => 1, 1n];
+    expect(bad.map((v) => thrown(() => canonicalJson(v)))).toEqual(
+      bad.map(() => expect.any(HashError)),
+    );
     expect(() => canonicalJson({ at: new Date(0) })).toThrow(/\$\.at is a Date/);
     expect(() => canonicalJson({ m: new Map() })).toThrow(/Map/);
     expect(() => canonicalJson([1, undefined])).toThrow(/\$\[1\] is undefined/);
@@ -72,15 +84,13 @@ describe('canonicalJson only accepts plain JSON', () => {
 const native = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 
 describe('useSha256', () => {
+  afterEach(() => useSha256(sha256));
+
   it('a native SHA-256 gives every id unchanged', () => {
     const value = { b: [1, 'é 🎻'], a: { s: 'x\ud800' } };
     const before = hashOf(value);
     useSha256(native);
-    try {
-      expect(hashOf(value)).toBe(before);
-    } finally {
-      useSha256(sha256);
-    }
+    expect(hashOf(value)).toBe(before);
   });
 
   it('refuses an implementation that is not SHA-256 of the UTF-8 bytes', () => {
