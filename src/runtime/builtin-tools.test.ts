@@ -142,8 +142,8 @@ describe('sources.catalog', () => {
     const fields = Object.keys(
       JSON.parse(await readFile(join(runs, score.pattern, summary!), 'utf8')),
     );
-    for (const f of PRIOR_RUNS_HOW.match(/\(([^)]+)\)/)![1]!.split(', '))
-      expect(fields).toContain(f);
+    const named = PRIOR_RUNS_HOW.match(/\(([^)]+)\)/)![1]!.split(', ');
+    expect(fields).toEqual(expect.arrayContaining(named));
   });
 
   it('is exposed through the default registry', async () => {

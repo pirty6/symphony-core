@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { rankFiles, termsOf } from './rank.js';
 
 const ws = mkdtempSync(join(tmpdir(), 'symphony-rank-'));
@@ -14,6 +14,17 @@ writeFileSync(join(ws, 'src', 'retry.ts'), 'export function backoff() { /* retry
 writeFileSync(join(ws, 'src', 'client.ts'), 'import { backoff } from "./retry";\n');
 execFileSync('git', ['init', '-q'], { cwd: ws });
 execFileSync('git', ['add', '.'], { cwd: ws });
+
+/** Folders a test made; removed after it. */
+const made: string[] = [];
+afterEach(() => {
+  for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+function plainFolder(): string {
+  const d = mkdtempSync(join(tmpdir(), 'symphony-rank-plain-'));
+  made.push(d);
+  return d;
+}
 
 describe('repo.rank', () => {
   const paths = ['README.md', 'src/a.ts', 'src/client.ts', 'src/retry.ts'];
@@ -34,12 +45,7 @@ describe('repo.rank', () => {
   });
 
   it('outside a git repository ranks by path names only', async () => {
-    const plain = mkdtempSync(join(tmpdir(), 'symphony-rank-plain-'));
-    try {
-      const r = await rankFiles(plain, paths, ['client retry']);
-      expect(r.ranked.slice(0, 2)).toEqual(['src/client.ts', 'src/retry.ts']);
-    } finally {
-      rmSync(plain, { recursive: true, force: true });
-    }
+    const r = await rankFiles(plainFolder(), paths, ['client retry']);
+    expect(r.ranked.slice(0, 2)).toEqual(['src/client.ts', 'src/retry.ts']);
   });
 });
