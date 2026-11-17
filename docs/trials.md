@@ -407,14 +407,14 @@ time, and the later ones shared the provider with fewer others.
 | `lean` | `lean=false` | 15/15 vs 15/15 | PR +11% [+2, +22], input +9% | Keep: it saves premium requests |
 | `readerHypotheses` | `=false` | 15/15 vs 15/15 | PR +8% [0, +19], time +8% [0, +18] | Keep |
 | Pragmatist, investigate | `pragmatistFrom=4` | 15/15 vs 15/15 | time +12% [+2, +26], PR +9% | Keep: without it every objection is researched |
-| Pragmatist, maestro | `pragmatistFrom=5` | 6/6 vs 6/6, planted concern caught in all | input −27% [−30, −23], PR −23% [−26, −19] | Remove: a quarter of composing for nothing measured |
+| Pragmatist, maestro | `pragmatistFrom=5` | 6/6 vs 6/6, planted concern caught in all | input −27% [−30, −23], PR −23% [−26, −19] | Removed: a quarter of composing for nothing measured |
 | Pragmatist, review | `pragmatistFrom=5` | 15/18 vs 15/18 | input +10% [−8, +30], PR +6% [−9, +24] | No effect either way |
 | Delta repair | `SYMPHONY_DELTA_REPAIR=0` | 6/6 vs 6/6 | PR +6% [0, +11], uncached input +22% | Keep |
 | Header in system | `SYMPHONY_HEADER_IN_SYSTEM=0` | 6/6 vs 6/6 | cached share 78% off vs 75% on, PR −4% [−16, +7] | No caching gain; time −25% off is likely load, re-run both arms together |
-| Support judge, enforce | `investigate-misread-quote(-judged)` | 1/3 judged vs 3/3 plain | PR +43%, time +28% | Remove or redesign (below) |
-| Support judge, shadow | `supportJudge=shadow` | 8/9 vs 9/9 (the miss: an open sub-question) | time +13% [−2, +28]; 49% of rulings UNSUPPORTED on right answers | As above |
+| Support judge, enforce | `investigate-misread-quote(-judged)` | 1/3 judged vs 3/3 plain | PR +43%, time +28% | Removed (below) |
+| Support judge, shadow | `supportJudge=shadow` | 8/9 vs 9/9 (the miss: an open sub-question) | time +13% [−2, +28]; 49% of rulings UNSUPPORTED on right answers | Removed |
 | Stability gate | `fix-flaky-gated` vs `fix-flaky` | 5/5 vs 5/5, no false Fixed either way | time +10% (control, then 49 runs per patch) | Unproven: this model never gives a lucky green |
-| Memory (facts, lessons) | `--carry-memory` | 14/15 vs 15/15 (the miss: an open sub-question) | input +2%, PR +4%; takes 2–3 used 21% more input than take 1 | No learning gain, even on the same question |
+| Memory (facts, lessons) | `--carry-memory` | 14/15 vs 15/15 (the miss: an open sub-question) | input +2%, PR +4%; takes 2–3 used 21% more input than take 1 | Removed: no learning gain, even on the same question (composition memory stays) |
 
 **The support judge's false rejections.** It sees only a finding's quote. 23 of 30 rejections
 sampled by hand from three real shadow runs were right claims whose proof was a line or two
@@ -427,7 +427,7 @@ shadow keeps those out of memory.
 - Clarify (hint) fired in 5 of 55 investigate runs. Three got no hint (a pause only).
 - Patterns: review 157, maestro 97, investigate 55, fix 10, analyze 2; backlog, refactor and
   implement 0; `hangman` 0 (a test fixture). Extras: 4 runs.
-- Web search 128 calls and web fetch 716 in 15–16 runs; Kusto 1 call; visitor accounts: 1.
+- Web search 128 calls and web fetch 716 in 15–16 runs; Kusto 1 call (removed); visitor accounts: 1.
 - Footprint: an eval process tree averages 290–530 MB of RAM, peaking at 1.2 GB; each saved run
   is 1.7 MB on average (eval runs); `memory.json` is 740 KB at 1,999 of 2,000 facts; the live
   folders take 3.1 GB for a week of runs (up to 450 MB each).
