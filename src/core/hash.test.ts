@@ -15,17 +15,32 @@ function thrown(call: () => unknown): unknown {
 }
 
 describe('sha256', () => {
-  it('matches node:crypto on empty, short, unicode, block-edge and long input', () => {
-    const inputs = [
-      '',
-      'abc',
-      'hello world',
-      'ü✓ unicode',
-      'x'.repeat(55),
-      'y'.repeat(56),
-      'z'.repeat(1000),
-    ];
-    expect(inputs.map(sha256)).toEqual(inputs.map(nodeSha));
+  it('matches node:crypto on the empty string', () => {
+    expect(sha256('')).toBe(nodeSha(''));
+  });
+
+  it('matches node:crypto on a short ASCII string', () => {
+    expect(sha256('abc')).toBe(nodeSha('abc'));
+  });
+
+  it('matches node:crypto on text with a space', () => {
+    expect(sha256('hello world')).toBe(nodeSha('hello world'));
+  });
+
+  it('matches node:crypto on multi-byte unicode', () => {
+    expect(sha256('ü✓ unicode')).toBe(nodeSha('ü✓ unicode'));
+  });
+
+  it('matches node:crypto on 55 bytes, the most one block can pad', () => {
+    expect(sha256('x'.repeat(55))).toBe(nodeSha('x'.repeat(55)));
+  });
+
+  it('matches node:crypto on 56 bytes, where the padding spills into a second block', () => {
+    expect(sha256('y'.repeat(56))).toBe(nodeSha('y'.repeat(56)));
+  });
+
+  it('matches node:crypto on 1000 bytes, many blocks', () => {
+    expect(sha256('z'.repeat(1000))).toBe(nodeSha('z'.repeat(1000)));
   });
 });
 

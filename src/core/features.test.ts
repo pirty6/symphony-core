@@ -5,6 +5,24 @@ import { runScripted } from './scripted.js';
 import type { StateField } from './types.js';
 import { composedScore, investigate, maestro, PATTERNS } from '../patterns/index.js';
 
+/** Every feature switch, each with its own test below. */
+const SWITCH_FIELDS = [
+  'lean',
+  'singlePass',
+  'readerHypotheses',
+  'keepUnchallenged',
+  'pragmatistFrom',
+  'gapsPerChase',
+  'maxExpandRounds',
+  'reproduceFirst',
+  'hypothesesPerResearch',
+  'plainSummary',
+  'followOpen',
+  'investigateOpen',
+  'narrowRead',
+  'gapAimed',
+];
+
 /** Why a library field does not fit its switch: the wrong type, or a default or choice that cannot be. */
 function fieldMisfits(f: Feature, s: StateField): string[] {
   if (!f.choices) return s.type === 'boolean' ? [] : [`${f.field} is ${s.type}, not boolean`];
@@ -16,18 +34,75 @@ function fieldMisfits(f: Feature, s: StateField): string[] {
   return [...badDefault, ...badNumbers.map((v) => `${f.field} offers ${v}, not a number`)];
 }
 
-/** Every way a switch fails to be a field of a library pattern, of the right type and default. */
-function switchMisfits(f: Feature): string[] {
-  const fields = PATTERNS.flatMap((p) => p.state.filter((s) => s.name === f.field));
+/** Every way the switch on a field fails to be a library field of the right type and default. */
+function switchMisfits(field: string): string[] {
+  const f = FEATURES.find((x) => x.field === field);
+  if (!f) return [`${field} is not a feature switch`];
+  const fields = PATTERNS.flatMap((p) => p.state.filter((s) => s.name === field));
   return fields.length
     ? fields.flatMap((s) => fieldMisfits(f, s))
     : [`${f.field} is in no pattern`];
 }
 
 describe('feature switches', () => {
-  it('each is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
-    expect(FEATURES.length).toBeGreaterThan(0);
-    expect(FEATURES.flatMap(switchMisfits)).toEqual([]);
+  it('the tests below name every feature switch', () => {
+    expect(FEATURES.map((f) => f.field)).toEqual(SWITCH_FIELDS);
+  });
+
+  it('lean is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('lean')).toEqual([]);
+  });
+
+  it('singlePass is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('singlePass')).toEqual([]);
+  });
+
+  it('readerHypotheses is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('readerHypotheses')).toEqual([]);
+  });
+
+  it('keepUnchallenged is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('keepUnchallenged')).toEqual([]);
+  });
+
+  it('pragmatistFrom is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('pragmatistFrom')).toEqual([]);
+  });
+
+  it('gapsPerChase is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('gapsPerChase')).toEqual([]);
+  });
+
+  it('maxExpandRounds is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('maxExpandRounds')).toEqual([]);
+  });
+
+  it('reproduceFirst is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('reproduceFirst')).toEqual([]);
+  });
+
+  it('hypothesesPerResearch is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('hypothesesPerResearch')).toEqual([]);
+  });
+
+  it('plainSummary is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('plainSummary')).toEqual([]);
+  });
+
+  it('followOpen is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('followOpen')).toEqual([]);
+  });
+
+  it('investigateOpen is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('investigateOpen')).toEqual([]);
+  });
+
+  it('narrowRead is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('narrowRead')).toEqual([]);
+  });
+
+  it('gapAimed is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('gapAimed')).toEqual([]);
   });
 });
 

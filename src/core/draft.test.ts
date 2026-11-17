@@ -41,6 +41,25 @@ function refusal(r: Checked<Pattern>): string {
 const roundTrip = (p: Pattern) =>
   JSON.parse(JSON.stringify(parsedPattern(parseDraft(asJson(p))))) as unknown;
 
+/** Every library pattern, each with its own round-trip test below. */
+const ROUND_TRIP_PATTERNS = [
+  'maestro',
+  'investigate',
+  'fix',
+  'refactor',
+  'implement',
+  'backlog',
+  'review',
+  'analyze',
+  'hangman',
+];
+
+/** The library pattern of that name, after the maestro's round trip, is as it was, field for field. */
+function expectRoundTrips(name: string): void {
+  const p = PATTERNS.find((x) => x.name === name)!;
+  expect(roundTrip(p)).toEqual(asJson(p));
+}
+
 describe('parseDraft', () => {
   it('accepts a JSON round-trip of a valid pattern', () => {
     const r = parseDraft(asJson(fix));
@@ -50,10 +69,44 @@ describe('parseDraft', () => {
 
   // The maestro re-parses every score it composes: a field dropped here silently changes how
   // the composed run plays (fewer sub-agents, no warm-up, no engine record of partial reads).
-  it('every library pattern survives the round trip the maestro gives it, field for field', () => {
-    expect(PATTERNS.map((p) => [p.name, roundTrip(p)])).toEqual(
-      PATTERNS.map((p) => [p.name, asJson(p)]),
-    );
+  it('the round-trip tests below name every pattern in the library', () => {
+    expect(PATTERNS.map((p) => p.name)).toEqual(ROUND_TRIP_PATTERNS);
+  });
+
+  it('maestro survives the round trip the maestro gives it, field for field', () => {
+    expectRoundTrips('maestro');
+  });
+
+  it('investigate survives the round trip the maestro gives it, field for field', () => {
+    expectRoundTrips('investigate');
+  });
+
+  it('fix survives the round trip the maestro gives it, field for field', () => {
+    expectRoundTrips('fix');
+  });
+
+  it('refactor survives the round trip the maestro gives it, field for field', () => {
+    expectRoundTrips('refactor');
+  });
+
+  it('implement survives the round trip the maestro gives it, field for field', () => {
+    expectRoundTrips('implement');
+  });
+
+  it('backlog survives the round trip the maestro gives it, field for field', () => {
+    expectRoundTrips('backlog');
+  });
+
+  it('review survives the round trip the maestro gives it, field for field', () => {
+    expectRoundTrips('review');
+  });
+
+  it('analyze survives the round trip the maestro gives it, field for field', () => {
+    expectRoundTrips('analyze');
+  });
+
+  it('hangman survives the round trip the maestro gives it, field for field', () => {
+    expectRoundTrips('hangman');
   });
 
   it('collects structural and graph errors', () => {
