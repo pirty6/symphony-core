@@ -159,7 +159,6 @@ describe('sources.catalog', () => {
       'git.diff',
       'diff.scan',
       'evidence.check',
-      'evidence.context',
       'memory.facts',
       'memory.recall',
       'memory.lesson',

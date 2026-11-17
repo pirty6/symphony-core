@@ -257,8 +257,7 @@ function plantedFlaw(): EvalTask[] {
 /**
  * A real quote that invites a wrong claim: `MAX_TRIES = 3` is there, but the loop starts at 1
  * and stops before the limit, so the request is tried twice. A finding "tried 3 times
- * \`MAX_TRIES = 3\`" passes the citation check (the quote is real) and is still wrong: the
- * support judge's own fixture, played with the judge off and on (enforce).
+ * \`MAX_TRIES = 3\`" passes the citation check (the quote is real) and is still wrong.
  */
 function misreadQuote(): EvalTask[] {
   const files = {
@@ -287,16 +286,7 @@ function misreadQuote(): EvalTask[] {
       ],
     };
   };
-  return [
-    { id: 'investigate-misread-quote', pattern: 'investigate', inputs, files, check },
-    {
-      id: 'investigate-misread-quote-judged',
-      pattern: 'investigate',
-      inputs: { ...inputs, supportJudge: 'enforce' },
-      files,
-      check,
-    },
-  ];
+  return [{ id: 'investigate-misread-quote', pattern: 'investigate', inputs, files, check }];
 }
 
 const SUM_RIGHT =

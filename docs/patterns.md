@@ -115,18 +115,12 @@ read pipelines, branch policies and Kusto tables; nothing that writes is allowed
    3 a Sonnet answer was as often right in the eval matrix, with runs 24% shorter.
    `keepUnchallenged: true` (off by default, for an A/B) makes the rewrite
    keep word for word the sub-answers no objection named, so it opens no new front.
-9. **Support judge** (`supportJudge`: off by default; `shadow`, `enforce`). Each cited
-   workspace finding's quote, with the numbered lines around it, its claim and nothing else, is
-   shown to another model family. It rules SUPPORTED when those lines bear the claim out, even in
-   other words, and UNSUPPORTED when they contradict it or don't show what it adds. Unsupported findings are never remembered;
-   in `enforce` they also make the answer partial. Web and other sources are said to be
-   uncheckable, never judged.
-10. **Settle.** Settled means no unresolved objection, no OPEN sub-answer or objection
+9. **Settle.** Settled means no unresolved objection, no OPEN sub-answer or objection
    resolution, and enough confidence. A settled answer ends `success`, remembers the findings
    it cited and a lesson built from its checked sub-answers (only when it names a workspace
    file, so the lesson goes stale with the code). Anything else ends `partial`, with the
    reasons in `doubts`, and teaches nothing.
-11. **Two versions of the result, one for each reader.**
+10. **Two versions of the result, one for each reader.**
     - **For people (`summary`).** It comes first, written by the AI from the cited answer in
       Simplified Technical English (ASD-STE100). It has short sentences, one idea in each,
       common words, the active voice and terms explained, and no citation ids. Its sections are
@@ -183,7 +177,6 @@ flowchart TD
   n_sourcePhase[["Search sources · 5 steps"]]
   n_gapPhase[["Close gaps · 25 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
-  n_judgePhase[["Support judge · 6 steps"]]
   n_start --> n_planPhase
   n_planPhase --> n_recall
   n_recall -.-> n_planPhase
@@ -206,8 +199,7 @@ flowchart TD
   n_listOpen --> n_challengePhase
   n_challengePhase --> n_attachParts
   n_challengePhase -.-> n_gapPhase
-  n_attachParts --> n_judgePhase
-  n_judgePhase --> n_noteDoubts
+  n_attachParts --> n_noteDoubts
   n_noteDoubts --> n_anyOpen
   n_anyOpen -->|"yes"| n_planVerification
   n_anyOpen -->|"no"| n_handoffDoc
@@ -233,7 +225,6 @@ flowchart TD
 | Search sources | History, GitHub, dependencies, MCP | Sources left? → Next source → Search source → Check citations → Record source |
 | Close gaps | Targeted research, then a human hint | Find gaps → Record gaps → Expand the read? → Unread files → Rank by the gaps → Queue gap files → Files queued? → Gap expansion read? → Back to the gaps → Chase gaps? → Aim the research → Close gaps → Check citations → Record gap research → Runs a gap needs? → Experiments allowed already? → Allow runs for the gaps? → Skip the gap runs → Queue the gap runs → Run what the gaps need → Check citations → Record the gap runs → Gaps closed? → Ask for a hint → Use hint |
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2, a round left) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left, research still finding) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
-| Support judge | Off by default: does each cited finding's quote back its claim? | Support judge? → What the judge can check → Lines around each quote → Any to judge? → Support judge → Record the rulings |
 
 <!-- /flow:investigate -->
 

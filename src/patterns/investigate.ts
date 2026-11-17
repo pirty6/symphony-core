@@ -657,30 +657,9 @@ export const investigate: Pattern = {
           'Files of the triage batch the engine gave whole (engine-filled; empty without a record)',
       },
       {
-        name: 'supportJudge',
-        type: 'string',
-        initial: 'off',
-        description:
-          "Does each cited finding's quote support its claim? off; shadow (judged and reported, the outcome unchanged); enforce (unsupported ones make the answer partial). Off until calibrated.",
-      },
-      {
-        name: 'judgeItems',
-        type: 'string[]',
-        description:
-          'Cited findings the judge can check: workspace path:line ones, with their quotes',
-      },
-      {
-        name: 'supportRulings',
-        type: 'string[]',
-        description:
-          'One per judgeItems entry, in order: "F12: SUPPORTED — why" or "F12: UNSUPPORTED — why"',
-      },
-      { name: 'unsupportedIds', type: 'string[]', description: 'Cited findings ruled UNSUPPORTED' },
-      { name: 'judgeBatch', type: 'number', initial: 40, description: 'Findings per judge call' },
-      {
         name: 'factsToKeep',
         type: 'string[]',
-        description: 'Cited findings remembered for later runs: all but the ones ruled unsupported',
+        description: 'Cited findings remembered for later runs',
       },
       {
         name: 'readerHypotheses',
@@ -962,19 +941,6 @@ export const investigate: Pattern = {
       ],
     },
     challenge.group,
-    {
-      id: 'judgePhase',
-      label: 'Support judge',
-      description: "Off by default: does each cited finding's quote back its claim?",
-      nodes: [
-        'useJudge',
-        'takeJudgeItems',
-        'judgeContext',
-        'hasJudgeItems',
-        'judgeSupport',
-        'splitRulings',
-      ],
-    },
   ],
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
@@ -2067,96 +2033,12 @@ export const investigate: Pattern = {
       ],
     },
     {
-      id: 'useJudge',
-      kind: 'condition',
-      label: 'Support judge?',
-      expression: 'supportJudge != "off" && len(citedFindings) > 0',
-    },
-    {
-      id: 'takeJudgeItems',
-      kind: 'compute',
-      label: 'What the judge can check',
-      // Workspace citations carry a checked quote; web and other sources do not (uncheckable).
-      assign: [
-        {
-          field: 'judgeItems',
-          expr: `pick(citedFindings, positions(citedFindings, "${FILE_CITE}"))`,
-        },
-      ],
-    },
-    {
-      // The lines around each quote: a claim is judged on what the code there shows, so an
-      // honest reading of it is not flagged for using other words, and a misreading is caught
-      // by the line that contradicts it.
-      id: 'judgeContext',
-      kind: 'tool',
-      label: 'Lines around each quote',
-      tool: 'evidence.context',
-      inputs: { findings: 'judgeItems' },
-      output: { items: 'judgeItems' },
-    },
-    {
-      id: 'hasJudgeItems',
-      kind: 'condition',
-      label: 'Any to judge?',
-      expression: 'len(judgeItems) > 0',
-    },
-    {
-      id: 'judgeSupport',
-      kind: 'agent',
-      role: 'assessor',
-      label: 'Support judge',
-      // Isolated and on another family: it sees each quote and its claim, never the question or
-      // the answer, so it judges support, not plausibility.
-      isolated: true,
-      otherModel: true,
-      directive:
-        'For EVERY entry of `judgeItems`, in order, write one `supportRulings` entry. Each entry is a claim, its quote (in backticks) and the numbered lines around the quote in that file (`context`). Write "F<n>: SUPPORTED — <why>" if the quote, read with those lines, shows what the claim says: a claim may describe the code in its own words or draw a conclusion, as long as the lines shown bear it out. Write "F<n>: UNSUPPORTED — <why>" if the lines contradict the claim (e.g. a limit the loop never reaches), are about something else, or the claim adds a number, name or condition they do not show. Do not rule UNSUPPORTED only because the claim uses other words than the quote. Judge each one on its own lines and claim only. Start each entry with the id of its finding and nothing before it.',
-      reads: ['judgeItems'],
-      writes: ['supportRulings'],
-      fanOut: { over: 'judgeItems', per: 'judgeBatch', agents: 'agents' },
-      retries: 2,
-      maxVisits: 1,
-      checks: [
-        {
-          // By the id each ruling starts with, in order: an id named inside a reason does not count.
-          expr: 'heads(supportRulings, "^F[0-9]+") == ids(judgeItems)',
-          message:
-            "Give exactly one supportRulings entry per entry of judgeItems, in the same order, each starting with that finding's id.",
-        },
-        {
-          expr: 'len(unmatched(supportRulings, "^F[0-9]+: (SUPPORTED|UNSUPPORTED)( |$)")) == 0',
-          message: 'Write each entry as "F<n>: SUPPORTED — why" or "F<n>: UNSUPPORTED — why".',
-        },
-      ],
-    },
-    {
-      id: 'splitRulings',
-      kind: 'compute',
-      label: 'Record the rulings',
-      assign: [
-        {
-          field: 'unsupportedIds',
-          expr: 'heads(without(supportRulings, unmatched(supportRulings, "^F[0-9]+: UNSUPPORTED")), "^F[0-9]+")',
-        },
-        // What later runs remember: never a finding whose quote does not back its claim.
-        {
-          field: 'factsToKeep',
-          expr: 'without(citedFindings, withIds(citedFindings, unsupportedIds))',
-        },
-        {
-          field: 'doubts',
-          expr: `doubts + if(len(unsupportedIds) > 0, ["The support judge found these cited findings unsupported by their own quotes" + if(supportJudge == "shadow", " (shadow mode: reported, the outcome unchanged)", "") + ": " + join(without(supportRulings, unmatched(supportRulings, "^F[0-9]+: UNSUPPORTED")), "; ")], []) + if(len(citedFindings) > len(judgeItems), [text(len(citedFindings) - len(judgeItems)) + " cited findings cite web pages or other sources: the support judge cannot check them"], [])`,
-        },
-      ],
-    },
-    {
       id: 'settled',
       kind: 'condition',
       label: 'Settled?',
       // Open objections, open sub-questions or low confidence are said in the outcome, not only
       // in the text. Confidence is the assessor's (from before any debate), so it is not enough.
-      expression: `(supportJudge != "enforce" || len(unsupportedIds) == 0) && len(unresolvedObjections) == 0 && len(${OPEN_ENTRIES('subAnswers')}) == 0 && len(${OPEN_ENTRIES('objectionResolutions')}) == 0 && confidence >= 0.5`,
+      expression: `len(unresolvedObjections) == 0 && len(${OPEN_ENTRIES('subAnswers')}) == 0 && len(${OPEN_ENTRIES('objectionResolutions')}) == 0 && confidence >= 0.5`,
     },
     {
       id: 'noteDoubts',
@@ -2375,15 +2257,7 @@ Find real paths, test names and table names with read-only tools first. Use the 
     { id: 'answer-listOpen', from: 'answer', to: 'listOpen' },
     { id: 'listOpen-challenge', from: 'listOpen', to: challenge.entry },
     ...challenge.edges,
-    { id: 'attachParts-useJudge', from: 'attachParts', to: 'useJudge' },
-    { id: 'useJudge-take', from: 'useJudge', to: 'takeJudgeItems', branch: 'then' },
-    { id: 'useJudge-settled', from: 'useJudge', to: 'noteDoubts', branch: 'else' },
-    { id: 'take-context', from: 'takeJudgeItems', to: 'judgeContext' },
-    { id: 'context-hasItems', from: 'judgeContext', to: 'hasJudgeItems' },
-    { id: 'hasItems-judge', from: 'hasJudgeItems', to: 'judgeSupport', branch: 'then' },
-    { id: 'hasItems-split', from: 'hasJudgeItems', to: 'splitRulings', branch: 'else' },
-    { id: 'judge-split', from: 'judgeSupport', to: 'splitRulings' },
-    { id: 'split-settled', from: 'splitRulings', to: 'noteDoubts' },
+    { id: 'attachParts-noteDoubts', from: 'attachParts', to: 'noteDoubts' },
     // Why it is unsettled is noted first (nothing, when it is settled), so both readers' versions
     // say it; then whether it is settled decides how the run ends.
     { id: 'note-anyOpen', from: 'noteDoubts', to: 'anyOpen' },
@@ -2455,8 +2329,6 @@ Find real paths, test names and table names with read-only tools first. Use the 
         const hit = files.filter((f) => RELEVANT.test(f));
         return { ranked: [...hit, ...files.filter((f) => !hit.includes(f))], matched: hit };
       },
-      // The demo's files are not on disk: the items go to the judge as they are.
-      judgeContext: (s) => ({ items: s.judgeItems }),
       // The gap names the command line: the CLI shares its words.
       rankGaps: (s) => {
         const pool = (s.expandPool as string[]) ?? [];
@@ -2692,14 +2564,6 @@ Find real paths, test names and table names with read-only tools first. Use the 
           ],
         },
         verdict: v('hypotheses proposed'),
-      }),
-      judgeSupport: (s) => ({
-        updates: {
-          supportRulings: ((s.judgeItems as string[]) ?? []).map(
-            (f) => `${f.split(' ')[0]}: SUPPORTED — the quote states it`,
-          ),
-        },
-        verdict: v('judged'),
       }),
       challenge: (_s, visit) => ({
         updates: {

@@ -166,18 +166,8 @@ time in one recorded run; this says whether it pays.
 
 ## 10. Calibrating the support judge (shadow)
 
-`investigate-misread-quote` has a real quote attached to a wrong claim, and its `-judged` twin
-plays the judge in `enforce`. Run the pair, then the other investigate tasks with the judge in
-`shadow`, so that false rejections on correct findings show up.
-
-```sh
-npm run cli -- eval --task investigate-misread-quote,investigate-misread-quote-judged -n 3
-npm run cli -- eval --task investigate-default-port,investigate-multi-hop,investigate-false-hint -n 3 --with supportJudge=shadow --compare $BASE
-```
-
-Compare: whether the judged twin is solved and the plain one is not (recall), what shadow marks
-unsupported on tasks whose findings are right (false rejections), and the judge's tokens
-(`judgeSupport` in `costliest steps`).
+Measured on 2026-11-17 and removed: see [Feature measurements](#feature-measurements-2026-11-17).
+`investigate-misread-quote` stays, as a check that a real quote does not lead to a wrong claim.
 
 ## 11. One sub-agent per gap vs one call for all gaps
 

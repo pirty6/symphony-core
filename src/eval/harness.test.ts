@@ -512,12 +512,6 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
         'Twice: the loop in src/send.js:5 runs attempt 1 and 2 and stops before MAX_TRIES (3), so a failing request is tried 2 times.',
     },
   }),
-  'investigate-misread-quote-judged': () => ({
-    state: {
-      answer:
-        'Twice: the loop in src/send.js:5 runs attempt 1 and 2 and stops before MAX_TRIES (3), so a failing request is tried 2 times.',
-    },
-  }),
   'investigate-many-files': () => ({
     state: {
       answer:

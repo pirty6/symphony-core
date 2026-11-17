@@ -63,7 +63,6 @@ end.
 | `maxExperiments` (12, at least 1; at most 4 with `lean`; gap runs count too) | Time | Lower it (never 0) for speed. Untimed experiments run in parallel | M: 15 serial experiments took 20% of one run; a tailored 0 left a run stuck |
 | `maxDebateRounds` (3, a ceiling), `pragmatistFrom` (3) | Correctness (a hypothesis) vs time and tokens | 1 for speed-bound runs. After round 1, another round plays only when the last one's research found new evidence, so most debates stop sooner; `debateLog` says why it stopped. No challenge after the last round. Eval matrix (20 runs per arm): 0/1/2/3 rounds solved 17/18/19/20 in investigate and 15/17/–/20 in review, the misses mostly unsettled runs, not wrong answers | M for cost: round 2 was ~16% of input and ~21% of time in one run. R for correctness: one run had two verified corrections (trial 9) |
 | `keepUnchallenged` (off), `readerHypotheses` (on), `gapAimed` (off); the first and last are on with `lean` | Unmeasured | After their A/Bs | R |
-| `supportJudge` (off; `judgeBatch` 40) | Catches a real quote attached to a wrong claim vs tokens and a second model family. Does nothing for web findings | `shadow` for high-stakes workspace questions; `enforce` only after calibration (trial 10) | D/R |
 | complexity (auto; `lean` caps a rated 4 at 3) | 1: no debate, cheapest. 4: the heaviest model at xhigh effort, plus a second investigator | Force 1 for routine lookups, 4 for high stakes (a chosen 4 is kept). Ratings vary | D |
 | `SYMPHONY_TIERS` (e.g. `4=claude-opus-5.5:high`) | A lower effort on the answer saves up to ≈2.5 min per answer visit (estimated). It also lowers hypothesize at complexity 3 and the skeptic, which plays a tier up on another model family that takes the tier's effort | Only after an A/B that checks objections found as well as answers | R: unmeasured |
 | improvisation (0) | 0 replays recorded answers at zero tokens; only the saved runs of the same score are read | none | M: loading only the same score's runs takes 0.3 s and 369 MB; loading all 1.2 GB took 5.4 s and 2.3 GB |
@@ -88,7 +87,7 @@ end.
 - **Default:** the code defaults, `lean` on.
 - **Routine question:** complexity 1.
 - **High-stakes workspace question:** complexity 4 and `lean` off (the second
-  investigator), with `supportJudge` set to `shadow`.
+  investigator).
 - **Huge, budget-bound repository:** a lower `maxTriageFiles`. Locate decides what is read there,
   not `narrowRead`. Gap expansion stays on.
 - **Cost-bound run:** lower `maxChaseRounds` and `maxDebateRounds`, and accept more reported
