@@ -65,6 +65,25 @@ const node = (p: typeof fix, id: string) =>
     reads: readonly string[];
   };
 
+type LineResult = 'failed' | 'passed' | 'retried' | 'neither';
+/** What a test-output line says of its test, by the stability phase's line patterns. */
+const resultOf = (line: string): LineResult =>
+  new RegExp(RETRIED_LINE).test(line)
+    ? 'retried'
+    : new RegExp(FAILED_LINE).test(line)
+      ? 'failed'
+      : new RegExp(PASSED_LINE).test(line)
+        ? 'passed'
+        : 'neither';
+
+/** What the flaky-test work adds to a pattern's steps. */
+const flakyWork = (p: typeof fix) => ({
+  forbidsHiding: /Do not hide a failure/.test(node(p, 'apply').directive),
+  triagesFlakyTarget: /flakyTarget/.test(node(p, 'triage').directive),
+  triageChecks: node(p, 'triage').checks.length,
+  reviewReadsMasking: node(p, 'prReview').reads.includes('maskingFlags'),
+});
+
 describe('fix on a flaky test', () => {
   it('the diagnosis of an intermittent failure names the test, its file and where the fix goes', () => {
     const named = play({ agents: { diagnose: flakyDiagnose() } });
@@ -96,7 +115,7 @@ describe('fix on a flaky test', () => {
 
   it("reads a test's own result line from vitest, node and pytest output", () => {
     // Captured from vitest 4.1.10 --reporter=verbose, node --test (spec and TAP) and pytest -v.
-    const lines: [string, 'failed' | 'passed' | 'retried' | 'neither'][] = [
+    const lines: [string, LineResult][] = [
       [' × a.test.ts > main > flaky one 2ms', 'failed'],
       [' FAIL  a.test.ts > main > flaky one', 'failed'],
       [' ✓ a.test.ts > main > stable one 1ms', 'passed'],
@@ -111,30 +130,24 @@ describe('fix on a flaky test', () => {
       ['tests/test_a.py::test_b PASSED', 'passed'],
       ['tests/test_a.py::test_b RERUN', 'retried'],
     ];
-    for (const [line, is] of lines) {
-      const got = new RegExp(RETRIED_LINE).test(line)
-        ? 'retried'
-        : new RegExp(FAILED_LINE).test(line)
-          ? 'failed'
-          : new RegExp(PASSED_LINE).test(line)
-            ? 'passed'
-            : 'neither';
-      expect(got, line).toBe(is);
-    }
+    expect(lines.map(([line]) => [line, resultOf(line)])).toEqual(lines);
   });
 
   it('the nondeterminism checklist and the masking rule are fix-only: implement and refactor are unchanged', () => {
-    for (const id of ['research', 'diagnose']) {
-      expect(node(fix, id).directive).toMatch(/state shared between tests/);
-    }
+    const sharedStateCheck = expect.stringMatching(/state shared between tests/);
+    expect(['research', 'diagnose'].map((id) => node(fix, id).directive)).toEqual([
+      sharedStateCheck,
+      sharedStateCheck,
+    ]);
     expect(node(fix, 'apply').directive).toMatch(/Do not hide a failure/);
     expect(node(fix, 'triage').directive).toMatch(/flakyTarget/);
-    for (const p of [implement, refactor]) {
-      expect(node(p, 'apply').directive).not.toMatch(/Do not hide a failure/);
-      expect(node(p, 'triage').directive).not.toMatch(/flakyTarget/);
-      expect(node(p, 'triage').checks).toHaveLength(2);
-      expect(node(p, 'prReview').reads).not.toContain('maskingFlags');
-    }
+    const unchanged = {
+      forbidsHiding: false,
+      triagesFlakyTarget: false,
+      triageChecks: 2,
+      reviewReadsMasking: false,
+    };
+    expect([implement, refactor].map(flakyWork)).toEqual([unchanged, unchanged]);
   });
 });
 
@@ -157,69 +170,173 @@ const masked = (files: string[], diff: string) => () => {
   return () => ({ diff: `${diff} // ${++k}`, hash: `m${k}`, files });
 };
 const armed = { maxStabilityRuns: 1, stabilityTolerance: 0.25, maxEdits: 2 };
+/** An edit that can hide a flake: the files it touches, its diff and the flag it raises. */
+interface MaskingCase {
+  readonly files: string[];
+  readonly diff: string;
+  readonly flag: RegExp;
+}
 /** Edits that can hide a flake, and the flag each raises. */
-const MASKING_CASES: [string[], string, RegExp][] = [
-  [
-    ['src/eval/harness.ts'],
-    `${head('src/eval/harness.ts')}\n+export const TIME_SLACK = 3;`,
-    /slack/,
-  ],
-  [['src/a.ts'], `${head('src/a.ts')}\n+  await sleep(50);`, /code touches/],
-  [['src/a.test.ts'], `${head('src/a.test.ts')}\n+  it.skip('another', () => {});`, /skip, invert/],
-  [['src/a.test.ts'], `${head('src/a.test.ts')}\n+  it('x', { retry: 3 }, () => {});`, /own file/],
-  [['src/b.test.ts'], `${head('src/b.test.ts')}\n+jest.retryTimes(3);`, /retry/],
-  [['test/b.js'], `${head('test/b.js')}\n+  this.retries(3);`, /retry/],
-  [['tests/test_b.py'], `${head('tests/test_b.py')}\n+@pytest.mark.flaky(reruns=3)`, /retry/],
-  [
-    ['src/my thing.test.ts'],
-    `${head('src/a.ts')}\n+ok()\ndiff --git a/src/my thing.test.ts b/src/my thing.test.ts\n--- a/src/my thing.test.ts\n+++ b/src/my thing.test.ts\n@@ -1 +1 @@\n+it.skip('x')`,
-    /skip, invert/,
-  ],
-  [
-    ['src/a.test.ts'],
-    `${head('src/a.test.ts')}\n-  it('loads in time', async () => {\n+  it('loads in time', async () => { // ok`,
-    /existing test lines/,
-  ],
-  [
-    ['src/a.ts'],
-    `${head('src/a.ts')}\n-  expect(ms).toBeLessThan(10);\n+  run();`,
-    /assertions removed/,
-  ],
-  [['package.json'], `${head('package.json')}\n+  "test": "vitest run"`, /configure the tests/],
-  [['img.png'], 'untracked files:\n  img.png', /cannot show/],
-];
+const MASKING = {
+  harnessSlack: {
+    files: ['src/eval/harness.ts'],
+    diff: `${head('src/eval/harness.ts')}\n+export const TIME_SLACK = 3;`,
+    flag: /slack/,
+  },
+  sleepInCode: {
+    files: ['src/a.ts'],
+    diff: `${head('src/a.ts')}\n+  await sleep(50);`,
+    flag: /code touches/,
+  },
+  skippedTest: {
+    files: ['src/a.test.ts'],
+    diff: `${head('src/a.test.ts')}\n+  it.skip('another', () => {});`,
+    flag: /skip, invert/,
+  },
+  retryInOwnFile: {
+    files: ['src/a.test.ts'],
+    diff: `${head('src/a.test.ts')}\n+  it('x', { retry: 3 }, () => {});`,
+    flag: /own file/,
+  },
+  jestRetry: {
+    files: ['src/b.test.ts'],
+    diff: `${head('src/b.test.ts')}\n+jest.retryTimes(3);`,
+    flag: /retry/,
+  },
+  mochaRetry: {
+    files: ['test/b.js'],
+    diff: `${head('test/b.js')}\n+  this.retries(3);`,
+    flag: /retry/,
+  },
+  pytestRerun: {
+    files: ['tests/test_b.py'],
+    diff: `${head('tests/test_b.py')}\n+@pytest.mark.flaky(reruns=3)`,
+    flag: /retry/,
+  },
+  skipInSpacedPath: {
+    files: ['src/my thing.test.ts'],
+    diff: `${head('src/a.ts')}\n+ok()\ndiff --git a/src/my thing.test.ts b/src/my thing.test.ts\n--- a/src/my thing.test.ts\n+++ b/src/my thing.test.ts\n@@ -1 +1 @@\n+it.skip('x')`,
+    flag: /skip, invert/,
+  },
+  existingTestLine: {
+    files: ['src/a.test.ts'],
+    diff: `${head('src/a.test.ts')}\n-  it('loads in time', async () => {\n+  it('loads in time', async () => { // ok`,
+    flag: /existing test lines/,
+  },
+  assertionRemoved: {
+    files: ['src/a.ts'],
+    diff: `${head('src/a.ts')}\n-  expect(ms).toBeLessThan(10);\n+  run();`,
+    flag: /assertions removed/,
+  },
+  testConfig: {
+    files: ['package.json'],
+    diff: `${head('package.json')}\n+  "test": "vitest run"`,
+    flag: /configure the tests/,
+  },
+  untrackedFile: {
+    files: ['img.png'],
+    diff: 'untracked files:\n  img.png',
+    flag: /cannot show/,
+  },
+} satisfies Record<string, MaskingCase>;
 const flaky = { diagnose: flakyDiagnose() };
+
+type Played = ReturnType<typeof play>;
+/** The steps of the stability gate that do I/O. */
+const GATE_IO_STEPS = ['controlSnapshot', 'runControl', 'runStable', 'checkMasking'];
+/** What a run shows of a stability gate that is off. */
+const gateOff = (r: Played) => ({
+  steps: r.r.state.steps.map((x) => x.nodeId),
+  gateIoRuns: GATE_IO_STEPS.map(r.ran),
+  end: r.end,
+  testRuns: r.ran('runTests'),
+  stabilityReport: r.state.stabilityReport,
+});
+/** A flaky run whose gate passes every run, under the given context. */
+const playStable = (context: Record<string, unknown>) =>
+  play({ agents: flaky, tools: { runStable: gateRuns()() } }, context);
+/** What a run shows of an armed stability gate: its runs, their order, the end and the report. */
+const gateOn = (r: Played) => {
+  const ids = r.r.state.steps.map((x) => x.nodeId);
+  return {
+    maxStableRuns: r.state.maxStableRuns,
+    controlRuns: r.ran('runControl'),
+    stableRuns: r.ran('runStable'),
+    controlBeforeApply: ids.indexOf('runControl') < ids.indexOf('apply'),
+    end: r.end,
+    stabilityReport: r.state.stabilityReport,
+    certifiesItsDiff:
+      JSON.stringify(r.state.certifiedHashes) === JSON.stringify([r.state.diffHash]),
+  };
+};
+
+/** Plays an armed run whose patch is the masking edit. */
+const playMasked = ({ files, diff }: MaskingCase) =>
+  play(
+    { agents: flaky, tools: { captureDiff: masked(files, diff)(), runStable: gateRuns()() } },
+    armed,
+  );
+/** Unattended, the masking edit raises its flag and the patch is not certified. */
+function expectFlaggedUncertified(edit: MaskingCase) {
+  const r = playMasked(edit);
+  expect((r.state.maskingFlags as string[]).join('; '), edit.diff).toMatch(edit.flag);
+  expect(r.end).toBe('uncertified');
+  expect(r.state.stabilityReport).toMatch(/did not accept the masking flags/);
+}
+
+/** The args a fix step reruns with, if any. */
+const argsOf = (id: string) => (fix.nodes.find((n) => n.id === id) as { args?: unknown }).args;
+/** How often a run played its control, and where it ended. */
+const controlEnding = (r: Played) => ({ controlRuns: r.ran('runControl'), end: r.end });
+
+/** The node --test name the runner reports, and a run whose control fails then passes. */
+const NODE_TEST_NAME = 'shows the answer to the latest query';
+function playNodeTest(failed: string, passed: string) {
+  let c = 0;
+  return play(
+    {
+      agents: {
+        diagnose: flakyDiagnose({ flakyTarget: NODE_TEST_NAME, flakyFile: 'test/search.test.js' }),
+      },
+      tools: {
+        runControl: () => tests(++c > 1, c > 1 ? passed : failed),
+        runStable: () => tests(true, passed),
+      },
+    },
+    armed,
+  );
+}
 
 describe('fix: the stability gate (opt-in)', () => {
   it('is off by default: three steps with no I/O, the same test runs and the same end', () => {
-    for (const r of [play(), play({ agents: flaky })]) {
-      const ids = r.r.state.steps.map((x) => x.nodeId);
-      expect(ids).toEqual(expect.arrayContaining(['armStability', 'controlOn', 'stableGate']));
-      for (const id of ['controlSnapshot', 'runControl', 'runStable', 'checkMasking'])
-        expect(r.ran(id)).toBe(0);
-      expect(r.end).toBe('fixed');
-      expect(r.ran('runTests')).toBe(2);
-      expect(r.state.stabilityReport).toBe('');
-    }
+    const off = {
+      steps: expect.arrayContaining(['armStability', 'controlOn', 'stableGate']),
+      gateIoRuns: [0, 0, 0, 0],
+      end: 'fixed',
+      testRuns: 2,
+      stabilityReport: '',
+    };
+    expect([play(), play({ agents: flaky })].map(gateOff)).toEqual([off, off]);
   });
 
   it('armed: the flake fails before the edit, then the patch passes the runs the tolerance needs: certified', () => {
-    for (const ctx of [armed, { ...armed, maxStabilityRuns: 0, autoStabilityRuns: 1 }]) {
-      const r = play({ agents: flaky, tools: { runStable: gateRuns()() } }, ctx);
-      expect(r.state.maxStableRuns).toBe(13);
-      expect(r.ran('runControl')).toBe(1);
-      expect(r.ran('runStable')).toBe(13);
-      const ids = r.r.state.steps.map((x) => x.nodeId);
-      expect(ids.indexOf('runControl')).toBeLessThan(ids.indexOf('apply'));
-      expect(r.end).toBe('fixed');
-      expect(r.state.stabilityReport).toMatch(
+    const certified = {
+      maxStableRuns: 13,
+      controlRuns: 1,
+      stableRuns: 13,
+      controlBeforeApply: true,
+      end: 'fixed',
+      stabilityReport: expect.stringMatching(
         /^certified: .* failed 1 of 1 runs .* none of 13 fresh runs .* below 0\.25 at 95% across 2 patches/,
-      );
-      expect(r.state.certifiedHashes).toEqual([r.state.diffHash]);
-    }
+      ),
+      certifiesItsDiff: true,
+    };
+    expect(gateOn(playStable(armed))).toEqual(certified);
+    expect(gateOn(playStable({ ...armed, maxStabilityRuns: 0, autoStabilityRuns: 1 }))).toEqual(
+      certified,
+    );
     // Each run is a sample: neither the control nor the gate reuses a result.
-    for (const id of ['runControl', 'runStable'])
-      expect((fix.nodes.find((n) => n.id === id) as { args?: unknown }).args).toBeUndefined();
+    expect(['runControl', 'runStable'].map(argsOf)).toEqual([undefined, undefined]);
   });
 
   it('a failure of the flaky test after verify goes back to the edit loop, never to ENVIRONMENT', () => {
@@ -335,25 +452,51 @@ describe('fix: the stability gate (opt-in)', () => {
   });
 
   // One case per test: each plays a whole gated run.
-  it.each(MASKING_CASES.map((c) => [c[2].source, ...c] as const))(
-    'edits that can hide a flake go to a person, unattended not certified: %s',
-    (_name, files, diff, flag) => {
-      const r = play(
-        { agents: flaky, tools: { captureDiff: masked(files, diff)(), runStable: gateRuns()() } },
-        armed,
-      );
-      expect((r.state.maskingFlags as string[]).join('; '), diff).toMatch(flag);
-      expect(r.end).toBe('uncertified');
-      expect(r.state.stabilityReport).toMatch(/did not accept the masking flags/);
-    },
-  );
+  describe('edits that can hide a flake go to a person, unattended not certified', () => {
+    it('a slack constant in the eval harness', () => {
+      expectFlaggedUncertified(MASKING.harnessSlack);
+    });
+    it('a sleep added to the code', () => {
+      expectFlaggedUncertified(MASKING.sleepInCode);
+    });
+    it('a skipped test', () => {
+      expectFlaggedUncertified(MASKING.skippedTest);
+    });
+    it("a retry option in the flaky test's own file", () => {
+      expectFlaggedUncertified(MASKING.retryInOwnFile);
+    });
+    it('jest.retryTimes', () => {
+      expectFlaggedUncertified(MASKING.jestRetry);
+    });
+    it("mocha's this.retries", () => {
+      expectFlaggedUncertified(MASKING.mochaRetry);
+    });
+    it("pytest's flaky reruns", () => {
+      expectFlaggedUncertified(MASKING.pytestRerun);
+    });
+    it('a skip in a test file whose path has a space', () => {
+      expectFlaggedUncertified(MASKING.skipInSpacedPath);
+    });
+    it('an existing test line changed', () => {
+      expectFlaggedUncertified(MASKING.existingTestLine);
+    });
+    it('an assertion removed', () => {
+      expectFlaggedUncertified(MASKING.assertionRemoved);
+    });
+    it('a change to how the tests are configured', () => {
+      expectFlaggedUncertified(MASKING.testConfig);
+    });
+    it('a file the diff cannot show', () => {
+      expectFlaggedUncertified(MASKING.untrackedFile);
+    });
+  });
 
   it('a person who accepts the flags certifies the patch, with a note', () => {
     const accepted = play(
       {
         agents: flaky,
         tools: {
-          captureDiff: masked(...(MASKING_CASES[0]!.slice(0, 2) as [string[], string]))(),
+          captureDiff: masked(MASKING.harnessSlack.files, MASKING.harnessSlack.diff)(),
           runStable: gateRuns()(),
         },
         approvals: { ...demo.approvals, maskingReview: () => ({ approved: true }) },
@@ -514,26 +657,17 @@ describe('fix: the stability gate (opt-in)', () => {
   });
 
   it('reads node --test results by the test name alone (spec and TAP)', () => {
-    const name = 'shows the answer to the latest query';
-    for (const [failed, passed] of [
-      [`✖ ${name} (1.0ms)\n✖ failing tests:\ntest at test/search.test.js:5:1`, `✔ ${name} (2.1ms)`],
-      [`not ok 1 - ${name}\n# fail 1`, `ok 1 - ${name}\n# pass 1`],
-    ] as const) {
-      let c = 0;
-      const r = play(
-        {
-          agents: {
-            diagnose: flakyDiagnose({ flakyTarget: name, flakyFile: 'test/search.test.js' }),
-          },
-          tools: {
-            runControl: () => tests(++c > 1, c > 1 ? passed : failed),
-            runStable: () => tests(true, passed),
-          },
-        },
-        armed,
-      );
-      expect(r.ran('runControl'), failed).toBe(1);
-      expect(r.end).toBe('fixed');
-    }
+    const spec = playNodeTest(
+      `✖ ${NODE_TEST_NAME} (1.0ms)\n✖ failing tests:\ntest at test/search.test.js:5:1`,
+      `✔ ${NODE_TEST_NAME} (2.1ms)`,
+    );
+    const tap = playNodeTest(
+      `not ok 1 - ${NODE_TEST_NAME}\n# fail 1`,
+      `ok 1 - ${NODE_TEST_NAME}\n# pass 1`,
+    );
+    expect([spec, tap].map(controlEnding)).toEqual([
+      { controlRuns: 1, end: 'fixed' },
+      { controlRuns: 1, end: 'fixed' },
+    ]);
   });
 });

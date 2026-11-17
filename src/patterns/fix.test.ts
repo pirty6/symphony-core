@@ -31,6 +31,14 @@ function play(over: Partial<DemoScript> = {}, context: Record<string, unknown> =
 }
 
 /** A diff tool that changes the patch every attempt (progress), counting calls. */
+/** The [first, then] pairs whose first step does not play before the second. */
+const outOfOrder = (order: readonly string[], pairs: readonly (readonly [string, string])[]) =>
+  pairs.filter(([first, then]) => !(order.indexOf(first) < order.indexOf(then)));
+
+/** The parts a text leaves out. */
+const missingFrom = (text: string, parts: readonly string[]) =>
+  parts.filter((part) => !text.includes(part));
+
 const freshDiff = () => {
   let n = 0;
   return () => ({ diff: `patch ${++n}`, hash: `h${n}`, files: ['src/paginate.ts'] });
@@ -197,13 +205,14 @@ describe('fix', () => {
     const on = play(reproducing, { reproduceFirst: true });
     expect(on.r.state.outcome).toBe('success');
     const order = on.r.state.steps.map((x) => x.nodeId);
-    for (const [a, b] of [
-      ['approve', 'planReproduce'],
-      ['planReproduce', 'writeTests'],
-      ['lockTests', 'apply'],
-      ['checkTests', 'prReview'],
-    ])
-      expect(order.indexOf(a!), `${a} before ${b}`).toBeLessThan(order.indexOf(b!));
+    expect(
+      outOfOrder(order, [
+        ['approve', 'planReproduce'],
+        ['planReproduce', 'writeTests'],
+        ['lockTests', 'apply'],
+        ['checkTests', 'prReview'],
+      ]),
+    ).toEqual([]);
     // The edit has to change more than the tests.
     expect(on.state.baseDiffHash).toBe('tests-1');
     // Off (the default): none of it plays.
@@ -347,8 +356,15 @@ describe('fix: a version for people and a brief for an AI agent', () => {
     expect(r.state.outcome).toBe('success');
     const brief = String(state.handoff);
     expect(brief).toMatch(/## Status\n\nFixed:/);
-    for (const h of ['## Root cause', '## Plan', '## Changed files', '## Review', '## Evidence'])
-      expect(brief).toContain(h);
+    expect(
+      missingFrom(brief, [
+        '## Root cause',
+        '## Plan',
+        '## Changed files',
+        '## Review',
+        '## Evidence',
+      ]),
+    ).toEqual([]);
     expect(String(state.summary)).toMatch(/^## In short/);
     expect(fix.result).toEqual(['summary', 'handoff']);
   });
