@@ -1852,6 +1852,12 @@ describe('a summary for people that cannot be written does not sink the run', ()
   });
 });
 
+/** Why the answer step's answers were sent back. */
+const answerErrors = (r: ReturnType<typeof runScripted>) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'answer' ? e.errors : [],
+  );
+
 describe('investigate rates the code pillars a question bears on', () => {
   const agents = demo.agents!;
   /** The plan tags its first sub-question with the Security pillar. */
@@ -1875,10 +1881,6 @@ describe('investigate rates the code pillars a question bears on', () => {
       ...demo,
       agents: { ...agents, plan: taggedPlan, answer },
     });
-  const answerErrors = (r: ReturnType<typeof playWith>) =>
-    r.state.events.flatMap((e) =>
-      e.type === 'response-rejected' && e.nodeId === 'answer' ? e.errors : [],
-    );
 
   it('a tagged sub-question without its pillar rating is sent back', () => {
     const r = playWith(answerRating([]));
