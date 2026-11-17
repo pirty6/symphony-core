@@ -100,7 +100,7 @@ describe('sources.catalog', () => {
     ]);
     expect(c.descriptions[0]).toMatch(/^workspace: 6 files/);
     expect(c.descriptions[1]).toMatch(/^git-history: 1 commits/);
-    // Signed in to Azure: its data is a source (read-only az and kusto_query); signed out, none.
+    // Signed in to Azure: its data is a source (read-only az); signed out, none.
     const azure = await sourceCatalog(ctx(dir), {
       probeGitHub: false,
       probeAzure: true,
@@ -109,7 +109,7 @@ describe('sources.catalog', () => {
     });
     expect(azure.names).toContain('azure');
     expect(azure.descriptions.find((d) => d.startsWith('azure:'))).toMatch(
-      /signed in as dev@example\.com: az list\/show\/query commands .* kusto_query/,
+      /signed in as dev@example\.com: az list\/show\/query commands/,
     );
     const signedOut = await sourceCatalog(ctx(dir), {
       probeGitHub: false,

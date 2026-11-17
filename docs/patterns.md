@@ -41,8 +41,7 @@ The 🧹 badge on a node in the studio shows which steps are held to it.
 Answer a question with evidence, from whatever sources it needs: workspace files, web pages,
 experiments, git history, GitHub, dependencies, Azure DevOps (read-only `az`), MCP servers.
 Read-only `az` commands (`list`, `show`, `get`, `query`; `az rest` and `az devops invoke` only as
-GET) and a `kusto_query` tool (queries and `.show` only, signed in with `az login`) let research
-read pipelines, branch policies and Kusto tables; nothing that writes is allowed.
+GET) let research read pipelines and branch policies; nothing that writes is allowed.
 
 1. **Recall and plan.** Facts and lessons from earlier runs are recalled and re-checked
    against today's files, once for the question and again for the sub-questions (within the

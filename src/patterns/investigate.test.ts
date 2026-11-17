@@ -1097,7 +1097,7 @@ describe('investigate always tries: the web and targeted experiments', () => {
 const right = (st: Readonly<Record<string, unknown>>) =>
   ((st.openQuestions as string[]) ?? []).map((q, i) =>
     i === 0
-      ? `V${i + 1} QUERY — kusto_query cluster bohemiahealth, database Health: TestHealthV2 | where Timestamp > ago(30d) | summarize retried=countif(Retried) by Package — the flake rate per package`
+      ? `V${i + 1} QUERY — az pipelines runs list --top 50 -o table — how often the build failed`
       : `V${i + 1} QUERY — az repos policy list --branch master -o table — which policies apply`,
   );
 
@@ -1137,7 +1137,7 @@ describe('investigate says how to verify what is still open', () => {
     expect(open.length).toBeGreaterThanOrEqual(2);
     expect(r.state.state.verification).toHaveLength(open.length);
     expect(String(r.state.state.handoff)).toContain('## How to verify what is still open');
-    expect(String(r.state.state.handoff)).toContain('V1 QUERY — kusto_query cluster bohemiahealth');
+    expect(String(r.state.state.handoff)).toContain('V1 QUERY — az pipelines runs list');
   });
 
   it('a missing line, or one that is not a read, a query or a run, is sent back', () => {

@@ -2064,7 +2064,7 @@ export const investigate: Pattern = {
       label: 'How to verify what is open',
       directive: `For each entry of \`openQuestions\`, in order, write one \`verification\` entry saying exactly how to settle it, so a person or a next run can do it without guessing:
 - "V<n> READ — the files to read or the search to run (e.g. rg -n 'retries' playwright.config.ts) — what it would show";
-- "V<n> QUERY — the exact command or query: an az command (az repos policy list …, az pipelines runs list …) or a Kusto query with its cluster and database (kusto_query: cluster bohemiahealth, database …, query TestHealthV2 | where …) — what it would show";
+- "V<n> QUERY — the exact command or query: an az or gh command (az repos policy list …, az pipelines runs list …, gh run list …) — what it would show";
 - "V<n> RUN — the exact command, targeted: one test file or test name, its repeats, retries off, a timeout (never the whole suite) — what result settles it".
 Find real paths, test names and table names with read-only tools first. Use the sources in \`sourceInfo\`; when settling it needs access this run did not have, say what access, and the query to run once it is there.`,
       reads: ['question', 'openQuestions', 'sourceInfo', 'findingsBrief', 'hint'],

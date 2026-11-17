@@ -111,7 +111,7 @@ reuse that browser's cookie, so keep it on your own network (or put HTTPS in fro
 fallback) for runs started on this computer (a browser on localhost, the CLI, a VS Code chat) and
 treats every other machine as below. `SYMPHONY_SIGNINS=off` runs every step with none of your
 credentials: no GitHub, Copilot or Azure token, empty `gh` and `az` sign-ins, no git credential
-helper or SSH agent, no MCP servers and no Kusto tool, whatever command a step runs. Then start
+helper or SSH agent and no MCP servers, whatever command a step runs. Then start
 the studio for the network with `npm run studio -- --host 0.0.0.0` (to reach it by a name, e.g.
 `symphony.example.org`, also set `SYMPHONY_STUDIO_HOSTS=symphony.example.org`). Without
 `SYMPHONY_MODEL_URL`, runs with sign-ins off stop at once rather than use your Copilot account.
