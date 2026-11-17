@@ -27,6 +27,16 @@ function publishLiveRun(liveDir: string, id: string) {
   return () => rmSync(dir, { recursive: true, force: true })
 }
 
+/** A suffix no other run of these tests shares. */
+const uniqueSuffix = () => `${Date.now()}-${process.pid}`
+
+// Published runs to remove once the test ends, pass or fail.
+const removals: (() => void)[] = []
+
+test.afterEach(() => {
+  removals.splice(0).forEach((remove) => remove())
+})
+
 async function listedRunIds(page: Page) {
   const response = await page.request.get('/api/runs')
   expect(response.ok()).toBe(true)
@@ -34,17 +44,11 @@ async function listedRunIds(page: Page) {
 }
 
 test('the studio lists the runs published in its own live folder, not the machine\'s', async ({ page }) => {
-  const unique = `${Date.now()}-${process.pid}`
+  const unique = uniqueSuffix()
   const insideId = `e2e-inside-${unique}`
   const outsideId = `e2e-outside-${unique}`
-  const removeInside = publishLiveRun(configuredLiveDir(), insideId)
-  const removeOutside = publishLiveRun(machineLiveDir(), outsideId)
-  try {
-    const listed = await listedRunIds(page)
-    expect(listed).toContain(insideId)
-    expect(listed).not.toContain(outsideId)
-  } finally {
-    removeInside()
-    removeOutside()
-  }
+  removals.push(publishLiveRun(configuredLiveDir(), insideId), publishLiveRun(machineLiveDir(), outsideId))
+  const listed = await listedRunIds(page)
+  expect(listed).toContain(insideId)
+  expect(listed).not.toContain(outsideId)
 })

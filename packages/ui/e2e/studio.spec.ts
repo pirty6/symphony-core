@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { approve, autoApproveWaitingCard, open, openSavedRun, startRun, waitForRunEnd } from './helpers'
 import { investigate } from '../../../src/patterns/investigate'
 
@@ -26,15 +26,90 @@ async function guess(page: Page, letter: string) {
   await approve(page, card, { field: 'letter', value: letter })
 }
 
+/** Guesses the word letter by letter, each on the approval card that asks for it. */
+async function guessWord(page: Page, word: string) {
+  for (const letter of word) {
+    await expect(page.getByTestId('approval-card')).toBeVisible()
+    await guess(page, letter)
+  }
+}
+
+/** Rewrites every run the studio starts so that 'pick' can never pass its check: the step gets stuck. */
+async function makePickImpossible(page: Page) {
+  await page.route('**/api/runs', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    const body = route.request().postDataJSON() as { pattern: { nodes: { id: string; checks?: unknown[] }[] } }
+    for (const n of body.pattern.nodes) {
+      if (n.id === 'pick') n.checks = [{ expr: 'len(word) > 99', message: 'The word must be over 99 letters.' }]
+    }
+    await route.continue({ postData: JSON.stringify(body) })
+  })
+}
+
+/** Demo runs start hidden in the saved list: show them. */
+async function showDemoRuns(page: Page) {
+  const toggle = page.getByTestId('toggle-demo-runs')
+  if ((await toggle.innerText()).startsWith('Show')) await toggle.click()
+}
+
+const STEP_PACE = { intervals: [100] }
+
+/** Steps the paused run, one step at a time, until the target shows. */
+async function stepUntilVisible(gate: Locator, target: Locator) {
+  await expect(async () => {
+    if (!(await target.isVisible())) await gate.getByRole('button', { name: '⏭ Step' }).click()
+    await expect(target).toBeVisible({ timeout: 100 })
+  }).toPass(STEP_PACE)
+}
+
+/** Where a feature card's control and title sit: all true when the card fits them. */
+async function featureCardFit(card: Locator) {
+  const box = (await card.boundingBox())!
+  const control = (await card.locator('select, input').first().boundingBox())!
+  const title = card.locator('label > span').first()
+  const t = (await title.boundingBox())!
+  return {
+    title: await title.innerText(),
+    controlStartsInside: control.x >= box.x,
+    controlEndsInside: control.x + control.width <= box.x + box.width + 0.5,
+    // The title is not squeezed under the control: its text fits its box, and the boxes do not meet.
+    titleFits: await title.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+    titleApartFromControl:
+      t.x + t.width <= control.x + 0.5 || control.x + control.width <= t.x + 0.5 || t.y + t.height <= control.y + 0.5 || control.y + control.height <= t.y + 0.5,
+  }
+}
+
+const TOOLBAR_SETTINGS = ['provider', 'model', 'complexity', 'improvisation', 'step mode']
+const NARROWEST_STUDIO_WIDTH = 1100
+const LAPTOP_STUDIO_WIDTH = 1280
+
+/** At this width, with the widest settings (GitHub Copilot adds the model field), ▶ Run and every setting stay on screen. */
+async function expectRunControlsOnScreen(page: Page, width: number) {
+  await page.setViewportSize({ width, height: 760 })
+  await open(page, 'investigate')
+  await page.getByLabel('provider').selectOption('copilot')
+  const toolbar = page.locator('.toolbar')
+  const bar = (await toolbar.boundingBox())!
+  const run = (await page.getByRole('button', { name: '▶ Run' }).boundingBox())!
+  expect(run.x + run.width, `Run at ${width}px`).toBeLessThanOrEqual(bar.x + bar.width)
+  expect(await toolbar.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0)
+  // Every setting is still on screen, not scrolled away.
+  const rightEdges = await Promise.all(
+    TOOLBAR_SETTINGS.map(async (label) => {
+      const box = (await toolbar.getByLabel(label, { exact: true }).boundingBox())!
+      return box.x + box.width
+    }),
+  )
+  const pastRun = TOOLBAR_SETTINGS.filter((_, i) => rightEdges[i]! > run.x)
+  expect(pastRun, `settings past ▶ Run at ${width}px`).toEqual([])
+}
+
 test('plays hangman live: AI picks, human guesses, engine scores', async ({ page }) => {
   await open(page, 'hangman')
   await startRun(page)
   await expect(page.getByTestId('approval-card')).toBeVisible()
   await expect(page.getByTestId('node-ask')).toHaveAttribute('data-status', 'paused')
-  for (const l of ['p', 'l', 'a', 'n', 'e', 't']) {
-    await expect(page.getByTestId('approval-card')).toBeVisible()
-    await guess(page, l)
-  }
+  await guessWord(page, 'planet')
   await waitForRunEnd(page)
   await expect(page.getByTestId('node-win')).toHaveAttribute('data-status', 'done')
   await page.getByRole('button', { name: 'State', exact: true }).click()
@@ -214,14 +289,7 @@ test('warns before the offline demo ignores your own question, and remembers the
 
 test('a stuck AI step waits for you: retry with a hint and a smarter tier, then stop', async ({ page }) => {
   // Make 'pick' impossible to satisfy, so every attempt is rejected and the step gets stuck.
-  await page.route('**/api/runs', async (route) => {
-    if (route.request().method() !== 'POST') return route.continue()
-    const body = route.request().postDataJSON() as { pattern: { nodes: { id: string; checks?: unknown[] }[] } }
-    for (const n of body.pattern.nodes) {
-      if (n.id === 'pick') n.checks = [{ expr: 'len(word) > 99', message: 'The word must be over 99 letters.' }]
-    }
-    await route.continue({ postData: JSON.stringify(body) })
-  })
+  await makePickImpossible(page)
   await open(page, 'hangman')
   await page.getByRole('button', { name: '▶ Run' }).click()
   const card = page.getByTestId('recovery-card')
@@ -364,8 +432,7 @@ test('deletes one saved run from the list after a second click', async ({ page }
   await page.getByText('auto-approve').click()
   await startRun(page)
   await waitForRunEnd(page)
-  const toggle = page.getByTestId('toggle-demo-runs')
-  if ((await toggle.innerText()).startsWith('Show')) await toggle.click()
+  await showDemoRuns(page)
   const newest = page.getByTestId('saved-run').filter({ has: page.locator('b', { hasText: /^review$/ }) }).first()
   await expect(newest).toBeVisible()
   // Other tests' runs may still be saving: follow this run by its file, not by position or count.
@@ -459,10 +526,7 @@ test('the sub-agents of a fanned-out step show as nodes beside it, each with its
   await page.getByLabel('step mode').check()
   await startRun(page)
   const gate = page.getByTestId('gate-card')
-  for (let i = 0; i < 40 && !(await page.getByTestId('subagent-1').isVisible()); i++) {
-    await gate.getByRole('button', { name: '⏭ Step' }).click()
-    await page.waitForTimeout(100)
-  }
+  await stepUntilVisible(gate, page.getByTestId('subagent-1'))
   await expect(page.getByTestId('subagent-1')).toBeVisible()
   await expect(page.getByTestId('subagent-2')).toBeVisible()
   await expect(page.getByTestId('subagent-1')).toHaveAttribute('data-state', /done|running/)
@@ -562,37 +626,15 @@ test('every feature switch fits inside its card, even with larger text', async (
   await page.addStyleTag({ content: '.library { font-size: 16px } .library select { font-size: 15px }' })
   const cards = page.locator('[data-testid^="feature-"]')
   await expect(cards.first()).toBeVisible()
-  for (let i = 0; i < (await cards.count()); i++) {
-    const card = (await cards.nth(i).boundingBox())!
-    const control = (await cards.nth(i).locator('select, input').first().boundingBox())!
-    expect(control.x).toBeGreaterThanOrEqual(card.x)
-    expect(control.x + control.width).toBeLessThanOrEqual(card.x + card.width + 0.5)
-    // The title is not squeezed under the control: its text fits its box, and the boxes do not meet.
-    const title = cards.nth(i).locator('label > span').first()
-    const spills = await title.evaluate((el) => el.scrollWidth > el.clientWidth + 1)
-    expect(spills, await title.innerText()).toBe(false)
-    const t = (await title.boundingBox())!
-    const apart =
-      t.x + t.width <= control.x + 0.5 || control.x + control.width <= t.x + 0.5 || t.y + t.height <= control.y + 0.5 || control.y + control.height <= t.y + 0.5
-    expect(apart, await title.innerText()).toBe(true)
-  }
+  const fits = await Promise.all((await cards.all()).map(featureCardFit))
+  const fitting = fits.map(({ title }) => ({ title, controlStartsInside: true, controlEndsInside: true, titleFits: true, titleApartFromControl: true }))
+  expect(fits).toEqual(fitting)
 })
 
 test('the top bar never pushes the run controls off screen, down to the narrowest studio', async ({ page }) => {
-  for (const width of [1100, 1280]) {
-    await page.setViewportSize({ width, height: 760 })
-    await open(page, 'investigate')
-    // GitHub Copilot adds the model field: the widest the settings get.
-    await page.getByLabel('provider').selectOption('copilot')
-    const bar = (await page.locator('.toolbar').boundingBox())!
-    const run = (await page.getByRole('button', { name: '▶ Run' }).boundingBox())!
-    expect(run.x + run.width, `Run at ${width}px`).toBeLessThanOrEqual(bar.x + bar.width)
-    expect(await page.locator('.toolbar').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0)
-    // Every setting is still on screen, not scrolled away.
-    for (const label of ['provider', 'model', 'complexity', 'improvisation', 'step mode']) {
-      const box = (await page.locator('.toolbar').getByLabel(label, { exact: true }).boundingBox())!
-      expect(box.x + box.width, `${label} at ${width}px`).toBeLessThanOrEqual(run.x)
-    }
-    await page.getByLabel('provider').selectOption('scripted')
-  }
+  await expectRunControlsOnScreen(page, NARROWEST_STUDIO_WIDTH)
+})
+
+test('the top bar keeps the run controls on screen at a laptop-wide studio', async ({ page }) => {
+  await expectRunControlsOnScreen(page, LAPTOP_STUDIO_WIDTH)
 })
