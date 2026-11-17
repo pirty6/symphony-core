@@ -2,7 +2,7 @@ import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
 import { TEST_PATH } from './phases/stability.js';
 import { bullets, READER_STATE, readers } from './phases/readers.js';
 import { chaseSteps } from './phases/chase.js';
-import { LENS_STATE, lensPhase } from './phases/lenses.js';
+import { CHANGE_PILLARS, LENS_STATE, lensPhase } from './phases/lenses.js';
 import { lensBrief, pillarById } from '../core/pillars.js';
 import { DEBATE_STATE, MAX_OBJECTIONS } from './phases/debate.js';
 import { checkFindings, CITE_BY_ID, citesFindings, EVIDENCE_STATE } from './phases/evidence.js';
@@ -119,12 +119,12 @@ Work each example out from the code; never claim you ran it. Plain words, short 
  * ids go on from every one made (kept or dismissed: never reused), and one already dismissed is
  * not recorded again.
  */
-const mergeIssues = (field: string) => [
+const mergeIssues = (field: string, rejected = 'rejectedFindings') => [
   {
     field: 'findings',
     expr: `findings + numbered(without(unique(${field}), unnumbered(findings) + unnumbered(dismissed)), len(findings) + len(dismissed) + 1)`,
   },
-  { field: 'unverified', expr: 'unverified + rejectedFindings' },
+  { field: 'unverified', expr: `unverified + ${rejected}` },
   { field: 'findingsBrief', expr: 'brief(findings, 240)' },
 ];
 
@@ -160,11 +160,11 @@ const demoLens = (s: Readonly<Record<string, unknown>>) => {
 
 /** The pillar lenses; the per-file reviewers and the whole-change judge are its Correctness. */
 const LENSES = lensPhase({
-  pillars: ['SECURITY', 'CLEAN', 'TESTS', 'PERFORMANCE', 'DETERMINISM'],
+  pillars: CHANGE_PILLARS,
   range: 'diffRange',
   reads: ['target', 'intent', 'claims', 'diffSummary', 'changedTests', 'context'],
   next: 'aimChase',
-  merge: mergeIssues('lensFindings'),
+  merge: mergeIssues('lensFindings', 'lensRejected'),
 });
 
 const REVIEW_CHASE = chaseSteps({

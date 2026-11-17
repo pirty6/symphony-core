@@ -131,6 +131,7 @@ describe('Symphony MCP server', () => {
       'rulings',
       'files',
       'plan',
+      'criticalPath',
     ]);
     await call(client, 'answer_approval', { run_id: body.run_id, approved: true });
     const done = await settle(client, body.run_id);

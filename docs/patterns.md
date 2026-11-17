@@ -347,6 +347,9 @@ flowchart TD
   n_approve{{"👤 Approve plan"}}
   n_reproduceFirstOn{"Reproduce first?"}
   n_reproduced{"Tests locked?"}
+  n_testRulesDue{"Check the test rules?"}
+  n_scanTests[/"🔧 Scan the changed tests"/]
+  n_testRules["Tests keep the rules?"]
   n_reviewStopped(["Stopped at review · partial"])
   n_fixed(["Fixed · success"])
   n_uncertified(["Not certified · partial"])
@@ -371,7 +374,7 @@ flowchart TD
   n_testFirstPhase[["Tests first · 19 steps"]]
   n_editPhase[["Edit and verify · 20 steps"]]
   n_stabilityPhase[["Stability gate · 14 steps"]]
-  n_prReviewPhase[["PR review · 5 steps"]]
+  n_prReviewPhase[["PR review · 12 steps"]]
   n_start --> n_baseline
   n_baseline --> n_snapshot
   n_snapshot --> n_hypothesesPhase
@@ -389,6 +392,11 @@ flowchart TD
   n_testFirstPhase --> n_editPhase
   n_testFirstPhase --> n_prReviewPhase
   n_approve -->|"rejected"| n_mark_rejected
+  n_editPhase --> n_testRulesDue
+  n_testRulesDue -->|"yes"| n_scanTests
+  n_testRulesDue -.->|"no"| n_editPhase
+  n_scanTests --> n_testRules
+  n_testRules -.-> n_editPhase
   n_editPhase --> n_stabilityPhase
   n_editPhase --> n_mark_gaveUp
   n_editPhase -.-> n_diagnosePhase
@@ -427,7 +435,7 @@ flowchart TD
 | Tests first | Tests written before the code must fail for the right reason, then stay locked | Plan the reproducing test → Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
 | Stability gate | With the gate: the patch passes the flaky test in fresh runs, with no masking edits, or is not certified | Stability gate? → Start the gate → Run again (gate) → Count gate run → Run the gate again? → Flaky test failed? → Not stable → Masking flags → Certified? → Masking flags? → Fixed, or hidden? → Certify → Reviewed patch certified? → Not certified |
-| PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
+| PR review | Review the change; blocking comments go back to editing until approved | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play → PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 
 <!-- /flow:fix -->
 
@@ -449,6 +457,9 @@ before anything changes and after.
 ```mermaid
 flowchart TD
   n_start(["Start"])
+  n_testRulesDue{"Check the test rules?"}
+  n_scanTests[/"🔧 Scan the changed tests"/]
+  n_testRules["Tests keep the rules?"]
   n_reviewStopped(["Stopped at review · partial"])
   n_refactored(["Refactored · success"])
   n_gaveUp(["Gave up · failed"])
@@ -457,12 +468,17 @@ flowchart TD
   n_baselinePhase[["Green baseline · 3 steps"]]
   n_planPhase[["Plan · 2 steps"]]
   n_editPhase[["Edit and verify · 17 steps"]]
-  n_prReviewPhase[["PR review · 5 steps"]]
+  n_prReviewPhase[["PR review · 12 steps"]]
   n_start --> n_baselinePhase
   n_baselinePhase --> n_notGreen
   n_baselinePhase --> n_planPhase
   n_planPhase --> n_editPhase
   n_planPhase --> n_rejected
+  n_editPhase --> n_testRulesDue
+  n_testRulesDue -->|"yes"| n_scanTests
+  n_testRulesDue -.->|"no"| n_editPhase
+  n_scanTests --> n_testRules
+  n_testRules -.-> n_editPhase
   n_editPhase --> n_prReviewPhase
   n_editPhase --> n_gaveUp
   n_prReviewPhase --> n_refactored
@@ -475,7 +491,7 @@ flowchart TD
 | Green baseline | Tests must pass before anything changes | Run tests first → Green? → Snapshot workspace |
 | Plan | Files, steps and the behaviour that must not change | Plan refactoring → Approve plan |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch |
-| PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
+| PR review | Review the change; blocking comments go back to editing until approved | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play → PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 
 <!-- /flow:refactor -->
 
@@ -501,6 +517,9 @@ flowchart TD
   n_start(["Start"])
   n_approve{{"👤 Approve design"}}
   n_testFirstStopped(["Stopped at tests · partial"])
+  n_testRulesDue{"Check the test rules?"}
+  n_scanTests[/"🔧 Scan the changed tests"/]
+  n_testRules["Tests keep the rules?"]
   n_reviewStopped(["Stopped at review · partial"])
   n_implemented(["Implemented · success"])
   n_incomplete(["Criteria unmet · partial"])
@@ -513,7 +532,7 @@ flowchart TD
   n_challengePhase[["Challenge the answer · 18 steps"]]
   n_testFirstPhase[["Tests first · 18 steps"]]
   n_editPhase[["Edit and verify · 20 steps"]]
-  n_prReviewPhase[["PR review · 5 steps"]]
+  n_prReviewPhase[["PR review · 12 steps"]]
   n_acceptancePhase[["Acceptance review · 4 steps"]]
   n_start --> n_baselinePhase
   n_baselinePhase --> n_notGreen
@@ -527,6 +546,11 @@ flowchart TD
   n_testFirstPhase --> n_testFirstStopped
   n_testFirstPhase --> n_editPhase
   n_testFirstPhase --> n_acceptancePhase
+  n_editPhase --> n_testRulesDue
+  n_testRulesDue -->|"yes"| n_scanTests
+  n_testRulesDue -.->|"no"| n_editPhase
+  n_scanTests --> n_testRules
+  n_testRules -.-> n_editPhase
   n_editPhase -.-> n_testFirstPhase
   n_editPhase --> n_gaveUp
   n_editPhase --> n_prReviewPhase
@@ -547,7 +571,7 @@ flowchart TD
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2, a round left) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left, research still finding) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
 | Tests first | Tests written before the code must fail for the right reason, then stay locked | Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
-| PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
+| PR review | Review the change; blocking comments go back to editing until approved | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play → PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 | Acceptance review | Every criterion met, with evidence; unmet ones go back to editing | Acceptance review → All met? → Review again? → Back to editing |
 
 <!-- /flow:implement -->

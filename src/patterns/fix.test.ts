@@ -51,9 +51,11 @@ describe('fix', () => {
     expect(state.changedFiles).toEqual(['src/paginate.test.ts', 'src/paginate.ts']);
   });
 
-  it('shows the root cause, rulings, files and plan at the approval', () => {
+  it('shows the root cause, rulings, files, plan and critical path at the approval', () => {
     const approve = fix.nodes.find((n) => n.id === 'approve');
-    expect(approve).toMatchObject({ shows: ['rootCause', 'rulings', 'files', 'plan'] });
+    expect(approve).toMatchObject({
+      shows: ['rootCause', 'rulings', 'files', 'plan', 'criticalPath'],
+    });
   });
 
   it('gives up after maxAttempts failing patches', () => {
@@ -357,5 +359,71 @@ describe('fix: a version for people and a brief for an AI agent', () => {
     expect(r.state.outcome).toBe('partial');
     expect(String(state.handoff)).toMatch(/## Status\n\nPlan rejected: nothing was changed\./);
     expect(String(state.handoff)).toMatch(/do not apply it/);
+  });
+});
+
+const IF_IN_TEST = "src/paginate.test.ts:4 — an if inside the test 'pages' (UT-3.2)";
+/** The changed tests break the test rules on the first passing attempt, then keep them. */
+const breaksOnce = () => {
+  let n = 0;
+  return () => ({ testBreaks: n++ === 0 ? [IF_IN_TEST] : [] });
+};
+/** The Tests lens finds the fix's unit untested. */
+const untestedLens: NonNullable<DemoScript['agents']>[string] = (s) => {
+  const pillar = String((s.lenses as string[])[0]).split(' ')[0];
+  const isTests = pillar === 'TESTS';
+  return {
+    updates: {
+      lensFindings: isTests
+        ? [
+            'src/paginate.ts:3 — [TEST] [MEDIUM] [UT-1.1] page boundaries are untested `return items.slice(start - 1, end);`',
+          ]
+        : [],
+      lensNotes: [`${pillar}: ${isTests ? 'ISSUES' : 'NONE'} — read the change`],
+      criticalUnits: isTests ? ['U1 src/paginate.ts:3 — DOMAIN — decides where a page starts'] : [],
+      unitVerdicts: isTests ? ['U1 UNTESTED — no test covers page 2'] : [],
+    },
+    verdict: v,
+  };
+};
+const errorsAt = (r: ReturnType<typeof play>['r'], nodeId: string) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === nodeId ? e.errors : [],
+  );
+
+describe('fix keeps the pillars', () => {
+  it('a passing patch whose tests break the test rules is edited again, told why', () => {
+    const { r, ran, end } = play({
+      tools: { scanTests: breaksOnce(), runTests: () => tests(true), captureDiff: freshDiff() },
+    });
+    const applyInputs = r.state.events.flatMap((e) =>
+      e.type === 'paused' && e.pause.kind === 'agent' && e.pause.nodeId === 'apply'
+        ? [e.pause.input]
+        : [],
+    );
+    expect(end).toBe('fixed');
+    expect(ran('apply')).toBe(2);
+    expect(String(applyInputs[1]!.lintOutput)).toContain(IF_IN_TEST);
+  });
+
+  it('the diagnosis names the critical path, and a domain unit without its test is sent back', () => {
+    const noTest = (s: Readonly<Record<string, unknown>>, visit: number) => {
+      const good = agents.diagnose!(s, visit);
+      return {
+        ...good,
+        updates: { ...good.updates, criticalPath: ['U1 src/paginate.ts — DOMAIN — none: obvious'] },
+      };
+    };
+    const { r } = play({ agents: { diagnose: noTest } });
+    expect(errorsAt(r, 'diagnose').join()).toMatch(
+      /Name the test for each DOMAIN or CONTROLLER unit/,
+    );
+  });
+
+  it('the PR review must block on an untested critical unit the lens found', () => {
+    const { r } = play({ agents: { lens: untestedLens } });
+    expect(errorsAt(r, 'prReview').join()).toMatch(
+      /Carry each WEAK or UNTESTED unit of unitVerdicts/,
+    );
   });
 });

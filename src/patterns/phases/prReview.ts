@@ -6,6 +6,7 @@
  */
 import type { ScoreEdge, ScoreNode, StateField } from '../../core/types.js';
 import type { Fragment } from './debate.js';
+import { CHANGE_PILLARS, LENS_STATE, lensPhase } from './lenses.js';
 import { CATEGORIES, categoryBullets, cleanIdCheck } from './reviewRules.js';
 
 export interface PrReviewConfig {
@@ -30,7 +31,24 @@ const bearsOn = (cfg: PrReviewConfig): string[] => [
   ...cfg.against,
   'tests',
   'Clean Code',
+  'security',
+  'performance',
+  'determinism',
 ];
+
+/** The pillar lenses look at the edit first: the reviewer carries what they found. */
+const LENSES_FIRST = lensPhase({
+  pillars: CHANGE_PILLARS,
+  range: 'lensRange',
+  reads: ['changes'],
+  next: 'prReview',
+  merge: [],
+});
+
+/** Where a pattern sends a change to be reviewed: the lenses, then the reviewer. */
+export const PR_REVIEW_ENTRY = LENSES_FIRST.entry;
+
+const LENS_NOTE = ` \`lensFindings\` are what the pillar lenses found in this change, and \`unitVerdicts\` how its critical path is tested: carry each HIGH or MEDIUM lens finding, and each WEAK or UNTESTED critical unit, into \`reviewComments\` as BLOCKING (a test one bears on \`tests\`), unless the change now addresses it (then RESOLVED).`;
 
 export const PR_REVIEW_STATE: readonly StateField[] = [
   { name: 'reviewDecision', type: 'string', description: 'APPROVE | REQUEST_CHANGES' },
@@ -50,6 +68,12 @@ export const PR_REVIEW_STATE: readonly StateField[] = [
   },
   { name: 'reviewedTestOutput', type: 'string', description: "The reviewed patch's test run" },
   { name: 'reviewedLintOutput', type: 'string', description: "The reviewed patch's lint run" },
+  {
+    name: 'lensRange',
+    type: 'string',
+    description: 'The change the lenses look at: empty, the uncommitted edit',
+  },
+  ...LENS_STATE,
 ];
 
 export function prReviewPhase(cfg: PrReviewConfig): Fragment {
@@ -72,7 +96,7 @@ Also look for a fix of the symptom instead of the cause, a change to \`checkFile
         .map((b) => `\`${b}\``)
         .join(
           ', ',
-        )}. Only real problems are BLOCKING: a clear break of a Clean Code rule in the new code is one (a function doing several things, a misleading name, a swallowed error, copied logic); judgment calls and style preferences are NITs. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed, and list each one that was as "RESOLVED path:line — how \`quote\`" (keep it BLOCKING if it was not). Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE (the engine checks that they agree), and summarize in \`reviewSummary\`.${cfg.reviewNote ?? ''}`,
+        )}. Only real problems are BLOCKING: a clear break of a Clean Code rule in the new code is one (a function doing several things, a misleading name, a swallowed error, copied logic); judgment calls and style preferences are NITs. Earlier rounds' comments, if any, are in \`reviewComments\`: check whether each was addressed, and list each one that was as "RESOLVED path:line — how \`quote\`" (keep it BLOCKING if it was not). Set \`reviewDecision\` to REQUEST_CHANGES if any comment is BLOCKING, otherwise APPROVE (the engine checks that they agree), and summarize in \`reviewSummary\`.${LENS_NOTE}${cfg.reviewNote ?? ''}`,
       reads: [
         cfg.subject,
         ...cfg.against,
@@ -81,6 +105,9 @@ Also look for a fix of the symptom instead of the cause, a change to \`checkFile
         'checkFiles',
         'testOutput',
         'reviewComments',
+        'lensFindings',
+        'criticalUnits',
+        'unitVerdicts',
         ...(cfg.reviewReads ?? []),
       ],
       writes: ['reviewDecision', 'reviewComments', 'reviewSummary'],
@@ -118,6 +145,12 @@ Also look for a fix of the symptom instead of the cause, a change to \`checkFile
           message: `End each BLOCKING comment's reason with what it bears on: (bears on: ${bearsOn(cfg).join(' | ')}).`,
         },
         cleanIdCheck('reviewComments', '"BLOCKING path:line — [CLEAN] [G30] …"'),
+        {
+          // The critical path is tested, or the review blocks it (or says how it now is).
+          expr: 'count(reviewComments, "^(BLOCKING|RESOLVED) .* — [[]TEST] ") >= count(unitVerdicts, "^U[0-9]+ (WEAK|UNTESTED) ")',
+          message:
+            'Carry each WEAK or UNTESTED unit of unitVerdicts into reviewComments as a BLOCKING [TEST] comment, or RESOLVED when the change now tests it.',
+        },
         { expr: 'len(reviewSummary) > 0', message: 'Summarize the review in reviewSummary.' },
       ],
     },
@@ -166,6 +199,7 @@ Also look for a fix of the symptom instead of the cause, a change to \`checkFile
     },
   ];
   const edges: ScoreEdge[] = [
+    ...LENSES_FIRST.edges,
     { id: 'prReview-approved', from: 'prReview', to: 'reviewApproved' },
     { id: 'reviewApproved-done', from: 'reviewApproved', to: cfg.approved, branch: 'then' },
     { id: 'reviewApproved-left', from: 'reviewApproved', to: 'reviewRoundsLeft', branch: 'else' },
@@ -188,14 +222,14 @@ Also look for a fix of the symptom instead of the cause, a change to \`checkFile
   ];
   return {
     state: PR_REVIEW_STATE,
-    nodes,
+    nodes: [...LENSES_FIRST.nodes, ...nodes],
     edges,
-    entry: 'prReview',
+    entry: PR_REVIEW_ENTRY,
     group: {
       id: 'prReviewPhase',
       label: 'PR review',
       description: 'Review the change; blocking comments go back to editing until approved',
-      nodes: nodes.map((n) => n.id),
+      nodes: [...LENSES_FIRST.nodes, ...nodes].map((n) => n.id),
     },
   };
 }

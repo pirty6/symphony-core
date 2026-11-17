@@ -91,7 +91,8 @@ describe('studio api', () => {
     const start = (await (await post('/api/runs', { pattern: data(fix), goal: 'fix it', context: fix.demo!.context, provider: 'scripted', autoApprove: true })).json()) as { runId: string }
     const msgs = await readSse(await fetch(`${base}/api/runs/${start.runId}/events`))
     const types = new Set(msgs.map((m) => m.type))
-    expect(types).toEqual(new Set(['status', 'engine', 'provider', 'performance']))
+    // 'part': the pillar lenses play as the parts of one step.
+    expect(types).toEqual(new Set(['status', 'engine', 'provider', 'performance', 'part']))
     expect(msgs.at(-1)).toMatchObject({ type: 'status', status: 'done' })
     const saved = (await (await fetch(`${base}/api/saved`)).json()) as { file: string; durationMs: number }[]
     expect(saved).toHaveLength(1)

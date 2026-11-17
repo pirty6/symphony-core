@@ -1,7 +1,8 @@
 import type { Pattern } from '../core/types.js';
 import { withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
-import { prReviewPhase } from './phases/prReview.js';
+import { DEMO_LENSES } from './phases/lenses.js';
+import { PR_REVIEW_ENTRY, prReviewPhase } from './phases/prReview.js';
 
 const v = (reason: string, confidence = 0.9) => ({
   outcome: 'applied' as const,
@@ -16,7 +17,7 @@ const edit = editVerifyPhase({
   applyReads: ['target', 'files', 'plan', 'invariants', 'reviewComments'],
   applyWrites: ['noticedBugs'],
   triageReads: ['target', 'plan', 'invariants'],
-  success: 'prReview',
+  success: PR_REVIEW_ENTRY,
   reviewedExit: 'acceptAnyway',
   giveUp: 'gaveUp',
 });
@@ -174,6 +175,7 @@ export const refactor: Pattern = {
   demo: {
     context: { target: 'Extract the page-boundary arithmetic in src/paginate.ts into pageRange()' },
     agents: {
+      ...DEMO_LENSES.agents,
       prReview: () => ({
         updates: {
           reviewDecision: 'APPROVE',
@@ -207,6 +209,7 @@ export const refactor: Pattern = {
       }),
     },
     tools: {
+      ...DEMO_LENSES.tools,
       baseline: () => ({ passed: true, output: 'Tests 12 passed', command: 'npm test' }),
       snapshot: () => ({ diff: '', hash: 'base', files: [] }),
       captureDiff: () => ({

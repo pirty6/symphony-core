@@ -4,10 +4,24 @@
  * leads); one reviewer per lens judges only that pillar, and the engine checks that each lens
  * says what it examined, and that the Tests lens judges every unit of the critical path.
  */
-import type { PillarId } from '../../core/pillars.js';
-import type { AcceptanceCheck, ScoreEdge, ScoreNode, StateField } from '../../core/types.js';
-import { checkFindings } from './evidence.js';
+import { lensBrief, pillarById, type PillarId } from '../../core/pillars.js';
+import type {
+  AcceptanceCheck,
+  DemoScript,
+  ScoreEdge,
+  ScoreNode,
+  StateField,
+} from '../../core/types.js';
 import { CATEGORIES, findingChecks } from './reviewRules.js';
+
+/** The lenses a change is looked at through; Correctness is the pattern's own reviewers. */
+export const CHANGE_PILLARS: readonly PillarId[] = [
+  'SECURITY',
+  'CLEAN',
+  'TESTS',
+  'PERFORMANCE',
+  'DETERMINISM',
+];
 
 export interface LensConfig {
   /** The lenses to look through, in this order. */
@@ -37,6 +51,11 @@ export const LENS_STATE: readonly StateField[] = [
     name: 'lensFindings',
     type: 'string[]',
     description: 'Issues the lenses found, in the review format with the rule id',
+  },
+  {
+    name: 'lensRejected',
+    type: 'string[]',
+    description: 'Lens findings whose citation did not hold in this checkout',
   },
   {
     name: 'lensNotes',
@@ -127,7 +146,15 @@ export function lensPhase(cfg: LensConfig): {
       retries: 2,
       checks: [...LENS_CHECKS],
     },
-    checkFindings('checkLens', 'lensFindings'),
+    {
+      // Its own rejected list: a pattern without investigate's evidence fields can play it.
+      id: 'checkLens',
+      kind: 'tool',
+      label: 'Check citations',
+      tool: 'evidence.check',
+      inputs: { findings: 'lensFindings' },
+      output: { valid: 'lensFindings', invalid: 'lensRejected' },
+    },
     {
       id: 'mergeLens',
       kind: 'compute',
@@ -154,3 +181,57 @@ export function lensPhase(cfg: LensConfig): {
   ];
   return { entry: 'lensDue', nodes, edges };
 }
+
+// ── the critical path, named before an edit ───────────────────────
+
+/** Where a step that plans an edit names the critical path and the tests it needs. */
+export const CRITICAL_PATH_FIELD: StateField = {
+  name: 'criticalPath',
+  type: 'string[]',
+  description:
+    'Each unit the edit adds or changes: "U<n> path — DOMAIN|CONTROLLER|TRIVIAL|OVERCOMPLICATED — test: the test that proves it" (TRIVIAL: "— none: why")',
+};
+
+/** For a planning step: the Tests lens's quadrants, applied before the code exists. */
+export const CRITICAL_PATH_DIRECTIVE = ` Name the critical path in \`criticalPath\`, one entry per function or class the edit adds or changes: "U<n> path — ${UNIT_KINDS} — test: the test that proves it". DOMAIN (decides much, few collaborators) gets unit tests of its outcomes and edge cases; CONTROLLER (coordinates many collaborators) an integration test; TRIVIAL needs none ("— none: why"); OVERCOMPLICATED is split first (the decisions apart from the wiring). Each test is one behaviour, with no if, loop or try/finally inside it, named for its scenario.`;
+
+export const CRITICAL_PATH_CHECKS: readonly AcceptanceCheck[] = [
+  { expr: 'len(criticalPath) > 0', message: 'Name the critical path in criticalPath.' },
+  {
+    expr: `len(unmatched(criticalPath, "^U[0-9]+ [^ ]+ — (${UNIT_KINDS}) — ")) == 0 && heads(criticalPath, "^U[0-9]+") == seq("U", len(criticalPath))`,
+    message: `Write criticalPath as "U<n> path — ${UNIT_KINDS} — test: …", numbered from U1.`,
+  },
+  {
+    expr: 'count(criticalPath, " — (DOMAIN|CONTROLLER) — test: ") == count(criticalPath, " — (DOMAIN|CONTROLLER) — ")',
+    message: 'Name the test for each DOMAIN or CONTROLLER unit: "— test: the test that proves it".',
+  },
+];
+
+// ── for a pattern's offline demo ──────────────────────────────────
+
+/** Each lens finds nothing: what it examined, and no critical unit. */
+const quietLens: NonNullable<DemoScript['agents']>[string] = (s) => ({
+  updates: {
+    lensFindings: [],
+    lensNotes: [`${String((s.lenses as string[])[0]).split(' ')[0]}: NONE — read the change`],
+    criticalUnits: [],
+    unitVerdicts: [],
+  },
+  verdict: { outcome: 'applied', confidence: 0.9, shouldTerminate: false, reason: 'sound' },
+});
+
+/** The lenses and the test rules in an offline demo: briefed from the rulebooks, all quiet. */
+export const DEMO_LENSES: {
+  readonly tools: NonNullable<DemoScript['tools']>;
+  readonly agents: NonNullable<DemoScript['agents']>;
+} = {
+  tools: {
+    lensScan: () => ({
+      lenses: CHANGE_PILLARS.map((p) => lensBrief(pillarById(p), [])),
+      testBreaks: [],
+    }),
+    scanTests: () => ({ testBreaks: [] }),
+    checkLens: (s) => ({ valid: s.lensFindings, invalid: [] }),
+  },
+  agents: { lens: quietLens },
+};

@@ -52,6 +52,16 @@ export interface EditVerifyConfig {
 
 export const EDIT_STATE: readonly StateField[] = [
   {
+    name: 'lensRange',
+    type: 'string',
+    description: 'The change the test rules and lenses look at: empty, the uncommitted edit',
+  },
+  {
+    name: 'testBreaks',
+    type: 'string[]',
+    description: 'Branches, loops, sleeps or clocks inside the changed test bodies (engine-found)',
+  },
+  {
     name: 'testCommand',
     type: 'string',
     description: "Command that runs the tests (empty: the project's test script)",
@@ -125,6 +135,9 @@ const LOOP_VISITS = 20;
  * and review rounds), each no-progress edit (one per diagnosis), and the ENVIRONMENT re-runs.
  */
 const LOOP_FROM = 'maxEdits + maxDiagnoses + maxEnvRechecks + 6';
+
+const TEST_RULES_FAILED =
+  'The tests break the test rules: no if, switch, loop, try/finally, sleep or real clock inside a test body, and no test.each; write each case as its own named test:';
 
 export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
   const re = cfg.rediagnose;
@@ -212,6 +225,39 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
       visitsFrom: LOOP_FROM,
     },
     {
+      id: 'testRulesDue',
+      kind: 'condition',
+      label: 'Check the test rules?',
+      // Once the checks pass: a failing run is fixed first.
+      expression: 'testsPassed && lintPassed',
+    },
+    {
+      // Symphony's own edits keep the test rules (core/lensscan): no branch, loop, try/finally,
+      // sleep or real clock inside a test body, no test.each.
+      id: 'scanTests',
+      kind: 'tool',
+      label: 'Scan the changed tests',
+      tool: 'pillars.scan',
+      args: { pillars: [] },
+      inputs: { range: 'lensRange' },
+      output: { testBreaks: 'testBreaks' },
+      maxVisits: LOOP_VISITS,
+      visitsFrom: LOOP_FROM,
+    },
+    {
+      id: 'testRules',
+      kind: 'compute',
+      label: 'Tests keep the rules?',
+      // A break fails the attempt like a lint error: the edit step reads it in lintOutput.
+      assign: [
+        { field: 'lintPassed', expr: 'len(testBreaks) == 0' },
+        {
+          field: 'lintOutput',
+          expr: `if(len(testBreaks) == 0, lintOutput, lintOutput + "\n${TEST_RULES_FAILED}\n" + join(testBreaks, "\n"))`,
+        },
+      ],
+    },
+    {
       id: 'countAttempt',
       kind: 'compute',
       label: 'Count attempt',
@@ -290,8 +336,12 @@ export function editVerifyPhase(cfg: EditVerifyConfig): Fragment {
     { id: 'runTests-hasLint', from: 'runTests', to: 'hasLint' },
     { id: 'hasLint-runLint', from: 'hasLint', to: 'runLint', branch: 'then' },
     { id: 'hasLint-noLint', from: 'hasLint', to: 'noLint', branch: 'else' },
-    { id: 'noLint-count', from: 'noLint', to: 'countAttempt' },
-    { id: 'runLint-count', from: 'runLint', to: 'countAttempt' },
+    { id: 'noLint-rulesDue', from: 'noLint', to: 'testRulesDue' },
+    { id: 'runLint-rulesDue', from: 'runLint', to: 'testRulesDue' },
+    { id: 'rulesDue-scan', from: 'testRulesDue', to: 'scanTests', branch: 'then' },
+    { id: 'rulesDue-count', from: 'testRulesDue', to: 'countAttempt', branch: 'else' },
+    { id: 'scanTests-rules', from: 'scanTests', to: 'testRules' },
+    { id: 'testRules-count', from: 'testRules', to: 'countAttempt' },
     { id: 'count-verified', from: 'countAttempt', to: 'verified' },
     { id: 'verified-success', from: 'verified', to: cfg.success, branch: 'then' },
     { id: 'verified-attemptsLeft', from: 'verified', to: 'attemptsLeft', branch: 'else' },
