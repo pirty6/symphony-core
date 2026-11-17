@@ -1,57 +1,58 @@
-import { IMPROVISATION_LEVELS } from '@core/jazz'
-import { TIER_NAMES } from '@core/catalog'
-import type { Complexity, Improvisation } from '@core/types'
-import type { ReactNode } from 'react'
-import type { ProviderChoice, RunStatus } from '../lib/model'
-import type { LocalStatus } from '../lib/api'
+import { IMPROVISATION_LEVELS } from '@core/jazz';
+import { TIER_NAMES } from '@core/catalog';
+import type { Complexity, Improvisation } from '@core/types';
+import type { ReactNode } from 'react';
+import type { ProviderChoice, RunStatus } from '../lib/model';
+import type { LocalStatus } from '../lib/api';
 
 function tierHint(tiers?: Tiers): string {
   const lines = ([1, 2, 3, 4] as const).map(
-    (c) => `${c} ${TIER_NAMES[c]}: ${tiers?.[c] ? `${tiers[c]!.model}${tiers[c]!.effort ? ` (${tiers[c]!.effort})` : ''}` : 'default model'}`,
-  )
-  return `Model tier per complexity (Copilot):\n${lines.join('\n')}\nauto = rated from the problem (investigate, fix, implement rate it before they start; the maestro for scores it composes). Each step then plays its own tier above or below that.`
+    (c) =>
+      `${c} ${TIER_NAMES[c]}: ${tiers?.[c] ? `${tiers[c]!.model}${tiers[c]!.effort ? ` (${tiers[c]!.effort})` : ''}` : 'default model'}`,
+  );
+  return `Model tier per complexity (Copilot):\n${lines.join('\n')}\nauto = rated from the problem (investigate, fix, implement rate it before they start; the maestro for scores it composes). Each step then plays its own tier above or below that.`;
 }
 
 export interface RunSettings {
-  provider: ProviderChoice
-  model: string
-  autoApprove: boolean
-  stepMode: boolean
+  provider: ProviderChoice;
+  model: string;
+  autoApprove: boolean;
+  stepMode: boolean;
   /** 0 = the pattern's default (the maestro decides for composed scores). */
-  complexity: 0 | Complexity
-  improvisation: Improvisation
+  complexity: 0 | Complexity;
+  improvisation: Improvisation;
 }
 
-export type Tiers = Partial<Record<Complexity, { model: string; effort?: string }>>
+export type Tiers = Partial<Record<Complexity, { model: string; effort?: string }>>;
 
 interface Props {
-  title: string
-  mode: 'idle' | 'live' | 'replay'
-  status: RunStatus
-  settings: RunSettings
-  canRun: boolean
-  onSettings: (s: RunSettings) => void
-  onRun: () => void
-  onPause: () => void
-  onResume: () => void
-  onStep: () => void
-  onStop: () => void
-  onEdit: () => void
-  tiers?: Tiers
+  title: string;
+  mode: 'idle' | 'live' | 'replay';
+  status: RunStatus;
+  settings: RunSettings;
+  canRun: boolean;
+  onSettings: (s: RunSettings) => void;
+  onRun: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onStep: () => void;
+  onStop: () => void;
+  onEdit: () => void;
+  tiers?: Tiers;
   /** Your model server, when the studio's machine has one set (SYMPHONY_MODEL_URL). */
-  local?: LocalStatus
+  local?: LocalStatus;
   /** The opening screen: the AI settings stay (the maestro uses them), nothing to run. */
-  home?: boolean
+  home?: boolean;
   /** How long the run on screen has played (and its ETA), while it plays. */
-  timer?: ReactNode
+  timer?: ReactNode;
 }
 
-const ACTIVE = new Set<RunStatus>(['running', 'paused', 'awaiting-approval'])
+const ACTIVE = new Set<RunStatus>(['running', 'paused', 'awaiting-approval']);
 
 export function Toolbar(p: Props) {
-  const active = p.mode === 'live' && ACTIVE.has(p.status)
-  const set = (patch: Partial<RunSettings>) => p.onSettings({ ...p.settings, ...patch })
-  const level = IMPROVISATION_LEVELS[p.settings.improvisation]!
+  const active = p.mode === 'live' && ACTIVE.has(p.status);
+  const set = (patch: Partial<RunSettings>) => p.onSettings({ ...p.settings, ...patch });
+  const level = IMPROVISATION_LEVELS[p.settings.improvisation]!;
   return (
     <header className="toolbar">
       <div className="tb-title">
@@ -98,7 +99,9 @@ export function Toolbar(p: Props) {
           <select
             value={p.settings.complexity}
             disabled={active}
-            onChange={(e) => set({ complexity: Number(e.target.value) as RunSettings['complexity'] })}
+            onChange={(e) =>
+              set({ complexity: Number(e.target.value) as RunSettings['complexity'] })
+            }
             aria-label="complexity"
             className="tb-complexity"
           >
@@ -134,7 +137,12 @@ export function Toolbar(p: Props) {
           auto-approve
         </label>
         <label title="Pause before every node and after every AI answer">
-          <input type="checkbox" checked={p.settings.stepMode} onChange={(e) => set({ stepMode: e.target.checked })} aria-label="step mode" />
+          <input
+            type="checkbox"
+            checked={p.settings.stepMode}
+            onChange={(e) => set({ stepMode: e.target.checked })}
+            aria-label="step mode"
+          />
           step mode
         </label>
       </div>
@@ -147,7 +155,13 @@ export function Toolbar(p: Props) {
                   ✎ Edit
                 </button>
               )}
-              <button type="button" className="primary" onClick={p.onRun} disabled={!p.canRun} title={p.canRun ? 'Run' : 'Fix the problems first'}>
+              <button
+                type="button"
+                className="primary"
+                onClick={p.onRun}
+                disabled={!p.canRun}
+                title={p.canRun ? 'Run' : 'Fix the problems first'}
+              >
                 ▶ Run
               </button>
             </>
@@ -176,5 +190,5 @@ export function Toolbar(p: Props) {
         </div>
       )}
     </header>
-  )
+  );
 }

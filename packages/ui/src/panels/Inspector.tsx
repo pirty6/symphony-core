@@ -1,33 +1,39 @@
-import { useEffect, useRef, useState } from 'react'
-import { TOOL_OUTPUTS } from '@core/catalog'
-import { summarizeComposed } from '@core/draft'
-import type { Frame } from '@core/replay'
-import { parseFieldInput } from '@core/schema'
-import type { ScoreEdge, ScoreNode, StateField } from '@core/types'
-import type { AiStream, FlowEdge, FlowNode, RunView } from '../lib/model'
+import { useEffect, useRef, useState } from 'react';
+import { TOOL_OUTPUTS } from '@core/catalog';
+import { summarizeComposed } from '@core/draft';
+import type { Frame } from '@core/replay';
+import { parseFieldInput } from '@core/schema';
+import type { ScoreEdge, ScoreNode, StateField } from '@core/types';
+import type { AiStream, FlowEdge, FlowNode, RunView } from '../lib/model';
 
 const list = (s: string) =>
   s
     .split(',')
     .map((x) => x.trim())
-    .filter(Boolean)
+    .filter(Boolean);
 
-const json = (v: unknown) => JSON.stringify(v, null, 2)
-
+const json = (v: unknown) => JSON.stringify(v, null, 2);
 
 // ── cards shown while a run waits for the user ─────────────────────
 
 /** A step over its time limit: keep waiting, or stop it and keep what it has so far. */
-export function OvertimeCard({ view, onAnswer }: { view: RunView; onAnswer: (action: 'keepWaiting' | 'stopStep') => void }) {
-  if (!view.overtime) return null
-  const { nodeId, afterMs } = view.overtime
+export function OvertimeCard({
+  view,
+  onAnswer,
+}: {
+  view: RunView;
+  onAnswer: (action: 'keepWaiting' | 'stopStep') => void;
+}) {
+  if (!view.overtime) return null;
+  const { nodeId, afterMs } = view.overtime;
   return (
     <div className="card gate" data-testid="overtime-card">
       <h3>
         ⏱ “{nodeId}” has run {Math.round(afterMs / 60_000)} min
       </h3>
       <p className="muted">
-        It is still working; its output so far is in AI output. Stopping keeps what it already submitted (and every finished part); only the rest is retried.
+        It is still working; its output so far is in AI output. Stopping keeps what it already
+        submitted (and every finished part); only the rest is retried.
       </p>
       <div className="row">
         <button type="button" className="primary" onClick={() => onAnswer('keepWaiting')}>
@@ -38,24 +44,48 @@ export function OvertimeCard({ view, onAnswer }: { view: RunView; onAnswer: (act
         </button>
       </div>
     </div>
-  )
+  );
 }
 
-export function GateCard({ view, onResume, onStep, onStop }: { view: RunView; onResume: () => void; onStep: () => void; onStop: () => void }) {
-  if (view.status !== 'paused' || !view.gate) return null
-  const { gate } = view
+export function GateCard({
+  view,
+  onResume,
+  onStep,
+  onStop,
+}: {
+  view: RunView;
+  onResume: () => void;
+  onStep: () => void;
+  onStop: () => void;
+}) {
+  if (view.status !== 'paused' || !view.gate) return null;
+  const { gate } = view;
   return (
     <div className="card gate" data-testid="gate-card">
       <h3>
-        ⏸ Paused {gate.phase === 'before' ? 'before' : gate.phase === 'parts' ? 'between the parts of' : view.pause?.kind === 'tool' ? 'after the tool ran at' : 'after AI answered at'} “{gate.nodeId}”
+        ⏸ Paused{' '}
+        {gate.phase === 'before'
+          ? 'before'
+          : gate.phase === 'parts'
+            ? 'between the parts of'
+            : view.pause?.kind === 'tool'
+              ? 'after the tool ran at'
+              : 'after AI answered at'}{' '}
+        “{gate.nodeId}”
       </h3>
       {gate.phase === 'before' ? (
-        <p className="muted">Nothing has run yet for this node. Inspect its input below, then continue.</p>
+        <p className="muted">
+          Nothing has run yet for this node. Inspect its input below, then continue.
+        </p>
       ) : gate.phase === 'parts' ? (
-        <p className="muted">The parts already played are kept; the rest start when you continue.</p>
+        <p className="muted">
+          The parts already played are kept; the rest start when you continue.
+        </p>
       ) : (
         <>
-          <p className="muted">The engine has not applied this yet. It will be validated against the node's schema.</p>
+          <p className="muted">
+            The engine has not applied this yet. It will be validated against the node's schema.
+          </p>
           <pre className="json" data-testid="proposed-result">
             {json(gate.proposed)}
           </pre>
@@ -73,46 +103,56 @@ export function GateCard({ view, onResume, onStep, onStop }: { view: RunView; on
         </button>
       </div>
     </div>
-  )
+  );
 }
 
 export interface RecoveryAnswer {
-  action: 'retry' | 'stop'
-  hint?: string
-  complexity?: number
+  action: 'retry' | 'stop';
+  hint?: string;
+  complexity?: number;
 }
 
 /** A stuck AI step (out of attempts): what went wrong, then retry it or stop the run. */
-export function RecoveryCard({ view, onAnswer }: { view: RunView; onAnswer: (a: RecoveryAnswer) => Promise<unknown> | void }) {
-  const pause = view.pause
-  const [hint, setHint] = useState('')
-  const [tier, setTier] = useState(0)
-  const [sentFor, setSentFor] = useState<string | undefined>()
-  const pauseId = pause?.pauseId
+export function RecoveryCard({
+  view,
+  onAnswer,
+}: {
+  view: RunView;
+  onAnswer: (a: RecoveryAnswer) => Promise<unknown> | void;
+}) {
+  const pause = view.pause;
+  const [hint, setHint] = useState('');
+  const [tier, setTier] = useState(0);
+  const [sentFor, setSentFor] = useState<string | undefined>();
+  const pauseId = pause?.pauseId;
   useEffect(() => {
-    setHint('')
-    setTier(0)
-  }, [pauseId])
-  if (view.status !== 'awaiting-approval' || pause?.kind !== 'stuck') return null
-  const sent = sentFor === pause.pauseId
+    setHint('');
+    setTier(0);
+  }, [pauseId]);
+  if (view.status !== 'awaiting-approval' || pause?.kind !== 'stuck') return null;
+  const sent = sentFor === pause.pauseId;
   const answer = (a: RecoveryAnswer) => {
-    setSentFor(pause.pauseId)
+    setSentFor(pause.pauseId);
     // If the answer does not get through, open the card again so it can be sent again.
-    void Promise.resolve(onAnswer(a)).catch(() => setSentFor(undefined))
-  }
+    void Promise.resolve(onAnswer(a)).catch(() => setSentFor(undefined));
+  };
   return (
     <form
       className="card approval stuck"
       data-testid="recovery-card"
       onSubmit={(e) => {
-        e.preventDefault()
-        answer({ action: 'retry', ...(hint.trim() ? { hint: hint.trim() } : {}), ...(tier ? { complexity: tier } : {}) })
+        e.preventDefault();
+        answer({
+          action: 'retry',
+          ...(hint.trim() ? { hint: hint.trim() } : {}),
+          ...(tier ? { complexity: tier } : {}),
+        });
       }}
     >
       <h3>⚠ {pause.label} is stuck</h3>
       <p>
-        No valid answer in {pause.attempts} attempts (tier {pause.complexity}). The run is waiting: retry this step, or stop the run. The AI
-        output tab shows what it tried.
+        No valid answer in {pause.attempts} attempts (tier {pause.complexity}). The run is waiting:
+        retry this step, or stop the run. The AI output tab shows what it tried.
       </p>
       <ul className="stuck-feedback">
         {pause.feedback.map((f, i) => (
@@ -132,7 +172,11 @@ export function RecoveryCard({ view, onAnswer }: { view: RunView; onAnswer: (a: 
         </label>
         <label className="field">
           Model for the retry
-          <select value={tier} onChange={(e) => setTier(Number(e.target.value))} aria-label="recovery tier">
+          <select
+            value={tier}
+            onChange={(e) => setTier(Number(e.target.value))}
+            aria-label="recovery tier"
+          >
             <option value={0}>same (tier {pause.complexity})</option>
             {[1, 2, 3, 4]
               .filter((t) => t !== pause.complexity)
@@ -154,44 +198,54 @@ export function RecoveryCard({ view, onAnswer }: { view: RunView; onAnswer: (a: 
         </div>
       </fieldset>
     </form>
-  )
+  );
 }
 
 export function ApprovalCard({
   view,
   onAnswer,
 }: {
-  view: RunView
-  onAnswer: (a: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) => Promise<unknown> | void
+  view: RunView;
+  onAnswer: (a: {
+    approved: boolean;
+    updates?: Record<string, unknown>;
+    scripted?: boolean;
+  }) => Promise<unknown> | void;
 }) {
-  const pause = view.pause
-  const [values, setValues] = useState<Record<string, string>>({})
-  const [sentFor, setSentFor] = useState<string | undefined>()
-  const pauseId = pause?.pauseId
-  useEffect(() => setValues({}), [pauseId])
-  if (view.status !== 'awaiting-approval' || pause?.kind !== 'approval') return null
-  const sent = sentFor === pause.pauseId
-  const answer = (a: { approved: boolean; updates?: Record<string, unknown>; scripted?: boolean }) => {
-    setSentFor(pause.pauseId)
+  const pause = view.pause;
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [sentFor, setSentFor] = useState<string | undefined>();
+  const pauseId = pause?.pauseId;
+  useEffect(() => setValues({}), [pauseId]);
+  if (view.status !== 'awaiting-approval' || pause?.kind !== 'approval') return null;
+  const sent = sentFor === pause.pauseId;
+  const answer = (a: {
+    approved: boolean;
+    updates?: Record<string, unknown>;
+    scripted?: boolean;
+  }) => {
+    setSentFor(pause.pauseId);
     // If the answer does not get through, open the card again so it can be sent again.
-    void Promise.resolve(onAnswer(a)).catch(() => setSentFor(undefined))
-  }
+    void Promise.resolve(onAnswer(a)).catch(() => setSentFor(undefined));
+  };
   const submit = (approved: boolean) => {
     try {
-      const updates = Object.fromEntries(pause.outputSchema.map((f) => [f.name, parseFieldInput(f.type, values[f.name] ?? '')]))
-      answer({ approved, updates })
+      const updates = Object.fromEntries(
+        pause.outputSchema.map((f) => [f.name, parseFieldInput(f.type, values[f.name] ?? '')]),
+      );
+      answer({ approved, updates });
     } catch (e) {
-      alert((e as Error).message)
+      alert((e as Error).message);
     }
-  }
+  };
   return (
     <form
       className="card approval"
       data-testid="approval-card"
       data-pause-id={pause.pauseId}
       onSubmit={(e) => {
-        e.preventDefault()
-        submit(true)
+        e.preventDefault();
+        submit(true);
       }}
     >
       <h3>✋ {pause.label}</h3>
@@ -199,70 +253,82 @@ export function ApprovalCard({
       <ComposedScore state={pause.state} />
       <Shown keys={pause.shows ?? []} state={pause.state} />
       <fieldset className="editor" disabled={sent}>
-      {pause.feedback?.map((f, i) => (
-        <div key={i} className="issue">
-          {f}
+        {pause.feedback?.map((f, i) => (
+          <div key={i} className="issue">
+            {f}
+          </div>
+        ))}
+        {pause.outputSchema.map((f) =>
+          f.type === 'boolean' ? (
+            <label key={f.name} className="field checkbox" title={f.description ?? ''}>
+              <input
+                type="checkbox"
+                checked={values[f.name] === 'true'}
+                onChange={(e) => setValues({ ...values, [f.name]: String(e.target.checked) })}
+                aria-label={f.name}
+              />{' '}
+              {f.name} <small>{f.description ?? ''}</small>
+            </label>
+          ) : (
+            <label key={f.name} className="field">
+              {f.name} <small>({f.type})</small>
+              <input
+                autoFocus
+                placeholder={f.description ?? ''}
+                value={values[f.name] ?? ''}
+                onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
+                aria-label={f.name}
+              />
+            </label>
+          ),
+        )}
+        <div className="row">
+          <button type="submit" className="primary">
+            Approve
+          </button>
+          <button type="button" onClick={() => submit(false)}>
+            Reject
+          </button>
+          <button
+            type="button"
+            onClick={() => answer({ approved: true, scripted: true })}
+            title="Use the pattern's demo answer"
+          >
+            Scripted answer
+          </button>
         </div>
-      ))}
-      {pause.outputSchema.map((f) =>
-        f.type === 'boolean' ? (
-          <label key={f.name} className="field checkbox" title={f.description ?? ''}>
-            <input
-              type="checkbox"
-              checked={values[f.name] === 'true'}
-              onChange={(e) => setValues({ ...values, [f.name]: String(e.target.checked) })}
-              aria-label={f.name}
-            />{' '}
-            {f.name} <small>{f.description ?? ''}</small>
-          </label>
-        ) : (
-        <label key={f.name} className="field">
-          {f.name} <small>({f.type})</small>
-          <input
-            autoFocus
-            placeholder={f.description ?? ''}
-            value={values[f.name] ?? ''}
-            onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
-            aria-label={f.name}
-          />
-        </label>
-        ),
-      )}
-      <div className="row">
-        <button type="submit" className="primary">
-          Approve
-        </button>
-        <button type="button" onClick={() => submit(false)}>
-          Reject
-        </button>
-        <button type="button" onClick={() => answer({ approved: true, scripted: true })} title="Use the pattern's demo answer">
-          Scripted answer
-        </button>
-      </div>
       </fieldset>
     </form>
-  )
+  );
 }
 
 // ── AI output ──────────────────────────────────────────────────────
 
 export function AiOutput({ stream, live }: { stream: AiStream | undefined; live: boolean }) {
-  const ref = useRef<HTMLPreElement>(null)
+  const ref = useRef<HTMLPreElement>(null);
   useEffect(() => {
-    if (live && ref.current) ref.current.scrollTop = ref.current.scrollHeight
-  }, [stream?.text, live])
-  if (!stream) return <p className="muted">No AI output for this node yet. Agent nodes stream here while they run.</p>
+    if (live && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [stream?.text, live]);
+  if (!stream)
+    return (
+      <p className="muted">
+        No AI output for this node yet. Agent nodes stream here while they run.
+      </p>
+    );
   return (
     <div className="ai-output" data-testid="ai-output">
       <div className="muted">
         step {stream.step} · attempt {stream.attempt}
-        {stream.info.length > 0 && ` · ${stream.info.filter((i) => !i.startsWith('running')).join(' · ')}`}
+        {stream.info.length > 0 &&
+          ` · ${stream.info.filter((i) => !i.startsWith('running')).join(' · ')}`}
       </div>
-      {stream.permissions.filter((p) => !p.allowed).map((p, i) => (
-        <div key={i} className="issue">
-          ⛔ {p.detail}
-        </div>
-      ))}
+      {stream.permissions
+        .filter((p) => !p.allowed)
+        .map((p, i) => (
+          <div key={i} className="issue">
+            ⛔ {p.detail}
+          </div>
+        ))}
       {stream.tools.length > 0 && (
         <ul className="tools">
           {stream.tools.map((t) => (
@@ -298,19 +364,20 @@ export function AiOutput({ stream, live }: { stream: AiStream | undefined; live:
         </>
       )}
     </div>
-  )
+  );
 }
 
 /** Jazz takes have a bandleader (take 0); without one, the takes are a fanned-out step's sub-agents. */
 function takeLabel(take: number | undefined, jazz: boolean): string {
-  if (take === 0) return '🎺 Bandleader: merged answer'
-  if (take === undefined) return jazz ? 'Answer' : "All sub-agents' answers, as the engine got them"
-  return jazz ? `Take ${take}` : `🤖 Sub-agent ${take}`
+  if (take === 0) return '🎺 Bandleader: merged answer';
+  if (take === undefined)
+    return jazz ? 'Answer' : "All sub-agents' answers, as the engine got them";
+  return jazz ? `Take ${take}` : `🤖 Sub-agent ${take}`;
 }
 
 export function AiTakes({ streams, live }: { streams: readonly AiStream[]; live: boolean }) {
-  if (streams.length <= 1) return <AiOutput stream={streams[0]} live={live} />
-  const jazz = streams.some((s) => s.take === 0)
+  if (streams.length <= 1) return <AiOutput stream={streams[0]} live={live} />;
+  const jazz = streams.some((s) => s.take === 0);
   return (
     <div className="takes" data-testid="ai-takes">
       {streams.map((s) => (
@@ -320,17 +387,23 @@ export function AiTakes({ streams, live }: { streams: readonly AiStream[]; live:
         </details>
       ))}
     </div>
-  )
+  );
 }
 
 /** Summary of the score the maestro composed, shown at its go-gate. */
 /** The state an approval asks the human to look at before deciding. */
-function Shown({ keys, state }: { keys: readonly string[]; state: Readonly<Record<string, unknown>> }) {
-  if (keys.length === 0) return null
+function Shown({
+  keys,
+  state,
+}: {
+  keys: readonly string[];
+  state: Readonly<Record<string, unknown>>;
+}) {
+  if (keys.length === 0) return null;
   return (
     <div className="shown" data-testid="approval-shows">
       {keys.map((k) => {
-        const v = state[k]
+        const v = state[k];
         return (
           <div key={k}>
             <b>{k}</b>
@@ -346,21 +419,27 @@ function Shown({ keys, state }: { keys: readonly string[]; state: Readonly<Recor
               <pre className="json">{json(v)}</pre>
             )}
           </div>
-        )
+        );
       })}
     </div>
-  )
+  );
 }
 
 /** How the maestro tailored a tested library pattern: guidance per step, changed settings. */
 function Tailoring({ adaptation }: { adaptation: unknown }) {
-  const a = (adaptation ?? {}) as { directives?: Record<string, string>; initial?: Record<string, unknown> }
-  const guidance = Object.entries(a.directives ?? {})
-  const settings = Object.entries(a.initial ?? {})
-  if (guidance.length === 0 && settings.length === 0) return null
+  const a = (adaptation ?? {}) as {
+    directives?: Record<string, string>;
+    initial?: Record<string, unknown>;
+  };
+  const guidance = Object.entries(a.directives ?? {});
+  const settings = Object.entries(a.initial ?? {});
+  if (guidance.length === 0 && settings.length === 0) return null;
   return (
     <div className="tailoring" data-testid="tailoring">
-      <div className="muted">Tailored for this request (guidance added to these steps; the steps themselves are the tested pattern):</div>
+      <div className="muted">
+        Tailored for this request (guidance added to these steps; the steps themselves are the
+        tested pattern):
+      </div>
       <ul>
         {guidance.map(([step, text]) => (
           <li key={step}>
@@ -374,17 +453,23 @@ function Tailoring({ adaptation }: { adaptation: unknown }) {
         ))}
       </ul>
     </div>
-  )
+  );
 }
 
 function ComposedScore({ state }: { state: Readonly<Record<string, unknown>> }) {
-  const p = state.normalized as { name?: string; description?: string; nodes?: { id: string; label: string; kind: string; role?: string }[] } | undefined
-  if (!p?.nodes) return null
-  const notes = (state.debateNotes as string[] | undefined) ?? []
-  const missing = (state.contextNotes as string[] | undefined) ?? []
-  const summary = summarizeComposed(state)
+  const p = state.normalized as
+    | {
+        name?: string;
+        description?: string;
+        nodes?: { id: string; label: string; kind: string; role?: string }[];
+      }
+    | undefined;
+  if (!p?.nodes) return null;
+  const notes = (state.debateNotes as string[] | undefined) ?? [];
+  const missing = (state.contextNotes as string[] | undefined) ?? [];
+  const summary = summarizeComposed(state);
   // A tested library pattern's steps are known: fold them away so it does not read as new.
-  const fresh = summary?.kind === 'new' || summary?.kind === 'rewritten'
+  const fresh = summary?.kind === 'new' || summary?.kind === 'rewritten';
   return (
     <div className="composed" data-testid="composed-score">
       <div>
@@ -420,15 +505,15 @@ function ComposedScore({ state }: { state: Readonly<Record<string, unknown>> }) 
         </div>
       ))}
     </div>
-  )
+  );
 }
 
 // ── state ──────────────────────────────────────────────────────────
 
 export function StateView({ frame }: { frame: Frame }) {
-  const changed = new Map(frame.lastChanges.map((c) => [c.key, c]))
-  const keys = Object.keys(frame.state)
-  if (keys.length === 0) return <p className="muted">State appears here once a run starts.</p>
+  const changed = new Map(frame.lastChanges.map((c) => [c.key, c]));
+  const keys = Object.keys(frame.state);
+  if (keys.length === 0) return <p className="muted">State appears here once a run starts.</p>;
   return (
     <div className="state-view" data-testid="state-view">
       {frame.lastEdge && frame.event?.type === 'edge-taken' && (
@@ -440,7 +525,7 @@ export function StateView({ frame }: { frame: Frame }) {
       <table>
         <tbody>
           {keys.map((k) => {
-            const c = changed.get(k)
+            const c = changed.get(k);
             return (
               <tr key={k} className={c ? 'changed' : ''} data-testid={`state-${k}`}>
                 <th>{k}</th>
@@ -449,12 +534,12 @@ export function StateView({ frame }: { frame: Frame }) {
                   <code>{JSON.stringify(frame.state[k])}</code>
                 </td>
               </tr>
-            )
+            );
           })}
         </tbody>
       </table>
     </div>
-  )
+  );
 }
 
 // ── editors ────────────────────────────────────────────────────────
@@ -466,41 +551,62 @@ export function NodeEditor({
   onChange,
   onDelete,
 }: {
-  node: FlowNode
-  state: readonly StateField[]
-  editable: boolean
-  onChange: (n: ScoreNode) => void
-  onDelete: () => void
+  node: FlowNode;
+  state: readonly StateField[];
+  editable: boolean;
+  onChange: (n: ScoreNode) => void;
+  onDelete: () => void;
 }) {
-  const n = node.data.node
-  const set = (patch: Partial<ScoreNode>) => onChange({ ...n, ...patch } as ScoreNode)
-  const fields = state.map((f) => f.name).join(', ')
+  const n = node.data.node;
+  const set = (patch: Partial<ScoreNode>) => onChange({ ...n, ...patch } as ScoreNode);
+  const fields = state.map((f) => f.name).join(', ');
   return (
     <fieldset className="editor" disabled={!editable}>
       <label className="field">
         Label
-        <input value={n.label} onChange={(e) => set({ label: e.target.value })} aria-label="label" />
+        <input
+          value={n.label}
+          onChange={(e) => set({ label: e.target.value })}
+          aria-label="label"
+        />
       </label>
       {n.kind === 'agent' && (
         <>
           <label className="field">
             Role
-            <select value={n.role} onChange={(e) => set({ role: e.target.value as 'assessor' | 'executor' })} aria-label="role">
+            <select
+              value={n.role}
+              onChange={(e) => set({ role: e.target.value as 'assessor' | 'executor' })}
+              aria-label="role"
+            >
               <option value="assessor">assessor (read-only)</option>
               <option value="executor">executor (read-write)</option>
             </select>
           </label>
           <label className="field">
             Directive
-            <textarea rows={4} value={n.directive} onChange={(e) => set({ directive: e.target.value })} aria-label="directive" />
+            <textarea
+              rows={4}
+              value={n.directive}
+              onChange={(e) => set({ directive: e.target.value })}
+              aria-label="directive"
+            />
           </label>
           <label className="field">
             Reads <small>(comma separated: {fields || 'define state first'})</small>
-            <input value={n.reads.join(', ')} onChange={(e) => set({ reads: list(e.target.value) })} aria-label="reads" />
+            <input
+              value={n.reads.join(', ')}
+              onChange={(e) => set({ reads: list(e.target.value) })}
+              aria-label="reads"
+            />
           </label>
           <label className="field">
             Writes
-            <input value={n.writes.join(', ')} onChange={(e) => set({ writes: list(e.target.value) })} aria-label="writes" />
+            <input
+              value={n.writes.join(', ')}
+              onChange={(e) => set({ writes: list(e.target.value) })}
+              aria-label="writes"
+            />
           </label>
         </>
       )}
@@ -515,11 +621,13 @@ export function NodeEditor({
                     type="checkbox"
                     checked={n.capabilities?.includes(cap) ?? false}
                     onChange={(e) => {
-                      const caps = new Set(n.capabilities ?? [])
-                      if (e.target.checked) caps.add(cap)
-                      else caps.delete(cap)
-                      const { capabilities: _c, ...rest } = n
-                      onChange((caps.size ? { ...rest, capabilities: [...caps] } : rest) as ScoreNode)
+                      const caps = new Set(n.capabilities ?? []);
+                      if (e.target.checked) caps.add(cap);
+                      else caps.delete(cap);
+                      const { capabilities: _c, ...rest } = n;
+                      onChange(
+                        (caps.size ? { ...rest, capabilities: [...caps] } : rest) as ScoreNode,
+                      );
                     }}
                     aria-label={`capability ${cap}`}
                   />
@@ -529,7 +637,8 @@ export function NodeEditor({
             </div>
           </div>
           <label className="field">
-            Acceptance checks <small>(one per line: expression | message shown to the AI when it fails)</small>
+            Acceptance checks{' '}
+            <small>(one per line: expression | message shown to the AI when it fails)</small>
             <textarea
               rows={3}
               value={(n.checks ?? []).map((c) => `${c.expr} | ${c.message}`).join('\n')}
@@ -538,11 +647,13 @@ export function NodeEditor({
                   .split('\n')
                   .filter((l) => l.trim())
                   .map((l) => {
-                    const i = l.indexOf('|')
-                    return i === -1 ? { expr: l.trim(), message: '' } : { expr: l.slice(0, i).trim(), message: l.slice(i + 1).trim() }
-                  })
-                const { checks: _c, ...rest } = n
-                onChange((checks.length ? { ...rest, checks } : rest) as ScoreNode)
+                    const i = l.indexOf('|');
+                    return i === -1
+                      ? { expr: l.trim(), message: '' }
+                      : { expr: l.slice(0, i).trim(), message: l.slice(i + 1).trim() };
+                  });
+                const { checks: _c, ...rest } = n;
+                onChange((checks.length ? { ...rest, checks } : rest) as ScoreNode);
               }}
               aria-label="checks"
             />
@@ -553,7 +664,11 @@ export function NodeEditor({
         <>
           <label className="field">
             Tool
-            <select value={n.tool} onChange={(e) => set({ tool: e.target.value })} aria-label="tool">
+            <select
+              value={n.tool}
+              onChange={(e) => set({ tool: e.target.value })}
+              aria-label="tool"
+            >
               {Object.keys(TOOL_OUTPUTS).map((t) => (
                 <option key={t} value={t}>
                   {t}
@@ -562,7 +677,11 @@ export function NodeEditor({
             </select>
           </label>
           <label className="field">
-            Output <small>(one per line: tool output = state field; outputs: {(TOOL_OUTPUTS[n.tool] ?? []).join(', ')})</small>
+            Output{' '}
+            <small>
+              (one per line: tool output = state field; outputs:{' '}
+              {(TOOL_OUTPUTS[n.tool] ?? []).join(', ')})
+            </small>
             <textarea
               rows={3}
               value={Object.entries(n.output)
@@ -574,7 +693,10 @@ export function NodeEditor({
                     e.target.value
                       .split('\n')
                       .filter((l) => l.includes('='))
-                      .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]),
+                      .map((l) => [
+                        l.slice(0, l.indexOf('=')).trim(),
+                        l.slice(l.indexOf('=') + 1).trim(),
+                      ]),
                   ),
                 })
               }
@@ -594,7 +716,10 @@ export function NodeEditor({
                 assign: e.target.value
                   .split('\n')
                   .filter((l) => l.includes('='))
-                  .map((l) => ({ field: l.slice(0, l.indexOf('=')).trim(), expr: l.slice(l.indexOf('=') + 1).trim() })),
+                  .map((l) => ({
+                    field: l.slice(0, l.indexOf('=')).trim(),
+                    expr: l.slice(l.indexOf('=') + 1).trim(),
+                  })),
               })
             }
             aria-label="assignments"
@@ -604,25 +729,42 @@ export function NodeEditor({
       {n.kind === 'condition' && (
         <label className="field">
           Expression <small>(e.g. confidence &gt;= 0.7)</small>
-          <input value={n.expression} onChange={(e) => set({ expression: e.target.value })} aria-label="expression" />
+          <input
+            value={n.expression}
+            onChange={(e) => set({ expression: e.target.value })}
+            aria-label="expression"
+          />
         </label>
       )}
       {n.kind === 'approval' && (
         <>
           <label className="field">
             Message
-            <textarea rows={2} value={n.message} onChange={(e) => set({ message: e.target.value })} aria-label="message" />
+            <textarea
+              rows={2}
+              value={n.message}
+              onChange={(e) => set({ message: e.target.value })}
+              aria-label="message"
+            />
           </label>
           <label className="field">
             Human provides <small>(state keys)</small>
-            <input value={n.writes.join(', ')} onChange={(e) => set({ writes: list(e.target.value) })} aria-label="writes" />
+            <input
+              value={n.writes.join(', ')}
+              onChange={(e) => set({ writes: list(e.target.value) })}
+              aria-label="writes"
+            />
           </label>
         </>
       )}
       {n.kind === 'end' && (
         <label className="field">
           Outcome
-          <select value={n.outcome ?? 'success'} onChange={(e) => set({ outcome: e.target.value as 'success' | 'failed' | 'partial' })} aria-label="outcome">
+          <select
+            value={n.outcome ?? 'success'}
+            onChange={(e) => set({ outcome: e.target.value as 'success' | 'failed' | 'partial' })}
+            aria-label="outcome"
+          >
             <option value="success">success</option>
             <option value="partial">partial</option>
             <option value="failed">failed</option>
@@ -637,8 +779,12 @@ export function NodeEditor({
             min={1}
             value={n.maxVisits ?? ''}
             onChange={(e) => {
-              const { maxVisits: _m, ...rest } = n
-              onChange((e.target.value ? { ...rest, maxVisits: Number(e.target.value) } : rest) as ScoreNode)
+              const { maxVisits: _m, ...rest } = n;
+              onChange(
+                (e.target.value
+                  ? { ...rest, maxVisits: Number(e.target.value) }
+                  : rest) as ScoreNode,
+              );
             }}
             aria-label="max visits"
           />
@@ -650,7 +796,7 @@ export function NodeEditor({
         </button>
       )}
     </fieldset>
-  )
+  );
 }
 
 export function EdgeEditor({
@@ -659,12 +805,12 @@ export function EdgeEditor({
   onChange,
   onDelete,
 }: {
-  edge: FlowEdge
-  editable: boolean
-  onChange: (e: ScoreEdge) => void
-  onDelete: () => void
+  edge: FlowEdge;
+  editable: boolean;
+  onChange: (e: ScoreEdge) => void;
+  onDelete: () => void;
 }) {
-  const e = edge.data!.edge
+  const e = edge.data!.edge;
   return (
     <fieldset className="editor" disabled={!editable}>
       <p className="muted">
@@ -677,8 +823,8 @@ export function EdgeEditor({
           <input
             value={e.guard ?? ''}
             onChange={(ev) => {
-              const { guard: _g, ...rest } = e
-              onChange(ev.target.value.trim() ? { ...rest, guard: ev.target.value } : rest)
+              const { guard: _g, ...rest } = e;
+              onChange(ev.target.value.trim() ? { ...rest, guard: ev.target.value } : rest);
             }}
             aria-label="guard"
           />
@@ -689,8 +835,8 @@ export function EdgeEditor({
         <input
           value={e.label ?? ''}
           onChange={(ev) => {
-            const { label: _l, ...rest } = e
-            onChange(ev.target.value ? { ...rest, label: ev.target.value } : rest)
+            const { label: _l, ...rest } = e;
+            onChange(ev.target.value ? { ...rest, label: ev.target.value } : rest);
           }}
           aria-label="edge label"
         />
@@ -702,17 +848,16 @@ export function EdgeEditor({
         </button>
       )}
     </fieldset>
-  )
+  );
 }
 
 export function NodeInput({ node, frame }: { node: FlowNode; frame: Frame }) {
-  const reads = node.data.reads
-  if (reads.length === 0) return null
+  const reads = node.data.reads;
+  if (reads.length === 0) return null;
   return (
     <div className="node-input">
       <h4>Input it sees</h4>
       <pre className="json">{json(Object.fromEntries(reads.map((k) => [k, frame.state[k]])))}</pre>
     </div>
-  )
+  );
 }
-

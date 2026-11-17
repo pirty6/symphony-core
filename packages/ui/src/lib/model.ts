@@ -3,55 +3,74 @@
  * and fold run messages (live) or a saved Performance (replay) into frames
  * the canvas, inspector and timeline render.
  */
-import type { Edge, Node } from '@xyflow/react'
-import { FEATURES, type Feature } from '@core/catalog'
-import { originOf, type Origin, type StepOrigin } from '@core/compare'
-import { graphToPattern, groupFrames, phaseView, readsOf, writesOf, type VisualGraph } from '@core/graph'
-import { EMPTY_FRAME, framesOf, reduceFrame, type Frame, type NodeStatus } from '@core/replay'
-import type { AiTranscript, ExecutableScore, NodeKind, Pause, Performance, Role, SavedRun, ScoreEdge, ScoreGroup, ScoreNode, StateField } from '@core/types'
-import type { NextPerformance, PatternData, RunMessage } from './api'
+import type { Edge, Node } from '@xyflow/react';
+import { FEATURES, type Feature } from '@core/catalog';
+import { originOf, type Origin, type StepOrigin } from '@core/compare';
+import {
+  graphToPattern,
+  groupFrames,
+  phaseView,
+  readsOf,
+  writesOf,
+  type VisualGraph,
+} from '@core/graph';
+import { EMPTY_FRAME, framesOf, reduceFrame, type Frame, type NodeStatus } from '@core/replay';
+import type {
+  AiTranscript,
+  ExecutableScore,
+  NodeKind,
+  Pause,
+  Performance,
+  Role,
+  SavedRun,
+  ScoreEdge,
+  ScoreGroup,
+  ScoreNode,
+  StateField,
+} from '@core/types';
+import type { NextPerformance, PatternData, RunMessage } from './api';
 
 // ── canvas ──────────────────────────────────────────────────────────
 
 export type FlowNodeData = {
-  node: ScoreNode
-  reads: string[]
-  writes: string[]
-  status?: NodeStatus
-  visits?: number
-  breakpoint?: boolean
-  issues?: string[]
-  gate?: 'before' | 'after' | 'parts'
+  node: ScoreNode;
+  reads: string[];
+  writes: string[];
+  status?: NodeStatus;
+  visits?: number;
+  breakpoint?: boolean;
+  issues?: string[];
+  gate?: 'before' | 'after' | 'parts';
   /** Who played this node's latest step in a finished run. */
-  origin?: StepOrigin
-  onToggleBreakpoint?: (id: string) => void
-}
-export type FlowNode = Node<FlowNodeData>
+  origin?: StepOrigin;
+  onToggleBreakpoint?: (id: string) => void;
+};
+export type FlowNode = Node<FlowNodeData>;
 
 export type FlowEdgeData = {
-  edge: ScoreEdge
-  carries: string[]
-  back: boolean
-  count?: number
-  active?: boolean
-  values?: Readonly<Record<string, unknown>>
-  issues?: string[]
-}
-export type FlowEdge = Edge<FlowEdgeData>
+  edge: ScoreEdge;
+  carries: string[];
+  back: boolean;
+  count?: number;
+  active?: boolean;
+  values?: Readonly<Record<string, unknown>>;
+  issues?: string[];
+};
+export type FlowEdge = Edge<FlowEdgeData>;
 
 export interface PatternMeta {
-  name: string
-  description: string
-  requiredContext: string[]
-  verbTriggers: string[]
-  state: StateField[]
-  maxSteps?: number
+  name: string;
+  description: string;
+  requiredContext: string[];
+  verbTriggers: string[];
+  state: StateField[];
+  maxSteps?: number;
   /** Required input whose value is the run's goal. */
-  goalFrom?: string
+  goalFrom?: string;
   /** State keys the run delivers. */
-  result?: string[]
+  result?: string[];
   /** Phases: named groups of steps the canvas can collapse. */
-  groups?: ScoreGroup[]
+  groups?: ScoreGroup[];
 }
 
 export function metaOf(p: PatternData): PatternMeta {
@@ -65,7 +84,7 @@ export function metaOf(p: PatternData): PatternMeta {
     ...(p.goalFrom ? { goalFrom: p.goalFrom } : {}),
     ...(p.result?.length ? { result: [...p.result] } : {}),
     ...(p.groups?.length ? { groups: p.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) } : {}),
-  }
+  };
 }
 
 /** What the studio shows for a run's score (saved or live): enough to draw and label it. */
@@ -77,9 +96,11 @@ export function scoreMeta(score: ExecutableScore): PatternMeta {
     verbTriggers: [],
     state: [...score.state],
     maxSteps: score.maxSteps,
-    ...(score.groups?.length ? { groups: score.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) } : {}),
+    ...(score.groups?.length
+      ? { groups: score.groups.map((g) => ({ ...g, nodes: [...g.nodes] })) }
+      : {}),
     ...(score.result?.length ? { result: [...score.result] } : {}),
-  }
+  };
 }
 
 export function toFlow(graph: VisualGraph): { nodes: FlowNode[]; edges: FlowEdge[] } {
@@ -98,10 +119,14 @@ export function toFlow(graph: VisualGraph): { nodes: FlowNode[]; edges: FlowEdge
       type: 'data',
       data: { edge: e.data.edge, carries: [...e.data.carries], back: e.data.back },
     })),
-  }
+  };
 }
 
-export function fromFlow(meta: PatternMeta, nodes: readonly FlowNode[], edges: readonly FlowEdge[]): PatternData {
+export function fromFlow(
+  meta: PatternMeta,
+  nodes: readonly FlowNode[],
+  edges: readonly FlowEdge[],
+): PatternData {
   const g = graphToPattern(
     {
       nodes: nodes.map((n) => ({ id: n.id, data: { node: n.data.node } })),
@@ -114,10 +139,12 @@ export function fromFlow(meta: PatternMeta, nodes: readonly FlowNode[], edges: r
       })),
     },
     { state: meta.state, ...(meta.maxSteps ? { maxSteps: meta.maxSteps } : {}) },
-  )
+  );
   // Keep phases in step with the canvas: deleted steps leave their phase, empty phases go.
-  const ids = new Set(nodes.map((n) => n.id))
-  const groups = (meta.groups ?? []).map((gr) => ({ ...gr, nodes: gr.nodes.filter((id) => ids.has(id)) })).filter((gr) => gr.nodes.length > 0)
+  const ids = new Set(nodes.map((n) => n.id));
+  const groups = (meta.groups ?? [])
+    .map((gr) => ({ ...gr, nodes: gr.nodes.filter((id) => ids.has(id)) }))
+    .filter((gr) => gr.nodes.length > 0);
   return {
     name: meta.name,
     description: meta.description,
@@ -127,7 +154,7 @@ export function fromFlow(meta: PatternMeta, nodes: readonly FlowNode[], edges: r
     ...(meta.result?.length ? { result: meta.result } : {}),
     ...g,
     ...(groups.length > 0 ? { groups } : {}),
-  }
+  };
 }
 
 /** Replace a node's definition and refresh its derived reads/writes. */
@@ -140,20 +167,32 @@ export function withNode(n: FlowNode, node: ScoreNode, state: readonly StateFiel
       reads: readsOf(node),
       writes: writesOf(node, { state, nodes: [], edges: [], start: '' }),
     },
-  }
+  };
 }
 
 export function uniqueId(prefix: string, taken: Iterable<string>): string {
-  const set = new Set(taken)
+  const set = new Set(taken);
   for (let i = 1; ; i += 1) {
-    const id = `${prefix}${i}`
-    if (!set.has(id)) return id
+    const id = `${prefix}${i}`;
+    if (!set.has(id)) return id;
   }
 }
 
-export type PaletteKind = 'start' | 'assessor' | 'executor' | 'compute' | 'tool' | 'condition' | 'approval' | 'end'
+export type PaletteKind =
+  | 'start'
+  | 'assessor'
+  | 'executor'
+  | 'compute'
+  | 'tool'
+  | 'condition'
+  | 'approval'
+  | 'end';
 
-export function newNode(kind: PaletteKind, id: string, position: { x: number; y: number }): FlowNode {
+export function newNode(
+  kind: PaletteKind,
+  id: string,
+  position: { x: number; y: number },
+): FlowNode {
   const node: ScoreNode = (() => {
     switch (kind) {
       case 'assessor':
@@ -166,94 +205,123 @@ export function newNode(kind: PaletteKind, id: string, position: { x: number; y:
           directive: kind === 'assessor' ? 'Read the workspace and report.' : 'Make the change.',
           reads: [],
           writes: [],
-        }
+        };
       case 'compute':
-        return { id, kind: 'compute', label: 'Compute', assign: [] }
+        return { id, kind: 'compute', label: 'Compute', assign: [] };
       case 'tool':
-        return { id, kind: 'tool', label: 'List files', tool: 'repo.files', output: {} }
+        return { id, kind: 'tool', label: 'List files', tool: 'repo.files', output: {} };
       case 'condition':
-        return { id, kind: 'condition', label: 'If', expression: 'true' }
+        return { id, kind: 'condition', label: 'If', expression: 'true' };
       case 'approval':
-        return { id, kind: 'approval', label: 'Approve', message: 'Approve?', writes: [] }
+        return { id, kind: 'approval', label: 'Approve', message: 'Approve?', writes: [] };
       case 'end':
-        return { id, kind: 'end', label: 'End' }
+        return { id, kind: 'end', label: 'End' };
       default:
-        return { id, kind: 'start', label: 'Start' }
+        return { id, kind: 'start', label: 'Start' };
     }
-  })()
-  return { id, type: node.kind, position, data: { node, reads: readsOf(node), writes: writesOf(node) } }
+  })();
+  return {
+    id,
+    type: node.kind,
+    position,
+    data: { node, reads: readsOf(node), writes: writesOf(node) },
+  };
 }
 
 // ── runs ────────────────────────────────────────────────────────────
 
-export type RunStatus = 'idle' | 'running' | 'paused' | 'awaiting-approval' | 'done' | 'failed' | 'cancelled'
+export type RunStatus =
+  | 'idle'
+  | 'running'
+  | 'paused'
+  | 'awaiting-approval'
+  | 'done'
+  | 'failed'
+  | 'cancelled';
 
 export interface AiStream {
-  readonly key: string
-  readonly nodeId: string
-  readonly step: number
-  readonly attempt: number
+  readonly key: string;
+  readonly nodeId: string;
+  readonly step: number;
+  readonly attempt: number;
   /** Jazz: 1..N for a take, 0 for the bandleader's merge. */
-  readonly take?: number
-  text: string
-  reasoning: string
-  messages: string[]
-  tools: { id: string; name: string; ok?: boolean; args?: unknown; denied?: string }[]
-  permissions: { kind: string; allowed: boolean; detail: string }[]
-  info: string[]
-  result?: unknown
-  rejected?: readonly string[]
+  readonly take?: number;
+  text: string;
+  reasoning: string;
+  messages: string[];
+  tools: { id: string; name: string; ok?: boolean; args?: unknown; denied?: string }[];
+  permissions: { kind: string; allowed: boolean; detail: string }[];
+  info: string[];
+  result?: unknown;
+  rejected?: readonly string[];
 }
 
 export interface RunView {
-  readonly mode: 'idle' | 'live' | 'replay'
-  readonly runId?: string
+  readonly mode: 'idle' | 'live' | 'replay';
+  readonly runId?: string;
   /** The goal of the score being performed. */
-  readonly goal?: string
+  readonly goal?: string;
   /** State keys the score declares as its result. */
-  readonly resultKeys?: readonly string[]
-  readonly status: RunStatus
-  readonly frames: readonly Frame[]
+  readonly resultKeys?: readonly string[];
+  readonly status: RunStatus;
+  readonly frames: readonly Frame[];
   /** Frame index being shown; null follows the latest frame. */
-  readonly cursor: number | null
-  readonly pause?: Pause
-  readonly gate?: { readonly nodeId: string; readonly phase: 'before' | 'after' | 'parts'; readonly proposed?: unknown }
-  readonly streams: readonly AiStream[]
-  readonly performance?: Performance
-  readonly savedTo?: string
-  readonly reason?: string
+  readonly cursor: number | null;
+  readonly pause?: Pause;
+  readonly gate?: {
+    readonly nodeId: string;
+    readonly phase: 'before' | 'after' | 'parts';
+    readonly proposed?: unknown;
+  };
+  readonly streams: readonly AiStream[];
+  readonly performance?: Performance;
+  readonly savedTo?: string;
+  readonly reason?: string;
   /** reproduced: undefined while the replay is still being checked. */
-  readonly replay?: { readonly reproduced?: boolean; readonly issues: readonly string[]; readonly file?: string }
+  readonly replay?: {
+    readonly reproduced?: boolean;
+    readonly issues: readonly string[];
+    readonly file?: string;
+  };
   /** The maestro handed on a composed score. */
-  readonly next?: NextPerformance
+  readonly next?: NextPerformance;
   /** A step over its time limit, waiting for you: keep waiting, or stop it keeping what it has. */
-  readonly overtime?: { readonly nodeId: string; readonly afterMs: number }
+  readonly overtime?: { readonly nodeId: string; readonly afterMs: number };
   /** The sub-agents of the latest fanned-out step, one state per part. */
-  readonly parts?: SubAgents
+  readonly parts?: SubAgents;
 }
 
-export type SubAgentState = 'waiting' | 'running' | 'done' | 'failed' | 'kept'
+export type SubAgentState = 'waiting' | 'running' | 'done' | 'failed' | 'kept';
 export interface SubAgents {
-  readonly nodeId: string
-  readonly step: number
-  readonly attempt: number
-  readonly states: readonly SubAgentState[]
+  readonly nodeId: string;
+  readonly step: number;
+  readonly attempt: number;
+  readonly states: readonly SubAgentState[];
 }
 
 /** What each sub-agent works on: the first entries of the list the step was split over. */
 export function subAgentItems(pause: Pause | undefined, nodeId: string): string[] | undefined {
-  if (pause?.kind !== 'agent' || pause.nodeId !== nodeId || !pause.parts || pause.parts.length < 2) return undefined
-  const [a, b] = pause.parts
-  const key = Object.keys(a!).find((k) => Array.isArray(a![k]) && JSON.stringify(a![k]) !== JSON.stringify(b![k]))
-  if (!key) return undefined
+  if (pause?.kind !== 'agent' || pause.nodeId !== nodeId || !pause.parts || pause.parts.length < 2)
+    return undefined;
+  const [a, b] = pause.parts;
+  const key = Object.keys(a!).find(
+    (k) => Array.isArray(a![k]) && JSON.stringify(a![k]) !== JSON.stringify(b![k]),
+  );
+  if (!key) return undefined;
   return pause.parts.map((p) => {
-    const list = (p[key] as unknown[]).map(String)
-    const first = list[0]?.split('/').pop() ?? ''
-    return list.length > 1 ? `${first} +${list.length - 1}` : first
-  })
+    const list = (p[key] as unknown[]).map(String);
+    const first = list[0]?.split('/').pop() ?? '';
+    return list.length > 1 ? `${first} +${list.length - 1}` : first;
+  });
 }
 
-export const IDLE_VIEW: RunView = { mode: 'idle', status: 'idle', frames: [], cursor: null, streams: [] }
+export const IDLE_VIEW: RunView = {
+  mode: 'idle',
+  status: 'idle',
+  frames: [],
+  cursor: null,
+  streams: [],
+};
 
 export function startLive(runId: string, goal?: string, resultKeys?: readonly string[]): RunView {
   return {
@@ -263,12 +331,14 @@ export function startLive(runId: string, goal?: string, resultKeys?: readonly st
     status: 'running',
     ...(goal ? { goal } : {}),
     ...(resultKeys?.length ? { resultKeys } : {}),
-  }
+  };
 }
 
 export function currentFrame(v: RunView): Frame {
-  if (v.frames.length === 0) return EMPTY_FRAME
-  return v.cursor === null ? v.frames.at(-1)! : (v.frames[Math.min(v.cursor, v.frames.length - 1)] ?? EMPTY_FRAME)
+  if (v.frames.length === 0) return EMPTY_FRAME;
+  return v.cursor === null
+    ? v.frames.at(-1)!
+    : (v.frames[Math.min(v.cursor, v.frames.length - 1)] ?? EMPTY_FRAME);
 }
 
 function updateStream(
@@ -278,18 +348,36 @@ function updateStream(
   fn: (s: AiStream) => void,
   take?: number,
 ): AiStream[] {
-  const step = v.pause?.nodeId === nodeId ? v.pause.step : (v.frames.at(-1)?.step ?? 0)
-  const key = `${step}:${nodeId}:${attempt}${take !== undefined ? `:${take}` : ''}`
-  const streams = [...v.streams]
-  let i = streams.findIndex((s) => s.key === key)
+  const step = v.pause?.nodeId === nodeId ? v.pause.step : (v.frames.at(-1)?.step ?? 0);
+  const key = `${step}:${nodeId}:${attempt}${take !== undefined ? `:${take}` : ''}`;
+  const streams = [...v.streams];
+  let i = streams.findIndex((s) => s.key === key);
   if (i === -1) {
-    streams.push({ key, nodeId, step, attempt, ...(take !== undefined ? { take } : {}), text: '', reasoning: '', messages: [], tools: [], permissions: [], info: [] })
-    i = streams.length - 1
+    streams.push({
+      key,
+      nodeId,
+      step,
+      attempt,
+      ...(take !== undefined ? { take } : {}),
+      text: '',
+      reasoning: '',
+      messages: [],
+      tools: [],
+      permissions: [],
+      info: [],
+    });
+    i = streams.length - 1;
   }
-  const copy: AiStream = { ...streams[i]!, messages: [...streams[i]!.messages], tools: [...streams[i]!.tools], permissions: [...streams[i]!.permissions], info: [...streams[i]!.info] }
-  fn(copy)
-  streams[i] = copy
-  return streams
+  const copy: AiStream = {
+    ...streams[i]!,
+    messages: [...streams[i]!.messages],
+    tools: [...streams[i]!.tools],
+    permissions: [...streams[i]!.permissions],
+    info: [...streams[i]!.info],
+  };
+  fn(copy);
+  streams[i] = copy;
+  return streams;
 }
 
 /**
@@ -298,114 +386,146 @@ function updateStream(
  * approval stays waiting for an answer nobody can receive.
  */
 export function endLocally(v: RunView, reason: string): RunView {
-  const { gate: _g, pause: _p, ...rest } = v
-  return { ...rest, status: 'cancelled', reason }
+  const { gate: _g, pause: _p, ...rest } = v;
+  return { ...rest, status: 'cancelled', reason };
 }
 
 export function applyMessage(v: RunView, m: RunMessage): RunView {
   switch (m.type) {
     case 'engine': {
-      const frame = reduceFrame(v.frames.at(-1) ?? EMPTY_FRAME, m.event)
-      const e = m.event
-      let pause = v.pause
-      let streams = v.streams
-      if (e.type === 'paused') pause = e.pause
-      if (e.type === 'node-completed' || e.type === 'run-completed' || e.type === 'run-failed') pause = undefined
+      const frame = reduceFrame(v.frames.at(-1) ?? EMPTY_FRAME, m.event);
+      const e = m.event;
+      let pause = v.pause;
+      let streams = v.streams;
+      if (e.type === 'paused') pause = e.pause;
+      if (e.type === 'node-completed' || e.type === 'run-completed' || e.type === 'run-failed')
+        pause = undefined;
       if (e.type === 'response-rejected' && v.pause?.kind === 'agent') {
-        const attempt = v.pause.attempt
+        const attempt = v.pause.attempt;
         streams = updateStream(v, e.nodeId, attempt, (s) => {
-          s.rejected = e.errors
-        })
+          s.rejected = e.errors;
+        });
       }
-      const { pause: _p, ...rest } = v
-      return { ...rest, ...(pause ? { pause } : {}), streams, frames: [...v.frames, frame] }
+      const { pause: _p, ...rest } = v;
+      return { ...rest, ...(pause ? { pause } : {}), streams, frames: [...v.frames, frame] };
     }
     case 'provider': {
-      const e = m.event
+      const e = m.event;
       const streams = updateStream(
         v,
         m.nodeId,
         m.attempt,
         (s) => {
-        switch (e.type) {
-          case 'delta':
-            s.text += e.text
-            break
-          case 'reasoning':
-            s.reasoning += e.text
-            break
-          case 'message':
-            s.messages.push(e.text)
-            break
-          case 'tool-start':
-            s.tools.push({ id: e.id, name: e.name, args: e.args })
-            break
-          case 'tool-end': {
-            const t = s.tools.find((x) => x.id === e.id)
-            if (t) t.ok = e.ok
-            break
+          switch (e.type) {
+            case 'delta':
+              s.text += e.text;
+              break;
+            case 'reasoning':
+              s.reasoning += e.text;
+              break;
+            case 'message':
+              s.messages.push(e.text);
+              break;
+            case 'tool-start':
+              s.tools.push({ id: e.id, name: e.name, args: e.args });
+              break;
+            case 'tool-end': {
+              const t = s.tools.find((x) => x.id === e.id);
+              if (t) t.ok = e.ok;
+              break;
+            }
+            case 'permission':
+              s.permissions.push({ kind: e.kind, allowed: e.allowed, detail: e.detail });
+              break;
+            case 'info':
+              s.info.push(e.text);
+              break;
           }
-          case 'permission':
-            s.permissions.push({ kind: e.kind, allowed: e.allowed, detail: e.detail })
-            break
-          case 'info':
-            s.info.push(e.text)
-            break
-        }
-      },
+        },
         m.take,
-      )
-      return { ...v, streams }
+      );
+      return { ...v, streams };
     }
     case 'status': {
-      const { gate: _g, ...rest } = v
+      const { gate: _g, ...rest } = v;
       if (m.status === 'paused' && m.nodeId && m.phase) {
-        const gate = { nodeId: m.nodeId, phase: m.phase, ...(m.proposed !== undefined ? { proposed: m.proposed } : {}) }
-        let streams = v.streams
+        const gate = {
+          nodeId: m.nodeId,
+          phase: m.phase,
+          ...(m.proposed !== undefined ? { proposed: m.proposed } : {}),
+        };
+        let streams = v.streams;
         if (m.phase === 'after' && v.pause?.kind === 'agent') {
           streams = updateStream(v, m.nodeId, v.pause.attempt, (s) => {
-            s.result = m.proposed
-          })
+            s.result = m.proposed;
+          });
         }
-        return { ...rest, status: 'paused', gate, streams }
+        return { ...rest, status: 'paused', gate, streams };
       }
-      return { ...rest, status: m.status, ...(m.reason ? { reason: m.reason } : {}) }
+      return { ...rest, status: m.status, ...(m.reason ? { reason: m.reason } : {}) };
     }
     case 'performance':
-      return { ...v, performance: m.performance, ...(m.savedTo ? { savedTo: m.savedTo } : {}) }
+      return { ...v, performance: m.performance, ...(m.savedTo ? { savedTo: m.savedTo } : {}) };
     case 'next':
-      return { ...v, next: m }
+      return { ...v, next: m };
     case 'part': {
-      const same = v.parts && v.parts.nodeId === m.nodeId && v.parts.step === m.step && v.parts.attempt === m.attempt
-      const states: SubAgentState[] = same ? [...v.parts!.states] : Array.from({ length: m.total }, () => 'waiting' as const)
-      states[m.part - 1] = m.state
-      return { ...v, parts: { nodeId: m.nodeId, step: m.step, attempt: m.attempt, states } }
+      const same =
+        v.parts &&
+        v.parts.nodeId === m.nodeId &&
+        v.parts.step === m.step &&
+        v.parts.attempt === m.attempt;
+      const states: SubAgentState[] = same
+        ? [...v.parts!.states]
+        : Array.from({ length: m.total }, () => 'waiting' as const);
+      states[m.part - 1] = m.state;
+      return { ...v, parts: { nodeId: m.nodeId, step: m.step, attempt: m.attempt, states } };
     }
     case 'overtime': {
-      const { overtime: _o, ...rest } = v
-      return m.state === 'asking' ? { ...rest, overtime: { nodeId: m.nodeId, afterMs: m.afterMs } } : rest
+      const { overtime: _o, ...rest } = v;
+      return m.state === 'asking'
+        ? { ...rest, overtime: { nodeId: m.nodeId, afterMs: m.afterMs } }
+        : rest;
     }
   }
 }
 
 /** Who played a recorded answer: tier, requested model, account, SDK and sampling. */
 export function musicianLines(t: AiTranscript): string[] {
-  const m = t.musician
-  if (!m) return []
-  const asked = m.requestedModel ? `asked for ${m.requestedModel}${m.effort ? ` (${m.effort})` : ''}` : 'default model'
-  return [[`tier ${m.tier}`, asked, m.account, m.sdk].filter(Boolean).join(' · '), `sampling: ${m.sampling}`]
+  const m = t.musician;
+  if (!m) return [];
+  const asked = m.requestedModel
+    ? `asked for ${m.requestedModel}${m.effort ? ` (${m.effort})` : ''}`
+    : 'default model';
+  return [
+    [`tier ${m.tier}`, asked, m.account, m.sdk].filter(Boolean).join(' · '),
+    `sampling: ${m.sampling}`,
+  ];
 }
 
-export function replayView(run: SavedRun, check: { reproduced?: boolean | undefined; issues: readonly string[]; file?: string }): RunView {
-  const perf = run.performance
-  const frames = framesOf(perf.events)
-  const streams: AiStream[] = []
+export function replayView(
+  run: SavedRun,
+  check: { reproduced?: boolean | undefined; issues: readonly string[]; file?: string },
+): RunView {
+  const perf = run.performance;
+  const frames = framesOf(perf.events);
+  const streams: AiStream[] = [];
   for (const s of perf.steps) {
-    if (s.kind !== 'agent') continue
-    const attempts = [...(s.attempts ?? []).map((a) => ({ t: a.transcript, rejected: a.errors, result: undefined as unknown })), { t: s.transcript, rejected: undefined, result: s.verdict ? { updates: s.updates, verdict: s.verdict } : undefined }]
+    if (s.kind !== 'agent') continue;
+    const attempts = [
+      ...(s.attempts ?? []).map((a) => ({
+        t: a.transcript,
+        rejected: a.errors,
+        result: undefined as unknown,
+      })),
+      {
+        t: s.transcript,
+        rejected: undefined,
+        result: s.verdict ? { updates: s.updates, verdict: s.verdict } : undefined,
+      },
+    ];
     attempts.forEach((a, i) => {
-      if (!a.t && !a.result) return
-      ;(a.t?.takes ?? []).forEach((t, k) =>
+      if (!a.t && !a.result) return;
+      (a.t?.takes ?? []).forEach((t, k) =>
         streams.push({
           key: `${s.step}:${s.nodeId}:${i + 1}:${k + 1}`,
           nodeId: s.nodeId,
@@ -415,11 +535,19 @@ export function replayView(run: SavedRun, check: { reproduced?: boolean | undefi
           text: t.output,
           reasoning: '',
           messages: [],
-          tools: t.toolCalls.map((c, j) => ({ id: String(j), name: c.name, ...(c.ok !== undefined ? { ok: c.ok } : {}), args: c.args })),
+          tools: t.toolCalls.map((c, j) => ({
+            id: String(j),
+            name: c.name,
+            ...(c.ok !== undefined ? { ok: c.ok } : {}),
+            args: c.args,
+          })),
           permissions: [],
-          info: [`take ${k + 1} · ${t.provider}${t.model ? ` · ${t.model}` : ''}`, ...musicianLines(t)],
+          info: [
+            `take ${k + 1} · ${t.provider}${t.model ? ` · ${t.model}` : ''}`,
+            ...musicianLines(t),
+          ],
         }),
-      )
+      );
       streams.push({
         key: `${s.step}:${s.nodeId}:${i + 1}`,
         nodeId: s.nodeId,
@@ -428,19 +556,32 @@ export function replayView(run: SavedRun, check: { reproduced?: boolean | undefi
         text: a.t?.output ?? '',
         reasoning: '',
         messages: [],
-        tools: (a.t?.toolCalls ?? []).map((c, j) => ({ id: String(j), name: c.name, ...(c.ok !== undefined ? { ok: c.ok } : {}), args: c.args, ...(c.denied ? { denied: c.denied } : {}) })),
+        tools: (a.t?.toolCalls ?? []).map((c, j) => ({
+          id: String(j),
+          name: c.name,
+          ...(c.ok !== undefined ? { ok: c.ok } : {}),
+          args: c.args,
+          ...(c.denied ? { denied: c.denied } : {}),
+        })),
         permissions: [],
         ...(a.t?.takes?.length ? { take: 0 } : {}),
         info: a.t
-          ? [`${a.t.fromRepertoire ? `🎼 replayed from ${a.t.fromRepertoire} · ` : ''}${a.t.provider}${a.t.model ? ` · ${a.t.model}` : ''}`, ...musicianLines(a.t)]
+          ? [
+              `${a.t.fromRepertoire ? `🎼 replayed from ${a.t.fromRepertoire} · ` : ''}${a.t.provider}${a.t.model ? ` · ${a.t.model}` : ''}`,
+              ...musicianLines(a.t),
+            ]
           : [],
         ...(a.result ? { result: a.result } : {}),
         ...(a.rejected ? { rejected: a.rejected } : {}),
-      })
-    })
+      });
+    });
   }
   const status: RunStatus =
-    perf.outcome === 'failed' ? 'failed' : perf.outcome === 'cancelled' || perf.outcome === 'in-progress' ? 'cancelled' : 'done'
+    perf.outcome === 'failed'
+      ? 'failed'
+      : perf.outcome === 'cancelled' || perf.outcome === 'in-progress'
+        ? 'cancelled'
+        : 'done';
   return {
     mode: 'replay',
     goal: run.score.goal,
@@ -456,22 +597,24 @@ export function replayView(run: SavedRun, check: { reproduced?: boolean | undefi
       issues: check.issues,
       ...(check.file ? { file: check.file } : {}),
     },
-  }
+  };
 }
 
 /** Latest AI stream for a node at or before the frame's step. */
 export function streamFor(v: RunView, nodeId: string, frame: Frame): AiStream | undefined {
-  return streamsFor(v, nodeId, frame).at(-1)
+  return streamsFor(v, nodeId, frame).at(-1);
 }
 
 /** Every stream of the node's latest attempt at or before the frame: the takes, then the merge. */
 export function streamsFor(v: RunView, nodeId: string, frame: Frame): AiStream[] {
-  const atOrBefore = v.streams.filter((s) => s.nodeId === nodeId && s.step <= Math.max(frame.step, 1))
-  const last = atOrBefore.at(-1)
-  if (!last) return []
+  const atOrBefore = v.streams.filter(
+    (s) => s.nodeId === nodeId && s.step <= Math.max(frame.step, 1),
+  );
+  const last = atOrBefore.at(-1);
+  if (!last) return [];
   return atOrBefore
     .filter((s) => s.step === last.step && s.attempt === last.attempt)
-    .toSorted((a, b) => (a.take === 0 ? 99 : (a.take ?? 0)) - (b.take === 0 ? 99 : (b.take ?? 0)))
+    .toSorted((a, b) => (a.take === 0 ? 99 : (a.take ?? 0)) - (b.take === 0 ? 99 : (b.take ?? 0)));
 }
 
 export function decorate(
@@ -479,18 +622,18 @@ export function decorate(
   edges: readonly FlowEdge[],
   frame: Frame,
   opts: {
-    breakpoints: ReadonlySet<string>
-    issues: ReadonlyMap<string, string[]>
-    gate?: RunView['gate']
-    origins?: ReadonlyMap<string, StepOrigin>
-    onToggleBreakpoint?: (id: string) => void
+    breakpoints: ReadonlySet<string>;
+    issues: ReadonlyMap<string, string[]>;
+    gate?: RunView['gate'];
+    origins?: ReadonlyMap<string, StepOrigin>;
+    onToggleBreakpoint?: (id: string) => void;
   },
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
   return {
     nodes: nodes.map((n) => {
-      const status = frame.nodeStatus[n.id]
-      const visits = frame.nodeVisits[n.id]
-      const issues = opts.issues.get(n.id)
+      const status = frame.nodeStatus[n.id];
+      const visits = frame.nodeVisits[n.id];
+      const issues = opts.issues.get(n.id);
       return {
         ...n,
         data: {
@@ -503,11 +646,11 @@ export function decorate(
           origin: opts.origins?.get(n.id),
           ...(opts.onToggleBreakpoint ? { onToggleBreakpoint: opts.onToggleBreakpoint } : {}),
         },
-      }
+      };
     }),
     edges: edges.map((e) => {
-      const active = frame.lastEdge?.id === e.id
-      const issues = opts.issues.get(e.id)
+      const active = frame.lastEdge?.id === e.id;
+      const issues = opts.issues.get(e.id);
       return {
         ...e,
         animated: false,
@@ -518,49 +661,49 @@ export function decorate(
           ...(active ? { values: frame.lastEdge!.values } : { values: undefined }),
           ...(issues ? { issues } : { issues: undefined }),
         },
-      }
+      };
     }),
-  }
+  };
 }
 
 // ── result ──────────────────────────────────────────────────────────
 
 export interface RunResult {
   /** Keys the run delivered: the score's declared result, else the last data carried toward its end. */
-  readonly keys: readonly string[]
-  readonly values: Readonly<Record<string, unknown>>
+  readonly keys: readonly string[];
+  readonly values: Readonly<Record<string, unknown>>;
   /** Why it ended, when it did not succeed (e.g. the step it stopped at, and why). */
-  readonly ended?: string
+  readonly ended?: string;
 }
 
 /** What a finished run produced, read from its final frames. Undefined while it runs. */
 export function runResult(v: RunView): RunResult | undefined {
-  const last = v.frames.at(-1)
-  if (!last?.outcome) return undefined
-  const final = v.performance?.finalState ?? last.state
-  let keys: readonly string[] = v.resultKeys ?? []
+  const last = v.frames.at(-1);
+  if (!last?.outcome) return undefined;
+  const final = v.performance?.finalState ?? last.state;
+  let keys: readonly string[] = v.resultKeys ?? [];
   for (let i = v.frames.length - 1; i >= 0 && keys.length === 0; i--) {
-    const f = v.frames[i]!
+    const f = v.frames[i]!;
     if (f.event?.type === 'edge-taken' && f.event.carried.length > 0) {
-      keys = f.event.carried
-      break
+      keys = f.event.carried;
+      break;
     }
   }
-  const completed = last.event?.type === 'run-completed' ? last.event.reason : undefined
-  const reason = v.performance?.reason ?? completed
+  const completed = last.event?.type === 'run-completed' ? last.event.reason : undefined;
+  const reason = v.performance?.reason ?? completed;
   return {
     keys,
     values: Object.fromEntries(keys.map((k) => [k, final[k]])),
     ...(last.outcome !== 'success' && reason ? { ended: `${last.outcome}: ${reason}` } : {}),
-  }
+  };
 }
 
-export const ENDED_HEADING = 'why it ended'
+export const ENDED_HEADING = 'why it ended';
 
 /** The result as Markdown, for copying and downloading. */
 export function resultMarkdown(r: RunResult, title: string): string {
   const body = r.keys.map((k) => {
-    const v = r.values[k]
+    const v = r.values[k];
     const text =
       typeof v === 'string'
         ? v
@@ -568,20 +711,23 @@ export function resultMarkdown(r: RunResult, title: string): string {
           ? v.length > 0
             ? v.map((x) => `- ${x}`).join('\n')
             : '_none_'
-          : '```json\n' + JSON.stringify(v, null, 2) + '\n```'
-    return `## ${k}\n\n${text}`
-  })
-  const why = r.ended ? [`## ${ENDED_HEADING}\n\n${r.ended}`] : []
-  return [`# ${title}`, ...why, ...body].join('\n\n') + '\n'
+          : '```json\n' + JSON.stringify(v, null, 2) + '\n```';
+    return `## ${k}\n\n${text}`;
+  });
+  const why = r.ended ? [`## ${ENDED_HEADING}\n\n${r.ended}`] : [];
+  return [`# ${title}`, ...why, ...body].join('\n\n') + '\n';
 }
 
 // ── origins ─────────────────────────────────────────────────────────
 
 /** Who played each node's latest step, up to a step number. */
-export function originsByNode(perf: Performance | undefined, upToStep = Infinity): Map<string, StepOrigin> {
-  const out = new Map<string, StepOrigin>()
-  for (const s of perf?.steps ?? []) if (s.step <= upToStep) out.set(s.nodeId, originOf(s))
-  return out
+export function originsByNode(
+  perf: Performance | undefined,
+  upToStep = Infinity,
+): Map<string, StepOrigin> {
+  const out = new Map<string, StepOrigin>();
+  for (const s of perf?.steps ?? []) if (s.step <= upToStep) out.set(s.nodeId, originOf(s));
+  return out;
 }
 
 export const ORIGIN_LABEL: Record<Origin, string> = {
@@ -591,101 +737,115 @@ export const ORIGIN_LABEL: Record<Origin, string> = {
   tool: '⚙ tool',
   human: '✋ human',
   engine: '♩ engine',
-}
+};
 
 /** e.g. "12 live AI · 4 tool · 1 human · 30 engine · 3 AI steps with takes merged" */
 export function originSummary(perf: Performance): string {
-  const counts = new Map<Origin, number>()
-  let takes = 0
+  const counts = new Map<Origin, number>();
+  let takes = 0;
   for (const s of perf.steps) {
-    const o = originOf(s)
-    counts.set(o.origin, (counts.get(o.origin) ?? 0) + 1)
-    if (s.transcript?.takes?.length) takes++
+    const o = originOf(s);
+    counts.set(o.origin, (counts.get(o.origin) ?? 0) + 1);
+    if (s.transcript?.takes?.length) takes++;
   }
-  const order: Origin[] = ['live', 'repertoire', 'script', 'tool', 'human', 'engine']
-  const parts = order.filter((o) => counts.has(o)).map((o) => `${counts.get(o)} ${ORIGIN_LABEL[o].replace(/^\S+ /, '')}`)
-  return [...parts, ...(takes ? [`${takes} AI steps with takes merged`] : [])].join(' · ')
+  const order: Origin[] = ['live', 'repertoire', 'script', 'tool', 'human', 'engine'];
+  const parts = order
+    .filter((o) => counts.has(o))
+    .map((o) => `${counts.get(o)} ${ORIGIN_LABEL[o].replace(/^\S+ /, '')}`);
+  return [...parts, ...(takes ? [`${takes} AI steps with takes merged`] : [])].join(' · ');
 }
 
 // ── settings and the offline demo ─────────────────────────────────────
 
 /** Who plays the AI steps: the offline demo, GitHub Copilot, or your own model server. */
-export type ProviderChoice = 'scripted' | 'copilot' | 'local'
+export type ProviderChoice = 'scripted' | 'copilot' | 'local';
 
 export interface StoredSettings {
-  provider: ProviderChoice
-  model: string
+  provider: ProviderChoice;
+  model: string;
   /** Optional patterns shown in the library (unset: as the server's SYMPHONY_EXTRAS says). */
-  extras: boolean
+  extras: boolean;
   /** Feature switches you turned away from their defaults, by field (as strings). */
-  features: Record<string, string>
+  features: Record<string, string>;
 }
 
 /** The AI choice kept between visits, so a reload never silently switches to the offline demo. */
 export function parseStoredSettings(raw: string | null): Partial<StoredSettings> {
   try {
-    const v = JSON.parse(raw ?? '{}') as Record<string, unknown>
+    const v = JSON.parse(raw ?? '{}') as Record<string, unknown>;
     return {
-      ...(v.provider === 'scripted' || v.provider === 'copilot' || v.provider === 'local' ? { provider: v.provider } : {}),
+      ...(v.provider === 'scripted' || v.provider === 'copilot' || v.provider === 'local'
+        ? { provider: v.provider }
+        : {}),
       ...(typeof v.model === 'string' ? { model: v.model } : {}),
       ...(typeof v.extras === 'boolean' ? { extras: v.extras } : {}),
       ...(v.features && typeof v.features === 'object' && !Array.isArray(v.features)
         ? {
             features: Object.fromEntries(
-              Object.entries(v.features as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === 'string'),
+              Object.entries(v.features as Record<string, unknown>).filter(
+                (e): e is [string, string] => typeof e[1] === 'string',
+              ),
             ),
           }
         : {}),
-    }
+    };
   } catch {
-    return {}
+    return {};
   }
 }
 
 /** True when every AI step was a canned demo answer (played now, or replayed from an earlier demo run). */
 export function isOfflineDemo(perf: Performance | undefined): boolean {
-  const ai = (perf?.steps ?? []).filter((s) => s.kind === 'agent')
-  return ai.length > 0 && ai.every((s) => s.transcript?.provider === 'scripted')
+  const ai = (perf?.steps ?? []).filter((s) => s.kind === 'agent');
+  return ai.length > 0 && ai.every((s) => s.transcript?.provider === 'scripted');
 }
 
 /** Inputs the user typed that the demo's canned answers were not written for. */
-export function changedFromDemo(context: Readonly<Record<string, string>>, demo: Readonly<Record<string, string>>): string[] {
+export function changedFromDemo(
+  context: Readonly<Record<string, string>>,
+  demo: Readonly<Record<string, string>>,
+): string[] {
   // Only what you typed counts: an empty field plays the demo's value.
   return Object.keys(demo).filter((k) => {
-    const mine = (context[k] ?? '').trim()
-    return mine !== '' && mine !== (demo[k] ?? '').trim()
-  })
+    const mine = (context[k] ?? '').trim();
+    return mine !== '' && mine !== (demo[k] ?? '').trim();
+  });
 }
 
 // ── phases ──────────────────────────────────────────────────────────
 
 export type PhaseNodeData = {
-  group: ScoreGroup
-  steps: string[]
-  writes: string[]
-  status?: NodeStatus
-  current?: string
-  ran: number
-  onExpand?: (id: string) => void
-}
-export type FrameNodeData = { label: string; width: number; height: number; onCollapse?: (id: string) => void }
+  group: ScoreGroup;
+  steps: string[];
+  writes: string[];
+  status?: NodeStatus;
+  current?: string;
+  ran: number;
+  onExpand?: (id: string) => void;
+};
+export type FrameNodeData = {
+  label: string;
+  width: number;
+  height: number;
+  onCollapse?: (id: string) => void;
+};
 export interface SubAgentNodeData extends Record<string, unknown> {
-  readonly parent: string
-  readonly part: number
-  readonly total: number
-  readonly state: SubAgentState
-  readonly item?: string
+  readonly parent: string;
+  readonly part: number;
+  readonly total: number;
+  readonly state: SubAgentState;
+  readonly item?: string;
 }
 
 export type CanvasNode =
   | FlowNode
   | Node<PhaseNodeData, 'phase'>
   | Node<FrameNodeData, 'frame'>
-  | Node<SubAgentNodeData, 'subagent'>
+  | Node<SubAgentNodeData, 'subagent'>;
 
 /** Gap between a step and its sub-agents, and between sub-agents. */
-const SUB_X = 300
-const SUB_Y = 62
+const SUB_X = 300;
+const SUB_Y = 62;
 
 /**
  * The sub-agents of a fanned-out step as nodes beside it (or beside its closed phase),
@@ -697,18 +857,26 @@ export function subAgentNodes(
   phaseOf: ReadonlyMap<string, string>,
   items?: readonly string[],
 ): { nodes: CanvasNode[]; edges: FlowEdge[] } {
-  if (!parts || parts.states.length < 2) return { nodes: [], edges: [] }
-  const anchor = shown.find((n) => n.id === parts.nodeId) ?? shown.find((n) => n.id === phaseOf.get(parts.nodeId))
-  if (!anchor) return { nodes: [], edges: [] }
-  const top = anchor.position.y - ((parts.states.length - 1) * SUB_Y) / 2 + 20
+  if (!parts || parts.states.length < 2) return { nodes: [], edges: [] };
+  const anchor =
+    shown.find((n) => n.id === parts.nodeId) ??
+    shown.find((n) => n.id === phaseOf.get(parts.nodeId));
+  if (!anchor) return { nodes: [], edges: [] };
+  const top = anchor.position.y - ((parts.states.length - 1) * SUB_Y) / 2 + 20;
   const nodes: CanvasNode[] = parts.states.map((state, i) => ({
     id: `sub:${parts.nodeId}:${i + 1}`,
     type: 'subagent',
     position: { x: anchor.position.x + SUB_X, y: top + i * SUB_Y },
-    data: { parent: parts.nodeId, part: i + 1, total: parts.states.length, state, ...(items?.[i] ? { item: items[i] } : {}) },
+    data: {
+      parent: parts.nodeId,
+      part: i + 1,
+      total: parts.states.length,
+      state,
+      ...(items?.[i] ? { item: items[i] } : {}),
+    },
     draggable: false,
     connectable: false,
-  }))
+  }));
   const edges: FlowEdge[] = parts.states.map((state, i) => ({
     id: `sub:${parts.nodeId}:${i + 1}:edge`,
     source: anchor.id,
@@ -718,11 +886,11 @@ export function subAgentNodes(
     animated: state === 'running',
     className: `subagent-edge subagent-${state}`,
     selectable: false,
-  }))
-  return { nodes, edges }
+  }));
+  return { nodes, edges };
 }
 
-const STATUS_RANK: Record<NodeStatus, number> = { paused: 4, active: 3, failed: 2, done: 1 }
+const STATUS_RANK: Record<NodeStatus, number> = { paused: 4, active: 3, failed: 2, done: 1 };
 
 /**
  * What the canvas draws when the pattern has phases: collapsed phases become
@@ -735,24 +903,27 @@ export function phaseDisplay(
   expanded: ReadonlySet<string>,
   frame: Frame,
   handlers: {
-    onExpand?: (id: string) => void
-    onCollapse?: (id: string) => void
+    onExpand?: (id: string) => void;
+    onCollapse?: (id: string) => void;
     /** Where you dragged nodes of this view (display only: the pattern is unchanged). */
-    moved?: ReadonlyMap<string, { x: number; y: number }>
+    moved?: ReadonlyMap<string, { x: number; y: number }>;
   } = {},
 ): { nodes: CanvasNode[]; edges: FlowEdge[]; phaseOf: Map<string, string>; collapsed: boolean } {
-  const groups = pattern.groups ?? []
-  const phaseOf = new Map<string, string>()
-  if (groups.length === 0) return { nodes: [...decorated.nodes], edges: [...decorated.edges], phaseOf, collapsed: false }
+  const groups = pattern.groups ?? [];
+  const phaseOf = new Map<string, string>();
+  if (groups.length === 0)
+    return { nodes: [...decorated.nodes], edges: [...decorated.edges], phaseOf, collapsed: false };
 
-  const anyCollapsed = groups.some((g) => !expanded.has(g.id))
-  const byId = new Map(decorated.nodes.map((n) => [n.id, n]))
-  const edgeById = new Map(decorated.edges.map((e) => [e.id, e]))
-  const view = anyCollapsed ? phaseView(pattern, expanded) : undefined
-  const moved = handlers.moved ?? new Map<string, { x: number; y: number }>()
+  const anyCollapsed = groups.some((g) => !expanded.has(g.id));
+  const byId = new Map(decorated.nodes.map((n) => [n.id, n]));
+  const edgeById = new Map(decorated.edges.map((e) => [e.id, e]));
+  const view = anyCollapsed ? phaseView(pattern, expanded) : undefined;
+  const moved = handlers.moved ?? new Map<string, { x: number; y: number }>();
   const positions = new Map(
-    view ? view.nodes.map((n) => [n.id, moved.get(n.id) ?? n.position]) : decorated.nodes.map((n) => [n.id, n.position]),
-  )
+    view
+      ? view.nodes.map((n) => [n.id, moved.get(n.id) ?? n.position])
+      : decorated.nodes.map((n) => [n.id, n.position]),
+  );
 
   const frames: CanvasNode[] = groupFrames(
     pattern,
@@ -762,34 +933,45 @@ export function phaseDisplay(
     id: `frame:${f.id}`,
     type: 'frame',
     position: { x: f.x, y: f.y },
-    data: { label: f.label, width: f.width, height: f.height, ...(handlers.onCollapse ? { onCollapse: handlers.onCollapse } : {}) },
+    data: {
+      label: f.label,
+      width: f.width,
+      height: f.height,
+      ...(handlers.onCollapse ? { onCollapse: handlers.onCollapse } : {}),
+    },
     draggable: false,
     selectable: false,
     connectable: false,
     zIndex: -1,
     style: { width: f.width, height: f.height },
-  }))
-  if (!view) return { nodes: [...frames, ...decorated.nodes], edges: [...decorated.edges], phaseOf, collapsed: false }
+  }));
+  if (!view)
+    return {
+      nodes: [...frames, ...decorated.nodes],
+      edges: [...decorated.edges],
+      phaseOf,
+      collapsed: false,
+    };
 
   const nodes: CanvasNode[] = view.nodes.flatMap((v): CanvasNode[] => {
     if (v.kind === 'node') {
-      const n = byId.get(v.id)
-      return n ? [{ ...n, position: { ...(moved.get(v.id) ?? v.position) } }] : []
+      const n = byId.get(v.id);
+      return n ? [{ ...n, position: { ...(moved.get(v.id) ?? v.position) } }] : [];
     }
-    const g = v.group!
-    for (const id of g.nodes) phaseOf.set(id, g.id)
+    const g = v.group!;
+    for (const id of g.nodes) phaseOf.set(id, g.id);
     const members = g.nodes.flatMap((id) => {
-      const n = byId.get(id)
-      return n ? [n] : []
-    })
-    let status: NodeStatus | undefined
-    let current: string | undefined
+      const n = byId.get(id);
+      return n ? [n] : [];
+    });
+    let status: NodeStatus | undefined;
+    let current: string | undefined;
     for (const m of members) {
-      const s = frame.nodeStatus[m.id]
-      if (s && (!status || STATUS_RANK[s] > STATUS_RANK[status])) status = s
-      if (s === 'active' || s === 'paused') current = m.data.node.label
+      const s = frame.nodeStatus[m.id];
+      if (s && (!status || STATUS_RANK[s] > STATUS_RANK[status])) status = s;
+      if (s === 'active' || s === 'paused') current = m.data.node.label;
     }
-    const writes = [...new Set(members.flatMap((m) => m.data.writes))]
+    const writes = [...new Set(members.flatMap((m) => m.data.writes))];
     const data: PhaseNodeData = {
       group: g,
       steps: members.map((m) => m.data.node.label),
@@ -798,16 +980,24 @@ export function phaseDisplay(
       ...(status ? { status } : {}),
       ...(current ? { current } : {}),
       ...(handlers.onExpand ? { onExpand: handlers.onExpand } : {}),
-    }
-    return [{ id: g.id, type: 'phase', position: { ...(moved.get(g.id) ?? v.position) }, data }]
-  })
+    };
+    return [{ id: g.id, type: 'phase', position: { ...(moved.get(g.id) ?? v.position) }, data }];
+  });
 
   const edges: FlowEdge[] = view.edges.map((v) => {
-    const original = v.members.map((id) => edgeById.get(id)).filter((e): e is FlowEdge => e !== undefined)
-    const first = original[0]
-    if (original.length === 1 && first && first.source === v.source && first.target === v.target) return first
-    const active = original.find((e) => e.data?.active)
-    const edge: ScoreEdge = { id: v.id, from: v.source, to: v.target, ...(v.label ? { label: v.label } : {}) }
+    const original = v.members
+      .map((id) => edgeById.get(id))
+      .filter((e): e is FlowEdge => e !== undefined);
+    const first = original[0];
+    if (original.length === 1 && first && first.source === v.source && first.target === v.target)
+      return first;
+    const active = original.find((e) => e.data?.active);
+    const edge: ScoreEdge = {
+      id: v.id,
+      from: v.source,
+      to: v.target,
+      ...(v.label ? { label: v.label } : {}),
+    };
     return {
       id: v.id,
       source: v.source,
@@ -822,9 +1012,9 @@ export function phaseDisplay(
         active: active !== undefined,
         ...(active?.data?.values ? { values: active.data.values } : {}),
       },
-    }
-  })
-  return { nodes: [...frames, ...nodes], edges, phaseOf, collapsed: true }
+    };
+  });
+  return { nodes: [...frames, ...nodes], edges, phaseOf, collapsed: true };
 }
 
 export const KIND_LABEL: Record<NodeKind, string> = {
@@ -835,7 +1025,7 @@ export const KIND_LABEL: Record<NodeKind, string> = {
   approval: 'Approval',
   tool: 'Tool',
   end: 'End',
-}
+};
 
 // ── minimap ──────────────────────────────────────────────────────────
 
@@ -846,26 +1036,31 @@ const MINIMAP: Record<NodeStatus | 'idle', { readonly fill: string; readonly str
   active: { fill: '#fbbf24', stroke: '#fde68a' },
   paused: { fill: '#34d399', stroke: '#a7f3d0' },
   failed: { fill: '#ef4444', stroke: '#fca5a5' },
-}
+};
 
 /** How a node shows on the minimap: where the run is lights up as it does on the diagram. */
-export function minimapStyle(status: NodeStatus | undefined): { fill: string; stroke: string; className: string } {
-  const colours = MINIMAP[status ?? 'idle']
-  return { ...colours, className: status ? `minimap-${status}` : '' }
+export function minimapStyle(status: NodeStatus | undefined): {
+  fill: string;
+  stroke: string;
+  className: string;
+} {
+  const colours = MINIMAP[status ?? 'idle'];
+  return { ...colours, className: status ? `minimap-${status}` : '' };
 }
 
 // ── feature switches ─────────────────────────────────────────────────
 
 export interface FeatureRow {
-  readonly feature: Feature
+  readonly feature: Feature;
   /** What runs get: your choice, else the pattern's default. */
-  readonly value: string
-  readonly default: string
+  readonly value: string;
+  readonly default: string;
   /** Library patterns that have it. */
-  readonly patterns: readonly string[]
+  readonly patterns: readonly string[];
 }
 
-const asText = (f: StateField) => String(f.initial ?? (f.type === 'boolean' ? false : f.type === 'number' ? 0 : ''))
+const asText = (f: StateField) =>
+  String(f.initial ?? (f.type === 'boolean' ? false : f.type === 'number' ? 0 : ''));
 
 /**
  * The switches for the open pattern: its own fields, or, for the maestro (which may compose
@@ -877,13 +1072,24 @@ export function featureRows(
   chosen: Readonly<Record<string, string>>,
 ): FeatureRow[] {
   return FEATURES.flatMap((feature) => {
-    const having = library.filter((p) => p.state.some((s) => s.name === feature.field))
-    const own = open.state.find((s) => s.name === feature.field)
-    const field = own ?? (open.name === 'maestro' ? having[0]?.state.find((s) => s.name === feature.field) : undefined)
-    if (!field) return []
-    const def = asText(field)
-    return [{ feature, value: chosen[feature.field] ?? def, default: def, patterns: having.map((p) => p.name) }]
-  })
+    const having = library.filter((p) => p.state.some((s) => s.name === feature.field));
+    const own = open.state.find((s) => s.name === feature.field);
+    const field =
+      own ??
+      (open.name === 'maestro'
+        ? having[0]?.state.find((s) => s.name === feature.field)
+        : undefined);
+    if (!field) return [];
+    const def = asText(field);
+    return [
+      {
+        feature,
+        value: chosen[feature.field] ?? def,
+        default: def,
+        patterns: having.map((p) => p.name),
+      },
+    ];
+  });
 }
 
 /** Your choices with these switches back at their defaults (the others are kept). */
@@ -891,8 +1097,8 @@ export function resetFeatures(
   chosen: Readonly<Record<string, string>>,
   rows: readonly FeatureRow[],
 ): Record<string, string> {
-  const fields = new Set(rows.map((r) => r.feature.field))
-  return Object.fromEntries(Object.entries(chosen).filter(([k]) => !fields.has(k)))
+  const fields = new Set(rows.map((r) => r.feature.field));
+  return Object.fromEntries(Object.entries(chosen).filter(([k]) => !fields.has(k)));
 }
 
 /** Your choices after setting one switch: a default is not kept (the pattern's own stays in charge). */
@@ -901,6 +1107,6 @@ export function chooseFeature(
   row: FeatureRow,
   value: string,
 ): Record<string, string> {
-  const { [row.feature.field]: _was, ...rest } = chosen
-  return value === row.default ? rest : { ...rest, [row.feature.field]: value }
+  const { [row.feature.field]: _was, ...rest } = chosen;
+  return value === row.default ? rest : { ...rest, [row.feature.field]: value };
 }

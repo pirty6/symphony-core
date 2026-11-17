@@ -52,8 +52,8 @@
     "prepublishOnly": "npm run build",
     "lint": "oxlint src/ packages/ui/src packages/ui/server",
     "lint:fix": "oxlint --fix src/ packages/ui/src packages/ui/server",
-    "format": "oxfmt src/",
-    "format:check": "oxfmt --check src/",
+    "format": "oxfmt src/ packages/ui/src packages/ui/server packages/ui/e2e",
+    "format:check": "oxfmt --check src/ packages/ui/src packages/ui/server packages/ui/e2e",
     "docs": "tsx src/flows.ts"
   },
   "devDependencies": {

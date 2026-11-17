@@ -412,11 +412,15 @@ pre {
 }
 .flow-node.status-active {
   border-color: var(--active);
-  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.35), 0 0 24px rgba(251, 191, 36, 0.35);
+  box-shadow:
+    0 0 0 3px rgba(251, 191, 36, 0.35),
+    0 0 24px rgba(251, 191, 36, 0.35);
 }
 .flow-node.status-paused {
   border-color: var(--approval);
-  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.35), 0 0 24px rgba(52, 211, 153, 0.3);
+  box-shadow:
+    0 0 0 3px rgba(52, 211, 153, 0.35),
+    0 0 24px rgba(52, 211, 153, 0.3);
   animation: pulse 1.4s ease-in-out infinite;
 }
 .flow-node.status-failed {
@@ -429,7 +433,9 @@ pre {
 }
 @keyframes pulse {
   50% {
-    box-shadow: 0 0 0 6px rgba(52, 211, 153, 0.15), 0 0 30px rgba(52, 211, 153, 0.45);
+    box-shadow:
+      0 0 0 6px rgba(52, 211, 153, 0.15),
+      0 0 30px rgba(52, 211, 153, 0.45);
   }
 }
 

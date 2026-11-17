@@ -1,15 +1,15 @@
 interface Props {
-  side: 'left' | 'right'
-  open: boolean
+  side: 'left' | 'right';
+  open: boolean;
   /** What the sidebar holds, for the button's name ("library", "inspector"). */
-  name: string
-  onToggle: () => void
+  name: string;
+  onToggle: () => void;
 }
 
 /** The button that folds a sidebar to a thin rail, and opens it again. */
 export function SideToggle(p: Props) {
   // An arrow pointing where the sidebar goes when clicked.
-  const arrow = (p.side === 'left') === p.open ? '«' : '»'
+  const arrow = (p.side === 'left') === p.open ? '«' : '»';
   return (
     <button
       type="button"
@@ -22,5 +22,5 @@ export function SideToggle(p: Props) {
     >
       {arrow}
     </button>
-  )
+  );
 }

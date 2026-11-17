@@ -24,28 +24,28 @@
  *   GET  /api/saved/file?path=             saved run + integrity (+ replay verdict once known)
  *   GET  /api/saved/check?path=            waits for the replay verdict: { reproduced, issues }
  */
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import { join, relative } from 'node:path'
-import { featureInputs } from '../../../src/core/catalog.js'
-import { CompileError, compileScore } from '../../../src/core/compile.js'
-import { parseDraft, patternToTypeScript } from '../../../src/core/draft.js'
-import { patternToGraph } from '../../../src/core/graph.js'
-import { restoreEngine } from '../../../src/core/replay.js'
-import { isImprovisation, playsFromRepertoire } from '../../../src/core/jazz.js'
-import type { Complexity, ExecutableScore, Pattern, SavedRun } from '../../../src/core/types.js'
-import { chainNext } from '../../../src/runtime/chain.js'
-import type { ChainStep } from '../../../src/core/chain.js'
-import { concertNext } from '../../../src/runtime/concert.js'
-import { validatePattern } from '../../../src/core/validate.js'
-import { libraryPatterns, PATTERNS } from '../../../src/patterns/index.js'
-import { enabledExtras } from '../../../src/patterns/extras/index.js'
-import { draftPattern } from '../../../src/runtime/drafting.js'
-import { Run, type RunOptions } from '../../../src/runtime/driver.js'
-import { liveRoot, LiveRuns, scrubbedFeed, type RunLike } from '../../../src/runtime/live.js'
-import { envForRun, fromThisComputer, signInsOff } from '../../../src/runtime/signins.js'
-import { ACCOUNT_ID, newAccountId, VisitorAccounts } from '../../../src/runtime/accounts.js'
-import { VISITOR_SIGN_IN_HELP } from '../../../src/runtime/copilot-provider.js'
-import { symphonyHome } from '../../../src/runtime/state.js'
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { join, relative } from 'node:path';
+import { featureInputs } from '../../../src/core/catalog.js';
+import { CompileError, compileScore } from '../../../src/core/compile.js';
+import { parseDraft, patternToTypeScript } from '../../../src/core/draft.js';
+import { patternToGraph } from '../../../src/core/graph.js';
+import { restoreEngine } from '../../../src/core/replay.js';
+import { isImprovisation, playsFromRepertoire } from '../../../src/core/jazz.js';
+import type { Complexity, ExecutableScore, Pattern, SavedRun } from '../../../src/core/types.js';
+import { chainNext } from '../../../src/runtime/chain.js';
+import type { ChainStep } from '../../../src/core/chain.js';
+import { concertNext } from '../../../src/runtime/concert.js';
+import { validatePattern } from '../../../src/core/validate.js';
+import { libraryPatterns, PATTERNS } from '../../../src/patterns/index.js';
+import { enabledExtras } from '../../../src/patterns/extras/index.js';
+import { draftPattern } from '../../../src/runtime/drafting.js';
+import { Run, type RunOptions } from '../../../src/runtime/driver.js';
+import { liveRoot, LiveRuns, scrubbedFeed, type RunLike } from '../../../src/runtime/live.js';
+import { envForRun, fromThisComputer, signInsOff } from '../../../src/runtime/signins.js';
+import { ACCOUNT_ID, newAccountId, VisitorAccounts } from '../../../src/runtime/accounts.js';
+import { VISITOR_SIGN_IN_HELP } from '../../../src/runtime/copilot-provider.js';
+import { symphonyHome } from '../../../src/runtime/state.js';
 import {
   effectiveTiers,
   envConfig,
@@ -56,67 +56,86 @@ import {
   playsLive,
   runtimeExtras,
   type RuntimeExtras,
-} from '../../../src/runtime/factory.js'
-import { isolate, editsFiles, sandboxFor } from '../../../src/runtime/worktree.js'
-import { prForRun } from '../../../src/runtime/pr.js'
-import { autoPrune, cachedReplayCheck, checkReplay, deleteRun, type ReplayCheck, gitFingerprint, pruneRuns, runScratch, listRuns, loadPatternFiles, loadRepertoire, loadRun, runPath, savePatternFile, saveRun, runsDirFor } from '../../../src/runtime/store.js'
-import { stateDir } from '../../../src/runtime/state.js'
+} from '../../../src/runtime/factory.js';
+import { isolate, editsFiles, sandboxFor } from '../../../src/runtime/worktree.js';
+import { prForRun } from '../../../src/runtime/pr.js';
+import {
+  autoPrune,
+  cachedReplayCheck,
+  checkReplay,
+  deleteRun,
+  type ReplayCheck,
+  gitFingerprint,
+  pruneRuns,
+  runScratch,
+  listRuns,
+  loadPatternFiles,
+  loadRepertoire,
+  loadRun,
+  runPath,
+  savePatternFile,
+  saveRun,
+  runsDirFor,
+} from '../../../src/runtime/store.js';
+import { stateDir } from '../../../src/runtime/state.js';
 
 /** A JSON object of strings (anything else dropped). */
 function stringRecord(v: unknown): Record<string, string> {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
-  return Object.fromEntries(Object.entries(v).filter((e): e is [string, string] => typeof e[1] === 'string'))
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(
+    Object.entries(v).filter((e): e is [string, string] => typeof e[1] === 'string'),
+  );
 }
 
 export interface ApiOptions {
   /** Repository root (where src/patterns lives). */
-  readonly repoRoot: string
+  readonly repoRoot: string;
   /** Directory agents work in. Defaults to repoRoot. */
-  readonly workspace?: string
+  readonly workspace?: string;
   /** Loads a TypeScript pattern module (Vite ssrLoadModule in dev, import() in tests). */
-  readonly importer: (file: string) => Promise<Record<string, unknown>>
+  readonly importer: (file: string) => Promise<Record<string, unknown>>;
   /** Streaming delay for the scripted provider, so runs are watchable. */
-  readonly scriptedDelayMs?: number
-  readonly env?: NodeJS.ProcessEnv
+  readonly scriptedDelayMs?: number;
+  readonly env?: NodeJS.ProcessEnv;
   /** Shared run table, so live runs survive an API reload in dev. */
-  readonly runs?: Map<string, Run>
+  readonly runs?: Map<string, Run>;
   /** Visitors' own GitHub sign-ins (default: under ~/.symphony/accounts). */
-  readonly accounts?: VisitorAccounts
+  readonly accounts?: VisitorAccounts;
 }
 
 /** Who asks: this computer (your sign-ins, per SYMPHONY_SIGNINS) or a visitor, with its own Copilot. */
 export interface Caller {
-  readonly here: boolean
+  readonly here: boolean;
   /** A visitor signed in with its own GitHub account: Copilot plays as it. */
-  readonly copilotHome?: string
+  readonly copilotHome?: string;
 }
 
-const ACCOUNT_COOKIE = 'symphony_account'
-const YEAR_S = 365 * 24 * 3600
+const ACCOUNT_COOKIE = 'symphony_account';
+const YEAR_S = 365 * 24 * 3600;
 
 /** The browser's visitor id, from its cookie; undefined when it has none (or a malformed one). */
 export function accountIdOf(req: IncomingMessage): string | undefined {
-  const cookie = String(req.headers.cookie ?? '')
-  const m = new RegExp(`(?:^|;\\s*)${ACCOUNT_COOKIE}=([^;]+)`).exec(cookie)
-  return m && ACCOUNT_ID.test(m[1]!) ? m[1] : undefined
+  const cookie = String(req.headers.cookie ?? '');
+  const m = new RegExp(`(?:^|;\\s*)${ACCOUNT_COOKIE}=([^;]+)`).exec(cookie);
+  return m && ACCOUNT_ID.test(m[1]!) ? m[1] : undefined;
 }
 
 function accountCookie(id: string): string {
-  return `${ACCOUNT_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${YEAR_S}`
+  return `${ACCOUNT_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${YEAR_S}`;
 }
 
-export const RUNS_DIR = '.symphony/runs'
-let counter = 0
-export const DRAFTS_DIR = 'src/patterns/drafts'
-const TERMINAL = new Set(['done', 'failed', 'cancelled'])
+export const RUNS_DIR = '.symphony/runs';
+let counter = 0;
+export const DRAFTS_DIR = 'src/patterns/drafts';
+const TERMINAL = new Set(['done', 'failed', 'cancelled']);
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = []
-  for await (const c of req) chunks.push(c as Buffer)
-  const text = Buffer.concat(chunks).toString('utf8')
-  if (!text) return {}
-  const parsed: unknown = JSON.parse(text)
-  return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(c as Buffer);
+  const text = Buffer.concat(chunks).toString('utf8');
+  if (!text) return {};
+  const parsed: unknown = JSON.parse(text);
+  return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
 }
 
 /**
@@ -124,24 +143,29 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
  * origin. Browsers cannot send application/json cross-site without a CORS preflight, which is never granted.
  */
 export function refuseCrossSite(req: IncomingMessage): string | undefined {
-  const type = String(req.headers['content-type'] ?? '')
-  if (!type.startsWith('application/json')) return 'content-type must be application/json'
-  const origin = req.headers.origin
+  const type = String(req.headers['content-type'] ?? '');
+  if (!type.startsWith('application/json')) return 'content-type must be application/json';
+  const origin = req.headers.origin;
   if (origin) {
-    let host: string
+    let host: string;
     try {
-      host = new URL(origin).host
+      host = new URL(origin).host;
     } catch {
-      return 'invalid origin'
+      return 'invalid origin';
     }
-    if (host !== req.headers.host) return 'cross-origin requests are not allowed'
+    if (host !== req.headers.host) return 'cross-origin requests are not allowed';
   }
-  return undefined
+  return undefined;
 }
 
-function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
-  res.writeHead(status, { 'Content-Type': 'application/json', ...headers })
-  res.end(JSON.stringify(body))
+function send(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): void {
+  res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
+  res.end(JSON.stringify(body));
 }
 
 function sseHeaders(res: ServerResponse): void {
@@ -149,74 +173,90 @@ function sseHeaders(res: ServerResponse): void {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
-  })
+  });
 }
 
 function sse(res: ServerResponse, data: unknown, id?: number): void {
-  res.write(`${id !== undefined ? `id: ${id}\n` : ''}data: ${JSON.stringify(data)}\n\n`)
+  res.write(`${id !== undefined ? `id: ${id}\n` : ''}data: ${JSON.stringify(data)}\n\n`);
 }
 
 /** Strip anything that is not plain pattern data (demo functions never cross the wire). */
 function asPattern(raw: unknown): Pattern {
-  const parsed = parseDraft(raw)
-  if (parsed.ok) return parsed.value
-  throw new CompileError(parsed.errors.map((message) => ({ message })))
+  const parsed = parseDraft(raw);
+  if (parsed.ok) return parsed.value;
+  throw new CompileError(parsed.errors.map((message) => ({ message })));
 }
 
 export function createApi(opts: ApiOptions) {
-  const runs = opts.runs ?? new Map<string, Run>()
+  const runs = opts.runs ?? new Map<string, Run>();
   /**
    * When each run started here, and how long it has waited for a person (an approval, a stuck
    * step or a pause), so the studio can time it and leave the waits out of its estimate.
    */
-  const clocks = new Map<string, { readonly startedAt: number; readonly demo: boolean; waitMs: number; waitingSince: number | undefined }>()
+  const clocks = new Map<
+    string,
+    {
+      readonly startedAt: number;
+      readonly demo: boolean;
+      waitMs: number;
+      waitingSince: number | undefined;
+    }
+  >();
   function clock(run: Run, demo: boolean): void {
-    const c = { startedAt: Date.now(), demo, waitMs: 0, waitingSince: undefined as number | undefined }
-    clocks.set(run.id, c)
+    const c = {
+      startedAt: Date.now(),
+      demo,
+      waitMs: 0,
+      waitingSince: undefined as number | undefined,
+    };
+    clocks.set(run.id, c);
     run.subscribe((m) => {
-      if (m.type !== 'status') return
-      const waiting = m.status === 'awaiting-approval' || m.status === 'paused'
-      if (waiting && c.waitingSince === undefined) c.waitingSince = Date.now()
+      if (m.type !== 'status') return;
+      const waiting = m.status === 'awaiting-approval' || m.status === 'paused';
+      if (waiting && c.waitingSince === undefined) c.waitingSince = Date.now();
       if (!waiting && c.waitingSince !== undefined) {
-        c.waitMs += Date.now() - c.waitingSince
-        c.waitingSince = undefined
+        c.waitMs += Date.now() - c.waitingSince;
+        c.waitingSince = undefined;
       }
-    })
+    });
   }
   const timing = (id: string) => {
-    const c = clocks.get(id)
-    if (!c) return {}
+    const c = clocks.get(id);
+    if (!c) return {};
     return {
       startedAt: new Date(c.startedAt).toISOString(),
       waitMs: c.waitMs,
-      ...(c.waitingSince !== undefined ? { waitingSince: new Date(c.waitingSince).toISOString() } : {}),
+      ...(c.waitingSince !== undefined
+        ? { waitingSince: new Date(c.waitingSince).toISOString() }
+        : {}),
       demo: c.demo,
-    }
-  }
+    };
+  };
   /** The file each run saves its checkpoints to, so a run still playing is not deleted. */
-  const savedFiles = new Map<string, string>()
+  const savedFiles = new Map<string, string>();
   /** Replay checks in progress, by run file: opening a run twice checks it once. */
-  const checking = new Map<string, Promise<ReplayCheck>>()
+  const checking = new Map<string, Promise<ReplayCheck>>();
   function replayCheckOf(file: string, run?: SavedRun): Promise<ReplayCheck> {
-    let p = checking.get(file)
+    let p = checking.get(file);
     if (!p) {
       p = (run ? Promise.resolve(run) : loadRun(file).then((l) => l.run))
         .then((r) => checkReplay(file, r))
-        .finally(() => checking.delete(file))
-      checking.set(file, p)
+        .finally(() => checking.delete(file));
+      checking.set(file, p);
     }
-    return p
+    return p;
   }
-  const env = opts.env ?? process.env
+  const env = opts.env ?? process.env;
   // Runs other processes play (a VS Code chat, through the MCP server): shown and steered here.
-  const sharedRoot = liveRoot(env)
-  const shared = sharedRoot ? new LiveRuns(sharedRoot) : undefined
-  const findRun = async (id: string): Promise<RunLike | undefined> => runs.get(id) ?? (await shared?.get(id))
-  const workspace = opts.workspace ?? opts.repoRoot
-  const runsDir = runsDirFor(opts.repoRoot, env)
-  const draftsDir = join(opts.repoRoot, DRAFTS_DIR)
-  const scratchDir = join(stateDir(workspace, env), 'scratch')
-  void autoPrune(workspace, runsDir, env)
+  const sharedRoot = liveRoot(env);
+  const shared = sharedRoot ? new LiveRuns(sharedRoot) : undefined;
+  const findRun = async (id: string): Promise<RunLike | undefined> =>
+    runs.get(id) ?? (await shared?.get(id));
+  const workspace = opts.workspace ?? opts.repoRoot;
+  const runsDir = runsDirFor(opts.repoRoot, env);
+  const draftsDir = join(opts.repoRoot, DRAFTS_DIR);
+  const scratchDir = join(stateDir(workspace, env), 'scratch');
+  void autoPrune(workspace, runsDir, env);
 
   /**
    * The library. Optional patterns: 'env' = as SYMPHONY_EXTRAS says (the studio's default),
@@ -225,26 +265,31 @@ export function createApi(opts: ApiOptions) {
   async function library(
     extrasMode: 'env' | 'on' | 'off' = 'on',
   ): Promise<{ pattern: Pattern; source: 'builtin' | 'extra' | 'draft' }[]> {
-    const drafts = await loadPatternFiles(draftsDir, opts.importer)
-    const withExtras = extrasMode === 'env' ? env : { ...env, SYMPHONY_EXTRAS: extrasMode === 'on' ? 'all' : '' }
-    const extras = new Set(enabledExtras(withExtras).map((p) => p.name))
+    const drafts = await loadPatternFiles(draftsDir, opts.importer);
+    const withExtras =
+      extrasMode === 'env' ? env : { ...env, SYMPHONY_EXTRAS: extrasMode === 'on' ? 'all' : '' };
+    const extras = new Set(enabledExtras(withExtras).map((p) => p.name));
     return libraryPatterns(withExtras, drafts).map((pattern) => ({
       pattern,
-      source: PATTERNS.includes(pattern) ? ('builtin' as const) : extras.has(pattern.name) ? ('extra' as const) : ('draft' as const),
-    }))
+      source: PATTERNS.includes(pattern)
+        ? ('builtin' as const)
+        : extras.has(pattern.name)
+          ? ('extra' as const)
+          : ('draft' as const),
+    }));
   }
 
   async function demoFor(name: string) {
-    return (await library()).find((l) => l.pattern.name === name)?.pattern.demo
+    return (await library()).find((l) => l.pattern.name === name)?.pattern.demo;
   }
 
   // SYMPHONY_SIGNINS=here: runs started from another machine get none of your sign-ins (runtime/signins.ts).
-  const extras = new Map<boolean, Promise<RuntimeExtras>>()
+  const extras = new Map<boolean, Promise<RuntimeExtras>>();
   const runtime = (here = true) => {
-    let x = extras.get(here)
-    if (!x) extras.set(here, (x = runtimeExtras(workspace, opts.repoRoot, envForRun(env, here))))
-    return x
-  }
+    let x = extras.get(here);
+    if (!x) extras.set(here, (x = runtimeExtras(workspace, opts.repoRoot, envForRun(env, here))));
+    return x;
+  };
 
   function providerFor(
     name: unknown,
@@ -254,11 +299,18 @@ export function createApi(opts: ApiOptions) {
     dir = workspace,
     caller: Caller = { here: true },
   ) {
-    if (!isProviderName(name)) throw new CompileError([{ message: 'provider must be scripted, copilot or local' }])
-    if (name === 'local' && !localModelFrom(env)) throw new CompileError([{ message: NO_LOCAL_MODEL }])
+    if (!isProviderName(name))
+      throw new CompileError([{ message: 'provider must be scripted, copilot or local' }]);
+    if (name === 'local' && !localModelFrom(env))
+      throw new CompileError([{ message: NO_LOCAL_MODEL }]);
     // A visitor who has not signed in with GitHub, where your sign-ins are not shared.
-    if (name === 'copilot' && !caller.here && !caller.copilotHome && signInsOff(envForRun(env, false)))
-      throw new CompileError([{ message: VISITOR_SIGN_IN_HELP }])
+    if (
+      name === 'copilot' &&
+      !caller.here &&
+      !caller.copilotHome &&
+      signInsOff(envForRun(env, false))
+    )
+      throw new CompileError([{ message: VISITOR_SIGN_IN_HELP }]);
     return makeProvider({
       provider: name,
       ...(pattern ? { pattern } : {}),
@@ -267,19 +319,21 @@ export function createApi(opts: ApiOptions) {
       ...(mcpServers ? { mcpServers } : {}),
       ...envConfig(envForRun(env, caller.here)),
       // A visitor's Copilot is its own account; nothing of yours comes with it.
-      ...(caller.copilotHome ? { signIns: false, gitHubToken: undefined, copilotHome: caller.copilotHome } : {}),
+      ...(caller.copilotHome
+        ? { signIns: false, gitHubToken: undefined, copilotHome: caller.copilotHome }
+        : {}),
       ...(typeof model === 'string' && model ? { model } : {}),
-    })
+    });
   }
 
-  const accounts = opts.accounts ?? new VisitorAccounts(join(symphonyHome(env), 'accounts'))
+  const accounts = opts.accounts ?? new VisitorAccounts(join(symphonyHome(env), 'accounts'));
 
   /** Who asks: this computer, or a visitor (with its own Copilot when it signed in here). */
   async function callerOf(req: IncomingMessage): Promise<Caller> {
-    if (fromThisComputer(req.socket.remoteAddress)) return { here: true }
-    const id = accountIdOf(req)
-    const signedIn = id ? (await accounts.status(id)).signedIn : false
-    return id && signedIn ? { here: false, copilotHome: accounts.home(id) } : { here: false }
+    if (fromThisComputer(req.socket.remoteAddress)) return { here: true };
+    const id = accountIdOf(req);
+    const signedIn = id ? (await accounts.status(id)).signedIn : false;
+    return id && signedIn ? { here: false, copilotHome: accounts.home(id) } : { here: false };
   }
 
   /**
@@ -287,73 +341,106 @@ export function createApi(opts: ApiOptions) {
    * when your sign-ins are shared (SYMPHONY_SIGNINS unset), else refused.
    */
   async function visitorSignedOut(caller: Caller): Promise<Record<string, unknown>> {
-    const shared = !signInsOff(envForRun(env, caller.here))
-    if (!shared) return { signedIn: false, canSignIn: true, message: VISITOR_SIGN_IN_HELP }
-    const copilot = makeProvider({ provider: 'copilot', workingDirectory: workspace, ...envConfig(env) })
+    const shared = !signInsOff(envForRun(env, caller.here));
+    if (!shared) return { signedIn: false, canSignIn: true, message: VISITOR_SIGN_IN_HELP };
+    const copilot = makeProvider({
+      provider: 'copilot',
+      workingDirectory: workspace,
+      ...envConfig(env),
+    });
     try {
-      const status = (await (copilot as { authStatus?: () => Promise<Record<string, unknown>> }).authStatus?.()) ?? { signedIn: true, message: '' }
-      return { ...status, canSignIn: true }
+      const status = (await (
+        copilot as { authStatus?: () => Promise<Record<string, unknown>> }
+      ).authStatus?.()) ?? { signedIn: true, message: '' };
+      return { ...status, canSignIn: true };
     } finally {
-      await copilot.dispose?.()
+      await copilot.dispose?.();
     }
   }
 
   interface Settings {
-    readonly provider: unknown
-    readonly model: unknown
-    readonly autoApprove: boolean
-    readonly stepMode: boolean
-    readonly breakpoints: string[]
+    readonly provider: unknown;
+    readonly model: unknown;
+    readonly autoApprove: boolean;
+    readonly stepMode: boolean;
+    readonly breakpoints: string[];
     /** Who started it: this computer, or a visitor (with its own Copilot when signed in). */
-    readonly caller: Caller
-    readonly restore?: RunOptions['restore']
+    readonly caller: Caller;
+    readonly restore?: RunOptions['restore'];
     /** Patterns (or backlog items) to play after this one. */
-    readonly chain?: readonly ChainStep[]
+    readonly chain?: readonly ChainStep[];
     /** Switches you chose (FEATURES), for this run and the runs it leads to. */
-    readonly features?: Readonly<Record<string, string>>
+    readonly features?: Readonly<Record<string, string>>;
   }
 
-  async function launch(score: ExecutableScore, pattern: Pattern, settings: Settings): Promise<Run> {
-    const demo = pattern.demo ?? (await demoFor(pattern.name))
-    const withDemo: Pattern = demo ? { ...pattern, demo } : pattern
-    const { tools, toolContext: shared, mcpServers } = await runtime(settings.caller.here)
+  async function launch(
+    score: ExecutableScore,
+    pattern: Pattern,
+    settings: Settings,
+  ): Promise<Run> {
+    const demo = pattern.demo ?? (await demoFor(pattern.name));
+    const withDemo: Pattern = demo ? { ...pattern, demo } : pattern;
+    const { tools, toolContext: shared, mcpServers } = await runtime(settings.caller.here);
     // A real AI editing files plays in its own worktree, so runs can play at once.
     const isolation =
       isProviderName(settings.provider) && playsLive(settings.provider) && editsFiles(score)
         ? await isolate(workspace, score.pattern, env)
-        : undefined
+        : undefined;
     // A run that reads a PR plays on the PR's own code, checked out apart (runtime/pr.ts).
     const pr = isolation
       ? undefined
       : await prForRun(pattern, score.context, workspace, {
           provider: String(settings.provider ?? 'scripted'),
           env: envForRun(env, settings.caller.here),
-        })
-    const dir = isolation?.dir ?? pr?.dir ?? workspace
+        });
+    const dir = isolation?.dir ?? pr?.dir ?? workspace;
     const toolContext = {
       ...shared,
       ...(dir !== workspace ? { workspace: dir } : {}),
       ...(pr?.info ? { pr: pr.info } : {}),
-    }
-    const provider = providerFor(settings.provider ?? 'scripted', settings.model, withDemo, mcpServers, dir, settings.caller)
-    const id = `run-${Date.now().toString(36)}-${(counter++).toString(36)}`
-    const next = concertNext({
-      maestroScore: score,
-      // The composed score plays with the same settings, starting fresh (no breakpoints).
-      start: async (s, p, chain) =>
-        (await launch(s, p, { ...settings, autoApprove: run.autoApproves, breakpoints: [], chain })).id,
-      ...(settings.features ? { features: settings.features } : {}),
-    }) ?? chainNext({
-      chain: settings.chain ?? [],
-      score,
-      library: async () => (await library()).map((l) => l.pattern),
-      improvisation: score.improvisation,
-      ...(settings.features ? { features: settings.features } : {}),
-      start: async (s, p, rest) =>
-        (await launch(s, p, { ...settings, autoApprove: run.autoApproves, breakpoints: [], chain: rest })).id,
-    })
+    };
+    const provider = providerFor(
+      settings.provider ?? 'scripted',
+      settings.model,
+      withDemo,
+      mcpServers,
+      dir,
+      settings.caller,
+    );
+    const id = `run-${Date.now().toString(36)}-${(counter++).toString(36)}`;
+    const next =
+      concertNext({
+        maestroScore: score,
+        // The composed score plays with the same settings, starting fresh (no breakpoints).
+        start: async (s, p, chain) =>
+          (
+            await launch(s, p, {
+              ...settings,
+              autoApprove: run.autoApproves,
+              breakpoints: [],
+              chain,
+            })
+          ).id,
+        ...(settings.features ? { features: settings.features } : {}),
+      }) ??
+      chainNext({
+        chain: settings.chain ?? [],
+        score,
+        library: async () => (await library()).map((l) => l.pattern),
+        improvisation: score.improvisation,
+        ...(settings.features ? { features: settings.features } : {}),
+        start: async (s, p, rest) =>
+          (
+            await launch(s, p, {
+              ...settings,
+              autoApprove: run.autoApproves,
+              breakpoints: [],
+              chain: rest,
+            })
+          ).id,
+      });
     // Until the run owns the PR checkout (cleanup), a failure here must remove it.
-    let run: Run
+    let run: Run;
     try {
       run = new Run({
         id,
@@ -362,97 +449,119 @@ export function createApi(opts: ApiOptions) {
         tools,
         toolContext,
         ...(demo ? { demo } : {}),
-        ...(playsFromRepertoire(score.improvisation) ? { repertoire: await loadRepertoire(runsDir, score.id) } : {}),
+        ...(playsFromRepertoire(score.improvisation)
+          ? { repertoire: await loadRepertoire(runsDir, score.id) }
+          : {}),
         autoApprove: settings.autoApprove,
         stepMode: settings.stepMode,
         breakpoints: settings.breakpoints,
         ...(provider.name !== 'scripted'
-          ? { envHash: () => gitFingerprint(dir), scratch: await runScratch(workspace), sandbox: sandboxFor(dir) }
+          ? {
+              envHash: () => gitFingerprint(dir),
+              scratch: await runScratch(workspace),
+              sandbox: sandboxFor(dir),
+            }
           : {}),
         ...(isolation ? { isolation } : {}),
         ...(pr ? { cleanup: pr.finish } : {}),
         onSave: async (r, how) => {
-          const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true })
-          savedFiles.set(id, file)
-          return file
+          const file = await saveRun(runsDir, r, { compact: how?.checkpoint === true });
+          savedFiles.set(id, file);
+          return file;
         },
         checkpoint: true,
         // You are watching: at the time limit you decide whether a step keeps going.
         askOnOvertime: true,
         ...(settings.restore ? { restore: settings.restore } : {}),
         ...(next ? { next } : {}),
-      })
+      });
     } catch (e) {
-      await pr?.finish()
-      throw e
+      await pr?.finish();
+      throw e;
     }
-    runs.set(run.id, run)
-    clock(run, provider.name === 'scripted')
+    runs.set(run.id, run);
+    clock(run, provider.name === 'scripted');
     void run.start().finally(() => {
-      provider.dispose?.()
+      provider.dispose?.();
       // Check the finished run replays now, so opening it later is instant.
-      const file = savedFiles.get(id)
-      if (file) void replayCheckOf(file).catch(() => undefined)
-    })
-    return run
+      const file = savedFiles.get(id);
+      if (file) void replayCheckOf(file).catch(() => undefined);
+    });
+    return run;
   }
 
   async function startRun(body: Record<string, unknown>, caller: Caller): Promise<Run> {
-    const pattern = asPattern(body.pattern)
-    const complexity = [1, 2, 3, 4].includes(body.complexity as number) ? (body.complexity as Complexity) : undefined
-    const improvisation = isImprovisation(body.improvisation) ? body.improvisation : undefined
-    const features = stringRecord(body.features)
+    const pattern = asPattern(body.pattern);
+    const complexity = [1, 2, 3, 4].includes(body.complexity as number)
+      ? (body.complexity as Complexity)
+      : undefined;
+    const improvisation = isImprovisation(body.improvisation) ? body.improvisation : undefined;
+    const features = stringRecord(body.features);
     const score = compileScore(pattern, {
-      goal: typeof body.goal === 'string' && body.goal.trim() ? body.goal : pattern.description || pattern.name,
+      goal:
+        typeof body.goal === 'string' && body.goal.trim()
+          ? body.goal
+          : pattern.description || pattern.name,
       // The switches you chose, unless the run inputs say otherwise.
-      context: { ...featureInputs(pattern, features), ...((body.context as Record<string, unknown> | undefined) ?? {}) },
+      context: {
+        ...featureInputs(pattern, features),
+        ...((body.context as Record<string, unknown> | undefined) ?? {}),
+      },
       ...(complexity ? { complexity } : {}),
       ...(improvisation !== undefined ? { improvisation } : {}),
-    })
+    });
     return launch(score, pattern, {
       provider: body.provider,
       model: body.model,
       autoApprove: body.autoApprove === true,
       stepMode: body.stepMode === true,
       breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
-      chain: Array.isArray(body.chain) ? body.chain.filter((t): t is string => typeof t === 'string' && t !== 'maestro') : [],
+      chain: Array.isArray(body.chain)
+        ? body.chain.filter((t): t is string => typeof t === 'string' && t !== 'maestro')
+        : [],
       features,
       caller,
-    })
+    });
   }
 
   /** Resume an interrupted run in place, or fork a saved run from a step as a new run. */
   async function continueRun(body: Record<string, unknown>, caller: Caller): Promise<Run> {
-    const file = runPath(runsDir, typeof body.file === 'string' ? body.file : '')
-    if (!file) throw new CompileError([{ message: 'invalid run file' }])
-    const { run: saved, issues } = await loadRun(file)
-    if (issues.length) throw new CompileError(issues.map((message) => ({ message })))
-    const kind = body.kind === 'forked' ? 'forked' : 'resumed'
+    const file = runPath(runsDir, typeof body.file === 'string' ? body.file : '');
+    if (!file) throw new CompileError([{ message: 'invalid run file' }]);
+    const { run: saved, issues } = await loadRun(file);
+    if (issues.length) throw new CompileError(issues.map((message) => ({ message })));
+    const kind = body.kind === 'forked' ? 'forked' : 'resumed';
     if (kind === 'resumed') {
       // The same run, played by this server: one copy, never two writing the same file.
-      const same = [...savedFiles].filter(([, f]) => f === file).map(([id]) => runs.get(id))
-      const playing = same.find((r) => r && !TERMINAL.has(r.status))
-      if (playing) return playing
+      const same = [...savedFiles].filter(([, f]) => f === file).map(([id]) => runs.get(id));
+      const playing = same.find((r) => r && !TERMINAL.has(r.status));
+      if (playing) return playing;
       // An ended copy is replaced by the resumed one in the list of runs.
-      for (const r of same) if (r) runs.delete(r.id)
+      for (const r of same) if (r) runs.delete(r.id);
     }
-    const perf = saved.performance
-    const last = perf.steps.at(-1)?.step ?? 0
+    const perf = saved.performance;
+    const last = perf.steps.at(-1)?.step ?? 0;
     if (kind === 'resumed' && perf.outcome !== 'in-progress' && perf.outcome !== 'cancelled') {
-      throw new CompileError([{ message: `this run already ended (${perf.outcome}); fork it from a step instead` }])
+      throw new CompileError([
+        { message: `this run already ended (${perf.outcome}); fork it from a step instead` },
+      ]);
     }
-    const at = Number(body.atStep)
+    const at = Number(body.atStep);
     if (kind === 'forked' && (!Number.isInteger(at) || at < 1 || at > last + 1)) {
-      throw new CompileError([{ message: `atStep must be a step from 1 to ${last + 1}` }])
+      throw new CompileError([{ message: `atStep must be a step from 1 to ${last + 1}` }]);
     }
-    const throughStep = kind === 'forked' ? at - 1 : last
-    let result
+    const throughStep = kind === 'forked' ? at - 1 : last;
+    let result;
     try {
-      result = restoreEngine(saved.score, perf, kind === 'forked' ? { throughStep, startedAt: new Date().toISOString() } : {})
+      result = restoreEngine(
+        saved.score,
+        perf,
+        kind === 'forked' ? { throughStep, startedAt: new Date().toISOString() } : {},
+      );
     } catch (e) {
-      throw new CompileError([{ message: (e as Error).message }])
+      throw new CompileError([{ message: (e as Error).message }]);
     }
-    const known = (await library()).find((l) => l.pattern.name === saved.score.pattern)?.pattern
+    const known = (await library()).find((l) => l.pattern.name === saved.score.pattern)?.pattern;
     const pattern: Pattern = known ?? {
       name: saved.score.pattern,
       description: saved.score.description,
@@ -461,7 +570,7 @@ export function createApi(opts: ApiOptions) {
       nodes: saved.score.nodes,
       edges: saved.score.edges,
       start: saved.score.start,
-    }
+    };
     return launch(saved.score, pattern, {
       provider: body.provider,
       model: body.model,
@@ -470,361 +579,435 @@ export function createApi(opts: ApiOptions) {
       breakpoints: Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
       restore: { result, basedOn: { kind, from: relative(runsDir, file), throughStep } },
       caller,
-    })
+    });
   }
 
   async function streamRun(req: IncomingMessage, res: ServerResponse, run: RunLike): Promise<void> {
     // A run another process plays is read only while someone watches it, and let go after.
-    const letGo = run.open ? await run.open() : undefined
-    sseHeaders(res)
-    const lastId = Number(req.headers['last-event-id'] ?? -1)
-    let closed = false
+    const letGo = run.open ? await run.open() : undefined;
+    sseHeaders(res);
+    const lastId = Number(req.headers['last-event-id'] ?? -1);
+    let closed = false;
     // What leaves the process is scrubbed as the live file is (in memory the run keeps the raw
     // text). Each connection replays the run through its own feed, so the numbers it gives are
     // the same every time and a reconnect resumes after the last one it saw.
-    let seq = 0
+    let seq = 0;
     const write = scrubbedFeed((m) => {
-      const id = seq++
-      if (closed || id <= lastId) return
-      sse(res, { ...m, seq: id }, id)
+      const id = seq++;
+      if (closed || id <= lastId) return;
+      sse(res, { ...m, seq: id }, id);
       if (m.type === 'status' && TERMINAL.has(m.status)) {
-        closed = true
-        res.end()
+        closed = true;
+        res.end();
       }
-    })
-    for (const m of [...run.messages]) write(m)
+    });
+    for (const m of [...run.messages]) write(m);
     if (closed) {
-      letGo?.()
-      return
+      letGo?.();
+      return;
     }
-    const off = run.subscribe(write)
+    const off = run.subscribe(write);
     res.on('close', () => {
-      closed = true
-      off()
-      letGo?.()
-    })
+      closed = true;
+      off();
+      letGo?.();
+    });
   }
 
-  async function draft(body: Record<string, unknown>, res: ServerResponse, caller: Caller): Promise<void> {
-    const request = typeof body.request === 'string' ? body.request.trim() : ''
-    if (!request) return send(res, 400, { error: 'request is required' })
-    const provider = providerFor(body.provider ?? 'scripted', body.model, undefined, undefined, workspace, caller)
-    const ctrl = new AbortController()
+  async function draft(
+    body: Record<string, unknown>,
+    res: ServerResponse,
+    caller: Caller,
+  ): Promise<void> {
+    const request = typeof body.request === 'string' ? body.request.trim() : '';
+    if (!request) return send(res, 400, { error: 'request is required' });
+    const provider = providerFor(
+      body.provider ?? 'scripted',
+      body.model,
+      undefined,
+      undefined,
+      workspace,
+      caller,
+    );
+    const ctrl = new AbortController();
     res.on('close', () => {
-      if (!res.writableEnded) ctrl.abort()
-    })
-    sseHeaders(res)
+      if (!res.writableEnded) ctrl.abort();
+    });
+    sseHeaders(res);
     try {
       const out = await draftPattern(provider, request, {
         ...(body.priorDraft ? { priorDraft: body.priorDraft } : {}),
         ...(Array.isArray(body.feedback) ? { feedback: body.feedback.map(String) } : {}),
         signal: ctrl.signal,
         onEvent: (e) => sse(res, { type: 'provider', event: e }),
-      })
-      for (const r of out.rounds) sse(res, { type: 'round', round: r.round, errors: r.errors })
+      });
+      for (const r of out.rounds) sse(res, { type: 'round', round: r.round, errors: r.errors });
       sse(res, {
         type: 'done',
         ...(out.pattern ? { pattern: out.pattern, graph: patternToGraph(out.pattern) } : {}),
         rounds: out.rounds.length,
-      })
+      });
     } catch (e) {
-      sse(res, { type: 'error', error: (e as Error).message })
+      sse(res, { type: 'error', error: (e as Error).message });
     } finally {
-      await provider.dispose?.()
-      res.end()
+      await provider.dispose?.();
+      res.end();
     }
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    const url = new URL(req.url ?? '/', 'http://localhost')
-    const path = url.pathname
-    if (!path.startsWith('/api/')) return false
-    const method = req.method ?? 'GET'
-    const refused = method === 'POST' ? refuseCrossSite(req) : undefined
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const path = url.pathname;
+    if (!path.startsWith('/api/')) return false;
+    const method = req.method ?? 'GET';
+    const refused = method === 'POST' ? refuseCrossSite(req) : undefined;
     if (refused) {
-      send(res, 403, { error: refused })
-      return true
+      send(res, 403, { error: refused });
+      return true;
     }
     try {
       if (method === 'GET' && path === '/api/patterns') {
-        const asked = url.searchParams.get('extras')
-        const items = await library(asked === 'on' || asked === 'off' ? asked : 'env')
+        const asked = url.searchParams.get('extras');
+        const items = await library(asked === 'on' || asked === 'off' ? asked : 'env');
         send(
           res,
           200,
           items.map(({ pattern, source }) => {
-            const { demo, ...data } = pattern
+            const { demo, ...data } = pattern;
             return {
               ...data,
               source,
               graph: patternToGraph(pattern),
               demo: demo ? { goal: demo.goal ?? '', context: demo.context ?? {} } : undefined,
-            }
+            };
           }),
-        )
-        return true
+        );
+        return true;
       }
       if (method === 'POST' && path === '/api/validate') {
-        const body = await readJson(req)
-        const parsed = parseDraft(body.pattern)
-        send(res, 200, parsed.ok ? validatePattern(parsed.value) : { errors: parsed.errors.map((message) => ({ message })), warnings: [] })
-        return true
+        const body = await readJson(req);
+        const parsed = parseDraft(body.pattern);
+        send(
+          res,
+          200,
+          parsed.ok
+            ? validatePattern(parsed.value)
+            : { errors: parsed.errors.map((message) => ({ message })), warnings: [] },
+        );
+        return true;
       }
       if (method === 'POST' && path === '/api/typescript') {
-        send(res, 200, { source: patternToTypeScript(asPattern((await readJson(req)).pattern)) })
-        return true
+        send(res, 200, { source: patternToTypeScript(asPattern((await readJson(req)).pattern)) });
+        return true;
       }
       if (method === 'POST' && path === '/api/patterns') {
-        const file = await savePatternFile(draftsDir, asPattern((await readJson(req)).pattern), '../../core/types.js')
-        send(res, 200, { file })
-        return true
+        const file = await savePatternFile(
+          draftsDir,
+          asPattern((await readJson(req)).pattern),
+          '../../core/types.js',
+        );
+        send(res, 200, { file });
+        return true;
       }
       if (method === 'POST' && path === '/api/draft') {
-        await draft(await readJson(req), res, await callerOf(req))
-        return true
+        await draft(await readJson(req), res, await callerOf(req));
+        return true;
       }
       if (method === 'POST' && path === '/api/runs') {
-        const run = await startRun(await readJson(req), await callerOf(req))
-        send(res, 200, { runId: run.id, score: run.score })
-        return true
+        const run = await startRun(await readJson(req), await callerOf(req));
+        send(res, 200, { runId: run.id, score: run.score });
+        return true;
       }
       if (method === 'POST' && path === '/api/runs/continue') {
-        const run = await continueRun(await readJson(req), await callerOf(req))
-        send(res, 200, { runId: run.id, score: run.score })
-        return true
+        const run = await continueRun(await readJson(req), await callerOf(req));
+        send(res, 200, { runId: run.id, score: run.score });
+        return true;
       }
       if (method === 'GET' && path === '/api/runs') {
         // Newest first; every run this server started, so the studio can switch between them.
-        const mine = [...runs.values()].toReversed().map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, scoreId: r.score.id, status: r.status, ...timing(r.id) }))
+        const mine = [...runs.values()]
+          .toReversed()
+          .map((r) => ({
+            id: r.id,
+            pattern: r.score.pattern,
+            goal: r.score.goal,
+            scoreId: r.score.id,
+            status: r.status,
+            ...timing(r.id),
+          }));
         // And the runs a chat plays in another process, marked so.
-        const theirs = (await shared?.list())?.filter((r) => !runs.has(r.id)) ?? []
+        const theirs = (await shared?.list())?.filter((r) => !runs.has(r.id)) ?? [];
         send(res, 200, [
           ...mine,
-          ...theirs.map((r) => ({ id: r.id, pattern: r.score.pattern, goal: r.score.goal, scoreId: r.score.id, status: r.status, source: r.source, workspace: r.workspace, ...(r.title ? { title: r.title } : {}), startedAt: r.startedAt })),
-        ])
-        return true
+          ...theirs.map((r) => ({
+            id: r.id,
+            pattern: r.score.pattern,
+            goal: r.score.goal,
+            scoreId: r.score.id,
+            status: r.status,
+            source: r.source,
+            workspace: r.workspace,
+            ...(r.title ? { title: r.title } : {}),
+            startedAt: r.startedAt,
+          })),
+        ]);
+        return true;
       }
       if (method === 'GET' && path === '/api/copilot/status') {
         // Whether a GitHub account is signed in for Copilot here, so the studio can say how to fix it.
-        const caller = await callerOf(req)
+        const caller = await callerOf(req);
         if (!caller.here) {
           // A visitor: its own sign-in in this studio, if any (signed in with GitHub, or not yet).
-          const id = accountIdOf(req)
-          const status = id ? await accounts.status(id) : undefined
-          send(res, 200, status?.signedIn ? { signedIn: true, login: status.login, message: status.login, visitor: true } : await visitorSignedOut(caller))
-          return true
+          const id = accountIdOf(req);
+          const status = id ? await accounts.status(id) : undefined;
+          send(
+            res,
+            200,
+            status?.signedIn
+              ? { signedIn: true, login: status.login, message: status.login, visitor: true }
+              : await visitorSignedOut(caller),
+          );
+          return true;
         }
-        const copilot = makeProvider({ provider: 'copilot', workingDirectory: workspace, ...envConfig(envForRun(env, caller.here)) })
+        const copilot = makeProvider({
+          provider: 'copilot',
+          workingDirectory: workspace,
+          ...envConfig(envForRun(env, caller.here)),
+        });
         try {
-          const status = await (copilot as { authStatus?: () => Promise<unknown> }).authStatus?.()
-          send(res, 200, status ?? { signedIn: true, message: '' })
+          const status = await (copilot as { authStatus?: () => Promise<unknown> }).authStatus?.();
+          send(res, 200, status ?? { signedIn: true, message: '' });
         } catch (e) {
-          send(res, 200, { signedIn: false, message: `Copilot could not start: ${(e as Error).message}` })
+          send(res, 200, {
+            signedIn: false,
+            message: `Copilot could not start: ${(e as Error).message}`,
+          });
         } finally {
-          await copilot.dispose?.()
+          await copilot.dispose?.();
         }
-        return true
+        return true;
       }
       if (method === 'GET' && path === '/api/local/status') {
         // Your model server (SYMPHONY_MODEL_URL): whether one is set, and whether it answers now.
-        const local = localModelFrom(env)
+        const local = localModelFrom(env);
         if (!local) {
-          send(res, 200, { configured: false })
-          return true
+          send(res, 200, { configured: false });
+          return true;
         }
-        const probe = makeProvider({ provider: 'local', localModel: { ...local, fallback: false } })
+        const probe = makeProvider({
+          provider: 'local',
+          localModel: { ...local, fallback: false },
+        });
         try {
-          const status = await (probe as { authStatus?: () => Promise<{ signedIn: boolean; message: string }> }).authStatus?.()
+          const status = await (
+            probe as { authStatus?: () => Promise<{ signedIn: boolean; message: string }> }
+          ).authStatus?.();
           send(res, 200, {
             configured: true,
             url: local.baseUrl,
             ...(local.model ? { model: local.model } : {}),
             reachable: status?.signedIn === true,
             message: status?.message ?? '',
-          })
+          });
         } finally {
-          await probe.dispose?.()
+          await probe.dispose?.();
         }
-        return true
+        return true;
       }
       if (method === 'GET' && path === '/api/account') {
         if (fromThisComputer(req.socket.remoteAddress)) {
-          send(res, 200, { here: true })
-          return true
+          send(res, 200, { here: true });
+          return true;
         }
-        const id = accountIdOf(req)
-        send(res, 200, { here: false, ...(id ? await accounts.status(id) : { signedIn: false }) })
-        return true
+        const id = accountIdOf(req);
+        send(res, 200, { here: false, ...(id ? await accounts.status(id) : { signedIn: false }) });
+        return true;
       }
       if (method === 'POST' && path === '/api/account/login') {
         if (fromThisComputer(req.socket.remoteAddress)) {
-          send(res, 400, { error: 'this computer uses its own sign-in: npm run login' })
-          return true
+          send(res, 400, { error: 'this computer uses its own sign-in: npm run login' });
+          return true;
         }
-        const id = accountIdOf(req) ?? newAccountId()
-        send(res, 200, await accounts.login(id), { 'Set-Cookie': accountCookie(id) })
-        return true
+        const id = accountIdOf(req) ?? newAccountId();
+        send(res, 200, await accounts.login(id), { 'Set-Cookie': accountCookie(id) });
+        return true;
       }
       if (method === 'POST' && path === '/api/account/logout') {
-        const id = accountIdOf(req)
-        if (id) await accounts.logout(id)
-        send(res, 200, { signedIn: false })
-        return true
+        const id = accountIdOf(req);
+        if (id) await accounts.logout(id);
+        send(res, 200, { signedIn: false });
+        return true;
       }
       if (method === 'GET' && path === '/api/tiers') {
-        send(res, 200, effectiveTiers(env))
-        return true
+        send(res, 200, effectiveTiers(env));
+        return true;
       }
-      const one = /^\/api\/runs\/([^/]+)$/.exec(path)
+      const one = /^\/api\/runs\/([^/]+)$/.exec(path);
       if (one && method === 'GET') {
-        const run = await findRun(one[1]!)
-        if (!run) send(res, 404, { error: 'run not found' })
-        else send(res, 200, { id: run.id, status: run.status, score: run.score, graph: patternToGraph(run.score) })
-        return true
+        const run = await findRun(one[1]!);
+        if (!run) send(res, 404, { error: 'run not found' });
+        else
+          send(res, 200, {
+            id: run.id,
+            status: run.status,
+            score: run.score,
+            graph: patternToGraph(run.score),
+          });
+        return true;
       }
-      const m = /^\/api\/runs\/([^/]+)\/(events|control|approval|recovery)$/.exec(path)
+      const m = /^\/api\/runs\/([^/]+)\/(events|control|approval|recovery)$/.exec(path);
       if (m) {
-        const run = await findRun(m[1]!)
+        const run = await findRun(m[1]!);
         if (!run) {
-          send(res, 404, { error: 'run not found' })
-          return true
+          send(res, 404, { error: 'run not found' });
+          return true;
         }
         if (m[2] === 'events' && method === 'GET') {
-          await streamRun(req, res, run)
-          return true
+          await streamRun(req, res, run);
+          return true;
         }
-        const body = await readJson(req)
+        const body = await readJson(req);
         if (m[2] === 'control') {
           switch (body.action) {
             case 'pause':
-              run.pause()
-              break
+              run.pause();
+              break;
             case 'resume':
-              run.resume()
-              break
+              run.resume();
+              break;
             case 'step':
-              run.step()
-              break
+              run.step();
+              break;
             case 'stop':
-              run.stop()
-              break
+              run.stop();
+              break;
             case 'breakpoints':
-              run.setBreakpoints(Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [])
-              break
+              run.setBreakpoints(
+                Array.isArray(body.breakpoints) ? body.breakpoints.map(String) : [],
+              );
+              break;
             case 'stepMode':
-              run.setStepMode(body.on === true)
-              break
+              run.setStepMode(body.on === true);
+              break;
             case 'autoApprove':
               // From now on (the approval waiting now included), and in the runs it hands on to.
-              run.setAutoApprove(body.on === true)
-              break
+              run.setAutoApprove(body.on === true);
+              break;
             case 'keepWaiting':
             case 'stopStep': {
               // A step over its time limit: keep waiting, or stop it keeping what it has.
-              const error = run.answerOvertime(body.action === 'stopStep' ? 'stop' : 'wait')
+              const error = run.answerOvertime(body.action === 'stopStep' ? 'stop' : 'wait');
               if (error) {
-                send(res, 409, { error })
-                return true
+                send(res, 409, { error });
+                return true;
               }
-              break
+              break;
             }
             default:
-              send(res, 400, { error: `unknown action '${String(body.action)}'` })
-              return true
+              send(res, 400, { error: `unknown action '${String(body.action)}'` });
+              return true;
           }
-          send(res, 200, { status: run.status })
-          return true
+          send(res, 200, { status: run.status });
+          return true;
         }
         if (m[2] === 'recovery') {
           if (body.action !== 'retry' && body.action !== 'stop') {
-            send(res, 400, { error: 'action must be retry or stop' })
-            return true
+            send(res, 400, { error: 'action must be retry or stop' });
+            return true;
           }
-          const complexity = [1, 2, 3, 4].includes(body.complexity as number) ? (body.complexity as Complexity) : undefined
+          const complexity = [1, 2, 3, 4].includes(body.complexity as number)
+            ? (body.complexity as Complexity)
+            : undefined;
           const error = run.answerRecovery({
             action: body.action,
-            ...(typeof body.hint === 'string' && body.hint.trim() ? { hint: body.hint.trim().slice(0, 2000) } : {}),
+            ...(typeof body.hint === 'string' && body.hint.trim()
+              ? { hint: body.hint.trim().slice(0, 2000) }
+              : {}),
             ...(complexity ? { complexity } : {}),
             by: 'studio',
-          })
-          send(res, error ? 409 : 200, error ? { error } : { ok: true })
-          return true
+          });
+          send(res, error ? 409 : 200, error ? { error } : { ok: true });
+          return true;
         }
         const error = run.answerApproval({
           approved: body.approved !== false,
-          ...(body.updates && typeof body.updates === 'object' ? { updates: body.updates as Record<string, unknown> } : {}),
+          ...(body.updates && typeof body.updates === 'object'
+            ? { updates: body.updates as Record<string, unknown> }
+            : {}),
           scripted: body.scripted === true,
           by: 'studio',
-        })
-        send(res, error ? 409 : 200, error ? { error } : { ok: true })
-        return true
+        });
+        send(res, error ? 409 : 200, error ? { error } : { ok: true });
+        return true;
       }
       if (method === 'GET' && path === '/api/saved') {
-        send(res, 200, await listRuns(runsDir))
-        return true
+        send(res, 200, await listRuns(runsDir));
+        return true;
       }
       if (method === 'POST' && path === '/api/saved/prune') {
-        const body = await readJson(req)
-        send(res, 200, await pruneRuns(runsDir, { scratchDir, dryRun: body.dryRun === true }))
-        return true
+        const body = await readJson(req);
+        send(res, 200, await pruneRuns(runsDir, { scratchDir, dryRun: body.dryRun === true }));
+        return true;
       }
       if (method === 'POST' && path === '/api/saved/delete') {
-        const body = await readJson(req)
-        const file = runPath(runsDir, typeof body.path === 'string' ? body.path : '')
+        const body = await readJson(req);
+        const file = runPath(runsDir, typeof body.path === 'string' ? body.path : '');
         if (!file) {
-          send(res, 400, { error: 'invalid path' })
-          return true
+          send(res, 400, { error: 'invalid path' });
+          return true;
         }
-        const playing = [...savedFiles].find(([id, f]) => f === file && !TERMINAL.has(runs.get(id)?.status ?? 'done'))
+        const playing = [...savedFiles].find(
+          ([id, f]) => f === file && !TERMINAL.has(runs.get(id)?.status ?? 'done'),
+        );
         if (playing) {
-          send(res, 409, { error: 'this run is still playing: stop it first' })
-          return true
+          send(res, 409, { error: 'this run is still playing: stop it first' });
+          return true;
         }
         if (!(await deleteRun(runsDir, file))) {
-          send(res, 404, { error: 'no such saved run' })
-          return true
+          send(res, 404, { error: 'no such saved run' });
+          return true;
         }
-        send(res, 200, { deleted: file })
-        return true
+        send(res, 200, { deleted: file });
+        return true;
       }
       if (method === 'GET' && path === '/api/saved/file') {
-        const file = runPath(runsDir, url.searchParams.get('path') ?? '')
+        const file = runPath(runsDir, url.searchParams.get('path') ?? '');
         if (!file) {
-          send(res, 400, { error: 'invalid path' })
-          return true
+          send(res, 400, { error: 'invalid path' });
+          return true;
         }
-        const { run, issues, migrated } = await loadRun(file)
+        const { run, issues, migrated } = await loadRun(file);
         // Replaying a long run takes seconds: answer now, with the verdict if it is known
         // (null = still checking; GET /api/saved/check waits for it).
-        const check = issues.length === 0 ? await cachedReplayCheck(file) : undefined
-        if (issues.length === 0 && !check) void replayCheckOf(file, run).catch(() => undefined)
+        const check = issues.length === 0 ? await cachedReplayCheck(file) : undefined;
+        if (issues.length === 0 && !check) void replayCheckOf(file, run).catch(() => undefined);
         send(res, 200, {
           run,
           issues: check?.note ? [...issues, check.note] : issues,
           reproduced: issues.length > 0 ? false : (check?.reproduced ?? null),
           migrated,
           graph: patternToGraph(run.score),
-        })
-        return true
+        });
+        return true;
       }
       if (method === 'GET' && path === '/api/saved/check') {
-        const file = runPath(runsDir, url.searchParams.get('path') ?? '')
+        const file = runPath(runsDir, url.searchParams.get('path') ?? '');
         if (!file) {
-          send(res, 400, { error: 'invalid path' })
-          return true
+          send(res, 400, { error: 'invalid path' });
+          return true;
         }
-        const check = await replayCheckOf(file)
-        send(res, 200, { reproduced: check.reproduced, issues: check.note ? [check.note] : [] })
-        return true
+        const check = await replayCheckOf(file);
+        send(res, 200, { reproduced: check.reproduced, issues: check.note ? [check.note] : [] });
+        return true;
       }
-      send(res, 404, { error: 'not found' })
-      return true
+      send(res, 404, { error: 'not found' });
+      return true;
     } catch (e) {
-      if (e instanceof CompileError) send(res, 400, { error: e.message, issues: e.issues })
-      else send(res, 500, { error: (e as Error).message })
-      return true
+      if (e instanceof CompileError) send(res, 400, { error: e.message, issues: e.issues });
+      else send(res, 500, { error: (e as Error).message });
+      return true;
     }
   }
 
-  return { handle, runs }
+  return { handle, runs };
 }

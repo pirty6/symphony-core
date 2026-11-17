@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -14,22 +14,36 @@ import {
   type Connection,
   type DefaultEdgeOptions,
   type NodeChange,
-} from '@xyflow/react'
-import { patternToGraph, writesOf } from '@core/graph'
-import { formatFieldInput, parseFieldInput } from '@core/schema'
-import type { NodeStatus } from '@core/replay'
-import type { Branch, ScoreEdge, ScoreNode } from '@core/types'
-import { validatePattern } from '@core/validate'
-import { formatUsage, performanceUsage } from '@core/usage'
-import { describeEdits } from '@core/edits'
-import { DataEdge } from './canvas/DataEdge'
-import { FlowNode } from './canvas/FlowNode'
-import { FrameNode, PhaseNode } from './canvas/PhaseNode'
-import { SubAgentNode } from './canvas/SubAgentNode'
-import { Home } from './panels/Home'
-import { api, errorText, isNetworkError, isRunGone, RUN_GONE, subscribeRun, type LibraryItem, type LiveRun, type LocalStatus, type SavedSummary, type StartRunRequest } from './lib/api'
-import { savedToList, someRunEnded } from './lib/saved'
-import { subAgentItems, subAgentNodes,
+} from '@xyflow/react';
+import { patternToGraph, writesOf } from '@core/graph';
+import { formatFieldInput, parseFieldInput } from '@core/schema';
+import type { NodeStatus } from '@core/replay';
+import type { Branch, ScoreEdge, ScoreNode } from '@core/types';
+import { validatePattern } from '@core/validate';
+import { formatUsage, performanceUsage } from '@core/usage';
+import { describeEdits } from '@core/edits';
+import { DataEdge } from './canvas/DataEdge';
+import { FlowNode } from './canvas/FlowNode';
+import { FrameNode, PhaseNode } from './canvas/PhaseNode';
+import { SubAgentNode } from './canvas/SubAgentNode';
+import { Home } from './panels/Home';
+import {
+  api,
+  errorText,
+  isNetworkError,
+  isRunGone,
+  RUN_GONE,
+  subscribeRun,
+  type LibraryItem,
+  type LiveRun,
+  type LocalStatus,
+  type SavedSummary,
+  type StartRunRequest,
+} from './lib/api';
+import { savedToList, someRunEnded } from './lib/saved';
+import {
+  subAgentItems,
+  subAgentNodes,
   chooseFeature,
   resetFeatures,
   featureRows,
@@ -63,71 +77,104 @@ import { subAgentItems, subAgentNodes,
   type PatternMeta,
   type RunResult,
   type RunView,
-} from './lib/model'
-import { AiTakes, ApprovalCard, RecoveryCard, EdgeEditor, GateCard, OvertimeCard, NodeEditor, NodeInput, StateView } from './panels/Inspector'
-import { SideToggle } from './panels/SideToggle'
-import { useSidebar } from './lib/sidebar'
-import { Library } from './panels/Library'
-import { ResultPreview, ResultReader } from './panels/Result'
-import { PatternPanel } from './panels/PatternPanel'
-import { Timeline } from './panels/Timeline'
-import { VisitorSignIn } from './panels/VisitorSignIn'
-import { Toolbar, type RunSettings, type Tiers } from './panels/Toolbar'
-import { RunTimer } from './panels/RunTimer'
+} from './lib/model';
+import {
+  AiTakes,
+  ApprovalCard,
+  RecoveryCard,
+  EdgeEditor,
+  GateCard,
+  OvertimeCard,
+  NodeEditor,
+  NodeInput,
+  StateView,
+} from './panels/Inspector';
+import { SideToggle } from './panels/SideToggle';
+import { useSidebar } from './lib/sidebar';
+import { Library } from './panels/Library';
+import { ResultPreview, ResultReader } from './panels/Result';
+import { PatternPanel } from './panels/PatternPanel';
+import { Timeline } from './panels/Timeline';
+import { VisitorSignIn } from './panels/VisitorSignIn';
+import { Toolbar, type RunSettings, type Tiers } from './panels/Toolbar';
+import { RunTimer } from './panels/RunTimer';
 
-const nodeTypes = { start: FlowNode, agent: FlowNode, compute: FlowNode, condition: FlowNode, approval: FlowNode, tool: FlowNode, end: FlowNode, phase: PhaseNode, frame: FrameNode, subagent: SubAgentNode }
-const edgeTypes = { data: DataEdge }
-const defaultEdgeOptions: DefaultEdgeOptions = { type: 'data', markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 } }
-const BLANK: PatternMeta = { name: 'my-flow', description: 'A new flow', requiredContext: [], verbTriggers: [], state: [] }
-const ACTIVE = new Set(['running', 'paused', 'awaiting-approval'])
-const READABLE_ZOOM = 0.55
-const SETTINGS_KEY = 'symphony.settings'
+const nodeTypes = {
+  start: FlowNode,
+  agent: FlowNode,
+  compute: FlowNode,
+  condition: FlowNode,
+  approval: FlowNode,
+  tool: FlowNode,
+  end: FlowNode,
+  phase: PhaseNode,
+  frame: FrameNode,
+  subagent: SubAgentNode,
+};
+const edgeTypes = { data: DataEdge };
+const defaultEdgeOptions: DefaultEdgeOptions = {
+  type: 'data',
+  markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+};
+const BLANK: PatternMeta = {
+  name: 'my-flow',
+  description: 'A new flow',
+  requiredContext: [],
+  verbTriggers: [],
+  state: [],
+};
+const ACTIVE = new Set(['running', 'paused', 'awaiting-approval']);
+const READABLE_ZOOM = 0.55;
+const SETTINGS_KEY = 'symphony.settings';
 /** A diagram node's run status (steps and phase boxes both carry it in their data). */
-const statusOf = (n: { data?: unknown }): NodeStatus | undefined => (n.data as { status?: NodeStatus } | undefined)?.status
+const statusOf = (n: { data?: unknown }): NodeStatus | undefined =>
+  (n.data as { status?: NodeStatus } | undefined)?.status;
 
 /** Results longer than this (characters of Markdown) open in the reader when a live run ends. */
-const LONG_RESULT = 600
+const LONG_RESULT = 600;
 const filled = (r: RunResult): RunResult => ({
   ...r,
   keys: r.keys.filter((k) => {
-    const v = r.values[k]
-    return !(v === '' || v === undefined || v === null || (Array.isArray(v) && v.length === 0))
+    const v = r.values[k];
+    return !(v === '' || v === undefined || v === null || (Array.isArray(v) && v.length === 0));
   }),
-})
-type Tab = 'node' | 'ai' | 'state'
+});
+type Tab = 'node' | 'ai' | 'state';
 
 function contextStrings(ctx: Record<string, unknown> | undefined): Record<string, string> {
-  return Object.fromEntries(Object.entries(ctx ?? {}).map(([k, v]) => [k, formatFieldInput(v)]))
+  return Object.fromEntries(Object.entries(ctx ?? {}).map(([k, v]) => [k, formatFieldInput(v)]));
 }
 
 /** The fields that have something typed in them. */
 const nonBlank = (c: Readonly<Record<string, string>>) =>
-  Object.fromEntries(Object.entries(c).filter(([, v]) => v.trim() !== ''))
+  Object.fromEntries(Object.entries(c).filter(([, v]) => v.trim() !== ''));
 
 export default function Studio() {
-  const { screenToFlowPosition, fitView, getZoom, setCenter, getNode } = useReactFlow()
-  const [follow, setFollow] = useState(true)
+  const { screenToFlowPosition, fitView, getZoom, setCenter, getNode } = useReactFlow();
+  const [follow, setFollow] = useState(true);
   /** Phases opened on the canvas; the rest are drawn as one node each. */
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   /** Measured sizes of phase and frame nodes (they are not in the editable node list). */
   // Where you dragged nodes while phases are closed: display only, reset when the view changes.
-  const [moved, setMoved] = useState<ReadonlyMap<string, { x: number; y: number }>>(new Map())
-  useEffect(() => setMoved(new Map()), [expanded])
-  const [phaseSizes, setPhaseSizes] = useState<ReadonlyMap<string, { width: number; height: number }>>(new Map())
-  const [library, setLibrary] = useState<LibraryItem[]>([])
+  const [moved, setMoved] = useState<ReadonlyMap<string, { x: number; y: number }>>(new Map());
+  useEffect(() => setMoved(new Map()), [expanded]);
+  const [phaseSizes, setPhaseSizes] = useState<
+    ReadonlyMap<string, { width: number; height: number }>
+  >(new Map());
+  const [library, setLibrary] = useState<LibraryItem[]>([]);
   // Both sidebars fold to a thin rail; each side is remembered.
-  const [leftOpen, toggleLeft] = useSidebar('left')
-  const [rightOpen, toggleRight] = useSidebar('right')
-  const [saved, setSaved] = useState<SavedSummary[]>([])
-  const [live, setLive] = useState<LiveRun[]>([])
-  const liveRef = useRef<LiveRun[]>([])
+  const [leftOpen, toggleLeft] = useSidebar('left');
+  const [rightOpen, toggleRight] = useSidebar('right');
+  const [saved, setSaved] = useState<SavedSummary[]>([]);
+  const [live, setLive] = useState<LiveRun[]>([]);
+  const liveRef = useRef<LiveRun[]>([]);
   /** The last poll could not reach the server (stopped or restarting); clears when it answers. */
-  const [serverDown, setServerDown] = useState(false)
-  const [meta, setMeta] = useState<PatternMeta>(BLANK)
-  const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeType>([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([])
-  const [goal, setGoal] = useState('')
-  const [context, setContext] = useState<Record<string, string>>({})
+  const [serverDown, setServerDown] = useState(false);
+  const [meta, setMeta] = useState<PatternMeta>(BLANK);
+  const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeType>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([]);
+  const [goal, setGoal] = useState('');
+  const [context, setContext] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState<RunSettings>(() => ({
     provider: 'scripted',
     model: '',
@@ -136,15 +183,17 @@ export default function Studio() {
     stepMode: false,
     complexity: 0,
     improvisation: 0,
-  }))
+  }));
   /** Optional patterns in the library: the toggle's choice, or unset for the server's default. */
-  const [extras, setExtras] = useState<boolean | undefined>(() => parseStoredSettings(localStorage.getItem(SETTINGS_KEY)).extras)
-  const extrasRef = useRef(extras)
-  extrasRef.current = extras
+  const [extras, setExtras] = useState<boolean | undefined>(
+    () => parseStoredSettings(localStorage.getItem(SETTINGS_KEY)).extras,
+  );
+  const extrasRef = useRef(extras);
+  extrasRef.current = extras;
   /** Feature switches you turned away from their defaults: kept between visits, sent with every run. */
   const [features, setFeatures] = useState<Record<string, string>>(
     () => parseStoredSettings(localStorage.getItem(SETTINGS_KEY)).features ?? {},
-  )
+  );
   useEffect(() => {
     localStorage.setItem(
       SETTINGS_KEY,
@@ -154,203 +203,214 @@ export default function Studio() {
         ...(extras === undefined ? {} : { extras }),
         ...(Object.keys(features).length ? { features } : {}),
       }),
-    )
-  }, [settings.provider, settings.model, extras, features])
+    );
+  }, [settings.provider, settings.model, extras, features]);
   // Choosing Copilot on a machine with no GitHub account signed in: say how to fix it before a run fails.
   useEffect(() => {
-    if (settings.provider !== 'copilot') return
-    let cancelled = false
+    if (settings.provider !== 'copilot') return;
+    let cancelled = false;
     void api.copilotStatus().then(
       // A visitor that may sign in with its own GitHub gets the sign-in card instead.
       (s) => !cancelled && !s.signedIn && !s.canSignIn && setError(s.message),
       () => undefined,
-    )
+    );
     return () => {
-      cancelled = true
-    }
-  }, [settings.provider])
+      cancelled = true;
+    };
+  }, [settings.provider]);
   // Your model server: offered as "Local AI" when set; chosen and not answering, say so before a run fails.
-  const [local, setLocal] = useState<LocalStatus | undefined>()
+  const [local, setLocal] = useState<LocalStatus | undefined>();
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
     void api.localStatus().then(
       (s) => {
-        if (cancelled) return
-        setLocal(s)
-        if (settings.provider !== 'local') return
-        if (!s.configured) setError("AI: Local needs a model server: set SYMPHONY_MODEL_URL in this studio's .env, or choose GitHub Copilot.")
-        else if (!s.reachable) setError(s.message ?? `The model server at ${s.url} is not answering.`)
+        if (cancelled) return;
+        setLocal(s);
+        if (settings.provider !== 'local') return;
+        if (!s.configured)
+          setError(
+            "AI: Local needs a model server: set SYMPHONY_MODEL_URL in this studio's .env, or choose GitHub Copilot.",
+          );
+        else if (!s.reachable)
+          setError(s.message ?? `The model server at ${s.url} is not answering.`);
       },
       () => undefined,
-    )
+    );
     return () => {
-      cancelled = true
-    }
-  }, [settings.provider])
-  const [tiers, setTiers] = useState<Tiers | undefined>()
-  const [notice, setNotice] = useState<string | null>(null)
+      cancelled = true;
+    };
+  }, [settings.provider]);
+  const [tiers, setTiers] = useState<Tiers | undefined>();
+  const [notice, setNotice] = useState<string | null>(null);
   /** The full-screen result reader is open. */
-  const [reading, setReading] = useState(false)
+  const [reading, setReading] = useState(false);
   /** Pattern to play after this one with its result ('' = none). */
-  const [thenPattern, setThenPattern] = useState('')
-  const [breakpoints, setBreakpoints] = useState<Set<string>>(new Set())
-  const [view, setView] = useState<RunView>(IDLE_VIEW)
-  const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('node')
-  const [error, setError] = useState<string | null>(null)
+  const [thenPattern, setThenPattern] = useState('');
+  const [breakpoints, setBreakpoints] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<RunView>(IDLE_VIEW);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>('node');
+  const [error, setError] = useState<string | null>(null);
   /** The opening screen: no pattern open (the URL names none). */
-  const [home, setHome] = useState(() => !location.hash.slice(1))
-  const unsubscribe = useRef<(() => void) | null>(null)
+  const [home, setHome] = useState(() => !location.hash.slice(1));
+  const unsubscribe = useRef<(() => void) | null>(null);
 
-  const editable = view.mode === 'idle'
-  const runActive = view.mode === 'live' && ACTIVE.has(view.status)
+  const editable = view.mode === 'idle';
+  const runActive = view.mode === 'live' && ACTIVE.has(view.status);
 
   // ── loading ────────────────────────────────────────────────────────
 
   const showGraph = useCallback(
     (m: PatternMeta, graph: LibraryItem['graph']) => {
-      const flow = toFlow(graph)
+      const flow = toFlow(graph);
       // A pattern or a run on screen: no longer the opening screen.
-      setHome(false)
-      setMeta(m)
-      setNodes(flow.nodes)
-      setEdges(flow.edges)
-      setExpanded(new Set())
-      setSelected(null)
+      setHome(false);
+      setMeta(m);
+      setNodes(flow.nodes);
+      setEdges(flow.edges);
+      setExpanded(new Set());
+      setSelected(null);
       setTimeout(() => {
         void fitView({ padding: 0.15 }).then(() => {
           // Big flows become unreadable when fitted: start at the top, readable size.
-          const start = flow.nodes.find((n) => n.type === 'start')
+          const start = flow.nodes.find((n) => n.type === 'start');
           if (getZoom() < READABLE_ZOOM && start) {
-            void setCenter(start.position.x + 115, start.position.y + 320, { zoom: 0.8, duration: 300 })
+            void setCenter(start.position.x + 115, start.position.y + 320, {
+              zoom: 0.8,
+              duration: 300,
+            });
           }
-        })
-      }, 50)
+        });
+      }, 50);
     },
     [fitView, getZoom, setCenter, setEdges, setNodes],
-  )
+  );
 
   const loadPattern = useCallback(
     (item: LibraryItem) => {
-      unsubscribe.current?.()
-      showGraph(metaOf(item), item.graph)
+      unsubscribe.current?.();
+      showGraph(metaOf(item), item.graph);
       // Start empty: the demo's inputs are shown as examples, and fill blanks only for offline runs.
-      setGoal('')
-      setThenPattern('')
-      setContext({})
-      setBreakpoints(new Set())
-      setView(IDLE_VIEW)
-      setTab('node')
-      setError(null)
-      history.replaceState(null, '', `#${item.name}`)
+      setGoal('');
+      setThenPattern('');
+      setContext({});
+      setBreakpoints(new Set());
+      setView(IDLE_VIEW);
+      setTab('node');
+      setError(null);
+      history.replaceState(null, '', `#${item.name}`);
     },
     [showGraph],
-  )
+  );
 
-  const refreshSaved = useCallback(() => void api.saved().then(setSaved, () => setSaved([])), [])
+  const refreshSaved = useCallback(() => void api.saved().then(setSaved, () => setSaved([])), []);
   // Several runs can play at once on this server; poll so the list stays current.
   useEffect(() => {
     const poll = () =>
       void api.liveRuns().then(
         (runs) => {
           // A run that stops playing has just saved its final record: list it.
-          if (someRunEnded(liveRef.current, runs)) refreshSaved()
-          liveRef.current = runs
-          setLive(runs)
-          setServerDown(false)
+          if (someRunEnded(liveRef.current, runs)) refreshSaved();
+          liveRef.current = runs;
+          setLive(runs);
+          setServerDown(false);
         },
         (e: unknown) => isNetworkError(e) && setServerDown(true),
-      )
-    poll()
-    const timer = setInterval(poll, 2000)
-    return () => clearInterval(timer)
-  }, [refreshSaved])
+      );
+    poll();
+    const timer = setInterval(poll, 2000);
+    return () => clearInterval(timer);
+  }, [refreshSaved]);
 
   // Load the library and the pattern named in the URL once; later loads are user actions.
-  const loadPatternRef = useRef(loadPattern)
-  loadPatternRef.current = loadPattern
+  const loadPatternRef = useRef(loadPattern);
+  loadPatternRef.current = loadPattern;
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
     api.patterns(extrasRef.current).then(
       (items) => {
-        if (cancelled) return
-        setLibrary(items)
+        if (cancelled) return;
+        setLibrary(items);
         // No pattern in the URL: the opening screen, where you ask the maestro.
-        const wanted = decodeURIComponent(location.hash.slice(1))
-        const first = wanted ? (items.find((i) => i.name === wanted) ?? items[0]) : undefined
-        if (first) loadPatternRef.current(first)
+        const wanted = decodeURIComponent(location.hash.slice(1));
+        const first = wanted ? (items.find((i) => i.name === wanted) ?? items[0]) : undefined;
+        if (first) loadPatternRef.current(first);
       },
       (e: Error) => !cancelled && setError(`Could not load patterns: ${errorText(e)}`),
-    )
-    refreshSaved()
+    );
+    refreshSaved();
     api.tiers().then(
       (t) => !cancelled && setTiers(t),
       () => undefined,
-    )
+    );
     return () => {
-      cancelled = true
-      unsubscribe.current?.()
-    }
-  }, [refreshSaved])
+      cancelled = true;
+      unsubscribe.current?.();
+    };
+  }, [refreshSaved]);
 
   useEffect(() => {
-    if (view.mode !== 'live' || ACTIVE.has(view.status)) return
-    refreshSaved()
+    if (view.mode !== 'live' || ACTIVE.has(view.status)) return;
+    refreshSaved();
     // A run may have saved a new pattern (metaphor, maestro --save): list it right away.
-    void api.patterns(extrasRef.current).then(setLibrary, () => undefined)
-  }, [view.mode, view.status, refreshSaved])
+    void api.patterns(extrasRef.current).then(setLibrary, () => undefined);
+  }, [view.mode, view.status, refreshSaved]);
 
   const toggleExtras = (on: boolean) => {
-    setExtras(on)
-    void api.patterns(on).then(setLibrary, (e: Error) => setError(errorText(e)))
-  }
+    setExtras(on);
+    void api.patterns(on).then(setLibrary, (e: Error) => setError(errorText(e)));
+  };
 
   // ── derived ────────────────────────────────────────────────────────
 
-  const pattern = useMemo(() => fromFlow(meta, nodes, edges), [meta, nodes, edges])
-  const report = useMemo(() => validatePattern(pattern), [pattern])
+  const pattern = useMemo(() => fromFlow(meta, nodes, edges), [meta, nodes, edges]);
+  const report = useMemo(() => validatePattern(pattern), [pattern]);
   const issues = useMemo(() => {
-    const map = new Map<string, string[]>()
+    const map = new Map<string, string[]>();
     for (const i of [...report.errors, ...report.warnings]) {
-      const key = i.nodeId ?? i.edgeId
-      if (key) map.set(key, [...(map.get(key) ?? []), i.message])
+      const key = i.nodeId ?? i.edgeId;
+      if (key) map.set(key, [...(map.get(key) ?? []), i.message]);
     }
-    return map
-  }, [report])
+    return map;
+  }, [report]);
 
-  const frame = currentFrame(view)
+  const frame = currentFrame(view);
 
   const toggleBreakpoint = useCallback(
     (id: string) => {
       setBreakpoints((prev) => {
-        const next = new Set(prev)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        if (view.runId && view.mode === 'live') void api.control(view.runId, 'breakpoints', { breakpoints: [...next] })
-        return next
-      })
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        if (view.runId && view.mode === 'live')
+          void api.control(view.runId, 'breakpoints', { breakpoints: [...next] });
+        return next;
+      });
     },
     [view.runId, view.mode],
-  )
+  );
 
-  const openPhase = useCallback((id: string) => setExpanded((prev) => new Set(prev).add(id)), [])
+  const openPhase = useCallback((id: string) => setExpanded((prev) => new Set(prev).add(id)), []);
   const closePhase = useCallback(
     (id: string) =>
       setExpanded((prev) => {
-        const next = new Set(prev)
-        next.delete(id)
-        return next
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
       }),
     [],
-  )
-  const phaseIds = useMemo(() => (meta.groups ?? []).map((g) => g.id), [meta.groups])
-  const allOpen = phaseIds.length > 0 && phaseIds.every((id) => expanded.has(id))
+  );
+  const phaseIds = useMemo(() => (meta.groups ?? []).map((g) => g.id), [meta.groups]);
+  const allOpen = phaseIds.length > 0 && phaseIds.every((id) => expanded.has(id));
   const togglePhases = useCallback(() => {
-    setExpanded(allOpen ? new Set() : new Set(phaseIds))
-    setTimeout(() => void fitView({ padding: 0.15, duration: 300 }), 50)
-  }, [allOpen, phaseIds, fitView])
+    setExpanded(allOpen ? new Set() : new Set(phaseIds));
+    setTimeout(() => void fitView({ padding: 0.15, duration: 300 }), 50);
+  }, [allOpen, phaseIds, fitView]);
 
-  const origins = useMemo(() => originsByNode(view.performance, frame.step), [view.performance, frame.step])
+  const origins = useMemo(
+    () => originsByNode(view.performance, frame.step),
+    [view.performance, frame.step],
+  );
 
   const display = useMemo(() => {
     const d = decorate(nodes, edges, frame, {
@@ -359,170 +419,253 @@ export default function Studio() {
       ...(view.gate ? { gate: view.gate } : {}),
       origins,
       onToggleBreakpoint: toggleBreakpoint,
-    })
-    const writes = new Map(nodes.map((n) => [n.id, writesOf(n.data.node, { state: meta.state, nodes: [], edges: [], start: '' })]))
-    const steps = { nodes: d.nodes, edges: d.edges.map((e) => ({ ...e, data: { ...e.data!, carries: writes.get(e.source) ?? [] } })) }
-    const shown = phaseDisplay(pattern, steps, expanded, frame, { onExpand: openPhase, onCollapse: closePhase, moved })
+    });
+    const writes = new Map(
+      nodes.map((n) => [
+        n.id,
+        writesOf(n.data.node, { state: meta.state, nodes: [], edges: [], start: '' }),
+      ]),
+    );
+    const steps = {
+      nodes: d.nodes,
+      edges: d.edges.map((e) => ({
+        ...e,
+        data: { ...e.data!, carries: writes.get(e.source) ?? [] },
+      })),
+    };
+    const shown = phaseDisplay(pattern, steps, expanded, frame, {
+      onExpand: openPhase,
+      onCollapse: closePhase,
+      moved,
+    });
     const sized = shown.nodes.map((n) => {
-      const size = n.type === 'phase' || n.type === 'frame' ? phaseSizes.get(n.id) : undefined
-      return size ? { ...n, measured: size } : n
-    })
+      const size = n.type === 'phase' || n.type === 'frame' ? phaseSizes.get(n.id) : undefined;
+      return size ? { ...n, measured: size } : n;
+    });
     // The sub-agents of the latest fanned-out step, beside it, while the run is on screen.
-    const playing = view.mode === 'live' && !['done', 'failed', 'cancelled'].includes(view.status)
-    const subs = playing ? subAgentNodes(view.parts, sized, shown.phaseOf, subAgentItems(view.pause, view.parts?.nodeId ?? '')) : { nodes: [], edges: [] }
+    const playing = view.mode === 'live' && !['done', 'failed', 'cancelled'].includes(view.status);
+    const subs = playing
+      ? subAgentNodes(
+          view.parts,
+          sized,
+          shown.phaseOf,
+          subAgentItems(view.pause, view.parts?.nodeId ?? ''),
+        )
+      : { nodes: [], edges: [] };
     // Nodes that are not steps keep their measured size here, or they are measured again forever.
     const subNodes = subs.nodes.map((n) => {
-      const size = phaseSizes.get(n.id)
-      return size ? { ...n, measured: size } : n
-    })
-    return { ...shown, nodes: [...sized, ...subNodes], edges: [...shown.edges, ...subs.edges] }
-  }, [nodes, edges, frame, breakpoints, editable, issues, view.gate, view.mode, view.status, view.parts, view.pause, origins, toggleBreakpoint, meta.state, pattern, expanded, openPhase, closePhase, phaseSizes, moved])
+      const size = phaseSizes.get(n.id);
+      return size ? { ...n, measured: size } : n;
+    });
+    return { ...shown, nodes: [...sized, ...subNodes], edges: [...shown.edges, ...subs.edges] };
+  }, [
+    nodes,
+    edges,
+    frame,
+    breakpoints,
+    editable,
+    issues,
+    view.gate,
+    view.mode,
+    view.status,
+    view.parts,
+    view.pause,
+    origins,
+    toggleBreakpoint,
+    meta.state,
+    pattern,
+    expanded,
+    openPhase,
+    closePhase,
+    phaseSizes,
+    moved,
+  ]);
 
   const onCanvasNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      const steps = new Set(nodes.map((n) => n.id))
-      const sizes = changes.flatMap((c) => (c.type === 'dimensions' && c.dimensions && !steps.has(c.id) ? [[c.id, c.dimensions] as const] : []))
-      if (sizes.length > 0) setPhaseSizes((prev) => new Map([...prev, ...sizes]))
+      const steps = new Set(nodes.map((n) => n.id));
+      const sizes = changes.flatMap((c) =>
+        c.type === 'dimensions' && c.dimensions && !steps.has(c.id)
+          ? [[c.id, c.dimensions] as const]
+          : [],
+      );
+      if (sizes.length > 0) setPhaseSizes((prev) => new Map([...prev, ...sizes]));
       // With phases closed the layout is the phase view's: a drag moves the node in this view only.
       const viewMoves = changes.flatMap((c) =>
-        c.type === 'position' && c.position && (display.collapsed || !steps.has(c.id)) ? [[c.id, c.position] as const] : [],
-      )
-      if (viewMoves.length > 0) setMoved((prev) => new Map([...prev, ...viewMoves]))
-      const own = new Set(viewMoves.map(([id]) => id))
-      onNodesChange(changes.filter((c) => !('id' in c) || (steps.has(c.id) && !own.has(c.id))) as NodeChange<FlowNodeType>[])
+        c.type === 'position' && c.position && (display.collapsed || !steps.has(c.id))
+          ? [[c.id, c.position] as const]
+          : [],
+      );
+      if (viewMoves.length > 0) setMoved((prev) => new Map([...prev, ...viewMoves]));
+      const own = new Set(viewMoves.map(([id]) => id));
+      onNodesChange(
+        changes.filter(
+          (c) => !('id' in c) || (steps.has(c.id) && !own.has(c.id)),
+        ) as NodeChange<FlowNodeType>[],
+      );
     },
     [nodes, onNodesChange, display.collapsed],
-  )
+  );
 
-  const focusId = selected ?? frame.pausedNodeId ?? frame.activeNodeId ?? null
-  const selectedNode = nodes.find((n) => n.id === selected)
-  const selectedEdge = edges.find((e) => e.id === selected)
-  const focusNode = nodes.find((n) => n.id === focusId)
-  const streams = focusId ? streamsFor(view, focusId, frame) : []
-  const result = useMemo(() => runResult(view), [view])
-  const offline = isOfflineDemo(view.performance)
+  const focusId = selected ?? frame.pausedNodeId ?? frame.activeNodeId ?? null;
+  const selectedNode = nodes.find((n) => n.id === selected);
+  const selectedEdge = edges.find((e) => e.id === selected);
+  const focusNode = nodes.find((n) => n.id === focusId);
+  const streams = focusId ? streamsFor(view, focusId, frame) : [];
+  const result = useMemo(() => runResult(view), [view]);
+  const offline = isOfflineDemo(view.performance);
   // The offline demo plays answers written for the demo inputs; warn before it ignores the user's own.
-  const demoInputs = useMemo(() => contextStrings(library.find((l) => l.name === meta.name)?.demo?.context), [library, meta.name])
-  const demoGoal = library.find((l) => l.name === meta.name)?.demo?.goal ?? ''
-  const ignoredInputs = editable && settings.provider === 'scripted' ? changedFromDemo(context, demoInputs) : []
-  const goalText = view.goal ?? ''
+  const demoInputs = useMemo(
+    () => contextStrings(library.find((l) => l.name === meta.name)?.demo?.context),
+    [library, meta.name],
+  );
+  const demoGoal = library.find((l) => l.name === meta.name)?.demo?.goal ?? '';
+  const ignoredInputs =
+    editable && settings.provider === 'scripted' ? changedFromDemo(context, demoInputs) : [];
+  const goalText = view.goal ?? '';
 
   // Open the reader once when a live run finishes with more than the inspector card can show
   // (empty fields, such as an unused gate's report, do not make it long). What a person reads
   // decides: the brief for an AI agent (handoff) is in the reader, but does not open it; nor does
   // a run that hands on to another, which the studio follows instead.
-  const forPeople = result ? { ...result, keys: result.keys.filter((k) => k !== 'handoff') } : undefined
+  const forPeople = result
+    ? { ...result, keys: result.keys.filter((k) => k !== 'handoff') }
+    : undefined;
   const finished =
-    view.mode === 'live' && !view.next && forPeople && resultMarkdown(filled(forPeople), '').length > LONG_RESULT
+    view.mode === 'live' &&
+    !view.next &&
+    forPeople &&
+    resultMarkdown(filled(forPeople), '').length > LONG_RESULT
       ? view.runId
-      : undefined
+      : undefined;
   useEffect(() => {
-    if (finished) setReading(true)
-  }, [finished])
+    if (finished) setReading(true);
+  }, [finished]);
   useEffect(() => {
-    if (view.mode === 'idle' || ACTIVE.has(view.status)) setReading(false)
-  }, [view.mode, view.status])
+    if (view.mode === 'idle' || ACTIVE.has(view.status)) setReading(false);
+  }, [view.mode, view.status]);
 
-  const activeStep = view.mode !== 'idle' ? (frame.pausedNodeId ?? frame.activeNodeId) : undefined
-  const followId = activeStep ? (display.phaseOf.get(activeStep) ?? activeStep) : undefined
+  const activeStep = view.mode !== 'idle' ? (frame.pausedNodeId ?? frame.activeNodeId) : undefined;
+  const followId = activeStep ? (display.phaseOf.get(activeStep) ?? activeStep) : undefined;
   useEffect(() => {
-    if (!follow || !followId) return
-    const node = getNode(followId)
-    if (!node) return
-    void setCenter(node.position.x + 115, node.position.y + 60, { zoom: Math.max(getZoom(), 0.75), duration: 300 })
-  }, [follow, followId, getNode, getZoom, setCenter])
+    if (!follow || !followId) return;
+    const node = getNode(followId);
+    if (!node) return;
+    void setCenter(node.position.x + 115, node.position.y + 60, {
+      zoom: Math.max(getZoom(), 0.75),
+      duration: 300,
+    });
+  }, [follow, followId, getNode, getZoom, setCenter]);
 
   // ── editing ────────────────────────────────────────────────────────
 
   const onConnect = useCallback(
     (c: Connection) => {
-      if (!editable || !c.source || !c.target) return
+      if (!editable || !c.source || !c.target) return;
       setEdges((eds) => {
-        const id = uniqueId(`${c.source}-${c.target}-`, eds.map((e) => e.id))
-        const branch = (c.sourceHandle ?? undefined) as Branch | undefined
-        const edge: ScoreEdge = { id, from: c.source, to: c.target, ...(branch ? { branch } : {}) }
-        return addEdge({ ...c, id, type: 'data', data: { edge, carries: [], back: false } }, eds)
-      })
+        const id = uniqueId(
+          `${c.source}-${c.target}-`,
+          eds.map((e) => e.id),
+        );
+        const branch = (c.sourceHandle ?? undefined) as Branch | undefined;
+        const edge: ScoreEdge = { id, from: c.source, to: c.target, ...(branch ? { branch } : {}) };
+        return addEdge({ ...c, id, type: 'data', data: { edge, carries: [], back: false } }, eds);
+      });
     },
     [editable, setEdges],
-  )
+  );
 
   const onDrop = useCallback(
     (e: DragEvent) => {
-      e.preventDefault()
-      const kind = e.dataTransfer.getData('application/symphony-node') as PaletteKind
-      if (!kind || !editable) return
-      const prefix = kind === 'assessor' || kind === 'executor' ? kind : kind
-      setNodes((ns) => [...ns, newNode(kind, uniqueId(prefix, ns.map((n) => n.id)), screenToFlowPosition({ x: e.clientX, y: e.clientY }))])
+      e.preventDefault();
+      const kind = e.dataTransfer.getData('application/symphony-node') as PaletteKind;
+      if (!kind || !editable) return;
+      const prefix = kind === 'assessor' || kind === 'executor' ? kind : kind;
+      setNodes((ns) => [
+        ...ns,
+        newNode(
+          kind,
+          uniqueId(
+            prefix,
+            ns.map((n) => n.id),
+          ),
+          screenToFlowPosition({ x: e.clientX, y: e.clientY }),
+        ),
+      ]);
     },
     [editable, screenToFlowPosition, setNodes],
-  )
+  );
 
-  const updateNode = (node: ScoreNode) => setNodes((ns) => ns.map((n) => (n.id === node.id ? withNode(n, node, meta.state) : n)))
+  const updateNode = (node: ScoreNode) =>
+    setNodes((ns) => ns.map((n) => (n.id === node.id ? withNode(n, node, meta.state) : n)));
   const updateEdge = (edge: ScoreEdge) =>
-    setEdges((es) => es.map((e) => (e.id === edge.id ? { ...e, data: { ...e.data!, edge } } : e)))
+    setEdges((es) => es.map((e) => (e.id === edge.id ? { ...e, data: { ...e.data!, edge } } : e)));
   const deleteSelected = () => {
-    if (!selected) return
-    setNodes((ns) => ns.filter((n) => n.id !== selected))
-    setEdges((es) => es.filter((e) => e.id !== selected && e.source !== selected && e.target !== selected))
-    setSelected(null)
-  }
+    if (!selected) return;
+    setNodes((ns) => ns.filter((n) => n.id !== selected));
+    setEdges((es) =>
+      es.filter((e) => e.id !== selected && e.source !== selected && e.target !== selected),
+    );
+    setSelected(null);
+  };
 
   // ── runs ───────────────────────────────────────────────────────────
 
   const run = async () => {
-    setError(null)
+    setError(null);
     // The offline demo answers the demo's question: blanks take the demo's value there.
     // A real AI uses only what you wrote.
-    const offline = settings.provider === 'scripted'
-    const filled = offline ? { ...demoInputs, ...nonBlank(context) } : context
-    let ctx: Record<string, unknown>
+    const offline = settings.provider === 'scripted';
+    const filled = offline ? { ...demoInputs, ...nonBlank(context) } : context;
+    let ctx: Record<string, unknown>;
     try {
       ctx = Object.fromEntries(
-        meta.state.filter((f) => (filled[f.name] ?? '').trim() !== '').map((f) => [f.name, parseFieldInput(f.type, filled[f.name]!)]),
-      )
+        meta.state
+          .filter((f) => (filled[f.name] ?? '').trim() !== '')
+          .map((f) => [f.name, parseFieldInput(f.type, filled[f.name]!)]),
+      );
     } catch (e) {
-      setError(`Invalid run input: ${(e as Error).message}`)
-      return
+      setError(`Invalid run input: ${(e as Error).message}`);
+      return;
     }
-    const runGoal = goal.trim() || (offline ? demoGoal || meta.description : '')
-    await start({ pattern, goal: runGoal, context: ctx }, breakpoints)
-  }
+    const runGoal = goal.trim() || (offline ? demoGoal || meta.description : '');
+    await start({ pattern, goal: runGoal, context: ctx }, breakpoints);
+  };
 
   const followRun = (runId: string, score?: { goal: string; result?: readonly string[] }) => {
-    unsubscribe.current?.()
+    unsubscribe.current?.();
     // Another run: an error about the last one no longer applies.
-    setError(null)
-    setView(startLive(runId, score?.goal, score?.result))
-    setSelected(null)
-    setTab('ai')
+    setError(null);
+    setView(startLive(runId, score?.goal, score?.result));
+    setSelected(null);
+    setTab('ai');
     unsubscribe.current = subscribeRun(
       runId,
       (m) => setView((v) => (v.runId === runId ? applyMessage(v, m) : v)),
       () => endRun(runId, RUN_GONE),
-    )
-  }
+    );
+  };
 
   /** The server cannot tell us more about this run: end it on screen so nothing waits forever. */
   const endRun = (runId: string, reason: string) => {
-    setView((v) => (v.runId === runId ? endLocally(v, reason) : v))
-  }
+    setView((v) => (v.runId === runId ? endLocally(v, reason) : v));
+  };
 
   /** A request about the open run failed: end it here if the server lost it, else say why. */
   const runRequestFailed = (runId: string, e: unknown) => {
-    if (isRunGone(e)) endRun(runId, RUN_GONE)
-    else setError(errorText(e))
-  }
+    if (isRunGone(e)) endRun(runId, RUN_GONE);
+    else setError(errorText(e));
+  };
 
   /** Send an approval or recovery answer; rejects when it fails, so its card can be sent again. */
   const sendAnswer = (send: (runId: string) => Promise<unknown>) => {
-    const runId = view.runId
-    if (!runId) return
+    const runId = view.runId;
+    if (!runId) return;
     return send(runId).catch((e: unknown) => {
-      runRequestFailed(runId, e)
-      throw e
-    })
-  }
+      runRequestFailed(runId, e);
+      throw e;
+    });
+  };
 
   const start = async (
     what: { pattern: StartRunRequest['pattern']; goal: string; context: Record<string, unknown> },
@@ -540,85 +683,95 @@ export default function Studio() {
         improvisation: settings.improvisation,
         ...(thenPattern && what.pattern.name !== 'maestro' ? { chain: [thenPattern] } : {}),
         ...(Object.keys(features).length ? { features } : {}),
-      })
-      followRun(runId, score)
+      });
+      followRun(runId, score);
     } catch (e) {
-      setError(errorText(e))
+      setError(errorText(e));
     }
-  }
+  };
 
   const ask = async (request: string) => {
-    const item = library.find((l) => l.name === 'maestro')
+    const item = library.find((l) => l.name === 'maestro');
     if (!item) {
-      setError('The maestro pattern is not in the library.')
-      return
+      setError('The maestro pattern is not in the library.');
+      return;
     }
-    setError(null)
-    setNotice(null)
-    loadPattern(item)
-    setGoal('Compose the score for the request')
-    setContext({ request })
-    const { demo: _demo, source: _source, graph: _graph, ...data } = item
-    await start({ pattern: data, goal: 'Compose the score for the request', context: { request } }, new Set())
-  }
+    setError(null);
+    setNotice(null);
+    loadPattern(item);
+    setGoal('Compose the score for the request');
+    setContext({ request });
+    const { demo: _demo, source: _source, graph: _graph, ...data } = item;
+    await start(
+      { pattern: data, goal: 'Compose the score for the request', context: { request } },
+      new Set(),
+    );
+  };
 
   // The maestro handed on its composed score: show it and follow its performance.
-  const metaRef = useRef(meta)
-  metaRef.current = meta
-  const handedOn = view.next
+  const metaRef = useRef(meta);
+  metaRef.current = meta;
+  const handedOn = view.next;
   useEffect(() => {
-    if (!handedOn) return
-    const meta = metaOf(handedOn.pattern)
-    const from = metaRef.current.name
+    if (!handedOn) return;
+    const meta = metaOf(handedOn.pattern);
+    const from = metaRef.current.name;
     if (handedOn.runId) {
-      const childId = handedOn.runId
+      const childId = handedOn.runId;
       void api.run(childId).then(
         (r) => {
-          showGraph(meta, r.graph)
-          setGoal(r.score.goal)
-          setContext(contextStrings(r.score.context as Record<string, unknown>))
+          showGraph(meta, r.graph);
+          setGoal(r.score.goal);
+          setContext(contextStrings(r.score.context as Record<string, unknown>));
           setNotice(
             from === 'maestro'
               ? `♪ The maestro composed '${handedOn.pattern.name}' (complexity ${r.score.complexity}). Now performing it.`
               : `♪ ${from} finished. Now playing '${handedOn.pattern.name}' with what it found.`,
-          )
-          followRun(childId, r.score)
+          );
+          followRun(childId, r.score);
         },
         (e: Error) => setError(errorText(e)),
-      )
+      );
     } else {
-      unsubscribe.current?.()
-      showGraph(meta, patternToGraph(handedOn.pattern))
-      setContext(contextStrings(handedOn.context as Record<string, unknown>))
-      setView(IDLE_VIEW)
-      setTab('node')
-      setNotice(handedOn.error ?? `The maestro composed '${handedOn.pattern.name}'. Fill in its inputs and press Run.`)
+      unsubscribe.current?.();
+      showGraph(meta, patternToGraph(handedOn.pattern));
+      setContext(contextStrings(handedOn.context as Record<string, unknown>));
+      setView(IDLE_VIEW);
+      setTab('node');
+      setNotice(
+        handedOn.error ??
+          `The maestro composed '${handedOn.pattern.name}'. Fill in its inputs and press Run.`,
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- react once per hand-off
-  }, [handedOn])
+  }, [handedOn]);
 
   const control = (action: string, extra?: Record<string, unknown>) => {
-    const runId = view.runId
-    if (!runId) return
+    const runId = view.runId;
+    if (!runId) return;
     void api.control(runId, action, extra).catch((e: unknown) => {
       // Stop must always get you out, even when the server cannot be reached to hear it.
       if (action === 'stop' && isNetworkError(e))
-        endRun(runId, 'Stopped here, but the server could not be reached to stop it. If it is still playing, it is listed under Live runs.')
-      else runRequestFailed(runId, e)
-    })
-  }
+        endRun(
+          runId,
+          'Stopped here, but the server could not be reached to stop it. If it is still playing, it is listed under Live runs.',
+        );
+      else runRequestFailed(runId, e);
+    });
+  };
 
   const changeSettings = (s: RunSettings) => {
-    if (s.stepMode !== settings.stepMode && runActive) control('stepMode', { on: s.stepMode })
+    if (s.stepMode !== settings.stepMode && runActive) control('stepMode', { on: s.stepMode });
     // Mid-run too: the approval waiting now answers itself, and so do the next ones.
-    if (s.autoApprove !== settings.autoApprove && runActive) control('autoApprove', { on: s.autoApprove })
-    setSettings(s)
-  }
+    if (s.autoApprove !== settings.autoApprove && runActive)
+      control('autoApprove', { on: s.autoApprove });
+    setSettings(s);
+  };
 
   /** Resume the open saved run, or fork it from a step; the studio follows the new performance. */
   const continueSaved = async (kind: 'resumed' | 'forked', atStep?: number) => {
-    const file = view.replay?.file
-    if (!file) return
+    const file = view.replay?.file;
+    if (!file) return;
     try {
       const { runId, score } = await api.continueRun({
         file,
@@ -629,68 +782,79 @@ export default function Studio() {
         autoApprove: settings.autoApprove,
         stepMode: settings.stepMode,
         breakpoints: [...breakpoints],
-      })
+      });
       setNotice(
         kind === 'resumed'
           ? `▶ Resuming: recorded steps replayed, the rest played live (${settings.provider}).`
           : `⑂ Forked at step ${atStep}: steps before it kept, the rest played live (${settings.provider}).`,
-      )
-      followRun(runId, score)
+      );
+      followRun(runId, score);
     } catch (e) {
-      setError(errorText(e))
+      setError(errorText(e));
     }
-  }
+  };
 
   /** Open a run the server is playing (started here, in another tab, or by a chain). */
   const openLive = async (runId: string) => {
     try {
-      const r = await api.run(runId)
-      showGraph(scoreMeta(r.score), r.graph)
-      setGoal(r.score.goal)
-      setContext(contextStrings(r.score.context as Record<string, unknown>))
-      setNotice(null)
-      followRun(runId, r.score)
+      const r = await api.run(runId);
+      showGraph(scoreMeta(r.score), r.graph);
+      setGoal(r.score.goal);
+      setContext(contextStrings(r.score.context as Record<string, unknown>));
+      setNotice(null);
+      followRun(runId, r.score);
     } catch (e) {
-      setError(errorText(e))
+      setError(errorText(e));
     }
-  }
+  };
 
   const openSaved = async (file: string) => {
     try {
-      const res = await api.savedFile(file)
-      unsubscribe.current?.()
-      setError(null)
-      showGraph(scoreMeta(res.run.score), res.graph)
-      setGoal(res.run.score.goal)
-      setContext(contextStrings(res.run.score.context as Record<string, unknown>))
-      setView(replayView(res.run, { reproduced: res.reproduced ?? undefined, issues: res.issues, file }))
+      const res = await api.savedFile(file);
+      unsubscribe.current?.();
+      setError(null);
+      showGraph(scoreMeta(res.run.score), res.graph);
+      setGoal(res.run.score.goal);
+      setContext(contextStrings(res.run.score.context as Record<string, unknown>));
+      setView(
+        replayView(res.run, { reproduced: res.reproduced ?? undefined, issues: res.issues, file }),
+      );
       // Long runs take seconds to replay: show the run now, the verdict when it is in.
       if (res.reproduced === null) {
         void api.savedCheck(file).then(
           (c) =>
             setView((v) =>
-              v.replay?.file === file ? { ...v, replay: { ...v.replay, reproduced: c.reproduced, issues: [...v.replay.issues, ...c.issues] } } : v,
+              v.replay?.file === file
+                ? {
+                    ...v,
+                    replay: {
+                      ...v.replay,
+                      reproduced: c.reproduced,
+                      issues: [...v.replay.issues, ...c.issues],
+                    },
+                  }
+                : v,
             ),
           (e: Error) => setError(errorText(e)),
-        )
+        );
       }
-      setTab('state')
+      setTab('state');
     } catch (e) {
-      setError(errorText(e))
+      setError(errorText(e));
     }
-  }
+  };
 
   const deleteSaved = async (file: string) => {
     try {
-      await api.deleteSaved(file)
+      await api.deleteSaved(file);
       // The run on screen is the one deleted: nothing is left to show or resume.
-      if (view.replay?.file === file) setView(IDLE_VIEW)
-      setError(null)
+      if (view.replay?.file === file) setView(IDLE_VIEW);
+      setError(null);
     } catch (e) {
-      setError(errorText(e))
+      setError(errorText(e));
     }
-    refreshSaved()
-  }
+    refreshSaved();
+  };
 
   // ── render ─────────────────────────────────────────────────────────
 
@@ -698,9 +862,20 @@ export default function Studio() {
     view.mode !== 'idle' && !ACTIVE.has(view.status) && view.status !== 'idle' ? (
       <div className={`card result status-${view.status}`} data-testid="run-result">
         <b>{view.performance?.outcome ?? view.status}</b> {view.reason}
-        {view.savedTo && <div className="muted">saved {view.savedTo.split('/.symphony/')[1] ?? view.savedTo}</div>}
+        {view.savedTo && (
+          <div className="muted">saved {view.savedTo.split('/.symphony/')[1] ?? view.savedTo}</div>
+        )}
         {view.replay && (
-          <div className={view.replay.reproduced === undefined ? 'muted' : view.replay.reproduced ? 'ok' : 'issue'} data-testid="replay-check">
+          <div
+            className={
+              view.replay.reproduced === undefined
+                ? 'muted'
+                : view.replay.reproduced
+                  ? 'ok'
+                  : 'issue'
+            }
+            data-testid="replay-check"
+          >
             {view.replay.reproduced === undefined
               ? '⏳ checking that replaying the recorded answers reproduces this run…'
               : view.replay.reproduced
@@ -710,25 +885,36 @@ export default function Studio() {
         )}
         {offline && (
           <div className="issue" data-testid="offline-result">
-            🎭 Offline demo: these are canned answers written for the demo inputs, not an investigation of yours. Choose
-            Copilot under AI and run again.
+            🎭 Offline demo: these are canned answers written for the demo inputs, not an
+            investigation of yours. Choose Copilot under AI and run again.
           </div>
         )}
         {view.performance && view.performance.steps.length > 0 && (
           <div className="muted origin-summary" data-testid="origin-summary">
             played by: {originSummary(view.performance)}
-            {performanceUsage(view.performance).total.calls > 0 && <> · tokens: {formatUsage(performanceUsage(view.performance).total)}</>}
+            {performanceUsage(view.performance).total.calls > 0 && (
+              <> · tokens: {formatUsage(performanceUsage(view.performance).total)}</>
+            )}
           </div>
         )}
         {view.performance?.edits && (
-          <div className={view.performance.edits.kind === 'patch' ? 'issue' : 'muted'} data-testid="edits-result">
+          <div
+            className={view.performance.edits.kind === 'patch' ? 'issue' : 'muted'}
+            data-testid="edits-result"
+          >
             {describeEdits(view.performance.edits)}
           </div>
         )}
         {view.mode === 'replay' && view.replay?.file && (
           <div className="continue-actions">
-            {(view.performance?.outcome === 'in-progress' || view.performance?.outcome === 'cancelled') && (
-              <button type="button" className="primary" onClick={() => void continueSaved('resumed')} title={`Continue live with ${settings.provider}`}>
+            {(view.performance?.outcome === 'in-progress' ||
+              view.performance?.outcome === 'cancelled') && (
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void continueSaved('resumed')}
+                title={`Continue live with ${settings.provider}`}
+              >
                 ▶ Resume
               </button>
             )}
@@ -744,16 +930,19 @@ export default function Studio() {
         )}
         {view.performance?.basedOn && (
           <div className="muted" data-testid="based-on">
-            {view.performance.basedOn.kind} from {view.performance.basedOn.from} after step {view.performance.basedOn.throughStep}
+            {view.performance.basedOn.kind} from {view.performance.basedOn.from} after step{' '}
+            {view.performance.basedOn.throughStep}
           </div>
         )}
         {result && <ResultPreview result={result} onOpen={() => setReading(true)} />}
       </div>
-    ) : null
-  const onScreen = view.mode === 'live' ? live.find((r) => r.id === view.runId) : undefined
+    ) : null;
+  const onScreen = view.mode === 'live' ? live.find((r) => r.id === view.runId) : undefined;
 
   return (
-    <div className={`studio${home ? ' at-home' : ''}${leftOpen ? '' : ' no-left'}${rightOpen ? '' : ' no-right'}`}>
+    <div
+      className={`studio${home ? ' at-home' : ''}${leftOpen ? '' : ' no-left'}${rightOpen ? '' : ' no-right'}`}
+    >
       {reading && result && result.keys.length > 0 && (
         <ResultReader
           result={result}
@@ -778,9 +967,9 @@ export default function Studio() {
         onStep={() => control('step')}
         onStop={() => control('stop')}
         onEdit={() => {
-          unsubscribe.current?.()
-          setView(IDLE_VIEW)
-          setTab('node')
+          unsubscribe.current?.();
+          setView(IDLE_VIEW);
+          setTab('node');
         }}
         timer={onScreen && <RunTimer run={onScreen} history={saved} />}
       />
@@ -793,24 +982,36 @@ export default function Studio() {
         asking={view.mode === 'live' && ACTIVE.has(view.status) && meta.name === 'maestro'}
         onLoad={loadPattern}
         onNew={() => {
-          const start = newNode('start', 'start', { x: 0, y: 0 })
-          const end = newNode('end', 'end', { x: 0, y: 200 })
-          setMeta(BLANK)
-          setNodes([start, end])
-          setEdges([{ id: 'start-end', source: 'start', target: 'end', type: 'data', data: { edge: { id: 'start-end', from: 'start', to: 'end' }, carries: [], back: false } }])
-          setGoal('')
-          setContext({})
-          setView(IDLE_VIEW)
-          setHome(false)
+          const start = newNode('start', 'start', { x: 0, y: 0 });
+          const end = newNode('end', 'end', { x: 0, y: 200 });
+          setMeta(BLANK);
+          setNodes([start, end]);
+          setEdges([
+            {
+              id: 'start-end',
+              source: 'start',
+              target: 'end',
+              type: 'data',
+              data: {
+                edge: { id: 'start-end', from: 'start', to: 'end' },
+                carries: [],
+                back: false,
+              },
+            },
+          ]);
+          setGoal('');
+          setContext({});
+          setView(IDLE_VIEW);
+          setHome(false);
         }}
         home={home}
         onHome={() => {
           // The run on screen keeps playing on the server; it stays under Running now.
-          unsubscribe.current?.()
-          setView(IDLE_VIEW)
-          setSelected(null)
-          setHome(true)
-          history.replaceState(null, '', location.pathname + location.search)
+          unsubscribe.current?.();
+          setView(IDLE_VIEW);
+          setSelected(null);
+          setHome(true);
+          history.replaceState(null, '', location.pathname + location.search);
         }}
         onOpenSaved={(f) => void openSaved(f)}
         onDeleteSaved={deleteSaved}
@@ -824,23 +1025,30 @@ export default function Studio() {
           void api
             .prune(true)
             .then(async (plan) => {
-              const n = plan.deleted.length + plan.compacted.length + plan.scratch.length
-              if (n === 0) return setNotice('Nothing to clean up: demo runs are kept 7 days, real runs 30 days before compacting.')
-              const mb = (plan.freed / 1e6).toFixed(1)
+              const n = plan.deleted.length + plan.compacted.length + plan.scratch.length;
+              if (n === 0)
+                return setNotice(
+                  'Nothing to clean up: demo runs are kept 7 days, real runs 30 days before compacting.',
+                );
+              const mb = (plan.freed / 1e6).toFixed(1);
               const ok = window.confirm(
                 `Delete ${plan.deleted.length} old demo run(s), compact ${plan.compacted.length} old run(s) (they still replay; the AI's raw text is dropped) and clear ${plan.scratch.length} scratch folder(s)? Frees about ${mb} MB.`,
-              )
-              if (!ok) return
-              const done = await api.prune(false)
-              setNotice(`Cleaned up ${done.deleted.length + done.compacted.length + done.scratch.length} item(s), ${(done.freed / 1e6).toFixed(1)} MB freed.`)
-              refreshSaved()
+              );
+              if (!ok) return;
+              const done = await api.prune(false);
+              setNotice(
+                `Cleaned up ${done.deleted.length + done.compacted.length + done.scratch.length} item(s), ${(done.freed / 1e6).toFixed(1)} MB freed.`,
+              );
+              refreshSaved();
             })
             .catch((e: Error) => setError(`Clean up failed: ${errorText(e)}`))
         }
         onAsk={(r) => void ask(r)}
         features={featureRows(meta, library, features)}
         onFeature={(row, value) => setFeatures((was) => chooseFeature(was, row, value))}
-        onResetFeatures={() => setFeatures((was) => resetFeatures(was, featureRows(meta, library, was)))}
+        onResetFeatures={() =>
+          setFeatures((was) => resetFeatures(was, featureRows(meta, library, was)))
+        }
       />
       {home && (
         <Home
@@ -851,13 +1059,20 @@ export default function Studio() {
         >
           {serverDown && (
             <div className="card issue warning" role="status" data-testid="server-down">
-              ⚠ Can't reach the studio server (stopped, or restarting after a code change). Reconnecting…
+              ⚠ Can't reach the studio server (stopped, or restarting after a code change).
+              Reconnecting…
             </div>
           )}
           {error && (
             <div className="card issue dismissable" role="alert">
               <span>{error}</span>
-              <button type="button" className="link dismiss" onClick={() => setError(null)} aria-label="dismiss" title="Dismiss">
+              <button
+                type="button"
+                className="link dismiss"
+                onClick={() => setError(null)}
+                aria-label="dismiss"
+                title="Dismiss"
+              >
                 ✕
               </button>
             </div>
@@ -872,20 +1087,20 @@ export default function Studio() {
           onEdgesChange={editable && !display.collapsed ? onEdgesChange : undefined}
           onConnect={onConnect}
           onNodeClick={(_, n) => {
-            if (n.type === 'frame') return
-            if (n.type === 'phase') return openPhase(n.id)
+            if (n.type === 'frame') return;
+            if (n.type === 'phase') return openPhase(n.id);
             // A sub-agent: its output is its step's, take by take.
             if (n.type === 'subagent') {
-              setSelected(String((n.data as { parent: string }).parent))
-              setTab('ai')
-              return
+              setSelected(String((n.data as { parent: string }).parent));
+              setTab('ai');
+              return;
             }
-            setSelected(n.id)
-            setTab(editable ? 'node' : 'ai')
+            setSelected(n.id);
+            setTab(editable ? 'node' : 'ai');
           }}
           onEdgeClick={(_, e) => {
-            setSelected(e.id)
-            setTab('node')
+            setSelected(e.id);
+            setTab('node');
           }}
           onPaneClick={() => setSelected(null)}
           nodeTypes={nodeTypes}
@@ -900,7 +1115,12 @@ export default function Studio() {
         >
           {phaseIds.length > 0 && (
             <Panel position="top-left">
-              <button type="button" className="phase-switch" onClick={togglePhases} data-testid="toggle-phases">
+              <button
+                type="button"
+                className="phase-switch"
+                onClick={togglePhases}
+                data-testid="toggle-phases"
+              >
                 {allOpen ? '▣ Close all phases' : '⊕ Open all phases'}
               </button>
             </Panel>
@@ -923,23 +1143,36 @@ export default function Studio() {
         <SideToggle side="right" open={rightOpen} name="inspector" onToggle={toggleRight} />
         {serverDown && (
           <div className="card issue warning" role="status" data-testid="server-down">
-            ⚠ Can't reach the studio server (stopped, or restarting after a code change). Reconnecting…
+            ⚠ Can't reach the studio server (stopped, or restarting after a code change).
+            Reconnecting…
           </div>
         )}
-        {settings.provider === 'copilot' && <VisitorSignIn onChange={(signedIn) => signedIn && setError(null)} />}
+        {settings.provider === 'copilot' && (
+          <VisitorSignIn onChange={(signedIn) => signedIn && setError(null)} />
+        )}
         {error && (
           <div className="card issue dismissable" role="alert">
             <span>{error}</span>
-            <button type="button" className="link dismiss" onClick={() => setError(null)} aria-label="dismiss" title="Dismiss">
+            <button
+              type="button"
+              className="link dismiss"
+              onClick={() => setError(null)}
+              aria-label="dismiss"
+              title="Dismiss"
+            >
               ✕
             </button>
           </div>
         )}
         {ignoredInputs.length > 0 && (
           <div className="card issue" data-testid="demo-warning">
-            🎭 <b>Scripted (offline demo)</b> plays canned answers written for the demo inputs, so it will ignore your{' '}
-            {ignoredInputs.join(', ')}.
-            <button type="button" className="primary" onClick={() => changeSettings({ ...settings, provider: 'copilot' })}>
+            🎭 <b>Scripted (offline demo)</b> plays canned answers written for the demo inputs, so
+            it will ignore your {ignoredInputs.join(', ')}.
+            <button
+              type="button"
+              className="primary"
+              onClick={() => changeSettings({ ...settings, provider: 'copilot' })}
+            >
               Use Copilot
             </button>
           </div>
@@ -947,20 +1180,41 @@ export default function Studio() {
         {notice && (
           <div className="card notice" data-testid="notice">
             {notice}
-            <button type="button" className="link" onClick={() => setNotice(null)} aria-label="dismiss notice">
+            <button
+              type="button"
+              className="link"
+              onClick={() => setNotice(null)}
+              aria-label="dismiss notice"
+            >
               ✕
             </button>
           </div>
         )}
-        <GateCard view={view} onResume={() => control('resume')} onStep={() => control('step')} onStop={() => control('stop')} />
+        <GateCard
+          view={view}
+          onResume={() => control('resume')}
+          onStep={() => control('step')}
+          onStop={() => control('stop')}
+        />
         <OvertimeCard view={view} onAnswer={(action) => control(action)} />
         <ApprovalCard view={view} onAnswer={(a) => sendAnswer((id) => api.approve(id, a))} />
         <RecoveryCard view={view} onAnswer={(a) => sendAnswer((id) => api.recover(id, a))} />
         {resultBanner}
         <nav className="tabs">
           {(['node', 'ai', 'state'] as const).map((t) => (
-            <button type="button" key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-              {t === 'node' ? (selectedNode || selectedEdge ? 'Selection' : 'Pattern') : t === 'ai' ? 'AI output' : 'State'}
+            <button
+              type="button"
+              key={t}
+              className={tab === t ? 'on' : ''}
+              onClick={() => setTab(t)}
+            >
+              {t === 'node'
+                ? selectedNode || selectedEdge
+                  ? 'Selection'
+                  : 'Pattern'
+                : t === 'ai'
+                  ? 'AI output'
+                  : 'State'}
             </button>
           ))}
         </nav>
@@ -974,7 +1228,13 @@ export default function Studio() {
                       {m}
                     </div>
                   ))}
-                <NodeEditor node={selectedNode} state={meta.state} editable={editable} onChange={updateNode} onDelete={deleteSelected} />
+                <NodeEditor
+                  node={selectedNode}
+                  state={meta.state}
+                  editable={editable}
+                  onChange={updateNode}
+                  onDelete={deleteSelected}
+                />
                 {!editable && <NodeInput node={selectedNode} frame={frame} />}
               </>
             ) : selectedEdge ? (
@@ -985,7 +1245,12 @@ export default function Studio() {
                       {m}
                     </div>
                   ))}
-                <EdgeEditor edge={selectedEdge} editable={editable} onChange={updateEdge} onDelete={deleteSelected} />
+                <EdgeEditor
+                  edge={selectedEdge}
+                  editable={editable}
+                  onChange={updateEdge}
+                  onDelete={deleteSelected}
+                />
               </>
             ) : (
               <PatternPanel
@@ -1000,15 +1265,17 @@ export default function Studio() {
                 onMeta={setMeta}
                 onGoal={setGoal}
                 onContext={setContext}
-                thenOptions={library.map((l) => l.name).filter((n) => n !== meta.name && n !== 'maestro' && n !== 'hangman')}
+                thenOptions={library
+                  .map((l) => l.name)
+                  .filter((n) => n !== meta.name && n !== 'maestro' && n !== 'hangman')}
                 then={thenPattern}
                 onThen={setThenPattern}
                 onSelect={setSelected}
                 onExport={() => api.typescript(pattern).then((r) => r.source)}
                 onSave={() =>
                   api.savePattern(pattern).then((r) => {
-                    void api.patterns(extrasRef.current).then(setLibrary)
-                    return r.file
+                    void api.patterns(extrasRef.current).then(setLibrary);
+                    return r.file;
                   })
                 }
               />
@@ -1035,5 +1302,5 @@ export default function Studio() {
         onFollow={setFollow}
       />
     </div>
-  )
+  );
 }
