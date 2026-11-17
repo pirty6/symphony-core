@@ -96,8 +96,11 @@ describe('buildAgentPrompt', () => {
     expect(b.slice(0, cut)).toBe(a.slice(0, cut));
     // Rules, output keys and the step's instructions are all in that shared part.
     expect(a).toContain('Your step serves this goal: stay on it.');
-    for (const part of ['## Rules', 'findings (string[])', '## Your step', '## Overall goal'])
-      expect(a.indexOf(part)).toBeLessThan(cut);
+    const shared = a.slice(0, cut);
+    expect(shared).toContain('## Rules');
+    expect(shared).toContain('findings (string[])');
+    expect(shared).toContain('## Your step');
+    expect(shared).toContain('## Overall goal');
   });
 
   it('tells a sandbox step it works in a throwaway copy it may change', () => {
@@ -201,7 +204,7 @@ describe('buildAgentPrompt says each thing once', () => {
 });
 
 describe('isReadOnlyCommand', () => {
-  it.each([
+  const readOnlyLines = [
     'cd /repo && git --no-pager diff --stat HEAD~1..HEAD && echo "---" && git --no-pager diff HEAD~1..HEAD',
     'git -C /repo --no-pager log -5 --oneline | head -20',
     'grep -rn "foo; bar" src | wc -l',
@@ -239,11 +242,8 @@ describe('isReadOnlyCommand', () => {
     'az rest --url https://dev.azure.com/o/_apis/projects',
     'az account show --query name -o tsv',
     'az graph query -q "Resources | take 5"',
-  ])('allows %s', (cmd) => {
-    expect(isReadOnlyCommand(cmd)).toBe(true);
-  });
-
-  it.each([
+  ];
+  const writingLines = [
     'rm -rf dist',
     'git commit -m x',
     'git branch new-branch',
@@ -304,8 +304,14 @@ describe('isReadOnlyCommand', () => {
     'az pipelines runs artifact download --run-id 1 --path out',
     'az login',
     'az extension add --name kusto',
-  ])('refuses %s', (cmd) => {
-    expect(isReadOnlyCommand(cmd)).toBe(false);
+  ];
+
+  it('allows every command line that only reads', () => {
+    expect(readOnlyLines.filter((cmd) => !isReadOnlyCommand(cmd))).toEqual([]);
+  });
+
+  it('refuses every command line that could write or run code', () => {
+    expect(writingLines.filter((cmd) => isReadOnlyCommand(cmd))).toEqual([]);
   });
 
   it('lets assessors run git diff even when the CLI marks it as a write', () => {
@@ -384,27 +390,27 @@ git -C .. log --oneline -1 -- . ; git --no-pager -C /w check-ignore -v .symphony
   });
 
   it('allows the read-only git subcommands that were missing', () => {
-    for (const ok of [
+    const reads = [
       'git check-ignore -v dist',
       'git check-attr -a src/a.ts',
       'git ls-remote origin',
       'git config --get remote.origin.url',
       'git config --list',
-    ])
-      expect(readOnlyRefusal(ok), ok).toBeUndefined();
+    ];
+    expect(reads.filter((ok) => readOnlyRefusal(ok) !== undefined)).toEqual([]);
     expect(readOnlyRefusal('git config user.name x')).toBe(
       '`git config` (only with --get, --get-all, --get-regexp or --list)',
     );
   });
 
   it('lets awk read, but not run commands or write files', () => {
-    for (const ok of [
+    const reads = [
       "awk '{print $1}' src/a.ts",
       "awk 'NR>=10 && NR<=40' src/a.ts",
       'awk -F: \'$3 > 5 || $2 == "x" {n++} END {print n}\' f',
       "git log --oneline | awk '{print $1}'",
-    ])
-      expect(readOnlyRefusal(ok), ok).toBeUndefined();
+    ];
+    expect(reads.filter((ok) => readOnlyRefusal(ok) !== undefined)).toEqual([]);
     expect(readOnlyRefusal('awk \'BEGIN{system("rm x")}\'')).toMatch(/runs commands/);
     expect(readOnlyRefusal('awk \'{print | "sh"}\' f')).toMatch(/pipe/);
     expect(readOnlyRefusal('awk \'{"date" | getline d}\' f')).toMatch(/runs commands|pipe/);
