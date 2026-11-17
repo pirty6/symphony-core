@@ -47,7 +47,8 @@ GET) let research read pipelines and branch policies; nothing that writes is all
    every available source whether it can hold evidence (a reason for each skip), chooses
    how many sub-agents to use (1-6), and may split the question into independent parts. The
    web and experiments are always used when they are on offer: a plan that skips either is
-   sent back.
+   sent back. A question about how good, risky or ready some code is splits along the code
+   pillars that bear on it, one sub-question each, tagged (`S3 [SECURITY] …`).
 2. **Hypotheses.** Competing answers before any evidence, each with what would confirm or
    refute it. The engine keeps a tally per hypothesis (`hypothesisStatus`: findings for and
    against, *untested*, *challenged*) after every batch, and later steps steer by it.
@@ -97,7 +98,8 @@ GET) let research read pipelines and branch policies; nothing that writes is all
    allowed experiments. Earlier Symphony runs (`prior-runs`) are searched through their
    one-line `.summary` files first, then one `jq` path of the few records needed.
 7. **Answer.** Cited by finding id, one answer per sub-question (or OPEN), one ruling per
-   hypothesis. The engine appends a coverage section: files not triaged, pages, experiments,
+   hypothesis, and one rating per tagged pillar (`[SECURITY] SOUND|AT RISK|POOR — why [F3]`),
+   shown under **Pillars**. The engine appends a coverage section: files not triaged, pages, experiments,
    what could not be read, sources searched and skipped, findings taken on trust.
 8. **Challenge.** The debate above; REAL objections reopen research (within the run-wide
    research budget), at most `maxDebateRounds` (3) rounds. After the first, another round plays
@@ -245,7 +247,7 @@ hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
    known to the diagnosis and the triage. The command that ran is kept: every later test run
    uses it. A detected `npm test` still reads the test script on each run, so an edit to
    package.json is flagged (`checkFiles`) for the reviewer.
-2. **Recall, hypotheses, evidence.** Research and the debate read the findings brief; the
+2. **Hypotheses, evidence.** Research and the debate read the findings brief; the
    diagnosis reads the findings in full.
 3. **Diagnose** a root cause from the cited evidence; the challenge phase attacks it. Research
    and the diagnosis are given the usual causes of intermittent failures. An intermittent
@@ -260,6 +262,10 @@ hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
    - **Progress.** An edit that changes nothing, returns to the starting workspace, or
      repeats any earlier attempt is not progress.
    - **Lint.** Lint runs only once the tests pass.
+   - **Test rules.** Once the checks pass, the engine reads every changed test file and fails
+     the attempt, like a lint error, on an `if`, `switch`, loop, `try/finally`, sleep or real
+     clock inside a test body, or a `test.each` (core/lensscan.ts). The break is in
+     `lintOutput` for the next edit.
    - **Wrong diagnosis.** A failure triaged as a wrong diagnosis goes back to research for a
      new diagnosis (bounded).
    - **Environment problem.** The same patch is tested once more; if it still fails, the run
@@ -268,7 +274,9 @@ hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
    - **No hiding.** The edit may not hide a failure (retries, skips, longer timeouts, wider
      slack, fewer workers) unless the plan shows the old limit was wrong for measured work.
    - **Budget.** `maxEdits` (8) bounds the tested edits across diagnoses and review rounds.
-8. **Stability gate** (opt-in, below), then **PR review**.
+8. **Stability gate** (opt-in, below), then the **pillar lenses** (as in review) and the
+   **PR review**, which must carry each untested critical unit as a BLOCKING test comment, or say
+   how the change now tests it.
    - **Agreement.** The decision must agree with the comments: APPROVE has no BLOCKING
      comment, REQUEST_CHANGES has one. Earlier comments now addressed are RESOLVED.
    - **Weakened checks.** Changed files that configure the checks (`checkFiles`) are flagged,
@@ -502,12 +510,14 @@ evidence.
 
 1. **Baseline** tests, then **competing approaches** (the hypotheses phase) and evidence
    from the code.
-2. **Design** with acceptance criteria; the challenge phase attacks it; **👤 approve** it.
+2. **Design** with acceptance criteria and the **critical path**: each unit the edit adds or
+   changes, its quadrant (DOMAIN, CONTROLLER, TRIVIAL, OVERCOMPLICATED) and the test that proves
+   it (fix's diagnosis names it too); the challenge phase attacks it; **👤 approve** it.
 3. **Tests first.** Tests written before the code must fail, for the right reason; then they
    are locked, and the engine checks that edits leave them untouched.
 4. **Edit and verify** against the locked tests.
-5. **PR review**, then an **acceptance review**: each criterion met, with evidence, or the
-   edit goes back (bounded).
+5. **Pillar lenses** and the **PR review** (as in fix), then an **acceptance review**: each
+   criterion met, with evidence, or the edit goes back (bounded).
 
 <!-- flow:implement -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
@@ -702,10 +712,18 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    One verdict per entry, by id and in order: an omitted or doubled entry is sent back. Each
    adverse verdict (PARTIAL, NOT MET, WEAK, UNTESTED, ABSENT, unrelated) must also be a finding,
    which is checked and merged like the others.
-7. **Settle open points** (investigate's gap research, shared): a claim the whole-change step
+7. **Pillar lenses**, once: Security, Clean code, Tests, Performance and memory, Determinism
+   (the steps above are its Correctness). The engine scans the diff and the changed test files
+   (`pillars.scan`) and briefs each lens with its rulebook (`src/core/pillars.ts`) and its leads;
+   one reviewer per lens, in parallel, judges only that pillar. Each must say what it examined
+   (`SECURITY: NONE — …`). The Tests lens sorts every changed unit of production code into a
+   quadrant (`U1 path:line — DOMAIN — why`) and judges its tests
+   (`U1 MEANINGFUL|WEAK|UNTESTED|SPLIT|NONE NEEDED`); a WEAK or UNTESTED one is a TEST finding
+   and an adverse verdict in the report.
+8. **Settle open points** (investigate's gap research, shared): a claim the whole-change step
    marked UNCLEAR is researched (`maxChaseRounds`, 1), every fact cited and checked into
    `evidence`, and the whole change is judged again with it.
-8. **Challenge the review** (investigate's debate, shaped for findings):
+9. **Challenge the review** (investigate's debate, shaped for findings):
    - a **second reviewer** (complexity 4, once; another model family) reviews the whole change from
      scratch; what it finds is checked and merged, a repeat of a finding left out;
    - the **skeptic** (from complexity 2, even with no finding: a missed issue is the costliest
@@ -722,7 +740,7 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    judged again, bounded by `maxDebateRounds` (3), and after the first round only when research
    found new evidence; one raised again word for word is reported as not settled instead of
    researched again.
-9. **Review comments** (when there are issues): one per finding, in order, in parts of three,
+10. **Review comments** (when there are issues): one per finding, in order, in parts of three,
    each checked to have every part, so that someone new to the code can understand it and act on
    it:
    - **What is wrong**, in plain words, at path:line;
@@ -735,7 +753,7 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
 
    Examples are worked out from the code, not run: a review step has no interpreter and no
    browser, so it shows no screenshots.
-10. **Report**: a short summary citing the findings by id (the comments hold the detail), what is
+11. **Report**: a short summary citing the findings by id (the comments hold the detail), what is
    not settled, and what was not reviewed or not checked. It ends:
    - **Issues reported** (success), or **Issues reported, not all settled** (partial) when
      something is open: an UNCLEAR claim, a context citation that failed, a step that failed (the
