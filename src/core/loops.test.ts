@@ -29,7 +29,9 @@ describe('cycles', () => {
 
 describe('every loop is bounded (a warning when not)', () => {
   it('the whole library passes', () => {
-    for (const p of PATTERNS) expect(loopWarnings(p), p.name).toEqual([]);
+    expect(PATTERNS.flatMap((p) => loopWarnings(p).map((w) => `${p.name}: ${w.message}`))).toEqual(
+      [],
+    );
   });
 
   it("flags hangman's pick → pick self-loop without its cap", () => {

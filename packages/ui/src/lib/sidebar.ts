@@ -1,23 +1,23 @@
-import { useState } from 'react'
+import { useState } from 'react';
 
-const KEY = 'symphony.sidebar.'
+const KEY = 'symphony.sidebar.';
 
 /** Whether a sidebar was left open (open until you fold it), remembered across reloads. */
 export function useSidebar(side: 'left' | 'right'): [boolean, () => void] {
   const [open, setOpen] = useState(() => {
     try {
-      return localStorage.getItem(KEY + side) !== '0'
+      return localStorage.getItem(KEY + side) !== '0';
     } catch {
-      return true
+      return true;
     }
-  })
+  });
   const toggle = () => {
-    setOpen(!open)
+    setOpen(!open);
     try {
-      localStorage.setItem(KEY + side, open ? '0' : '1')
+      localStorage.setItem(KEY + side, open ? '0' : '1');
     } catch {
       // Private mode: it still folds, it just is not remembered.
     }
-  }
-  return [open, toggle]
+  };
+  return [open, toggle];
 }

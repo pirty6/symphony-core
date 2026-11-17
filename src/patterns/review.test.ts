@@ -58,6 +58,11 @@ const withChangeFile = (more: string[]) => [
   ...more,
 ];
 
+/** The parts a text leaves out. */
+const missingFrom = (text: string, parts: readonly string[]) =>
+  parts.filter((part) => !text.includes(part));
+const nodeOf = (nodeId: string) => review.nodes.find((n) => n.id === nodeId);
+
 describe('review', () => {
   it("never runs tests or lint (the change's CI does), and gives the reviewers the changed tests", () => {
     const { ran, state, end } = play({
@@ -265,16 +270,22 @@ describe('review: a version for people and a brief for an AI agent', () => {
   it('the brief has the findings, what not to rely on, the coverage and what to do; people come first', () => {
     const { state } = play();
     const brief = String(state.handoff);
-    for (const h of [
-      '## Task',
-      '## Instructions for the next agent',
-      '## Findings (checked against the code)',
-      '## Do not rely on',
-      '## Coverage',
-      '## The review as written',
-    ])
-      expect(brief).toContain(h);
-    for (const f of state.findings as string[]) expect(brief).toContain(`- ${f}`);
+    expect(
+      missingFrom(brief, [
+        '## Task',
+        '## Instructions for the next agent',
+        '## Findings (checked against the code)',
+        '## Do not rely on',
+        '## Coverage',
+        '## The review as written',
+      ]),
+    ).toEqual([]);
+    expect(
+      missingFrom(
+        brief,
+        (state.findings as string[]).map((f) => `- ${f}`),
+      ),
+    ).toEqual([]);
     expect(review.result).toEqual(['summary', 'handoff']);
     const off = play({}, { plainSummary: false });
     expect(off.ran).not.toContain('explain');
@@ -608,9 +619,29 @@ describe('review: the skeptic (S11)', () => {
       agents: { wholeChange: soundWhole, skeptic: disposing('DROP') },
     });
     expect(state.findings).toEqual([]);
-    expect(state.openItems).toContain('The skeptic dismissed every finding: check the dismissals');
+    expect(state.openItems).toContain(
+      'The skeptic dismissed every finding, a HIGH or MEDIUM one among them: check the dismissals',
+    );
     expect(end).toBe('openQuestions');
     expect(r.state.outcome).toBe('partial');
+  });
+
+  it('dropping only LOW nitpicks on a sound change leaves it "Looks good"', () => {
+    const nitpick: Agent = (s) => ({
+      updates: {
+        newFindings: [
+          'src/core/engine.ts:120 — [CLEAN] [LOW] [N1] a shorter name would read better `attempts += 1`',
+        ],
+        reviewed: (s.files as string[]) ?? [],
+        attestations: attest(['CLEAN']),
+      },
+      verdict: v,
+    });
+    const { end, state } = play({
+      agents: { analyze: nitpick, wholeChange: soundWhole, skeptic: disposing('DROP') },
+    });
+    expect(state.dismissed).toHaveLength(1);
+    expect(end).toBe('clean');
   });
 
   it('a DROP must quote the code, and every finding gets a disposition, in order', () => {
@@ -649,14 +680,14 @@ describe('review: the skeptic (S11)', () => {
 
 describe('review: intent', () => {
   it('intent and the engine scan reach the steps that judge', () => {
-    for (const step of ['gatherContext', 'analyze', 'wholeChange'])
-      expect(review.nodes.find((n) => n.id === step)).toMatchObject({
-        reads: expect.arrayContaining(['intent']),
-      });
-    for (const step of ['analyze', 'wholeChange'])
-      expect(review.nodes.find((n) => n.id === step)).toMatchObject({
-        reads: expect.arrayContaining(['smellHints', 'maskingFlags', 'context']),
-      });
+    const readsIntent = { reads: expect.arrayContaining(['intent']) };
+    expect(['gatherContext', 'analyze', 'wholeChange'].map(nodeOf)).toMatchObject([
+      readsIntent,
+      readsIntent,
+      readsIntent,
+    ]);
+    const readsScan = { reads: expect.arrayContaining(['smellHints', 'maskingFlags', 'context']) };
+    expect(['analyze', 'wholeChange'].map(nodeOf)).toMatchObject([readsScan, readsScan]);
     const { state } = play(
       {
         tools: {
@@ -1096,5 +1127,66 @@ describe('finding ids across rounds (seen live)', () => {
       'F1 src/core/engine.ts:120',
       'F3 src/core/engine.ts:121',
     ]);
+  });
+});
+
+/** Why the lens step's answers were sent back. */
+const lensRejections = (r: ReturnType<typeof play>['r']) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'lens' ? e.errors : [],
+  );
+
+describe('review through the pillar lenses', () => {
+  /** The Tests lens answers with these units, verdicts and findings; the others find nothing. */
+  const testsLens =
+    (units: string[], verdicts: string[], findings: string[] = []): Agent =>
+    (s) => {
+      const pillar = String((s.lenses as string[])[0]).split(' ')[0];
+      const tests = pillar === 'TESTS';
+      return {
+        updates: {
+          lensFindings: tests ? findings : [],
+          lensNotes: [`${pillar}: NONE — read the change`],
+          criticalUnits: tests ? units : [],
+          unitVerdicts: tests ? verdicts : [],
+        },
+        verdict: v,
+      };
+    };
+
+  it('plays after the whole change, and an untested critical unit is a finding and an adverse verdict', () => {
+    const unit =
+      'U1 src/core/engine.ts:120 — DOMAIN — counts the attempts that decide when a step gives up';
+    const finding =
+      'src/core/engine.ts:120 — [TEST] [MEDIUM] [UT-1.1] the retry limit has no test `attempts += 1`';
+    const { ran, state } = play({
+      agents: {
+        lens: testsLens([unit], ['U1 UNTESTED — no test runs a step past its retries'], [finding]),
+      },
+    });
+    expect(ran.indexOf('lens')).toBeGreaterThan(ran.indexOf('mergeWhole'));
+    expect(state.findings).toContainEqual(expect.stringMatching(/\[TEST\] \[MEDIUM\] \[UT-1\.1\]/));
+    expect(state.adverseVerdicts).toContain('U1 UNTESTED — no test runs a step past its retries');
+  });
+
+  it('rejects a Tests lens that leaves a critical unit without a verdict', () => {
+    const unit = 'U1 src/core/engine.ts:120 — DOMAIN — counts the attempts';
+    const { r } = play({ agents: { lens: testsLens([unit], []) } });
+    expect(lensRejections(r).join()).toMatch(/one unitVerdicts entry per criticalUnits entry/);
+  });
+
+  it('rejects an untested unit that is not also a TEST finding', () => {
+    const unit = 'U1 src/core/engine.ts:120 — DOMAIN — counts the attempts';
+    const { r } = play({ agents: { lens: testsLens([unit], ['U1 UNTESTED — none']) } });
+    expect(lensRejections(r).join()).toMatch(/each WEAK or UNTESTED unit as a \[TEST\] finding/);
+  });
+
+  it('rejects a lens that does not say what it examined', () => {
+    const silent: Agent = () => ({
+      updates: { lensFindings: [], lensNotes: [], criticalUnits: [], unitVerdicts: [] },
+      verdict: v,
+    });
+    const { r } = play({ agents: { lens: silent } });
+    expect(lensRejections(r).join()).toMatch(/one lensNotes entry per lens/);
   });
 });

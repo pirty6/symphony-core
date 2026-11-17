@@ -47,7 +47,8 @@ GET) let research read pipelines and branch policies; nothing that writes is all
    every available source whether it can hold evidence (a reason for each skip), chooses
    how many sub-agents to use (1-6), and may split the question into independent parts. The
    web and experiments are always used when they are on offer: a plan that skips either is
-   sent back.
+   sent back. A question about how good, risky or ready some code is splits along the code
+   pillars that bear on it, one sub-question each, tagged (`S3 [SECURITY] …`).
 2. **Hypotheses.** Competing answers before any evidence, each with what would confirm or
    refute it. The engine keeps a tally per hypothesis (`hypothesisStatus`: findings for and
    against, *untested*, *challenged*) after every batch, and later steps steer by it.
@@ -97,7 +98,8 @@ GET) let research read pipelines and branch policies; nothing that writes is all
    allowed experiments. Earlier Symphony runs (`prior-runs`) are searched through their
    one-line `.summary` files first, then one `jq` path of the few records needed.
 7. **Answer.** Cited by finding id, one answer per sub-question (or OPEN), one ruling per
-   hypothesis. The engine appends a coverage section: files not triaged, pages, experiments,
+   hypothesis, and one rating per tagged pillar (`[SECURITY] SOUND|AT RISK|POOR — why [F3]`),
+   shown under **Pillars**. The engine appends a coverage section: files not triaged, pages, experiments,
    what could not be read, sources searched and skipped, findings taken on trust.
 8. **Challenge.** The debate above; REAL objections reopen research (within the run-wide
    research budget), at most `maxDebateRounds` (3) rounds. After the first, another round plays
@@ -245,7 +247,7 @@ hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
    known to the diagnosis and the triage. The command that ran is kept: every later test run
    uses it. A detected `npm test` still reads the test script on each run, so an edit to
    package.json is flagged (`checkFiles`) for the reviewer.
-2. **Recall, hypotheses, evidence.** Research and the debate read the findings brief; the
+2. **Hypotheses, evidence.** Research and the debate read the findings brief; the
    diagnosis reads the findings in full.
 3. **Diagnose** a root cause from the cited evidence; the challenge phase attacks it. Research
    and the diagnosis are given the usual causes of intermittent failures. An intermittent
@@ -260,6 +262,10 @@ hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
    - **Progress.** An edit that changes nothing, returns to the starting workspace, or
      repeats any earlier attempt is not progress.
    - **Lint.** Lint runs only once the tests pass.
+   - **Test rules.** Once the checks pass, the engine reads every changed test file and fails
+     the attempt, like a lint error, on an `if`, `switch`, loop, `try/finally`, sleep or real
+     clock inside a test body, or a `test.each` (core/lensscan.ts). The break is in
+     `lintOutput` for the next edit.
    - **Wrong diagnosis.** A failure triaged as a wrong diagnosis goes back to research for a
      new diagnosis (bounded).
    - **Environment problem.** The same patch is tested once more; if it still fails, the run
@@ -268,7 +274,9 @@ hypothesis, `hypothesesPerResearch`), instead of triage and deep reads.
    - **No hiding.** The edit may not hide a failure (retries, skips, longer timeouts, wider
      slack, fewer workers) unless the plan shows the old limit was wrong for measured work.
    - **Budget.** `maxEdits` (8) bounds the tested edits across diagnoses and review rounds.
-8. **Stability gate** (opt-in, below), then **PR review**.
+8. **Stability gate** (opt-in, below), then the **pillar lenses** (as in review) and the
+   **PR review**, which must carry each untested critical unit as a BLOCKING test comment, or say
+   how the change now tests it.
    - **Agreement.** The decision must agree with the comments: APPROVE has no BLOCKING
      comment, REQUEST_CHANGES has one. Earlier comments now addressed are RESOLVED.
    - **Weakened checks.** Changed files that configure the checks (`checkFiles`) are flagged,
@@ -347,6 +355,9 @@ flowchart TD
   n_approve{{"👤 Approve plan"}}
   n_reproduceFirstOn{"Reproduce first?"}
   n_reproduced{"Tests locked?"}
+  n_testRulesDue{"Check the test rules?"}
+  n_scanTests[/"🔧 Scan the changed tests"/]
+  n_testRules["Tests keep the rules?"]
   n_reviewStopped(["Stopped at review · partial"])
   n_fixed(["Fixed · success"])
   n_uncertified(["Not certified · partial"])
@@ -371,7 +382,7 @@ flowchart TD
   n_testFirstPhase[["Tests first · 19 steps"]]
   n_editPhase[["Edit and verify · 20 steps"]]
   n_stabilityPhase[["Stability gate · 14 steps"]]
-  n_prReviewPhase[["PR review · 5 steps"]]
+  n_prReviewPhase[["PR review · 12 steps"]]
   n_start --> n_baseline
   n_baseline --> n_snapshot
   n_snapshot --> n_hypothesesPhase
@@ -389,6 +400,11 @@ flowchart TD
   n_testFirstPhase --> n_editPhase
   n_testFirstPhase --> n_prReviewPhase
   n_approve -->|"rejected"| n_mark_rejected
+  n_editPhase --> n_testRulesDue
+  n_testRulesDue -->|"yes"| n_scanTests
+  n_testRulesDue -.->|"no"| n_editPhase
+  n_scanTests --> n_testRules
+  n_testRules -.-> n_editPhase
   n_editPhase --> n_stabilityPhase
   n_editPhase --> n_mark_gaveUp
   n_editPhase -.-> n_diagnosePhase
@@ -427,7 +443,7 @@ flowchart TD
 | Tests first | Tests written before the code must fail for the right reason, then stay locked | Plan the reproducing test → Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
 | Stability gate | With the gate: the patch passes the flaky test in fresh runs, with no masking edits, or is not certified | Stability gate? → Start the gate → Run again (gate) → Count gate run → Run the gate again? → Flaky test failed? → Not stable → Masking flags → Certified? → Masking flags? → Fixed, or hidden? → Certify → Reviewed patch certified? → Not certified |
-| PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
+| PR review | Review the change; blocking comments go back to editing until approved | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play → PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 
 <!-- /flow:fix -->
 
@@ -449,6 +465,9 @@ before anything changes and after.
 ```mermaid
 flowchart TD
   n_start(["Start"])
+  n_testRulesDue{"Check the test rules?"}
+  n_scanTests[/"🔧 Scan the changed tests"/]
+  n_testRules["Tests keep the rules?"]
   n_reviewStopped(["Stopped at review · partial"])
   n_refactored(["Refactored · success"])
   n_gaveUp(["Gave up · failed"])
@@ -457,12 +476,17 @@ flowchart TD
   n_baselinePhase[["Green baseline · 3 steps"]]
   n_planPhase[["Plan · 2 steps"]]
   n_editPhase[["Edit and verify · 17 steps"]]
-  n_prReviewPhase[["PR review · 5 steps"]]
+  n_prReviewPhase[["PR review · 12 steps"]]
   n_start --> n_baselinePhase
   n_baselinePhase --> n_notGreen
   n_baselinePhase --> n_planPhase
   n_planPhase --> n_editPhase
   n_planPhase --> n_rejected
+  n_editPhase --> n_testRulesDue
+  n_testRulesDue -->|"yes"| n_scanTests
+  n_testRulesDue -.->|"no"| n_editPhase
+  n_scanTests --> n_testRules
+  n_testRules -.-> n_editPhase
   n_editPhase --> n_prReviewPhase
   n_editPhase --> n_gaveUp
   n_prReviewPhase --> n_refactored
@@ -475,7 +499,7 @@ flowchart TD
 | Green baseline | Tests must pass before anything changes | Run tests first → Green? → Snapshot workspace |
 | Plan | Files, steps and the behaviour that must not change | Plan refactoring → Approve plan |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch |
-| PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
+| PR review | Review the change; blocking comments go back to editing until approved | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play → PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 
 <!-- /flow:refactor -->
 
@@ -486,12 +510,14 @@ evidence.
 
 1. **Baseline** tests, then **competing approaches** (the hypotheses phase) and evidence
    from the code.
-2. **Design** with acceptance criteria; the challenge phase attacks it; **👤 approve** it.
+2. **Design** with acceptance criteria and the **critical path**: each unit the edit adds or
+   changes, its quadrant (DOMAIN, CONTROLLER, TRIVIAL, OVERCOMPLICATED) and the test that proves
+   it (fix's diagnosis names it too); the challenge phase attacks it; **👤 approve** it.
 3. **Tests first.** Tests written before the code must fail, for the right reason; then they
    are locked, and the engine checks that edits leave them untouched.
 4. **Edit and verify** against the locked tests.
-5. **PR review**, then an **acceptance review**: each criterion met, with evidence, or the
-   edit goes back (bounded).
+5. **Pillar lenses** and the **PR review** (as in fix), then an **acceptance review**: each
+   criterion met, with evidence, or the edit goes back (bounded).
 
 <!-- flow:implement -->
 <!-- Generated from src/patterns by `npm run docs`: edit the pattern, not this block. -->
@@ -501,6 +527,9 @@ flowchart TD
   n_start(["Start"])
   n_approve{{"👤 Approve design"}}
   n_testFirstStopped(["Stopped at tests · partial"])
+  n_testRulesDue{"Check the test rules?"}
+  n_scanTests[/"🔧 Scan the changed tests"/]
+  n_testRules["Tests keep the rules?"]
   n_reviewStopped(["Stopped at review · partial"])
   n_implemented(["Implemented · success"])
   n_incomplete(["Criteria unmet · partial"])
@@ -513,7 +542,7 @@ flowchart TD
   n_challengePhase[["Challenge the answer · 18 steps"]]
   n_testFirstPhase[["Tests first · 18 steps"]]
   n_editPhase[["Edit and verify · 20 steps"]]
-  n_prReviewPhase[["PR review · 5 steps"]]
+  n_prReviewPhase[["PR review · 12 steps"]]
   n_acceptancePhase[["Acceptance review · 4 steps"]]
   n_start --> n_baselinePhase
   n_baselinePhase --> n_notGreen
@@ -527,6 +556,11 @@ flowchart TD
   n_testFirstPhase --> n_testFirstStopped
   n_testFirstPhase --> n_editPhase
   n_testFirstPhase --> n_acceptancePhase
+  n_editPhase --> n_testRulesDue
+  n_testRulesDue -->|"yes"| n_scanTests
+  n_testRulesDue -.->|"no"| n_editPhase
+  n_scanTests --> n_testRules
+  n_testRules -.-> n_editPhase
   n_editPhase -.-> n_testFirstPhase
   n_editPhase --> n_gaveUp
   n_editPhase --> n_prReviewPhase
@@ -547,7 +581,7 @@ flowchart TD
 | Challenge the answer | Skeptic, pragmatist and a second investigator, scaled by complexity | Skeptic? (≥2, a round left) → Skeptic → Only repeats? → Report the repeats → Set repeats aside → Objections? → Research them? (rounds left, research still finding) → Report open objections → Pragmatist? (≥pragmatistFrom) → Pragmatist → Keep every objection → Real objections? → Research objections → Second investigator? (4) → Second investigator → Check citations → Record its evidence → Reconcile |
 | Tests first | Tests written before the code must fail for the right reason, then stay locked | Write tests first → Capture tests → Only tests changed? → Not accepted → Run tests (must fail) → Red? → Not accepted → Failing for the right reason? → Right reason? → Not accepted → Try again? → Write them again → Implement anyway? → Lock tests → Tests are the base → Tests untouched? → Same tests? → Tests were changed |
 | Edit and verify | Edit; the engine diffs and runs the tests; failures are triaged | Edit → Capture diff → Anything new? → No progress → Run tests → Lint? → No lint run → Run lint → Count attempt → Tests pass? → Attempts left? → Triage failure → Environment? → Run the tests again? → Run again → The reviewed patch? → Back to the reviewed patch → Diagnosis wrong? → Diagnose again? → Back to diagnosis |
-| PR review | Review the change; blocking comments go back to editing until approved | PR review → Approved? → Review again? → Back to editing → Accept despite review? |
+| PR review | Review the change; blocking comments go back to editing until approved | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play → PR review → Approved? → Review again? → Back to editing → Accept despite review? |
 | Acceptance review | Every criterion met, with evidence; unmet ones go back to editing | Acceptance review → All met? → Review again? → Back to editing |
 
 <!-- /flow:implement -->
@@ -678,10 +712,18 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    One verdict per entry, by id and in order: an omitted or doubled entry is sent back. Each
    adverse verdict (PARTIAL, NOT MET, WEAK, UNTESTED, ABSENT, unrelated) must also be a finding,
    which is checked and merged like the others.
-7. **Settle open points** (investigate's gap research, shared): a claim the whole-change step
+7. **Pillar lenses**, once: Security, Clean code, Tests, Performance and memory, Determinism
+   (the steps above are its Correctness). The engine scans the diff and the changed test files
+   (`pillars.scan`) and briefs each lens with its rulebook (`src/core/pillars.ts`) and its leads;
+   one reviewer per lens, in parallel, judges only that pillar. Each must say what it examined
+   (`SECURITY: NONE — …`). The Tests lens sorts every changed unit of production code into a
+   quadrant (`U1 path:line — DOMAIN — why`) and judges its tests
+   (`U1 MEANINGFUL|WEAK|UNTESTED|SPLIT|NONE NEEDED`); a WEAK or UNTESTED one is a TEST finding
+   and an adverse verdict in the report.
+8. **Settle open points** (investigate's gap research, shared): a claim the whole-change step
    marked UNCLEAR is researched (`maxChaseRounds`, 1), every fact cited and checked into
    `evidence`, and the whole change is judged again with it.
-8. **Challenge the review** (investigate's debate, shaped for findings):
+9. **Challenge the review** (investigate's debate, shaped for findings):
    - a **second reviewer** (complexity 4, once; another model family) reviews the whole change from
      scratch; what it finds is checked and merged, a repeat of a finding left out;
    - the **skeptic** (from complexity 2, even with no finding: a missed issue is the costliest
@@ -698,7 +740,7 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    judged again, bounded by `maxDebateRounds` (3), and after the first round only when research
    found new evidence; one raised again word for word is reported as not settled instead of
    researched again.
-9. **Review comments** (when there are issues): one per finding, in order, in parts of three,
+10. **Review comments** (when there are issues): one per finding, in order, in parts of three,
    each checked to have every part, so that someone new to the code can understand it and act on
    it:
    - **What is wrong**, in plain words, at path:line;
@@ -711,14 +753,14 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
 
    Examples are worked out from the code, not run: a review step has no interpreter and no
    browser, so it shows no screenshots.
-10. **Report**: a short summary citing the findings by id (the comments hold the detail), what is
+11. **Report**: a short summary citing the findings by id (the comments hold the detail), what is
    not settled, and what was not reviewed or not checked. It ends:
    - **Issues reported** (success), or **Issues reported, not all settled** (partial) when
      something is open: an UNCLEAR claim, a context citation that failed, a step that failed (the
      skeptic or the whole-change step), or an objection the debate could not settle;
    - with nothing found: **Could not verify** (partial) when findings' quotes are missing from this
      checkout; **Reviewed in part** (partial) when files were over the cap or not read whole;
-     **Not settled** (partial) when something is open, or the skeptic dropped every finding;
+     **Not settled** (partial) when something is open, or the skeptic dropped every finding, a HIGH or MEDIUM one among them;
      **Looks good** (success) only otherwise. An objection the debate could not settle counts
      as something open.
 
@@ -817,6 +859,7 @@ flowchart TD
   n_endIs_notVerified{"Could not verify?"}
   n_endIs_partlyReviewed{"Reviewed in part?"}
   n_endIs_openQuestions{"Not settled?"}
+  n_lensPhase[["Pillar lenses · 7 steps"]]
   n_chasePhase[["Settle open points · 5 steps"]]
   n_debatePhase[["Challenge the review · 16 steps"]]
   n_start --> n_prInfo
@@ -850,7 +893,8 @@ flowchart TD
   n_wholeOk -->|"no"| n_noteWholeFailed
   n_noteWholeFailed --> n_debatePhase
   n_checkWhole --> n_mergeWhole
-  n_mergeWhole --> n_chasePhase
+  n_mergeWhole --> n_lensPhase
+  n_lensPhase --> n_chasePhase
   n_chasePhase --> n_debatePhase
   n_chasePhase -.-> n_wholeChange
   n_debatePhase --> n_summarize
@@ -896,6 +940,7 @@ flowchart TD
 
 | Phase | What it does | Steps |
 | --- | --- | --- |
+| Pillar lenses | Security, clean code, tests (the critical path), performance and determinism: a scan, then one reviewer per pillar | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play |
 | Settle open points | investigate's gap research: unclear claims and objections, then judged again | What to settle → Research them? → Settle open points → Check citations → Record what was found |
 | Challenge the review | A second reviewer (4), the skeptic (≥2) and the pragmatist (≥pragmatistFrom), as in investigate | Second reviewer? (4) → Second reviewer → Check citations → Record its issues → Challenge? (≥2) → Skeptic → Challenged? → Note it → Pragmatist? (≥pragmatistFrom) → Pragmatist → Take the challenge → Apply the challenge → Real objections? → Research them? (rounds left, last one found something) → Research objections → Report open objections |
 

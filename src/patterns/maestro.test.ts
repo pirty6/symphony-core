@@ -451,7 +451,9 @@ describe('maestro remembers approved compositions', () => {
     );
     expect(r.state.outcome).toBe('success');
     const ran = nodesRun(r);
-    for (const id of ['classify', 'propose', 'skeptic', 'revise']) expect(ran).not.toContain(id);
+    expect(['classify', 'propose', 'skeptic', 'revise'].filter((id) => ran.includes(id))).toEqual(
+      [],
+    );
     expect(ran).toEqual(
       expect.arrayContaining(['reuse', 'validate', 'context', 'gate', 'remember']),
     );
@@ -474,10 +476,9 @@ describe('maestro remembers approved compositions', () => {
         tools: { ...demo.tools, recall: () => ({ exact: {}, similar }) },
       },
     );
-    for (const id of ['classify', 'propose'])
-      expect(r.state.steps.find((st) => st.nodeId === id)!.input!.pastCompositions).toEqual(
-        similar,
-      );
+    const precedentOf = (id: string) =>
+      r.state.steps.find((st) => st.nodeId === id)!.input!.pastCompositions;
+    expect(['classify', 'propose'].map(precedentOf)).toEqual([similar, similar]);
   });
 
   it('a remembered adaptation that no longer fits goes to the conductor with the errors', () => {
@@ -792,8 +793,10 @@ describe('maestro keeps a requirement ledger (replaying run 05-02-16)', () => {
 describe('maestro shares its names with the other surfaces', () => {
   it("the classifier's tiers are the shared tier names", () => {
     const classify = maestro.nodes.find((n) => n.id === 'classify') as { directive: string };
-    for (const [tier, name] of Object.entries(TIER_NAMES))
-      expect(classify.directive).toMatch(new RegExp(`${tier} [^;]*\\b${name}\\b`));
+    const unnamed = Object.entries(TIER_NAMES).filter(
+      ([tier, name]) => !new RegExp(`${tier} [^;]*\\b${name}\\b`).test(classify.directive),
+    );
+    expect(unnamed).toEqual([]);
   });
 });
 

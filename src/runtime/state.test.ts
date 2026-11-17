@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,6 +21,7 @@ const tmp = () => {
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
+const modifiedAt = (path: string) => statSync(path).mtimeMs;
 
 describe("a workspace's Symphony files live outside it", () => {
   it('under ~/.symphony/workspaces, one folder per workspace path', () => {
@@ -38,13 +47,14 @@ describe("a workspace's Symphony files live outside it", () => {
   it("moves a workspace's old .symphony folder out, saved runs and memory with it", () => {
     const ws = tmp();
     const env = { SYMPHONY_HOME: join(tmp(), 'home'), SYMPHONY_STATE: 'home' };
-    const later = Date.now() + 16 * 60_000;
     mkdirSync(join(ws, '.symphony', 'runs'), { recursive: true });
     writeFileSync(join(ws, '.symphony', 'runs', 'r.json'), '{"n":1}');
     writeFileSync(join(ws, '.symphony', 'memory.json'), '{"facts":[]}');
+    const justWritten = modifiedAt(join(ws, '.symphony', 'memory.json'));
+    const later = justWritten + 16 * 60_000;
     // Only looking moves nothing; nor does anything while a run may still be writing there.
     expect(stateDir(ws, env, { move: false })).toBe(join(ws, '.symphony'));
-    expect(stateDir(ws, env, { now: Date.now() })).toBe(join(ws, '.symphony'));
+    expect(stateDir(ws, env, { now: justWritten })).toBe(join(ws, '.symphony'));
     expect(existsSync(join(ws, '.symphony'))).toBe(true);
     // A quarter of an hour later it moves.
     const dir = stateDir(ws, env, { now: later });

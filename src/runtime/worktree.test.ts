@@ -113,9 +113,8 @@ describe('editing runs play in their own worktree', { timeout: 30_000 }, () => {
     const r1 = await failed.finish('failed');
     expect(r1).toMatchObject({ kind: 'patch', files: ['b.txt'], reason: 'the run ended failed' });
     expect(read(join(ws, 'b.txt'), 'utf8')).toBe('b\n');
+    // The edit exactly as made, so it can still apply.
     expect(read(r1.patch!, 'utf8')).toMatch(/\+half done/);
-    // The edit exactly as made, so it can still apply: readable by you alone (not on Windows).
-    if (process.platform !== 'win32') expect(statSync(r1.patch!).mode & 0o777).toBe(0o600);
 
     const clash = (await isolateRun(ws, { label: 'fix', env, root }))!;
     writeFileSync(join(clash.dir, 'b.txt'), 'from the run\n');
@@ -125,6 +124,17 @@ describe('editing runs play in their own worktree', { timeout: 30_000 }, () => {
     expect(r2.reason).toMatch(/changed in the same places/);
     expect(read(join(ws, 'b.txt'), 'utf8')).toBe('edited by you meanwhile\n');
   });
+
+  it.runIf(process.platform !== 'win32')(
+    'a kept patch is readable by you alone (not on Windows)',
+    async () => {
+      const ws = repo('patch-mode');
+      const failed = (await isolateRun(ws, { label: 'fix', env, root }))!;
+      writeFileSync(join(failed.dir, 'b.txt'), 'half done\n');
+      const { patch } = await failed.finish('failed');
+      expect(statSync(patch!).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it('nothing changed: nothing to apply; and it can be turned off or skipped outside git', async () => {
     const ws = repo('unchanged');

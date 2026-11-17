@@ -28,6 +28,28 @@ afterEach(async () => {
 }, 300_000);
 
 let out = '';
+
+/** Plays investigate offline, auto-approved, with `extra` arguments; the run file it saved. */
+async function savedInvestigateRun(...extra: string[]): Promise<string> {
+  out = '';
+  expect(await main(['run', 'investigate', ...extra, '--auto-approve'], cwd)).toBe(0);
+  return /saved (\S+\.json)/.exec(out)![1]!;
+}
+
+/** Live folders a test publishes to; removed, and the environment restored, after it. */
+const liveDirs: string[] = [];
+afterEach(() => {
+  vi.unstubAllEnvs();
+  for (const d of liveDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+/** Turns publishing on for this test, into a folder of its own. */
+function publishingTo(): string {
+  const live = mkdtempSync(join(tmpdir(), 'symphony-cli-live-'));
+  liveDirs.push(live);
+  vi.stubEnv('SYMPHONY_LIVE', '');
+  vi.stubEnv('SYMPHONY_LIVE_DIR', live);
+  return live;
+}
 // oxlint-disable-next-line no-control-regex
 const plain = () => out.replace(/\x1b\[[0-9;]*m/g, '');
 beforeEach(() => {
@@ -105,8 +127,10 @@ describe('main', () => {
     // The baseline without its times: the time gate compares the machine's load on runs this
     // short, not the code (a loaded machine made this exit 2). The gate has its own tests.
     const saved = JSON.parse(readFileSync(report, 'utf8')) as { results: { ms: number }[] };
-    for (const r of saved.results) r.ms = 0;
-    writeFileSync(report, JSON.stringify(saved));
+    writeFileSync(
+      report,
+      JSON.stringify({ ...saved, results: saved.results.map((r) => Object.assign(r, { ms: 0 })) }),
+    );
     expect(await main([...args, '--compare', report], cwd)).toBe(0);
     expect(plain()).toMatch(/solved 0\/1 \(baseline 0\/1\)/);
     expect(await main(['eval', '--task', 'nope'], cwd)).toBe(1);
@@ -151,20 +175,11 @@ describe('main', () => {
   }, 60_000);
 
   it('two offline runs are identical even though the first one changes the runs folder', async () => {
-    const saved: string[] = [];
-    for (let i = 0; i < 2; i++) {
-      out = '';
-      expect(await main(['run', 'investigate', '--auto-approve'], cwd)).toBe(0);
-      saved.push(/saved (\S+\.json)/.exec(out)![1]!);
-    }
+    const saved = [await savedInvestigateRun(), await savedInvestigateRun()];
     out = '';
     expect(await main(['compare', ...saved], cwd)).toBe(0);
     expect(plain()).toMatch(/identical performances/);
-    out = '';
-    expect(await main(['run', 'investigate', '-c', 'question=Other?', '--auto-approve'], cwd)).toBe(
-      0,
-    );
-    const other = /saved (\S+\.json)/.exec(out)![1]!;
+    const other = await savedInvestigateRun('-c', 'question=Other?');
     out = '';
     expect(await main(['compare', saved[0]!, other], cwd)).toBe(3);
     expect(plain()).toMatch(/first divergence: the plan[\s\S]*goal, context differ/);
@@ -223,27 +238,20 @@ describe('main', () => {
   });
 
   it('publishes the run it plays, so the studio shows it running and can steer it', async () => {
-    const live = mkdtempSync(join(tmpdir(), 'symphony-cli-live-'));
-    vi.stubEnv('SYMPHONY_LIVE', '');
-    vi.stubEnv('SYMPHONY_LIVE_DIR', live);
-    try {
-      expect(await main(['run', 'fix', '--auto-approve', '--title', 'PR 7: Fix paging'], cwd)).toBe(
-        0,
-      );
-      const [run] = await new LiveRuns(live).list();
-      // Named for people in the studio; the score, and so its id, does not change.
-      expect(run).toMatchObject({
-        source: 'cli',
-        workspace: cwd,
-        status: 'done',
-        title: 'PR 7: Fix paging',
-      });
-      expect(JSON.stringify(run?.score)).not.toContain('PR 7: Fix paging');
-      expect(run?.score.pattern).toBe('fix');
-    } finally {
-      vi.unstubAllEnvs();
-      rmSync(live, { recursive: true, force: true });
-    }
+    const live = publishingTo();
+    expect(await main(['run', 'fix', '--auto-approve', '--title', 'PR 7: Fix paging'], cwd)).toBe(
+      0,
+    );
+    const [run] = await new LiveRuns(live).list();
+    // Named for people in the studio; the score, and so its id, does not change.
+    expect(run).toMatchObject({
+      source: 'cli',
+      workspace: cwd,
+      status: 'done',
+      title: 'PR 7: Fix paging',
+    });
+    expect(JSON.stringify(run?.score)).not.toContain('PR 7: Fix paging');
+    expect(run?.score.pattern).toBe('fix');
   });
 
   it('retries a stuck step unattended one tier up (up to the top), while retries remain', () => {

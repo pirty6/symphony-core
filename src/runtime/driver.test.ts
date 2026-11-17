@@ -41,6 +41,53 @@ const statusIs =
     m.status === status &&
     Object.entries(extra).every(([k, v]) => (m as unknown as Record<string, unknown>)[k] === v);
 
+/** Answers each approval in turn once it is asked, one letter each; returns each answer's error. */
+async function approveLettersInTurn(run: Run, letters: readonly string[]) {
+  const asked = () =>
+    run.messages.filter((m) => m.type === 'status' && m.status === 'awaiting-approval').length;
+  const errors: (string | undefined)[] = [];
+  for (const [i, letter] of letters.entries()) {
+    await waitFor(run, () => asked() === i + 1);
+    errors.push(run.answerApproval({ approved: true, updates: { letter } }));
+  }
+  return errors;
+}
+
+/** A provider that fails with HTTP 429 until `recover` is called, then picks "cat". */
+function rateLimitedUntilRecovered(seen: AgentRequest[]) {
+  let failing = true;
+  const provider: Provider = {
+    name: 'flaky',
+    runAgent: async (req) => {
+      seen.push(req);
+      if (failing) throw new Error('HTTP 429');
+      return {
+        result: {
+          updates: { word: 'cat' },
+          verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+        },
+        transcript: { provider: 'flaky', prompt: '', output: 'cat', toolCalls: [] },
+      };
+    },
+    draft: () => Promise.reject(new Error('n/a')),
+  };
+  return {
+    provider,
+    recover: () => {
+      failing = false;
+    },
+  };
+}
+
+/** From a status listener, at once: resumes every pause and approves every approval. */
+function answerEveryPauseAtOnce(run: Run): void {
+  run.subscribe((m) => {
+    if (m.type === 'status' && m.status === 'paused') run.resume();
+    if (m.type === 'status' && m.status === 'awaiting-approval')
+      run.answerApproval({ approved: true, scripted: true });
+  });
+}
+
 describe('Run', () => {
   it('runs a full flow with auto-approval and reproduces on replay', async () => {
     const run = new Run({
@@ -78,12 +125,8 @@ describe('Run', () => {
       clock,
     });
     const done = run.start();
-    const asked = () =>
-      run.messages.filter((m) => m.type === 'status' && m.status === 'awaiting-approval').length;
-    for (const [i, letter] of ['p', 'l', 'a', 'n', 'e', 't'].entries()) {
-      await waitFor(run, () => asked() === i + 1);
-      expect(run.answerApproval({ approved: true, updates: { letter } })).toBeUndefined();
-    }
+    const letters = ['p', 'l', 'a', 'n', 'e', 't'];
+    expect(await approveLettersInTurn(run, letters)).toEqual(letters.map(() => undefined));
     const perf = await done;
     expect(perf.outcome).toBe('success');
     expect(perf.finalState.won).toBe(true);
@@ -184,28 +227,13 @@ describe('Run', () => {
 
   it('a stuck step waits for a human, who can retry it with a hint and a smarter tier', async () => {
     const seen: AgentRequest[] = [];
-    let fail = true;
-    const flaky: Provider = {
-      name: 'flaky',
-      runAgent: async (req) => {
-        seen.push(req);
-        if (fail) throw new Error('HTTP 429');
-        return {
-          result: {
-            updates: { word: 'cat' },
-            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
-          },
-          transcript: { provider: 'flaky', prompt: '', output: 'cat', toolCalls: [] },
-        };
-      },
-      draft: () => Promise.reject(new Error('n/a')),
-    };
-    const run = new Run({ score: hangmanScore, provider: flaky, clock });
+    const flaky = rateLimitedUntilRecovered(seen);
+    const run = new Run({ score: hangmanScore, provider: flaky.provider, clock });
     const done = run.start();
     await waitFor(run, (m) => m.type === 'status' && m.status === 'awaiting-approval');
     expect(run.engine.pause).toMatchObject({ kind: 'stuck', nodeId: 'pick', attempts: 3 });
     expect(run.answerApproval({ approved: true })).toBe('no approval is pending');
-    fail = false;
+    flaky.recover();
     expect(
       run.answerRecovery({ action: 'retry', hint: 'try again later', complexity: 4 }),
     ).toBeUndefined();
@@ -266,11 +294,7 @@ describe('Run', () => {
       breakpoints: ['pick'],
       clock,
     });
-    run.subscribe((m) => {
-      if (m.type === 'status' && m.status === 'paused') run.resume();
-      if (m.type === 'status' && m.status === 'awaiting-approval')
-        run.answerApproval({ approved: true, scripted: true });
-    });
+    answerEveryPauseAtOnce(run);
     const perf = await run.start();
     expect(perf.outcome).toBe('success');
   });
@@ -689,16 +713,14 @@ describe('checkpoints, resume and fork', () => {
       (r) => r.performance.steps.findLast((x) => external(x.kind))?.step,
     );
     const decided = done.steps.filter((x) => x.kind === 'agent' || x.kind === 'approval');
-    for (const d of decided) expect(lastExternal, d.nodeId).toContain(d.step);
+    expect(lastExternal).toEqual(expect.arrayContaining(decided.map((d) => d.step)));
     // So is whatever came just before an edit (a tool result included): resume never runs a
     // tool again on a workspace the executor may already have changed.
     const steps = done.steps.filter((x) => external(x.kind));
     const edits = steps.filter((x) => x.nodeId === 'apply');
     expect(edits.length).toBeGreaterThan(0);
-    for (const e of edits) {
-      const before = steps[steps.indexOf(e) - 1]!;
-      expect(lastExternal, `${before.nodeId} before ${e.nodeId}`).toContain(before.step);
-    }
+    const beforeEdits = edits.map((e) => steps[steps.indexOf(e) - 1]!.step);
+    expect(lastExternal).toEqual(expect.arrayContaining(beforeEdits));
     // Tool results coalesce (the test runs in well under 30 s).
     const answered = done.steps.filter((s) => ['agent', 'tool', 'approval'].includes(s.kind));
     expect(saved.length).toBeLessThan(answered.length);
@@ -731,33 +753,43 @@ describe('checkpoints, resume and fork', () => {
     expect(lastExternal).toContain('lockTests');
   });
 
+  /** Resumes a saved partial run and checks it ends exactly as the uninterrupted one did. */
+  async function expectResumesTo(
+    partial: SavedRun['performance'],
+    whole: SavedRun['performance'],
+  ): Promise<void> {
+    const restored = restoreEngine(fixScore, partial);
+    expect(restored.state.kind).toBe('running');
+    const resumed = await new Run({
+      score: fixScore,
+      provider: offline(),
+      demo: fix.demo,
+      autoApprove: true,
+      clock,
+      restore: {
+        result: restored,
+        basedOn: {
+          kind: 'resumed',
+          from: 'f.json',
+          throughStep: partial.steps.at(-1)?.step ?? 0,
+        },
+      },
+    }).start();
+    expect(strip(resumed)).toEqual(strip(whole));
+    expect(resumed.basedOn).toMatchObject({ kind: 'resumed', from: 'f.json' });
+    expect(replayPerformance(fixScore, resumed).divergence.reproduced).toBe(true);
+  }
+
   it('a run cut off at any step resumes to exactly the uninterrupted performance', async () => {
     const saved = await checkpoints();
     const whole = saved.at(-1)!.performance;
-    for (const cut of [0, 3, saved.length - 3]) {
-      const partial = saved[cut]!.performance;
-      if (cut > 0) expect(replayPerformance(fixScore, partial).divergence.reproduced).toBe(true);
-      const restored = restoreEngine(fixScore, partial);
-      expect(restored.state.kind).toBe('running');
-      const resumed = await new Run({
-        score: fixScore,
-        provider: offline(),
-        demo: fix.demo,
-        autoApprove: true,
-        clock,
-        restore: {
-          result: restored,
-          basedOn: {
-            kind: 'resumed',
-            from: 'f.json',
-            throughStep: partial.steps.at(-1)?.step ?? 0,
-          },
-        },
-      }).start();
-      expect(strip(resumed)).toEqual(strip(whole));
-      expect(resumed.basedOn).toMatchObject({ kind: 'resumed', from: 'f.json' });
-      expect(replayPerformance(fixScore, resumed).divergence.reproduced).toBe(true);
-    }
+    const [first, early, late] = [0, 3, saved.length - 3].map((cut) => saved[cut]!.performance);
+    // A run cut off after its first save is itself a faithful record.
+    expect(replayPerformance(fixScore, early!).divergence.reproduced).toBe(true);
+    expect(replayPerformance(fixScore, late!).divergence.reproduced).toBe(true);
+    await expectResumesTo(first!, whole);
+    await expectResumesTo(early!, whole);
+    await expectResumesTo(late!, whole);
   });
 
   it('forks a finished run from a step: earlier steps are kept, later ones play again', async () => {
@@ -1069,6 +1101,18 @@ describe('time limit: keep what it has, or ask', () => {
   });
 });
 
+/** How long a part's fake AI call plays, so parts overlap. */
+const PART_PLAY_MS = 5;
+const playForAWhile = () => new Promise((r) => setTimeout(r, PART_PLAY_MS));
+const partFile = (req: AgentRequest) => (req.pause.input.files as string[])[0]!;
+const partAnswer = (file: string, read: string[]): AgentResponse => ({
+  result: {
+    updates: { read },
+    verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: file },
+  },
+  transcript: { provider: 'parts', prompt: '', output: file, toolCalls: [] },
+});
+
 describe('fan-out retry', () => {
   const reader: Pattern = {
     name: 'reader',
@@ -1101,32 +1145,62 @@ describe('fan-out retry', () => {
     ],
   };
 
-  it('plays again only the part that failed, as many at once as the AI chose', async () => {
+  /** Parts that each play a while, counting the most at once; part c fails its first time. */
+  function partsFailingCOnce() {
     const asked: string[] = [];
-    let running = 0;
-    let most = 0;
+    const load = { running: 0, most: 0 };
     let failedC = false;
     const provider: Provider = {
       name: 'parts',
       runAgent: async (req) => {
-        const file = (req.pause.input.files as string[])[0]!;
+        const file = partFile(req);
         asked.push(file);
-        running += 1;
-        most = Math.max(most, running);
-        await new Promise((r) => setTimeout(r, 5));
-        running -= 1;
-        // c fails the first time only.
+        load.running += 1;
+        load.most = Math.max(load.most, load.running);
+        await playForAWhile();
+        load.running -= 1;
         const read = file === 'c' && !failedC ? ((failedC = true), []) : [file];
-        return {
-          result: {
-            updates: { read },
-            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: file },
-          },
-          transcript: { provider: 'parts', prompt: '', output: file, toolCalls: [] },
-        };
+        return partAnswer(file, read);
       },
       draft: () => Promise.reject(new Error('n/a')),
     };
+    return { provider, asked, load };
+  }
+
+  /** Part a answers at once; any other part never submits, returning nothing at the limit. */
+  const onlyPartAAnswers: Provider = {
+    name: 'parts',
+    runAgent: (req) =>
+      new Promise<AgentResponse>((resolve) => {
+        const file = partFile(req);
+        if (file === 'a') resolve(partAnswer(file, [file]));
+        else
+          req.signal.addEventListener('abort', () =>
+            resolve({ ...partAnswer(file, []), result: undefined }),
+          );
+      }),
+    draft: () => Promise.reject(new Error('n/a')),
+  };
+
+  /** Parts that each play a while; the first part to start calls `pauseRun`. */
+  function partsPausingAtFirst(pauseRun: () => void) {
+    const asked: string[] = [];
+    const provider: Provider = {
+      name: 'parts',
+      runAgent: async (req) => {
+        const file = partFile(req);
+        asked.push(file);
+        if (asked.length === 1) pauseRun();
+        await playForAWhile();
+        return partAnswer(file, [file]);
+      },
+      draft: () => Promise.reject(new Error('n/a')),
+    };
+    return { provider, asked };
+  }
+
+  it('plays again only the part that failed, as many at once as the AI chose', async () => {
+    const { provider, asked, load } = partsFailingCOnce();
     const score = compileScore(reader, {
       goal: 'g',
       context: { files: ['a', 'b', 'c', 'd'] },
@@ -1135,33 +1209,13 @@ describe('fan-out retry', () => {
     const perf = await new Run({ score, provider, clock }).start();
     expect(perf.outcome).toBe('success');
     expect(asked.toSorted()).toEqual(['a', 'b', 'c', 'c', 'd']);
-    expect(most).toBe(2);
+    expect(load.most).toBe(2);
     expect(perf.finalState.read).toEqual(['a', 'b', 'c', 'd']);
     expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
   });
 
   it('a part stopped at the time limit with nothing submitted says it was the limit', async () => {
-    const provider: Provider = {
-      name: 'parts',
-      runAgent: (req) =>
-        new Promise<AgentResponse>((resolve) => {
-          const file = (req.pause.input.files as string[])[0]!;
-          const answer = (read: string[]) => ({
-            result: {
-              updates: { read },
-              verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: file },
-            },
-            transcript: { provider: 'parts', prompt: '', output: file, toolCalls: [] },
-          });
-          if (file === 'a') resolve(answer([file]));
-          // b never submits: at the limit it returns what it had (nothing).
-          else
-            req.signal.addEventListener('abort', () =>
-              resolve({ ...answer([]), result: undefined }),
-            );
-        }),
-      draft: () => Promise.reject(new Error('n/a')),
-    };
+    const provider = onlyPartAAnswers;
     const score = compileScore(reader, {
       goal: 'g',
       context: { files: ['a', 'b'] },
@@ -1179,26 +1233,9 @@ describe('fan-out retry', () => {
   });
 
   it('a pause holds the parts not yet started; those playing finish; resume plays the rest', async () => {
-    const asked: string[] = [];
     let run!: Run;
-    const provider: Provider = {
-      name: 'parts',
-      runAgent: async (req) => {
-        const file = (req.pause.input.files as string[])[0]!;
-        asked.push(file);
-        // Paused while the first two parts play.
-        if (asked.length === 1) run.pause();
-        await new Promise((r) => setTimeout(r, 5));
-        return {
-          result: {
-            updates: { read: [file] },
-            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: file },
-          },
-          transcript: { provider: 'parts', prompt: '', output: file, toolCalls: [] },
-        };
-      },
-      draft: () => Promise.reject(new Error('n/a')),
-    };
+    // Paused while the first two parts play.
+    const { provider, asked } = partsPausingAtFirst(() => run.pause());
     const score = compileScore(reader, {
       goal: 'g',
       context: { files: ['a', 'b', 'c', 'd', 'e', 'f'] },

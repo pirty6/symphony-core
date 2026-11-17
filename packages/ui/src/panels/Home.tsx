@@ -1,39 +1,42 @@
-import { useState, type ReactNode } from 'react'
-import { DEMO_ONLY } from '@core/catalog'
-import type { LibraryItem } from '../lib/api'
-import { PromptBox } from './PromptBox'
+import { useState, type ReactNode } from 'react';
+import { DEMO_ONLY } from '@core/catalog';
+import type { LibraryItem } from '../lib/api';
+import { PromptBox } from './PromptBox';
 
 interface Props {
-  library: readonly LibraryItem[]
-  asking: boolean
-  onAsk: (request: string) => void
-  onOpen: (item: LibraryItem) => void
+  library: readonly LibraryItem[];
+  asking: boolean;
+  onAsk: (request: string) => void;
+  onOpen: (item: LibraryItem) => void;
   /** Errors and notices: there is no inspector on this screen to show them. */
-  children?: ReactNode
+  children?: ReactNode;
 }
 
 /** The opening screen: ask the maestro, or open a pattern. */
 export function Home(p: Props) {
-  const [request, setRequest] = useState('')
+  const [request, setRequest] = useState('');
   // Real work only: the maestro is the prompt above, and demo games are not offered.
-  const patterns = p.library.filter((i) => i.name !== 'maestro' && i.source === 'builtin' && !DEMO_ONLY.has(i.name))
+  const patterns = p.library.filter(
+    (i) => i.name !== 'maestro' && i.source === 'builtin' && !DEMO_ONLY.has(i.name),
+  );
   const ask = () => {
-    if (request.trim() && !p.asking) p.onAsk(request.trim())
-  }
+    if (request.trim() && !p.asking) p.onAsk(request.trim());
+  };
   return (
     <main className="home" data-testid="home">
       <div className="home-box">
         <h1>What should the orchestra play?</h1>
         <p className="muted">
-          Describe the work. The maestro finds the pattern that fits, tailors it, debates it by complexity, and plays it once you approve.
+          Describe the work. The maestro finds the pattern that fits, tailors it, debates it by
+          complexity, and plays it once you approve.
         </p>
         <div
           className="home-prompt"
           onKeyDown={(e) => {
             // ⌘/Ctrl+Enter composes; Enter alone starts a new line.
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault()
-              ask()
+              e.preventDefault();
+              ask();
             }
           }}
         >
@@ -48,7 +51,12 @@ export function Home(p: Props) {
           />
           <div className="home-actions">
             <small className="muted">⌘/Ctrl + Enter</small>
-            <button type="button" className="primary" disabled={p.asking || !request.trim()} onClick={ask}>
+            <button
+              type="button"
+              className="primary"
+              disabled={p.asking || !request.trim()}
+              onClick={ask}
+            >
               {p.asking ? 'Composing…' : '🎼 Compose & perform'}
             </button>
           </div>
@@ -58,7 +66,13 @@ export function Home(p: Props) {
           <div className="home-patterns">
             <span className="muted">or open a pattern:</span>
             {patterns.map((item) => (
-              <button type="button" key={item.name} className="home-chip" onClick={() => p.onOpen(item)} title={item.description}>
+              <button
+                type="button"
+                key={item.name}
+                className="home-chip"
+                onClick={() => p.onOpen(item)}
+                title={item.description}
+              >
                 {item.name}
               </button>
             ))}
@@ -66,5 +80,5 @@ export function Home(p: Props) {
         )}
       </div>
     </main>
-  )
+  );
 }

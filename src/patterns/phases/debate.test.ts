@@ -260,8 +260,8 @@ describe('debate phases in investigate', () => {
   });
 
   it('rejects hypotheses that are too few and an answer that skips a ruling', () => {
-    let first = true;
     let proposals = 0;
+    let answers = 0;
     const sloppy: DemoScript = {
       ...demo,
       agents: {
@@ -275,9 +275,7 @@ describe('debate phases in investigate', () => {
             : agents.hypothesize!(s, v),
         answer: (s, v) => {
           const good = agents.answer!(s, v);
-          if (!first) return good;
-          first = false;
-          return { ...good, updates: { ...good.updates, rulings: [] } };
+          return answers++ === 0 ? { ...good, updates: { ...good.updates, rulings: [] } } : good;
         },
       },
     };
@@ -592,7 +590,8 @@ describe('the answer meets every REAL objection by its tag', () => {
     ]);
     // The parts are written against the same objections.
     const parts = r.state.steps.filter((x) => x.nodeId === 'answerParts');
-    for (const p of parts) expect(p.input).toHaveProperty('realObjections');
+    const withoutObjections = parts.filter((p) => !p.input || !('realObjections' in p.input));
+    expect(withoutObjections).toEqual([]);
   });
 
   it('an objection the answer cannot settle is an open question, and the run ends partial', () => {
@@ -761,6 +760,31 @@ const answerErrors = (r: ReturnType<typeof play>['r']) =>
     e.type === 'response-rejected' && e.nodeId === 'answer' ? e.errors : [],
   );
 
+/** H2 per answer visit, given the finding research found last. */
+type H2Ruling = (visit: number, newest: string) => string;
+
+/** Round 1 flips H2 on an old finding first, then on the finding research just found. */
+function flipsOnOldEvidenceFirst(): H2Ruling {
+  let tries = 0;
+  return (visit, newest) => {
+    if (visit === 0) return 'H2: REFUTED — no state change outside advance() [F1]';
+    if (visit === 1 && tries++ === 0) return 'H2: CONFIRMED — on a second look [F1]';
+    return `H2: CONFIRMED — the new commit shows it [${newest}]`;
+  };
+}
+
+/** Round 2 goes back to REFUTED, with new evidence: the evidence goes both ways, so UNKNOWN. */
+function goesBackThenUnknown(): H2Ruling {
+  let backTries = 0;
+  return (visit, newest) => {
+    if (visit === 0) return 'H2: REFUTED — first look [F1]';
+    if (visit === 1) return `H2: CONFIRMED — round 1 found this [${newest}]`;
+    return backTries++ === 0
+      ? `H2: REFUTED — round 2 found this [${newest}]`
+      : `H2: UNKNOWN — rounds 1 and 2 found evidence both ways [${newest}]`;
+  };
+}
+
 describe('flip-flops: a ruling that changes needs new evidence; one that goes back is UNKNOWN', () => {
   /** The skeptic objects every round and research finds something new each time. */
   const rounds = (h2: (visit: number, newest: string, call: number) => string): DemoScript => {
@@ -789,16 +813,7 @@ describe('flip-flops: a ruling that changes needs new evidence; one that goes ba
   };
 
   it('a changed ruling citing only old evidence is sent back; citing a new finding it holds', () => {
-    // Round 1 flips H2 on an old finding first, then on the finding research just found.
-    let tries = 0;
-    const { r, state } = play(
-      3,
-      rounds((v, newest) => {
-        if (v === 0) return 'H2: REFUTED — no state change outside advance() [F1]';
-        if (v === 1 && tries++ === 0) return 'H2: CONFIRMED — on a second look [F1]';
-        return `H2: CONFIRMED — the new commit shows it [${newest}]`;
-      }),
-    );
+    const { r, state } = play(3, rounds(flipsOnOldEvidenceFirst()));
     expect(answerErrors(r).join(' ')).toMatch(
       /A ruling that changes since the last answer must cite a finding found since then/,
     );
@@ -806,18 +821,7 @@ describe('flip-flops: a ruling that changes needs new evidence; one that goes ba
   });
 
   it('back to what an earlier answer said: only UNKNOWN is accepted', () => {
-    let backTries = 0;
-    const { r, state } = play(
-      3,
-      rounds((v, newest) => {
-        if (v === 0) return 'H2: REFUTED — first look [F1]';
-        if (v === 1) return `H2: CONFIRMED — round 1 found this [${newest}]`;
-        // Round 2 goes back to REFUTED, with new evidence: the evidence goes both ways.
-        return backTries++ === 0
-          ? `H2: REFUTED — round 2 found this [${newest}]`
-          : `H2: UNKNOWN — rounds 1 and 2 found evidence both ways [${newest}]`;
-      }),
-    );
+    const { r, state } = play(3, rounds(goesBackThenUnknown()));
     expect(answerErrors(r).join(' ')).toMatch(/goes back to what an earlier answer said/);
     expect(state.rulings).toContainEqual(expect.stringMatching(/^H2: UNKNOWN/));
   });

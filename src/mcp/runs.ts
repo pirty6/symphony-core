@@ -767,11 +767,6 @@ export class RunManager {
   }
 
   /**
-   * Stop the latest run of the chain (any run id of it works), then wait up to
-   * `waitMs` for its current step to wind down: answering "running" right after
-   * a stop made callers think it had not stopped. Still ending: 'stopping'.
-   */
-  /**
    * Approvals answer themselves from now on (the one waiting included), in this run and the
    * runs it hands on to; or ask again. Stuck steps still ask. Any run id of a chain works.
    */
@@ -783,6 +778,11 @@ export class RunManager {
     return this.view(id);
   }
 
+  /**
+   * Stop the latest run of the chain (any run id of it works), then wait up to
+   * `waitMs` for its current step to wind down: answering "running" right after
+   * a stop made callers think it had not stopped. Still ending: 'stopping'.
+   */
   async stop(runId: string, waitMs = STOP_WAIT_MS): Promise<RunView> {
     const { managed, id } = this.latest(runId);
     managed.run.stop('stopped from chat');

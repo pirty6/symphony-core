@@ -8,6 +8,41 @@ import { validatePattern } from '../core/validate.js';
 import { findPattern, PATTERNS, routePrompt } from './index.js';
 import { attest } from './phases/reviewRules.js';
 
+/** Every pattern in the library, each with its own tests below. */
+const PATTERN_NAMES = [
+  'maestro',
+  'investigate',
+  'fix',
+  'refactor',
+  'implement',
+  'backlog',
+  'review',
+  'analyze',
+  'hangman',
+];
+
+/** The library pattern of that name. */
+const patternNamed = (name: string) => PATTERNS.find((p) => p.name === name)!;
+
+function expectValid(name: string) {
+  expect(validatePattern(patternNamed(name)).errors).toEqual([]);
+}
+
+/** The demo ends done, well, and a second run performs exactly the same. */
+function expectDemoDeterministic(name: string) {
+  const p = patternNamed(name);
+  const score = compileScore(p, {
+    goal: p.demo?.goal ?? 'demo',
+    context: p.demo?.context ?? {},
+    generatedAt: 't',
+  });
+  const a = runScripted(score, p.demo, { at: 't' });
+  const b = runScripted(score, p.demo, { at: 't' });
+  expect(a.state.kind).toBe('done');
+  expect(['success', 'partial']).toContain(a.state.outcome);
+  expect(hashOf(toPerformance(a.state))).toBe(hashOf(toPerformance(b.state)));
+}
+
 describe('pattern library', () => {
   it('holds every step that edits or reviews code to Clean Code', () => {
     const held = PATTERNS.flatMap((p) =>
@@ -36,26 +71,81 @@ describe('pattern library', () => {
     );
   });
 
-  it.each(PATTERNS.map((p) => [p.name, p] as const))('%s is valid', (_name, p) => {
-    const report = validatePattern(p);
-    expect(report.errors).toEqual([]);
+  it('the tests below name every pattern in the library', () => {
+    expect(PATTERNS.map((p) => p.name)).toEqual(PATTERN_NAMES);
   });
 
-  it.each(PATTERNS.map((p) => [p.name, p] as const))(
-    '%s demo runs to completion deterministically',
-    (_n, p) => {
-      const score = compileScore(p, {
-        goal: p.demo?.goal ?? 'demo',
-        context: p.demo?.context ?? {},
-        generatedAt: 't',
-      });
-      const a = runScripted(score, p.demo, { at: 't' });
-      const b = runScripted(score, p.demo, { at: 't' });
-      expect(a.state.kind).toBe('done');
-      expect(['success', 'partial']).toContain(a.state.outcome);
-      expect(hashOf(toPerformance(a.state))).toBe(hashOf(toPerformance(b.state)));
-    },
-  );
+  it('maestro is valid', () => {
+    expectValid('maestro');
+  });
+
+  it('investigate is valid', () => {
+    expectValid('investigate');
+  });
+
+  it('fix is valid', () => {
+    expectValid('fix');
+  });
+
+  it('refactor is valid', () => {
+    expectValid('refactor');
+  });
+
+  it('implement is valid', () => {
+    expectValid('implement');
+  });
+
+  it('backlog is valid', () => {
+    expectValid('backlog');
+  });
+
+  it('review is valid', () => {
+    expectValid('review');
+  });
+
+  it('analyze is valid', () => {
+    expectValid('analyze');
+  });
+
+  it('hangman is valid', () => {
+    expectValid('hangman');
+  });
+
+  it('maestro demo runs to completion deterministically', () => {
+    expectDemoDeterministic('maestro');
+  });
+
+  it('investigate demo runs to completion deterministically', () => {
+    expectDemoDeterministic('investigate');
+  });
+
+  it('fix demo runs to completion deterministically', () => {
+    expectDemoDeterministic('fix');
+  });
+
+  it('refactor demo runs to completion deterministically', () => {
+    expectDemoDeterministic('refactor');
+  });
+
+  it('implement demo runs to completion deterministically', () => {
+    expectDemoDeterministic('implement');
+  });
+
+  it('backlog demo runs to completion deterministically', () => {
+    expectDemoDeterministic('backlog');
+  });
+
+  it('review demo runs to completion deterministically', () => {
+    expectDemoDeterministic('review');
+  });
+
+  it('analyze demo runs to completion deterministically', () => {
+    expectDemoDeterministic('analyze');
+  });
+
+  it('hangman demo runs to completion deterministically', () => {
+    expectDemoDeterministic('hangman');
+  });
 
   it('investigate covers every file, every chosen source and closes gaps', () => {
     const p = findPattern('investigate')!;

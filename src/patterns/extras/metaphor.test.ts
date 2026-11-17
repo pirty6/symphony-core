@@ -19,6 +19,12 @@ const draftOf = (over: Record<string, unknown>) => () => ({
   verdict: v,
 });
 
+/** Compiles a parsed draft; a draft that did not parse throws its errors. */
+function compileParsed(parsed: ReturnType<typeof parseDraft>) {
+  if (!parsed.ok) throw new Error(parsed.errors.join('; '));
+  return compileScore(parsed.value, { context: { subject: 'x' } });
+}
+
 function play(over: Partial<DemoScript> = {}) {
   const script: DemoScript = {
     ...demo,
@@ -49,8 +55,7 @@ describe('metaphor', () => {
   it("the demo's drafted pattern is a real, valid, runnable pattern", () => {
     const parsed = parseDraft(demo.agents!.draft!({}, 0).updates!.draft);
     expect(parsed.ok ? [] : parsed.errors).toEqual([]);
-    if (parsed.ok)
-      expect(() => compileScore(parsed.value, { context: { subject: 'x' } })).not.toThrow();
+    expect(() => compileParsed(parsed)).not.toThrow();
   });
 
   it('an invalid draft goes back with the errors, and gives up after maxRounds', () => {
@@ -106,7 +111,9 @@ describe('metaphor', () => {
 
   it('maps by explicit rules, and is routed from metaphor requests', () => {
     const map = metaphor.nodes.find((n) => n.id === 'map');
-    for (const rule of METAPHOR_RULES) expect(JSON.stringify(map)).toContain(rule.split(':')[0]);
+    const mapText = JSON.stringify(map);
+    const ruleNames = METAPHOR_RULES.map((rule) => rule.split(':')[0]!);
+    expect(ruleNames.filter((name) => !mapText.includes(name))).toEqual([]);
     const ask = 'Create a symphony pattern that from a metaphor can create symphony patterns';
     expect(routePrompt(ask, [...PATTERNS, metaphor])?.name).toBe('metaphor');
   });

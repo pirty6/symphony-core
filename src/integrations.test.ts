@@ -41,17 +41,30 @@ async function mcpTools() {
   return (await client.listTools()).tools;
 }
 
+type McpTool = Awaited<ReturnType<typeof mcpTools>>[number];
+
+/** What a document does not name in code style: each tool, and each option it takes. */
+function unmentioned(name: string, text: string, tools: readonly McpTool[]): string[] {
+  const missing = (word: string) => !mentioned(word).test(text);
+  return tools.flatMap((tool) => [
+    ...(missing(tool.name) ? [`${name}: tool ${tool.name}`] : []),
+    ...Object.keys(tool.inputSchema.properties ?? {})
+      .filter(missing)
+      .map((option) => `${name}: ${tool.name}.${option}`),
+  ]);
+}
+
+/** The debate roles a description does not name. */
+const unnamedRoles = (description: string) =>
+  DEBATE_ROLES.filter((role) => !description.includes(role));
+
 describe('integrations describe what the code offers', () => {
   it('every MCP tool and every option it takes is in the Copilot Studio and VS Code instructions', async () => {
     const tools = await mcpTools();
     expect(tools.length).toBeGreaterThan(5);
-    for (const [name, text] of Object.entries(DOCS)) {
-      for (const tool of tools) {
-        expect(text, `${name}: tool ${tool.name}`).toMatch(mentioned(tool.name));
-        for (const option of Object.keys(tool.inputSchema.properties ?? {}))
-          expect(text, `${name}: ${tool.name}.${option}`).toMatch(mentioned(option));
-      }
-    }
+    expect(Object.entries(DOCS).flatMap(([name, text]) => unmentioned(name, text, tools))).toEqual(
+      [],
+    );
   });
 
   it('the agent and the skill list the core patterns, from the library', () => {
@@ -64,9 +77,7 @@ describe('integrations describe what the code offers', () => {
   it('the debate roles are named as the maestro names its steps', async () => {
     const tools = await mcpTools();
     const described = tools.find((t) => t.name === 'maestro')!.description!;
-    for (const role of DEBATE_ROLES) {
-      expect(described).toContain(role);
-      expect(maestro.description).toContain(role);
-    }
+    expect(unnamedRoles(described)).toEqual([]);
+    expect(unnamedRoles(maestro.description)).toEqual([]);
   });
 });

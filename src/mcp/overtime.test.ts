@@ -66,14 +66,20 @@ async function settle(runs: RunManager, runId: string): Promise<RunView> {
   throw new Error('run did not settle');
 }
 
+/** What get_run returns while waiting up to `seconds`, and how long it took to return. */
+async function timedWait(runs: RunManager, runId: string, seconds: number) {
+  const started = Date.now();
+  const view = await runs.wait(runId, seconds);
+  return { view, elapsedMs: Date.now() - started };
+}
+
 describe('a step over its time limit, from chat', () => {
   it('asks the chat: keep waiting, or stop the step and keep what it has', async () => {
     const runs = manager();
     const id = await runs.start({ pattern: 'investigate', inputs: question, provider: 'scripted' });
-    const t0 = Date.now();
-    const asked = await runs.wait(id, 5);
+    const { view: asked, elapsedMs } = await timedWait(runs, id, 5);
     // get_run returns as soon as the run asks, not when its wait runs out.
-    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(elapsedMs).toBeLessThan(4000);
     expect(asked.waitingFor).toMatchObject({ kind: 'overtime', minutes: 0 });
     expect(asked.status).toBe('running');
     // Waiting: asked again after another limit, the step never cut off meanwhile.

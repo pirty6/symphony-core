@@ -1,0 +1,190 @@
+import { describe, expect, it } from 'vitest';
+import { lensLeads, testBodyBreaks } from './lensscan.js';
+
+/** A one-file diff that adds these lines at line 1 of `path`. */
+const added = (path: string, lines: readonly string[]): string =>
+  [
+    `diff --git a/${path} b/${path}`,
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    `@@ -0,0 +1,${lines.length} @@`,
+    ...lines.map((l) => `+${l}`),
+  ].join('\n');
+
+describe('test-body breaks', () => {
+  it('flags an if inside a test, with its line, the test and the rule', () => {
+    const text = [
+      "it('adds two numbers', () => {",
+      '  const sum = add(1, 2);',
+      '  if (sum > 0) expect(sum).toBe(3);',
+      '});',
+    ].join('\n');
+    expect(testBodyBreaks('src/a.test.ts', text)).toEqual([
+      "src/a.test.ts:3 — an if inside the test 'adds two numbers' (UT-3.2)",
+    ]);
+  });
+
+  it('lets a helper outside the tests branch', () => {
+    const text = [
+      'const pick = (n: number) => {',
+      '  if (n > 1) return n;',
+      '  return 0;',
+      '};',
+      "it('picks', () => {",
+      '  expect(pick(2)).toBe(2);',
+      '});',
+    ].join('\n');
+    expect(testBodyBreaks('src/a.test.ts', text)).toEqual([]);
+  });
+
+  it('flags a loop and a try/finally in the test that holds them', () => {
+    const text = [
+      "test('reads every file', async () => {",
+      '  try {',
+      '    for (const f of files) expect(await read(f)).toBeTruthy();',
+      '  } finally {',
+      '    await cleanup();',
+      '  }',
+      '});',
+    ].join('\n');
+    expect(testBodyBreaks('src/b.test.ts', text)).toEqual([
+      "src/b.test.ts:2 — a try/finally inside the test 'reads every file' (UT-3.2)",
+      "src/b.test.ts:3 — a loop inside the test 'reads every file' (UT-3.2)",
+      "src/b.test.ts:4 — a try/finally inside the test 'reads every file' (UT-3.2)",
+    ]);
+  });
+
+  it('does not read keywords inside strings as code', () => {
+    const text = [
+      "it('says if (x) in its name', () => {",
+      "  expect('for (;;)').toBe('for (;;)');",
+      '});',
+    ].join('\n');
+    expect(testBodyBreaks('src/c.test.ts', text)).toEqual([]);
+  });
+
+  it('does not take a comment that says "it (…" for a test', () => {
+    const text = [
+      '/** Opens it (it then stays open). */',
+      'async function open(page) {',
+      '  if (closed) await toggle();',
+      '}',
+    ].join('\n');
+    expect(testBodyBreaks('e2e/a.spec.ts', text)).toEqual([]);
+  });
+
+  it('keeps a test name whole when it holds an escaped quote', () => {
+    const text = [
+      "it('lists the machine\\'s runs', () => {",
+      '  if (x) expect(x).toBe(1);',
+      '});',
+    ].join('\n');
+    expect(testBodyBreaks('src/f.test.ts', text)).toEqual([
+      "src/f.test.ts:2 — an if inside the test 'lists the machine's runs' (UT-3.2)",
+    ]);
+  });
+
+  it('flags test.each: each case is its own named test', () => {
+    const text = "it.each([1, 2])('handles %i', (n) => expect(n).toBeGreaterThan(0));";
+    expect(testBodyBreaks('src/d.test.ts', text)).toEqual([
+      'src/d.test.ts:1 — test.each: write each case as its own named test (UT-3.2)',
+    ]);
+  });
+
+  it('flags a sleep and the real clock inside a test', () => {
+    const text = [
+      "it('expires the session', async () => {",
+      '  await new Promise((r) => setTimeout(r, 50));',
+      '  expect(expired(Date.now())).toBe(true);',
+      '});',
+    ].join('\n');
+    expect(testBodyBreaks('src/e.test.ts', text)).toEqual([
+      "src/e.test.ts:2 — a sleep inside the test 'expires the session' (UT-11.2)",
+      "src/e.test.ts:3 — the real clock inside the test 'expires the session' (DET-5)",
+    ]);
+  });
+
+  it('reads Python tests by indentation, and not their helpers', () => {
+    const text = [
+      'def helper(n):',
+      '    if n > 1:',
+      '        return n',
+      '',
+      'def test_total():',
+      '    for n in [1, 2]:',
+      '        assert total(n) > 0',
+    ].join('\n');
+    expect(testBodyBreaks('tests/test_total.py', text)).toEqual([
+      "tests/test_total.py:6 — a loop inside the test 'test_total' (UT-3.2)",
+    ]);
+  });
+
+  it('reads a C# test method by its attribute', () => {
+    const text = [
+      '[Fact]',
+      'public void Totals_are_positive()',
+      '{',
+      '    foreach (var n in Numbers) Assert.True(Total(n) > 0);',
+      '}',
+    ].join('\n');
+    expect(testBodyBreaks('Tests/TotalTests.cs', text)).toEqual([
+      "Tests/TotalTests.cs:4 — a loop inside the test 'Totals_are_positive' (UT-3.2)",
+    ]);
+  });
+});
+
+describe('lens leads from a diff', () => {
+  it('names a query built from values for the Security lens', () => {
+    const leads = lensLeads(
+      added('src/db.ts', ['const q = `SELECT * FROM users WHERE id = ${id}`;']),
+    );
+    expect(leads.SECURITY).toEqual(['src/db.ts:1 — a query built from values (SEC-1)']);
+  });
+
+  it('names a shell command built from values and eval', () => {
+    const leads = lensLeads(added('src/run.ts', ['execSync(`git log ${branch}`);', 'eval(code);']));
+    expect(leads.SECURITY).toEqual([
+      'src/run.ts:1 — a shell command built from values (SEC-1)',
+      'src/run.ts:2 — eval or unsafe deserialization (SEC-5)',
+    ]);
+  });
+
+  it('names a credential, even in a test file', () => {
+    const token = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
+    const leads = lensLeads(added('src/auth.test.ts', [`const token = '${token}';`]));
+    expect(leads.SECURITY).toEqual(['src/auth.test.ts:1 — a credential in the change (SEC-2)']);
+  });
+
+  it('names an await inside a loop for the Performance lens', () => {
+    const leads = lensLeads(
+      added('src/sync.ts', ['for (const id of ids) {', '  await save(id);', '}']),
+    );
+    expect(leads.PERFORMANCE).toEqual([
+      'src/sync.ts:2 — an await inside a loop: one call per item? (PERF-1)',
+    ]);
+  });
+
+  it('names the clock in production code for the Determinism lens, not in tests', () => {
+    const prod = lensLeads(added('src/expiry.ts', ['const now = Date.now();']));
+    const test = lensLeads(added('src/expiry.test.ts', ['const now = Date.now();']));
+    expect(prod.DETERMINISM).toEqual([
+      'src/expiry.ts:1 — reads the clock: should the time come in as an input? (DET-3)',
+    ]);
+    expect(test.DETERMINISM).toEqual([]);
+  });
+
+  it('gives the Clean code lens the smell scan, with rule ids', () => {
+    const leads = lensLeads(added('src/f.ts', ['function f(a, b, c, d) {', '}']));
+    expect(leads.CLEAN).toEqual(['src/f.ts:1 — 4 parameters (F1)']);
+  });
+
+  it('gives the Tests lens test.each and what may hide a failing test', () => {
+    const leads = lensLeads(
+      added('src/g.test.ts', ["it.skip('works', () => {});", 'it.each([1])("n", () => {});']),
+    );
+    expect(leads.TESTS).toEqual([
+      'src/g.test.ts — a test skipped or focused',
+      'src/g.test.ts:2 — test.each: write each case as its own named test (UT-3.2)',
+    ]);
+  });
+});

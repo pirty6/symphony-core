@@ -1,7 +1,13 @@
 import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
-import { prReviewPhase } from './phases/prReview.js';
+import {
+  CRITICAL_PATH_CHECKS,
+  CRITICAL_PATH_DIRECTIVE,
+  CRITICAL_PATH_FIELD,
+  DEMO_LENSES,
+} from './phases/lenses.js';
+import { PR_REVIEW_ENTRY, prReviewPhase } from './phases/prReview.js';
 import { TESTS_KEPT_CHECK, testFirstPhase } from './phases/testFirst.js';
 import {
   checkFindings,
@@ -42,6 +48,7 @@ const edit = editVerifyPhase({
     'files',
     'acceptanceCriteria',
     'testsToAdd',
+    'criticalPath',
     'testFiles',
     'redOutput',
     'unmetCriteria',
@@ -124,6 +131,7 @@ export const implement: Pattern = {
         description: 'Observable behaviour that proves the feature works, one per entry',
       },
       { name: 'testsToAdd', type: 'string[]', description: 'Tests that prove each criterion' },
+      CRITICAL_PATH_FIELD,
       { name: 'files', type: 'string[]', description: 'Files to change or create' },
       { name: 'plan', type: 'string', description: 'Step-by-step implementation plan' },
       {
@@ -227,9 +235,18 @@ export const implement: Pattern = {
       directive:
         'From `findings` only, choose how to build `request` and write it in `design`, citing the evidence by id and naming the conventions to follow. ' +
         CITE_BY_ID +
-        ' Rule on every approach in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence", where CONFIRMED is the approach you chose (if the feature already exists, confirm that and plan only what is missing). Write `acceptanceCriteria` as observable behaviour, one per entry, each checkable by a test; list those tests in `testsToAdd` (file and test name), the `files` to change or create, and a short step-by-step `plan`. If a previous attempt failed (`failureReason`, `testOutput`), the new design must say why it will not fail the same way.',
+        ' Rule on every approach in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence", where CONFIRMED is the approach you chose (if the feature already exists, confirm that and plan only what is missing). Write `acceptanceCriteria` as observable behaviour, one per entry, each checkable by a test; list those tests in `testsToAdd` (file and test name), the `files` to change or create, and a short step-by-step `plan`. If a previous attempt failed (`failureReason`, `testOutput`), the new design must say why it will not fail the same way.' +
+        CRITICAL_PATH_DIRECTIVE,
       reads: ['request', 'hint', 'hypotheses', 'findings', 'failureReason', 'testOutput'],
-      writes: ['design', 'rulings', 'acceptanceCriteria', 'testsToAdd', 'files', 'plan'],
+      writes: [
+        'design',
+        'rulings',
+        'acceptanceCriteria',
+        'testsToAdd',
+        'criticalPath',
+        'files',
+        'plan',
+      ],
       verifyBelow: 0.6,
       retries: 2,
       complexityShift: 1,
@@ -252,6 +269,7 @@ export const implement: Pattern = {
           message:
             'Give exactly one ruling per approach: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence".',
         },
+        ...CRITICAL_PATH_CHECKS,
       ],
     },
     ...challenge.nodes,
@@ -262,7 +280,15 @@ export const implement: Pattern = {
       message:
         'Review the design, the approaches ruled out and the acceptance criteria. Approve to let the executor write the tests first (they must fail), then the code; the engine runs the tests after every edit, then each criterion is reviewed.',
       writes: [],
-      shows: ['design', 'acceptanceCriteria', 'testsToAdd', 'rulings', 'files', 'plan'],
+      shows: [
+        'design',
+        'acceptanceCriteria',
+        'testsToAdd',
+        'criticalPath',
+        'rulings',
+        'files',
+        'plan',
+      ],
     },
     ...testFirst.nodes,
     { id: 'testFirstStopped', kind: 'end', label: 'Stopped at tests', outcome: 'partial' },
@@ -342,7 +368,7 @@ export const implement: Pattern = {
     ...edit.edges,
     ...prReview.edges,
     { id: 'review-allMet', from: 'review', to: 'allMet' },
-    { id: 'allMet-prReview', from: 'allMet', to: 'prReview', branch: 'then' },
+    { id: 'allMet-prReview', from: 'allMet', to: PR_REVIEW_ENTRY, branch: 'then' },
     { id: 'allMet-reviewsLeft', from: 'allMet', to: 'reviewsLeft', branch: 'else' },
     { id: 'reviewsLeft-back', from: 'reviewsLeft', to: 'backToEdit', branch: 'then' },
     {
@@ -357,6 +383,7 @@ export const implement: Pattern = {
   demo: {
     context: { request: 'Add a --json flag to `todo list` that prints the items as JSON' },
     agents: {
+      ...DEMO_LENSES.agents,
       prReview: () => ({
         updates: {
           reviewDecision: 'APPROVE',
@@ -405,6 +432,9 @@ export const implement: Pattern = {
             'src/commands/list.test.ts "prints text by default"',
           ],
           files: ['src/commands/list.ts', 'src/commands/list.test.ts'],
+          criticalPath: [
+            'U1 src/commands/list.ts — DOMAIN — test: src/commands/list.test.ts "prints JSON with --json" and "prints text by default"',
+          ],
           plan: '1. add the json option\n2. branch on it when printing\n3. add both tests',
         },
         verdict: v('designed'),
@@ -458,6 +488,7 @@ export const implement: Pattern = {
       }),
     },
     tools: {
+      ...DEMO_LENSES.tools,
       checkExplore: (s) => ({ valid: s.newFindings, invalid: [] }),
       baseline: () => ({ passed: true, output: 'Tests 20 passed', command: 'npm test' }),
       snapshot: () => ({ diff: '', hash: 'base', files: [] }),

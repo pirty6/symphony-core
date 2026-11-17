@@ -408,6 +408,13 @@ const REPORT_FIXED = REPORT_JS.replace('${d.month}', '${d.month + 1}');
 const INVOICE_DATE_JS =
   "import { parseDate } from './date.js';\n\nexport const dueMonth = (text) => parseDate(text).month;\n";
 
+const DISCOUNT_JS =
+  '/** 10% off orders over 100. */\nexport const discount = (total) => (total > 100 ? total * 0.1 : 0);\n';
+const DISCOUNT_BRANCHING_TEST = `${TEST_HEAD}import { discount } from '../src/discount.js';\n\ntest('discount', () => {\n  for (const total of [50, 150]) {\n    if (total > 100) assert.equal(discount(total), total * 0.1);\n    else assert.equal(discount(total), 0);\n  }\n});\n`;
+const USERS_JS =
+  "export const findUser = (db, id) => db.query('SELECT * FROM users WHERE id = ?', [id]);\n";
+const USERS_SEARCH = `${USERS_JS}\n/** Users whose name matches what the caller typed. */\nexport const searchUsers = (db, name) => db.query(\`SELECT * FROM users WHERE name = '\${name}'\`);\n`;
+
 const CART_JS =
   'export function total(items) {\n  let sum = 0;\n  for (const item of items) sum += item.price * item.qty;\n  return sum;\n}\n';
 const CART_TEST = `${TEST_HEAD}import { total } from '../src/cart.js';\ntest('sums', () => assert.equal(total([{ price: 2, qty: 3 }]), 6));\n`;
@@ -506,6 +513,34 @@ const SEEDED_REVIEWS: readonly EvalTask[] = [
         { file: 'src/cart.js', text: CART_DISCOUNT, near: 'sum > 100' },
         { file: 'test/cart.test.js', text: CART_TEST, near: "test('sums'" },
       ],
+    }),
+  },
+  {
+    // A new test that branches and loops inside its body (the Tests lens, UT-3.2).
+    id: 'review-if-in-test',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: { 'package.json': PKG, '.gitignore': IGNORE, 'src/discount.js': DISCOUNT_JS },
+    changes: { 'test/discount.test.js': DISCOUNT_BRANCHING_TEST },
+    check: seededReview({
+      category: 'TEST',
+      accept: ['TEST', 'CLEAN'],
+      at: [
+        { file: 'test/discount.test.js', text: DISCOUNT_BRANCHING_TEST, near: 'if (total > 100)' },
+      ],
+    }),
+  },
+  {
+    // A query built from a caller's input (the Security lens, SEC-1).
+    id: 'review-sql-injection',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: { 'package.json': PKG, '.gitignore': IGNORE, 'src/users.js': USERS_JS },
+    changes: { 'src/users.js': USERS_SEARCH },
+    check: seededReview({
+      category: 'SECURITY',
+      accept: ['SECURITY'],
+      at: [{ file: 'src/users.js', text: USERS_SEARCH, near: "WHERE name = '${name}'" }],
     }),
   },
   {

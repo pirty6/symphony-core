@@ -1,14 +1,14 @@
-import { useEffect, useRef } from 'react'
-import type { Frame } from '@core/replay'
-import { describeEvent } from '../lib/events'
-import type { EngineEvent } from '@core/types'
+import { useEffect, useRef } from 'react';
+import type { Frame } from '@core/replay';
+import { describeEvent } from '../lib/events';
+import type { EngineEvent } from '@core/types';
 
 interface Props {
-  frames: readonly Frame[]
-  cursor: number | null
-  onSeek: (index: number | null) => void
-  follow?: boolean
-  onFollow?: (on: boolean) => void
+  frames: readonly Frame[];
+  cursor: number | null;
+  onSeek: (index: number | null) => void;
+  follow?: boolean;
+  onFollow?: (on: boolean) => void;
 }
 
 const ICON: Record<EngineEvent['type'], string> = {
@@ -22,18 +22,23 @@ const ICON: Record<EngineEvent['type'], string> = {
   'node-completed': 'Δ',
   'run-completed': '✔',
   'run-failed': '✘',
-}
+};
 
 export function Timeline({ frames, cursor, onSeek, follow, onFollow }: Props) {
-  const index = cursor ?? frames.length - 1
-  const current = useRef<HTMLLIElement>(null)
+  const index = cursor ?? frames.length - 1;
+  const current = useRef<HTMLLIElement>(null);
   useEffect(() => {
-    current.current?.scrollIntoView?.({ block: 'nearest' })
-  }, [index])
+    current.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [index]);
   return (
     <footer className="timeline">
       <div className="tl-controls">
-        <button type="button" onClick={() => onSeek(Math.max(0, index - 1))} disabled={index <= 0} aria-label="previous event">
+        <button
+          type="button"
+          onClick={() => onSeek(Math.max(0, index - 1))}
+          disabled={index <= 0}
+          aria-label="previous event"
+        >
           ◀
         </button>
         <input
@@ -45,15 +50,30 @@ export function Timeline({ frames, cursor, onSeek, follow, onFollow }: Props) {
           aria-label="timeline"
           disabled={frames.length === 0}
         />
-        <button type="button" onClick={() => onSeek(Math.min(frames.length - 1, index + 1))} disabled={index >= frames.length - 1} aria-label="next event">
+        <button
+          type="button"
+          onClick={() => onSeek(Math.min(frames.length - 1, index + 1))}
+          disabled={index >= frames.length - 1}
+          aria-label="next event"
+        >
           ▶
         </button>
-        <button type="button" className={cursor === null ? 'on' : ''} onClick={() => onSeek(null)} title="Follow the latest event">
+        <button
+          type="button"
+          className={cursor === null ? 'on' : ''}
+          onClick={() => onSeek(null)}
+          title="Follow the latest event"
+        >
           ● live
         </button>
         {onFollow && (
           <label title="Keep the active node centered on the canvas">
-            <input type="checkbox" checked={follow ?? false} onChange={(e) => onFollow(e.target.checked)} aria-label="follow active node" />
+            <input
+              type="checkbox"
+              checked={follow ?? false}
+              onChange={(e) => onFollow(e.target.checked)}
+              aria-label="follow active node"
+            />
             follow
           </label>
         )}
@@ -64,7 +84,11 @@ export function Timeline({ frames, cursor, onSeek, follow, onFollow }: Props) {
       <ol className="tl-events" data-testid="timeline-events">
         {frames.map((f, i) =>
           f.event ? (
-            <li key={i} ref={i === index ? current : undefined} className={`tl-${f.event.type}${i === index ? ' current' : ''}`}>
+            <li
+              key={i}
+              ref={i === index ? current : undefined}
+              className={`tl-${f.event.type}${i === index ? ' current' : ''}`}
+            >
               <button type="button" onClick={() => onSeek(i)}>
                 <span className="tl-icon">{ICON[f.event.type]}</span> {describeEvent(f.event)}
               </button>
@@ -73,5 +97,5 @@ export function Timeline({ frames, cursor, onSeek, follow, onFollow }: Props) {
         )}
       </ol>
     </footer>
-  )
+  );
 }

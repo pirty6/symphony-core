@@ -1,20 +1,46 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { canonicalJson, freezeJson, HashError, hashOf, sha256, useSha256 } from './hash.js';
 
 const nodeSha = (s: string) => createHash('sha256').update(s).digest('hex');
 
+/** The error a call throws, or undefined when it returns. */
+function thrown(call: () => unknown): unknown {
+  try {
+    call();
+    return undefined;
+  } catch (e) {
+    return e;
+  }
+}
+
 describe('sha256', () => {
-  it.each([
-    '',
-    'abc',
-    'hello world',
-    'ü✓ unicode',
-    'x'.repeat(55),
-    'y'.repeat(56),
-    'z'.repeat(1000),
-  ])('matches node:crypto for case %#', (input) => {
-    expect(sha256(input)).toBe(nodeSha(input));
+  it('matches node:crypto on the empty string', () => {
+    expect(sha256('')).toBe(nodeSha(''));
+  });
+
+  it('matches node:crypto on a short ASCII string', () => {
+    expect(sha256('abc')).toBe(nodeSha('abc'));
+  });
+
+  it('matches node:crypto on text with a space', () => {
+    expect(sha256('hello world')).toBe(nodeSha('hello world'));
+  });
+
+  it('matches node:crypto on multi-byte unicode', () => {
+    expect(sha256('ü✓ unicode')).toBe(nodeSha('ü✓ unicode'));
+  });
+
+  it('matches node:crypto on 55 bytes, the most one block can pad', () => {
+    expect(sha256('x'.repeat(55))).toBe(nodeSha('x'.repeat(55)));
+  });
+
+  it('matches node:crypto on 56 bytes, where the padding spills into a second block', () => {
+    expect(sha256('y'.repeat(56))).toBe(nodeSha('y'.repeat(56)));
+  });
+
+  it('matches node:crypto on 1000 bytes, many blocks', () => {
+    expect(sha256('z'.repeat(1000))).toBe(nodeSha('z'.repeat(1000)));
   });
 });
 
@@ -52,9 +78,10 @@ describe('frozen values', () => {
 
 describe('canonicalJson only accepts plain JSON', () => {
   it('refuses values that would collide with null or {}', () => {
-    for (const bad of [NaN, Infinity, -Infinity, undefined, () => 1, 1n]) {
-      expect(() => canonicalJson(bad)).toThrow(HashError);
-    }
+    const bad = [NaN, Infinity, -Infinity, undefined, () => 1, 1n];
+    expect(bad.map((v) => thrown(() => canonicalJson(v)))).toEqual(
+      bad.map(() => expect.any(HashError)),
+    );
     expect(() => canonicalJson({ at: new Date(0) })).toThrow(/\$\.at is a Date/);
     expect(() => canonicalJson({ m: new Map() })).toThrow(/Map/);
     expect(() => canonicalJson([1, undefined])).toThrow(/\$\[1\] is undefined/);
@@ -72,15 +99,13 @@ describe('canonicalJson only accepts plain JSON', () => {
 const native = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 
 describe('useSha256', () => {
+  afterEach(() => useSha256(sha256));
+
   it('a native SHA-256 gives every id unchanged', () => {
     const value = { b: [1, 'é 🎻'], a: { s: 'x\ud800' } };
     const before = hashOf(value);
     useSha256(native);
-    try {
-      expect(hashOf(value)).toBe(before);
-    } finally {
-      useSha256(sha256);
-    }
+    expect(hashOf(value)).toBe(before);
   });
 
   it('refuses an implementation that is not SHA-256 of the UTF-8 bytes', () => {

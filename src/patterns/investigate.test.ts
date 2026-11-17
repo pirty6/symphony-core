@@ -33,6 +33,13 @@ const withNotes =
     return { ...r, updates: { ...r.updates, readNotes: batch.map((x) => `${x} — read`) } };
   };
 
+/** The parts a text leaves out. */
+const missingFrom = (text: string, parts: readonly string[]) =>
+  parts.filter((part) => !text.includes(part));
+
+/** An investigate node by its id. */
+const nodeOf = (id: string) => investigate.nodes.find((n) => n.id === id);
+
 /** Run investigate with the plan using exactly `use` (everything else skipped). */
 /** How many leading characters two prompts share. */
 const sharedPrefix = (a: string, b: string) => {
@@ -235,6 +242,25 @@ describe('items that cannot be read', () => {
     reason: 'r',
   };
   const play = (s: DemoScript) => runScripted(compileInvestigate({ context: demo.context! }), s);
+  /** A deep read whose web page is rate-limited on its first read only; counts reads per url. */
+  const rateLimitedOnce =
+    (tries: Map<string, number>): DemoResponder =>
+    (s) => {
+      const batch = s.deepBatch as string[];
+      const url = batch.find((x) => x.startsWith('http'));
+      const n = url ? (tries.get(url) ?? 0) : 0;
+      if (url) tries.set(url, n + 1);
+      const flaky = url && n === 0 ? [url] : [];
+      return {
+        updates: {
+          examined: batch.filter((x) => !flaky.includes(x)),
+          unreadable: flaky,
+          unreadableReasons: flaky.map(() => 'HTTP 429'),
+          newFindings: ['x — y'],
+        },
+        verdict,
+      };
+    };
 
   it('are reported with a reason and land in the coverage, instead of failing the run', () => {
     const r = play(
@@ -261,24 +287,7 @@ describe('items that cannot be read', () => {
 
   it('get one more try at the end of deep reading (a rate limit may have cleared)', () => {
     const tries = new Map<string, number>();
-    const r = play(
-      script((s) => {
-        const batch = s.deepBatch as string[];
-        const url = batch.find((x) => x.startsWith('http'));
-        const n = url ? (tries.get(url) ?? 0) : 0;
-        if (url) tries.set(url, n + 1);
-        const flaky = url && n === 0 ? [url] : [];
-        return {
-          updates: {
-            examined: batch.filter((x) => !flaky.includes(x)),
-            unreadable: flaky,
-            unreadableReasons: flaky.map(() => 'HTTP 429'),
-            newFindings: ['x — y'],
-          },
-          verdict,
-        };
-      }),
-    );
+    const r = play(script(rateLimitedOnce(tries)));
     expect(r.state.outcome).toBe('success');
     expect([...tries.values()]).toEqual([2]);
     expect(r.state.state.notRead).toEqual([]);
@@ -339,6 +348,13 @@ const assessRejections = (r: { state: { events: readonly EngineEvent[] } }) =>
     e.type === 'response-rejected' && e.nodeId === 'assess' ? [JSON.stringify(e)] : [],
   );
 
+/** Gap-check assessments the engine sends back. */
+type Assessment = (subs: string[]) => string[];
+const leftOut: Assessment = (subs) => subs.slice(1).map((_, i) => `S${i + 1}: ANSWERED [F1]`);
+const outOfOrder: Assessment = (subs) => subs.map((_, i) => `S${subs.length - i}: ANSWERED [F1]`);
+const uncited: Assessment = (subs) => subs.map((_, i) => `S${i + 1}: ANSWERED, clearly`);
+const unknownId: Assessment = (subs) => subs.map((_, i) => `S${i + 1}: ANSWERED [F9999]`);
+
 describe('the gap check: one structured entry per sub-question', () => {
   const v = { outcome: 'applied' as const, confidence: 0.9, shouldTerminate: false, reason: 'r' };
   const assessing = (assess: DemoResponder) =>
@@ -346,6 +362,18 @@ describe('the gap check: one structured entry per sub-question', () => {
       ...demo,
       agents: { ...demo.agents, assess },
     });
+  /** How a run ends whose gap check always writes the given assessment. */
+  const assessedAs = (assessment: Assessment) => {
+    const r = assessing((s) => ({
+      updates: {
+        assessment: assessment(s.subQuestions as string[]),
+        objectionGaps: [],
+        confidence: 1,
+      },
+      verdict: v,
+    }));
+    return { outcome: r.state.outcome, rejected: assessRejections(r).length > 0 };
+  };
   it('the engine derives the gaps from the GAP entries, not from a list the AI writes', () => {
     let seen = 0;
     const r = assessing((s, visit) => {
@@ -407,19 +435,13 @@ describe('the gap check: one structured entry per sub-question', () => {
   });
 
   it('sends back an entry left out, one out of order, an ANSWERED without a citation or one citing an unknown id', () => {
-    for (const bad of [
-      (subs: string[]) => subs.slice(1).map((_, i) => `S${i + 1}: ANSWERED [F1]`),
-      (subs: string[]) => subs.map((_, i) => `S${subs.length - i}: ANSWERED [F1]`),
-      (subs: string[]) => subs.map((_, i) => `S${i + 1}: ANSWERED, clearly`),
-      (subs: string[]) => subs.map((_, i) => `S${i + 1}: ANSWERED [F9999]`),
-    ]) {
-      const r = assessing((s) => ({
-        updates: { assessment: bad(s.subQuestions as string[]), objectionGaps: [], confidence: 1 },
-        verdict: v,
-      }));
-      expect(r.state.outcome).toBe('partial');
-      expect(assessRejections(r).length).toBeGreaterThan(0);
-    }
+    const sentBack = { outcome: 'partial', rejected: true };
+    expect([leftOut, outOfOrder, uncited, unknownId].map(assessedAs)).toEqual([
+      sentBack,
+      sentBack,
+      sentBack,
+      sentBack,
+    ]);
   });
 });
 
@@ -663,10 +685,8 @@ describe('investigate only records evidence that holds', () => {
     const findings = r.state.state.findings as string[];
     const unverified = r.state.state.unverified as string[];
     expect(unverified.length).toBeGreaterThan(0);
-    for (const u of unverified) {
-      const original = u.split(' ✗ ')[0]!;
-      expect(findings.some((f) => f.endsWith(original))).toBe(false);
-    }
+    const originals = unverified.map((u) => u.split(' ✗ ')[0]!);
+    expect(originals.filter((o) => findings.some((f) => f.endsWith(o)))).toEqual([]);
     // Ids are assigned in order, once each.
     expect(findings.map((f) => /^F(\d+) /.exec(f)?.[1])).toEqual(
       findings.map((_f, i) => String(i + 1)),
@@ -679,6 +699,7 @@ describe('investigate only records evidence that holds', () => {
         answer: (s) => ({
           updates: {
             answer: 'It is validated in the engine [F999].',
+            pillarRatings: [],
             openQuestions: [],
             subAnswers: ((s.subQuestions as string[]) ?? []).map((_, i) => `S${i + 1}: OPEN — x`),
             rulings: ((s.hypotheses as string[]) ?? []).map(
@@ -837,6 +858,12 @@ describe('investigate always ends: research rounds are bounded', () => {
 
 describe('investigate answers several subjects side by side', () => {
   const ALGOS = ['fix', 'refactor', 'review'];
+  /** What the plan step was told, planning these parts. */
+  const planFeedback = (parts: string[]) => {
+    const { r } = runWith(['workspace'], demo.approvals, { parts });
+    const plan = r.state.steps.find((st) => st.nodeId === 'plan');
+    return JSON.stringify(plan?.attempts ?? r.state.pause);
+  };
   it('the parts share one prompt up to their own subject, which comes last (the cache reuses the rest)', () => {
     const { r } = runWith(['workspace'], demo.approvals, { parts: ALGOS });
     const pause = r.state.events.flatMap((e) =>
@@ -878,22 +905,22 @@ describe('investigate answers several subjects side by side', () => {
   });
 
   it('rejects a synthesis or summary part: the overall answer is the synthesis', () => {
-    for (const extra of ['synthesis', 'Summary', 'Overall recommendations', '5. Conclusion:']) {
-      const { r } = runWith(['workspace'], demo.approvals, { parts: [...ALGOS, extra] });
-      const plan = r.state.steps.find((st) => st.nodeId === 'plan');
-      expect(JSON.stringify(plan?.attempts ?? r.state.pause), extra).toMatch(
-        /leave out a synthesis, summary, overview or conclusion part/,
-      );
-    }
+    const extras = ['synthesis', 'Summary', 'Overall recommendations', '5. Conclusion:'];
+    const leaveItOut = expect.stringMatching(
+      /leave out a synthesis, summary, overview or conclusion part/,
+    );
+    expect(extras.map((extra) => planFeedback([...ALGOS, extra]))).toEqual(
+      extras.map(() => leaveItOut),
+    );
     // A subject that merely contains or starts with such a word is fine.
-    for (const parts of [
+    const fine = [
       ['token summary cache', 'speed'],
       ['summarize.py', 'parse.py', 'fetch.py'],
       ['the Summarizer', 'Synthesizer', 'Overview page'],
-    ]) {
-      const ok = runWith(['workspace'], demo.approvals, { parts });
-      expect(ok.r.state.outcome, parts.join()).toBe('success');
-    }
+    ];
+    expect(
+      fine.map((parts) => runWith(['workspace'], demo.approvals, { parts }).r.state.outcome),
+    ).toEqual(['success', 'success', 'success']);
   });
 
   it('rejects a plan with exactly one part', () => {
@@ -928,7 +955,12 @@ describe('investigate hands on its evidence', () => {
     // The AI version carries them, each with its id, as the chained run reads it.
     expect(investigate.result).toEqual(['summary', 'handoff']);
     const handoff = String(r.state.state.handoff);
-    for (const f of cited) expect(handoff).toContain(`- ${f}`);
+    expect(
+      missingFrom(
+        handoff,
+        cited.map((f) => `- ${f}`),
+      ),
+    ).toEqual([]);
   });
 
   it('two versions: a plain one for people first, then a complete one for an AI agent', () => {
@@ -936,18 +968,19 @@ describe('investigate hands on its evidence', () => {
     const s = r.state.state;
     const handoff = String(s.handoff);
     // The AI version: every section, the full answer, and what to do with it.
-    for (const h of [
-      '## Task',
-      '## Status',
-      '## Sub-questions and their answers',
-      '## Hypotheses and rulings',
-      '## Answer (with what was and was not investigated)',
-      '## Evidence: the findings the answer cites',
-      '## Do not rely on: findings that could not be verified',
-      '## Still open',
-      '## Instructions for the next agent',
-    ])
-      expect(handoff).toContain(h);
+    expect(
+      missingFrom(handoff, [
+        '## Task',
+        '## Status',
+        '## Sub-questions and their answers',
+        '## Hypotheses and rulings',
+        '## Answer (with what was and was not investigated)',
+        '## Evidence: the findings the answer cites',
+        '## Do not rely on: findings that could not be verified',
+        '## Still open',
+        '## Instructions for the next agent',
+      ]),
+    ).toEqual([]);
     expect(handoff).toContain(String(s.answer));
     expect(handoff).toContain(`Question: ${String(s.question)}`);
     // The plain one: short sentences, no ids.
@@ -1012,10 +1045,14 @@ describe('investigate asks for a hint once', () => {
     expect(r.state.state).toMatchObject({ hint: '', hintAsked: true });
     expect(r.state.steps.some((st) => st.nodeId === 'answer')).toBe(true);
     // Every evidence step reads the hint.
-    for (const id of ['triage', 'deepRead', 'sweep', 'assess', 'answer'])
-      expect(
-        (investigate.nodes.find((n) => n.id === id) as unknown as { reads: string[] }).reads,
-      ).toContain('hint');
+    const readsHint = { reads: expect.arrayContaining(['hint']) };
+    expect(['triage', 'deepRead', 'sweep', 'assess', 'answer'].map(nodeOf)).toMatchObject([
+      readsHint,
+      readsHint,
+      readsHint,
+      readsHint,
+      readsHint,
+    ]);
   });
 });
 
@@ -1088,8 +1125,10 @@ describe('investigate always tries: the web and targeted experiments', () => {
   });
 
   it('experiments play in a throwaway copy of the workspace', () => {
-    for (const id of ['experiment', 'parallelExperiment'])
-      expect(investigate.nodes.find((n) => n.id === id)).toMatchObject({ sandbox: true });
+    expect(['experiment', 'parallelExperiment'].map(nodeOf)).toMatchObject([
+      { sandbox: true },
+      { sandbox: true },
+    ]);
   });
 });
 
@@ -1184,6 +1223,32 @@ describe('investigate searches sources side by side', () => {
   });
 });
 
+/** A deep read whose first answer tags its findings for H1; later answers are the demo's. */
+const tagsFirstAnswer = (): DemoResponder => {
+  let answers = 0;
+  return (s, v) => {
+    const good = demo.agents!.deepRead!(s, v);
+    if (answers++ > 0) return good;
+    const findings = (good.updates.newFindings as string[]).map((f) => `${f} [H1 for]`);
+    return { ...good, updates: { ...good.updates, newFindings: findings } };
+  };
+};
+
+/** What each reader step that played was given of the hypotheses. */
+const readerViews = (r: ReturnType<typeof runScripted>, nodes: readonly string[]) =>
+  nodes.flatMap((node) => {
+    const input = r.state.steps.find((x) => x.nodeId === node)?.input;
+    if (!input) return [];
+    return [
+      {
+        node,
+        leadHypotheses: input.leadHypotheses,
+        leadStatus: input.leadStatus,
+        seesHypotheses: 'hypotheses' in input,
+      },
+    ];
+  });
+
 describe('investigate keeps a tally per hypothesis', () => {
   it('the engine counts [H# for/against] tags after each merge; no hypothesis is dropped', () => {
     const { r } = runWith(['workspace']);
@@ -1202,19 +1267,10 @@ describe('investigate keeps a tally per hypothesis', () => {
   });
 
   it('readerHypotheses off (an ablation): readers get none and may not tag; the answer still rules on each', () => {
-    let tagged = 0;
+    // The first answer tags anyway: it is sent back.
     const script: DemoScript = {
       ...demo,
-      agents: {
-        ...demo.agents,
-        deepRead: (s, v) => {
-          const good = demo.agents!.deepRead!(s, v);
-          // The first answer tags anyway: it is sent back.
-          if (tagged++ > 0) return good;
-          const findings = (good.updates.newFindings as string[]).map((f) => `${f} [H1 for]`);
-          return { ...good, updates: { ...good.updates, newFindings: findings } };
-        },
-      },
+      agents: { ...demo.agents, deepRead: tagsFirstAnswer() },
     };
     const r = runScripted(
       compileInvestigate({
@@ -1224,13 +1280,15 @@ describe('investigate keeps a tally per hypothesis', () => {
       script,
     );
     const s = r.state.state;
-    for (const node of ['triage', 'deepRead', 'sweep', 'chase']) {
-      const step = r.state.steps.find((x) => x.nodeId === node);
-      if (!step) continue;
-      expect(step.input?.leadHypotheses, node).toEqual([]);
-      expect(step.input?.leadStatus, node).toEqual([]);
-      expect(step.input, node).not.toHaveProperty('hypotheses');
-    }
+    const views = readerViews(r, ['triage', 'deepRead', 'sweep', 'chase']);
+    expect(views).toEqual(
+      views.map(({ node }) => ({
+        node,
+        leadHypotheses: [],
+        leadStatus: [],
+        seesHypotheses: false,
+      })),
+    );
     const rejected = r.state.events.flatMap((e) =>
       e.type === 'response-rejected' && e.nodeId === 'deepRead' ? e.errors : [],
     );
@@ -1316,6 +1374,40 @@ describe('investigate reads the likeliest files first, and still every file', ()
   });
 });
 
+/** engine.ts cut twice by its size, validate.ts cut once by the call's, nothing of schema.ts fit once. */
+function cutShort(item: string, visit: number): PreloadRecord[] {
+  const { path, from, to } = itemOf(item);
+  if (from !== undefined)
+    return path.endsWith('engine.ts') && from === 4001
+      ? [{ path, item, range: [from, to!], lines: 9000, omitted: [8001, 9000], cut: 'file' }]
+      : [{ path, item, range: [from, to!], lines: 9000 }];
+  if (path.endsWith('engine.ts'))
+    return [{ path, lines: 9000, omitted: [4001, 9000], cut: 'file' }];
+  if (path.endsWith('validate.ts') && visit === 0)
+    return [{ path, lines: 900, omitted: [301, 900], cut: 'call' }];
+  if (path.endsWith('schema.ts') && visit === 0)
+    return [{ path, lines: 500, omitted: [1, 500], cut: 'call' }];
+  return [{ path, lines: 100 }];
+}
+
+/** The demo, with the runtime's preload record on each triage call. */
+function withTriagePreload(preloaded: PreloadRecord[]) {
+  const score = compileInvestigate({
+    goal: 'g',
+    context: demo.context!,
+    generatedAt: 't',
+  });
+  let r = createEngine(score, { startedAt: 't' });
+  for (let i = 0; i < 2000 && r.state.kind === 'running' && r.state.pause; i++) {
+    const pause = r.state.pause;
+    let res: Resolution = scriptedResolution(demo, pause, r.state, 't');
+    if (pause.kind === 'agent' && pause.nodeId === 'triage' && res.kind === 'agent')
+      res = { ...res, transcript: { ...res.transcript!, preloaded } };
+    r = advance(score, r.state, res);
+  }
+  return r;
+}
+
 describe('investigate holds "read completely" to what the engine gave', () => {
   /** The demo, with the runtime's preload record on each deep read: what it could not give whole. */
   function withManifest(manifest: (batch: readonly string[], visit: number) => PreloadRecord[]) {
@@ -1349,20 +1441,7 @@ describe('investigate holds "read completely" to what the engine gave', () => {
     // engine.ts is too long for one prompt (twice over); validate.ts was cut for the call's
     // size; nothing of schema.ts fit the first time. Chunks are given whole when asked for.
     const { score, r, deepBatches } = withManifest((batch, visit) =>
-      batch.flatMap((item): PreloadRecord[] => {
-        const { path, from, to } = itemOf(item);
-        if (from !== undefined)
-          return path.endsWith('engine.ts') && from === 4001
-            ? [{ path, item, range: [from, to!], lines: 9000, omitted: [8001, 9000], cut: 'file' }]
-            : [{ path, item, range: [from, to!], lines: 9000 }];
-        if (path.endsWith('engine.ts'))
-          return [{ path, lines: 9000, omitted: [4001, 9000], cut: 'file' }];
-        if (path.endsWith('validate.ts') && visit === 0)
-          return [{ path, lines: 900, omitted: [301, 900], cut: 'call' }];
-        if (path.endsWith('schema.ts') && visit === 0)
-          return [{ path, lines: 500, omitted: [1, 500], cut: 'call' }];
-        return [{ path, lines: 100 }];
-      }),
+      batch.flatMap((item) => cutShort(item, visit)),
     );
     expect(r.state.kind).toBe('done');
     const s = r.state.state;
@@ -1401,6 +1480,28 @@ describe('investigate holds "read completely" to what the engine gave', () => {
     expect(String(s.answer)).toMatch(/Could not read in full: .*src\/core\/engine\.ts/);
   });
 
+  const NOTED_ITEMS = ['Loop Experiences/plan.md', 'src/a.ts#chunk=401-800', 'src/b.ts'];
+  /** Read notes for NOTED_ITEMS: well formed, without a dash, and three ways wrong. */
+  const NOTES = {
+    dashed: [
+      'Loop Experiences/plan.md — the rollout plan',
+      'src/a.ts#chunk=401-800 — nothing relevant',
+      'src/b.ts – the retry loop',
+    ],
+    undashed: ['Loop Experiences/plan.md — x', 'src/a.ts#chunk=401-800 x', 'src/b.ts x'],
+    missing: ['Loop Experiences/plan.md — x', 'src/b.ts — x'],
+    outOfOrder: ['src/b.ts — x', 'src/a.ts#chunk=401-800 — x', 'Loop Experiences/plan.md — x'],
+    cutAtSpace: ['Loop — x', 'src/a.ts#chunk=401-800 — x', 'src/b.ts — x'],
+  };
+  /** Whether a note check accepts each set of NOTES. */
+  const noteVerdicts = ({ expr, field }: { expr: string; field: string }) =>
+    Object.fromEntries(
+      Object.entries(NOTES).map(([name, readNotes]) => [
+        name,
+        evaluateGuard(expr, { [field]: NOTED_ITEMS, readNotes }),
+      ]),
+    );
+
   it("each read note is matched to its item by what comes before ' — ', so paths may hold spaces", () => {
     // Both note checks: the deep read's (deepBatch) and the single-pass reader's (readFully).
     const checks = investigate.nodes.flatMap((n) =>
@@ -1410,27 +1511,15 @@ describe('investigate holds "read completely" to what the engine gave', () => {
       }),
     );
     expect(checks.map((c) => c.field).toSorted()).toEqual(['deepBatch', 'readFully']);
-    const items = ['Loop Experiences/plan.md', 'src/a.ts#chunk=401-800', 'src/b.ts'];
-    for (const { expr, field } of checks) {
-      const ok = (readNotes: string[]) => evaluateGuard(expr, { [field]: items, readNotes });
-      expect(
-        ok([
-          'Loop Experiences/plan.md — the rollout plan',
-          'src/a.ts#chunk=401-800 — nothing relevant',
-          'src/b.ts – the retry loop',
-        ]),
-        field,
-      ).toBe(true);
+    const verdicts = {
+      dashed: true,
       // No dash: the first word, as before.
-      expect(ok(['Loop Experiences/plan.md — x', 'src/a.ts#chunk=401-800 x', 'src/b.ts x'])).toBe(
-        true,
-      );
-      expect(ok(['Loop Experiences/plan.md — x', 'src/b.ts — x'])).toBe(false);
-      expect(
-        ok(['src/b.ts — x', 'src/a.ts#chunk=401-800 — x', 'Loop Experiences/plan.md — x']),
-      ).toBe(false);
-      expect(ok(['Loop — x', 'src/a.ts#chunk=401-800 — x', 'src/b.ts — x'])).toBe(false);
-    }
+      undashed: true,
+      missing: false,
+      outOfOrder: false,
+      cutAtSpace: false,
+    };
+    expect(checks.map(noteVerdicts)).toEqual([verdicts, verdicts]);
   });
 
   it('a reader that leaves out the note for an item is sent back', () => {
@@ -1453,25 +1542,9 @@ describe('investigate holds "read completely" to what the engine gave', () => {
   });
 
   it('a file triage saw only part of goes to the deep read whatever triage said', () => {
-    const score = compileInvestigate({
-      goal: 'g',
-      context: demo.context!,
-      generatedAt: 't',
-    });
-    let r = createEngine(score, { startedAt: 't' });
-    for (let i = 0; i < 2000 && r.state.kind === 'running' && r.state.pause; i++) {
-      const pause = r.state.pause;
-      let res: Resolution = scriptedResolution(demo, pause, r.state, 't');
-      if (pause.kind === 'agent' && pause.nodeId === 'triage' && res.kind === 'agent')
-        res = {
-          ...res,
-          transcript: {
-            ...res.transcript!,
-            preloaded: [{ path: 'src/cli.ts', lines: 5000, omitted: [3001, 5000], cut: 'file' }],
-          },
-        };
-      r = advance(score, r.state, res);
-    }
+    const r = withTriagePreload([
+      { path: 'src/cli.ts', lines: 5000, omitted: [3001, 5000], cut: 'file' },
+    ]);
     // The demo's triage calls cli.ts irrelevant; it was not shown whole, so it is read in depth.
     expect(r.state.state.relevantFiles).toContain('src/cli.ts');
   });
@@ -1571,6 +1644,14 @@ describe('single-pass triage pilot (off by default)', () => {
   });
 });
 
+/** Where a worst-case run ends, and whether its steps stay far below the limit. */
+const worstEnding = ({ r, max }: { r: ReturnType<typeof runScripted>; max: number }) => ({
+  kind: r.state.kind,
+  cursor: r.state.cursor,
+  atMost700: r.state.steps.length <= 700,
+  atMostAThirdOfMax: r.state.steps.length <= max / 3,
+});
+
 describe('the step limit is a backstop, never the bound', () => {
   /** Every loop pushed: one sub-agent, every file relevant, gaps never close, the skeptic always objects. */
   const worst = (fileCount: number, context: Record<string, unknown> = {}) => {
@@ -1644,16 +1725,15 @@ describe('the step limit is a backstop, never the bound', () => {
   };
 
   it('the worst case ends far below maxSteps, with the counters at default and raised', () => {
-    for (const raised of [
-      {},
-      { maxChaseRounds: 20, maxDebateRounds: 5, maxGapRounds: 5, maxExperiments: 20 },
-    ]) {
-      const { r, max } = worst(300, raised);
-      expect(r.state.kind).toBe('done');
-      expect(r.state.cursor).toBe('doubts');
-      expect(r.state.steps.length).toBeLessThanOrEqual(700);
-      expect(r.state.steps.length).toBeLessThanOrEqual(max / 3);
-    }
+    const atDefault = worst(300);
+    const raised = worst(300, {
+      maxChaseRounds: 20,
+      maxDebateRounds: 5,
+      maxGapRounds: 5,
+      maxExperiments: 20,
+    });
+    const farBelow = { kind: 'done', cursor: 'doubts', atMost700: true, atMostAThirdOfMax: true };
+    expect([atDefault, raised].map(worstEnding)).toEqual([farBelow, farBelow]);
   }, 30_000);
 
   it('exhaustive on a huge repository stops at the citation check cap, not at maxSteps', () => {
@@ -1848,5 +1928,50 @@ describe('a summary for people that cannot be written does not sink the run', ()
     expect(step.attempts).toHaveLength(3);
     // The record replays to the same end.
     expect(replayPerformance(score, toPerformance(r.state)).divergence.reproduced).toBe(true);
+  });
+});
+
+/** Why the answer step's answers were sent back. */
+const answerErrors = (r: ReturnType<typeof runScripted>) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'answer' ? e.errors : [],
+  );
+
+describe('investigate rates the code pillars a question bears on', () => {
+  const agents = demo.agents!;
+  /** The plan tags its first sub-question with the Security pillar. */
+  const taggedPlan: NonNullable<DemoScript['agents']>[string] = (s, visit) => {
+    const good = agents.plan!(s, visit);
+    const [first, ...rest] = good.updates.subQuestions as string[];
+    return {
+      ...good,
+      updates: { ...good.updates, subQuestions: [`[SECURITY] ${first}`, ...rest] },
+    };
+  };
+  /** The demo's answer, with these pillar ratings. */
+  const answerRating =
+    (ratings: string[]): NonNullable<DemoScript['agents']>[string] =>
+    (s, visit) => {
+      const good = agents.answer!(s, visit);
+      return { ...good, updates: { ...good.updates, pillarRatings: ratings } };
+    };
+  const playWith = (answer: NonNullable<DemoScript['agents']>[string]) =>
+    runScripted(compileInvestigate({ goal: 'g', context: demo.context! }), {
+      ...demo,
+      agents: { ...agents, plan: taggedPlan, answer },
+    });
+
+  it('a tagged sub-question without its pillar rating is sent back', () => {
+    const r = playWith(answerRating([]));
+    expect(answerErrors(r).join()).toMatch(
+      /one pillarRatings entry per sub-question tagged with a pillar/,
+    );
+  });
+
+  it('the rating, citing its findings, closes the answer under Pillars', () => {
+    const rating = '[SECURITY] SOUND — the answer is checked before any state changes [F1]';
+    const r = playWith(answerRating([rating]));
+    expect(answerErrors(r)).toEqual([]);
+    expect(String(r.state.state.answer)).toContain(`## Pillars\n\n${rating}`);
   });
 });

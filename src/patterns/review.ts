@@ -2,6 +2,8 @@ import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
 import { TEST_PATH } from './phases/stability.js';
 import { bullets, READER_STATE, readers } from './phases/readers.js';
 import { chaseSteps } from './phases/chase.js';
+import { CHANGE_PILLARS, LENS_STATE, lensPhase } from './phases/lenses.js';
+import { lensBrief, pillarById } from '../core/pillars.js';
 import { DEBATE_STATE, MAX_OBJECTIONS } from './phases/debate.js';
 import { checkFindings, CITE_BY_ID, citesFindings, EVIDENCE_STATE } from './phases/evidence.js';
 import {
@@ -117,12 +119,12 @@ Work each example out from the code; never claim you ran it. Plain words, short 
  * ids go on from every one made (kept or dismissed: never reused), and one already dismissed is
  * not recorded again.
  */
-const mergeIssues = (field: string) => [
+const mergeIssues = (field: string, rejected = 'rejectedFindings') => [
   {
     field: 'findings',
     expr: `findings + numbered(without(unique(${field}), unnumbered(findings) + unnumbered(dismissed)), len(findings) + len(dismissed) + 1)`,
   },
-  { field: 'unverified', expr: 'unverified + rejectedFindings' },
+  { field: 'unverified', expr: `unverified + ${rejected}` },
   { field: 'findingsBrief', expr: 'brief(findings, 240)' },
 ];
 
@@ -130,6 +132,41 @@ const mergeIssues = (field: string) => [
 const OBJECTION_TARGET = '(^|[^A-Za-z0-9])[CBO][0-9]+([^0-9]|$)|[^ :]+:[0-9]+';
 
 /** Investigate's gap research (phases/chase), aimed at what the review could not settle. */
+/** The demo's lenses find nothing new: what each examined, and the critical path judged tested. */
+const demoLens = (s: Readonly<Record<string, unknown>>) => {
+  const pillar = String((s.lenses as string[])[0]).split(' ')[0];
+  const tests = pillar === 'TESTS';
+  return {
+    updates: {
+      lensFindings: [],
+      lensNotes: [`${pillar}: NONE — read src/core/engine.ts:120 for this pillar`],
+      criticalUnits: tests
+        ? [
+            'U1 src/core/engine.ts:120 — DOMAIN — counts the attempts that decide when a step gives up',
+          ]
+        : [],
+      unitVerdicts: tests
+        ? ['U1 MEANINGFUL — src/core/engine.test.ts:40 fails if it stops counting']
+        : [],
+    },
+    verdict: {
+      outcome: 'applied' as const,
+      confidence: 0.9,
+      shouldTerminate: false,
+      reason: 'sound',
+    },
+  };
+};
+
+/** The pillar lenses; the per-file reviewers and the whole-change judge are its Correctness. */
+const LENSES = lensPhase({
+  pillars: CHANGE_PILLARS,
+  range: 'diffRange',
+  reads: ['target', 'intent', 'claims', 'diffSummary', 'changedTests', 'context'],
+  next: 'aimChase',
+  merge: mergeIssues('lensFindings', 'lensRejected'),
+});
+
 const REVIEW_CHASE = chaseSteps({
   ids: { chase: 'chase', check: 'checkChase', merge: 'mergeChase' },
   label: 'Settle open points',
@@ -382,6 +419,7 @@ export const review: Pattern = {
       description: 'Steps that answered "failed": what they check was not checked',
     },
     ...EVIDENCE_STATE,
+    ...LENS_STATE,
     ...DEBATE_STATE.filter((f) =>
       [
         'objections',
@@ -467,6 +505,13 @@ export const review: Pattern = {
   ],
   // The studio and the docs draw each as one box (open it to see its steps).
   groups: [
+    {
+      id: 'lensPhase',
+      label: 'Pillar lenses',
+      description:
+        'Security, clean code, tests (the critical path), performance and determinism: a scan, then one reviewer per pillar',
+      nodes: LENSES.nodes.map((n) => n.id),
+    },
     {
       id: 'chasePhase',
       label: 'Settle open points',
@@ -841,6 +886,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         ...mergeIssues('wholeFindings'),
       ],
     },
+    ...LENSES.nodes,
     {
       id: 'aimChase',
       kind: 'compute',
@@ -1128,6 +1174,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
           expr: [
             'pick(claimVerdicts, positions(claimVerdicts, "^C[0-9]+ (PARTIAL|NOT MET) "))',
             ' + pick(testVerdicts, positions(testVerdicts, "^B[0-9]+ (WEAK|UNTESTED) "))',
+            ' + pick(unitVerdicts, positions(unitVerdicts, "^U[0-9]+ (WEAK|UNTESTED|SPLIT) "))',
             ' + pick(obligationVerdicts, positions(obligationVerdicts, "^O[0-9]+ ABSENT "))',
             ' + if(len(unrelated) > 0, ["Unrelated to what the change is for: " + join(unrelated, ", ")], [])',
           ].join(''),
@@ -1138,7 +1185,9 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
             'if(count(claimVerdicts, "^C[0-9]+ UNCLEAR ") > 0, ["Claims the review could not settle: " + join(pick(claimVerdicts, positions(claimVerdicts, "^C[0-9]+ UNCLEAR ")), "; ")], [])',
             ' + if(len(inventoryRejected) > 0, ["Context the review was to use whose citation did not hold: " + join(inventoryRejected, "; ")], [])',
             ' + if(len(stepsFailed) > 0, ["Steps that failed, so what they check was not checked: " + join(stepsFailed, "; ")], [])',
-            ' + if(len(dismissed) > 0 && len(findings) == 0, ["The skeptic dismissed every finding: check the dismissals"], [])',
+            // Only a HIGH or MEDIUM issue dismissed keeps "looks good" back: LOW nitpicks dropped on
+            // a sound change (seen live on review-migration-present) leave it clean.
+            ' + if(count(dismissed, " — [[][A-Z]+] [[](HIGH|MEDIUM)] ") > 0 && len(findings) == 0, ["The skeptic dismissed every finding, a HIGH or MEDIUM one among them: check the dismissals"], [])',
             ' + if(len(unresolvedObjections) > 0, ["Objections the debate could not settle: " + join(unresolvedObjections, "; ")], [])',
           ].join(''),
         },
@@ -1336,7 +1385,8 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     { id: 'wholeOk-note', from: 'wholeOk', to: 'noteWholeFailed', branch: 'else' },
     { id: 'noteWhole-second', from: 'noteWholeFailed', to: 'useSecond' },
     { id: 'checkWhole-merge', from: 'checkWhole', to: 'mergeWhole' },
-    { id: 'mergeWhole-aim', from: 'mergeWhole', to: 'aimChase' },
+    { id: 'mergeWhole-lenses', from: 'mergeWhole', to: LENSES.entry },
+    ...LENSES.edges,
     { id: 'aim-wantChase', from: 'aimChase', to: 'wantChase' },
     { id: 'wantChase-chase', from: 'wantChase', to: 'chase', branch: 'then' },
     { id: 'wantChase-second', from: 'wantChase', to: 'useSecond', branch: 'else' },
@@ -1400,6 +1450,12 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       checkWhole: (s) => ({ valid: s.wholeFindings, invalid: [] }),
       checkChase: (s) => ({ valid: s.chaseNotes, invalid: [] }),
       checkSecond: (s) => ({ valid: s.newFindings, invalid: [] }),
+      // Two lenses for the demo: the change has no test for its retry limit, and no secret.
+      lensScan: () => ({
+        lenses: [pillarById('SECURITY'), pillarById('TESTS')].map((p) => lensBrief(p, [])),
+        testBreaks: [],
+      }),
+      checkLens: (s) => ({ valid: s.lensFindings, invalid: [] }),
     },
     agents: {
       // Each finding keeps its location, so the reader can find the line.
@@ -1511,6 +1567,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         verdict: v('researched'),
       }),
       second: () => ({ updates: { newFindings: [] }, verdict: v('found nothing new') }),
+      lens: demoLens,
       // Keeps what the skeptic would change and sends every objection to research.
       pragmatist: (s) => ({
         updates: {

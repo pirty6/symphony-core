@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
   detectTestCommand,
   normalizeOutput,
@@ -60,6 +60,16 @@ describe('normalizeOutput', () => {
   });
 });
 
+/** Whether a process is still running (signal 0 only checks). */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe('tests.run', () => {
   it('uses the project test script, choosing the package manager from the lockfile', async () => {
     const d = dir();
@@ -99,16 +109,7 @@ setInterval(() => {}, 1000);`,
     expect(r.passed).toBe(false);
     expect(r.output).toMatch(/^timed out after 2s/);
     const pid = Number(readFileSync(join(d, 'pid'), 'utf8'));
-    const alive = () => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    for (let i = 0; i < 20 && alive(); i++) await new Promise((wait) => setTimeout(wait, 100));
-    expect(alive()).toBe(false);
+    await vi.waitFor(() => expect(isAlive(pid)).toBe(false), { timeout: 2000, interval: 100 });
   });
 
   it('needs a command it can find, and never takes one from elsewhere than its input', async () => {
@@ -322,5 +323,38 @@ describe('diff.scan', { timeout: 30_000 }, () => {
     });
     const unknown = await tool('diff.scan').run({ range: 'nope..HEAD' }, ctx(d));
     expect(unknown.error).not.toBe('');
+  });
+
+  it('reports only the breaks on the lines the change adds to a test file', async () => {
+    const d = dir();
+    const old = "it('old', () => {\n  if (a) expect(a).toBe(1);\n});\n";
+    writeFileSync(join(d, 'b.test.js'), old);
+    execFileSync('git', ['-C', d, 'add', '.']);
+    commitAll(d);
+    writeFileSync(
+      join(d, 'b.test.js'),
+      `${old}it('new', () => {\n  for (const n of [1]) expect(n).toBe(1);\n});\n`,
+    );
+    const out = await tool('pillars.scan').run({ range: '', pillars: [] }, ctx(d));
+    expect(out.testBreaks).toEqual(["b.test.js:5 — a loop inside the test 'new' (UT-3.2)"]);
+  });
+
+  it('briefs each lens asked for, with the branches found inside the changed test bodies', async () => {
+    const d = dir();
+    writeFileSync(join(d, 'a.js'), 'export const a = 1;\n');
+    execFileSync('git', ['-C', d, 'add', '.']);
+    commitAll(d);
+    writeFileSync(
+      join(d, 'a.test.js'),
+      "it('reads a', () => {\n  if (a) expect(a).toBe(1);\n});\n",
+    );
+    const out = await tool('pillars.scan').run(
+      { range: '', pillars: ['TESTS', 'SECURITY'] },
+      ctx(d),
+    );
+    const lenses = out.lenses as string[];
+    expect(lenses.map((l) => l.split(' ')[0])).toEqual(['SECURITY', 'TESTS']);
+    expect(out.testBreaks).toEqual(["a.test.js:2 — an if inside the test 'reads a' (UT-3.2)"]);
+    expect(lenses[1]).toContain("- a.test.js:2 — an if inside the test 'reads a' (UT-3.2)");
   });
 });

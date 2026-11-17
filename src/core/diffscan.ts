@@ -5,7 +5,7 @@
  */
 
 /** A path that is a test file. */
-const TEST_FILE =
+export const TEST_FILE =
   /(^|\/)(tests?|__tests__|spec)\/|[._-](test|spec)\.[A-Za-z0-9]+$|_test\.go$|(^|\/)test_[^/]+\.py$/;
 /** A line that asserts something. */
 const ASSERTION = /\b(expect|assert\w*|should|t\.(Error|Fatal)\w*|Assert\.\w+)\b/;
@@ -28,7 +28,7 @@ export interface DiffScan {
   readonly masking: readonly string[];
 }
 
-interface FileDiff {
+export interface FileDiff {
   readonly path: string;
   readonly deleted: boolean;
   /** [line in the new file, text] of each added line. */
@@ -36,7 +36,7 @@ interface FileDiff {
   readonly removed: string[];
 }
 
-function filesOf(diff: string): FileDiff[] {
+export function filesOf(diff: string): FileDiff[] {
   const files: { path: string; deleted: boolean; added: [number, string][]; removed: string[] }[] =
     [];
   let cur: (typeof files)[number] | undefined;

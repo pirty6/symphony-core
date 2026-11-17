@@ -114,7 +114,7 @@ describe('run store', () => {
     expect(fanned.map((n) => n.id)).toEqual(
       expect.arrayContaining(['triage', 'deepRead', 'chase']),
     );
-    for (const n of fanned) expect(n.fanOut!.agents).toBe('agents');
+    expect(new Set(fanned.map((n) => n.fanOut!.agents))).toEqual(new Set(['agents']));
     expect(run.score.state.find((f) => f.name === 'agents')?.initial).toBe(6);
     // The deep read's pause asks for 6 at once, not the runtime's default.
     const deep = played.events.flatMap((e) =>
@@ -126,7 +126,7 @@ describe('run store', () => {
         : [],
     );
     expect(deep.length).toBeGreaterThan(0);
-    for (const pause of deep) expect(pause.parallel).toBe(6);
+    expect(new Set(deep.map((pause) => pause.parallel))).toEqual(new Set([6]));
   });
 
   it('agentsCap caps what the plan chose (the 6 vs 4 trial)', () => {
@@ -327,7 +327,8 @@ describe('run store', () => {
     );
     expect((await checkReplay(file, run)).reproduced).toBe(false);
     // ...and a rewritten run is replayed again. Listing never shows the check.
-    utimesSync(file, new Date(), new Date(Date.now() + 5000));
+    const { atime, mtime } = statSync(file);
+    utimesSync(file, atime, new Date(mtime.getTime() + 5000));
     expect(await cachedReplayCheck(file)).toBeUndefined();
     expect((await checkReplay(file, run)).reproduced).toBe(true);
     expect((await listRuns(dir))[0]).not.toHaveProperty('check');

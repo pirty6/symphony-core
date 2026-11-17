@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
-import { api, errorText, type AccountView } from '../lib/api'
+import { useEffect, useRef, useState } from 'react';
+import { api, errorText, type AccountView } from '../lib/api';
 
-const POLL_MS = 3000
+const POLL_MS = 3000;
 
 /**
  * A browser on another computer, with AI: GitHub Copilot: sign in with your own GitHub account so
@@ -9,53 +9,59 @@ const POLL_MS = 3000
  * studio's computer never uses your account for anything else.
  */
 export function VisitorSignIn({ onChange }: { readonly onChange?: (signedIn: boolean) => void }) {
-  const [account, setAccount] = useState<AccountView | undefined>()
-  const [error, setError] = useState<string | undefined>()
-  const [busy, setBusy] = useState(false)
+  const [account, setAccount] = useState<AccountView | undefined>();
+  const [error, setError] = useState<string | undefined>();
+  const [busy, setBusy] = useState(false);
   // The latest callback, so a parent re-rendering does not restart the wait below.
-  const changed = useRef(onChange)
-  changed.current = onChange
+  const changed = useRef(onChange);
+  changed.current = onChange;
 
   useEffect(() => {
-    let cancelled = false
-    void api.account().then((a) => !cancelled && setAccount(a), () => undefined)
+    let cancelled = false;
+    void api.account().then(
+      (a) => !cancelled && setAccount(a),
+      () => undefined,
+    );
     return () => {
-      cancelled = true
-    }
-  }, [])
+      cancelled = true;
+    };
+  }, []);
 
   // Waiting for the code to be entered at GitHub: check until it is.
-  const waiting = account?.pending !== undefined && !account.signedIn
+  const waiting = account?.pending !== undefined && !account.signedIn;
   useEffect(() => {
-    if (!waiting) return
+    if (!waiting) return;
     const timer = setInterval(() => {
-      void api.account().then((a) => {
-        setAccount(a)
-        if (a.signedIn) changed.current?.(true)
-      }, () => undefined)
-    }, POLL_MS)
-    return () => clearInterval(timer)
-  }, [waiting])
+      void api.account().then(
+        (a) => {
+          setAccount(a);
+          if (a.signedIn) changed.current?.(true);
+        },
+        () => undefined,
+      );
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [waiting]);
 
-  if (!account || account.here) return null
+  if (!account || account.here) return null;
 
   const signIn = async () => {
-    setBusy(true)
-    setError(undefined)
+    setBusy(true);
+    setError(undefined);
     try {
-      const pending = await api.accountLogin()
-      setAccount({ ...account, pending })
+      const pending = await api.accountLogin();
+      setAccount({ ...account, pending });
     } catch (e) {
-      setError(errorText(e))
+      setError(errorText(e));
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
-  }
+  };
   const signOut = async () => {
-    await api.accountLogout()
-    setAccount({ here: false, signedIn: false })
-    changed.current?.(false)
-  }
+    await api.accountLogout();
+    setAccount({ here: false, signedIn: false });
+    changed.current?.(false);
+  };
 
   if (account.signedIn)
     return (
@@ -65,7 +71,7 @@ export function VisitorSignIn({ onChange }: { readonly onChange?: (signedIn: boo
           Sign out
         </button>
       </div>
-    )
+    );
   return (
     <div className="card issue" data-testid="visitor-account">
       {account.pending ? (
@@ -74,7 +80,8 @@ export function VisitorSignIn({ onChange }: { readonly onChange?: (signedIn: boo
           <a href={account.pending.url} target="_blank" rel="noreferrer">
             {account.pending.url}
           </a>{' '}
-          and enter <b className="mono">{account.pending.code}</b>, then authorize GitHub Copilot. Waiting…
+          and enter <b className="mono">{account.pending.code}</b>, then authorize GitHub Copilot.
+          Waiting…
         </span>
       ) : (
         <span>
@@ -86,5 +93,5 @@ export function VisitorSignIn({ onChange }: { readonly onChange?: (signedIn: boo
       )}
       {(error ?? account.error) && <div className="muted">{error ?? account.error}</div>}
     </div>
-  )
+  );
 }

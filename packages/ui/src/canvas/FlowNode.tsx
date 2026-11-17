@@ -1,6 +1,6 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { codeStandardFor } from '@core/standards'
-import { KIND_LABEL, ORIGIN_LABEL, type FlowNode as FlowNodeType } from '../lib/model'
+import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { codeStandardFor } from '@core/standards';
+import { KIND_LABEL, ORIGIN_LABEL, type FlowNode as FlowNodeType } from '../lib/model';
 
 const ICON: Record<string, string> = {
   start: '▶',
@@ -11,10 +11,10 @@ const ICON: Record<string, string> = {
   approval: '✋',
   end: '⏹',
   tool: '⚙',
-}
+};
 
 function Chips({ label, keys }: { label: string; keys: readonly string[] }) {
-  if (keys.length === 0) return null
+  if (keys.length === 0) return null;
   return (
     <div className="fn-chips">
       <span className="fn-chip-label">{label}</span>
@@ -24,13 +24,13 @@ function Chips({ label, keys }: { label: string; keys: readonly string[] }) {
         </span>
       ))}
     </div>
-  )
+  );
 }
 
 export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNodeType>) {
-  const n = data.node
-  const kindKey = n.kind === 'agent' ? n.role : n.kind
-  const standard = n.kind === 'agent' ? codeStandardFor(n) : undefined
+  const n = data.node;
+  const kindKey = n.kind === 'agent' ? n.role : n.kind;
+  const standard = n.kind === 'agent' ? codeStandardFor(n) : undefined;
   const cls = [
     'flow-node',
     `kind-${kindKey}`,
@@ -40,11 +40,18 @@ export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNo
     data.gate ? 'at-gate' : '',
   ]
     .filter(Boolean)
-    .join(' ')
+    .join(' ');
 
   return (
-    <div className={cls} data-testid={`node-${id}`} data-status={data.status ?? 'idle'} title={data.issues?.join('\n')}>
-      {n.kind !== 'start' && <Handle isConnectable={isConnectable} type="target" position={Position.Top} />}
+    <div
+      className={cls}
+      data-testid={`node-${id}`}
+      data-status={data.status ?? 'idle'}
+      title={data.issues?.join('\n')}
+    >
+      {n.kind !== 'start' && (
+        <Handle isConnectable={isConnectable} type="target" position={Position.Top} />
+      )}
       <div className="fn-header">
         <span className="fn-icon">{ICON[kindKey]}</span>
         <span className="fn-title">{n.label}</span>
@@ -61,8 +68,8 @@ export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNo
             aria-label={`breakpoint ${id}`}
             aria-pressed={data.breakpoint ?? false}
             onClick={(e) => {
-              e.stopPropagation()
-              data.onToggleBreakpoint?.(id)
+              e.stopPropagation();
+              data.onToggleBreakpoint?.(id);
             }}
           />
         )}
@@ -71,7 +78,11 @@ export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNo
         {n.kind === 'agent' ? `${n.role} · AI` : KIND_LABEL[n.kind]} · <code>{id}</code>
       </div>
       {data.origin && n.kind === 'agent' && (
-        <div className={`fn-origin origin-${data.origin.origin}`} title={data.origin.detail} data-testid={`origin-${id}`}>
+        <div
+          className={`fn-origin origin-${data.origin.origin}`}
+          title={data.origin.detail}
+          data-testid={`origin-${id}`}
+        >
           {ORIGIN_LABEL[data.origin.origin]}
         </div>
       )}
@@ -80,24 +91,59 @@ export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNo
           <p className="fn-text">{n.directive}</p>
           <Chips label="in" keys={data.reads} />
           <Chips label="out" keys={data.writes} />
-          {n.capabilities?.length || n.checks?.length || n.solo || n.isolated || n.complexity || standard ? (
+          {n.capabilities?.length ||
+          n.checks?.length ||
+          n.solo ||
+          n.isolated ||
+          n.complexity ||
+          standard ? (
             <div className="fn-badges">
-              {n.solo && <span className="badge badge-solo" title="Solo point: from Swing up the AI chooses the route">🎷 solo</span>}
-              {n.isolated && <span className="badge" title="No workspace tools: works only from its input">🔒 isolated</span>}
-              {n.complexity && <span className="badge" title="Fixed model tier">tier {n.complexity}</span>}
+              {n.solo && (
+                <span
+                  className="badge badge-solo"
+                  title="Solo point: from Swing up the AI chooses the route"
+                >
+                  🎷 solo
+                </span>
+              )}
+              {n.isolated && (
+                <span className="badge" title="No workspace tools: works only from its input">
+                  🔒 isolated
+                </span>
+              )}
+              {n.complexity && (
+                <span className="badge" title="Fixed model tier">
+                  tier {n.complexity}
+                </span>
+              )}
               {standard && (
                 <span
                   className="badge"
                   data-testid={`clean-code-${id}`}
-                  title={standard === 'write' ? 'Writes code to the Clean Code standard (Robert C. Martin)' : 'Reviews code against the Clean Code standard (Robert C. Martin)'}
+                  title={
+                    standard === 'write'
+                      ? 'Writes code to the Clean Code standard (Robert C. Martin)'
+                      : 'Reviews code against the Clean Code standard (Robert C. Martin)'
+                  }
                 >
                   🧹 clean code
                 </span>
               )}
-              {n.capabilities?.includes('web') && <span className="badge" title="May search and read the web">🌐 web</span>}
-              {n.capabilities?.includes('mcp') && <span className="badge" title="May use MCP servers">🔌 mcp</span>}
+              {n.capabilities?.includes('web') && (
+                <span className="badge" title="May search and read the web">
+                  🌐 web
+                </span>
+              )}
+              {n.capabilities?.includes('mcp') && (
+                <span className="badge" title="May use MCP servers">
+                  🔌 mcp
+                </span>
+              )}
               {n.checks?.length ? (
-                <span className="badge badge-check" title={n.checks.map((c) => `${c.expr} — ${c.message}`).join('\n')}>
+                <span
+                  className="badge badge-check"
+                  title={n.checks.map((c) => `${c.expr} — ${c.message}`).join('\n')}
+                >
                   ✓ {n.checks.length} check{n.checks.length > 1 ? 's' : ''}
                 </span>
               ) : null}
@@ -127,14 +173,36 @@ export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNo
           <Chips label="out" keys={data.writes} />
         </>
       )}
-      {n.kind === 'end' && <div className={`fn-outcome outcome-${n.outcome ?? 'success'}`}>{n.outcome ?? 'success'}</div>}
+      {n.kind === 'end' && (
+        <div className={`fn-outcome outcome-${n.outcome ?? 'success'}`}>
+          {n.outcome ?? 'success'}
+        </div>
+      )}
       {data.gate && (
-        <div className="fn-gate">{data.gate === 'before' ? '⏸ paused before running' : data.gate === 'parts' ? '⏸ paused between parts' : '⏸ AI answered: review before applying'}</div>
+        <div className="fn-gate">
+          {data.gate === 'before'
+            ? '⏸ paused before running'
+            : data.gate === 'parts'
+              ? '⏸ paused between parts'
+              : '⏸ AI answered: review before applying'}
+        </div>
       )}
       {n.kind === 'condition' ? (
         <>
-          <Handle isConnectable={isConnectable} type="source" id="then" position={Position.Bottom} style={{ left: '28%' }} />
-          <Handle isConnectable={isConnectable} type="source" id="else" position={Position.Bottom} style={{ left: '72%' }} />
+          <Handle
+            isConnectable={isConnectable}
+            type="source"
+            id="then"
+            position={Position.Bottom}
+            style={{ left: '28%' }}
+          />
+          <Handle
+            isConnectable={isConnectable}
+            type="source"
+            id="else"
+            position={Position.Bottom}
+            style={{ left: '72%' }}
+          />
           <div className="fn-branches">
             <span>then</span>
             <span>else</span>
@@ -142,8 +210,20 @@ export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNo
         </>
       ) : n.kind === 'approval' ? (
         <>
-          <Handle isConnectable={isConnectable} type="source" id="approved" position={Position.Bottom} style={{ left: '28%' }} />
-          <Handle isConnectable={isConnectable} type="source" id="rejected" position={Position.Bottom} style={{ left: '72%' }} />
+          <Handle
+            isConnectable={isConnectable}
+            type="source"
+            id="approved"
+            position={Position.Bottom}
+            style={{ left: '28%' }}
+          />
+          <Handle
+            isConnectable={isConnectable}
+            type="source"
+            id="rejected"
+            position={Position.Bottom}
+            style={{ left: '72%' }}
+          />
           <div className="fn-branches">
             <span>approved</span>
             <span>rejected</span>
@@ -153,5 +233,5 @@ export function FlowNode({ id, data, selected, isConnectable }: NodeProps<FlowNo
         <Handle isConnectable={isConnectable} type="source" position={Position.Bottom} />
       ) : null}
     </div>
-  )
+  );
 }

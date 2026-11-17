@@ -15,6 +15,7 @@ import {
 } from './engine.js';
 import { hashOf } from './hash.js';
 import { replayPerformance } from './replay.js';
+import type { Checked } from './schema.js';
 import type { ExecutableScore, Pattern, Resolution } from './types.js';
 
 const ok = (updates: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
@@ -28,6 +29,10 @@ function answerAgent(s: ExecutableScore, r: AdvanceResult, result: unknown): Adv
   const pause = r.state.pause!;
   return advance(s, r.state, { kind: 'agent', pauseId: pause.pauseId, result, at: 't' });
 }
+
+/** The run after each result in turn, given to the agent step it is paused on. */
+const answerAgentInTurn = (s: ExecutableScore, r: AdvanceResult, results: readonly unknown[]) =>
+  results.reduce<AdvanceResult>((run, result) => answerAgent(s, run, result), r);
 
 function recover(
   s: ExecutableScore,
@@ -53,11 +58,30 @@ function guess(s: ExecutableScore, r: AdvanceResult, letter: string): AdvanceRes
   });
 }
 
+/** The run after guessing each letter in turn. */
+const guessAll = (s: ExecutableScore, r: AdvanceResult, letters: readonly string[]) =>
+  letters.reduce((run, letter) => guess(s, run, letter), r);
+
+/** The value an accepted answer was read as; throws the errors of a refused one. */
+function accepted<T>(r: Checked<T>): T {
+  if (!r.ok) throw new Error(`refused: ${r.errors.join('; ')}`);
+  return r.value;
+}
+
+/** The first error of a refused answer; throws when it was accepted. */
+function firstError(r: Checked<unknown>): string {
+  if (r.ok) throw new Error('accepted');
+  return r.errors[0]!;
+}
+
+/** The run after its first step answers with this outcome and asks to stop. */
+const stopAskedAfter = (outcome: string) =>
+  answerAgent(score, createEngine(score), ok({ word: 'cat' }, { outcome, shouldTerminate: true }))
+    .state;
+
 function playWin(): AdvanceResult {
-  let r = createEngine(score, { startedAt: 't0' });
-  r = answerAgent(score, r, ok({ word: 'cat' }));
-  for (const l of ['c', 'X', 'a', 't']) r = guess(score, r, l);
-  return r;
+  const r = createEngine(score, { startedAt: 't0' });
+  return guessAll(score, answerAgent(score, r, ok({ word: 'cat' })), ['c', 'X', 'a', 't']);
 }
 
 describe('engine: hangman', () => {
@@ -108,7 +132,7 @@ describe('engine: hangman', () => {
   it('loses after maxWrong misses', () => {
     let r = createEngine(score);
     r = answerAgent(score, r, ok({ word: 'cat' }));
-    for (const l of ['q', 'w', 'e', 'r', 'y', 'u']) r = guess(score, r, l);
+    r = guessAll(score, r, ['q', 'w', 'e', 'r', 'y', 'u']);
     expect(r.state.kind).toBe('done');
     expect(r.state.outcome).toBe('partial');
     expect(r.state.cursor).toBe('lose');
@@ -146,7 +170,7 @@ describe('engine: advance leaves the state it was given as it was', () => {
     expect(next.state).not.toHaveProperty('seen');
     const lists = Object.values(next.state.state).filter((v) => Array.isArray(v));
     expect(lists.length).toBeGreaterThan(0);
-    for (const list of lists) expect(Object.isFrozen(list)).toBe(true);
+    expect(lists.map((list) => Object.isFrozen(list))).toEqual(lists.map(() => true));
   });
 });
 
@@ -178,29 +202,25 @@ describe('engine: paths a subset check holds are read in its spelling', () => {
       },
     );
     expect(r.ok).toBe(true);
-    if (r.ok)
-      expect(r.value.updates.scopeFiles).toEqual([
-        'src/a.ts',
-        'src/b c.ts',
-        'src/a.ts',
-        'a.ts',
-        'src/a.ts',
-        'src/b c.ts',
-      ]);
+    expect(accepted(r).updates.scopeFiles).toEqual([
+      'src/a.ts',
+      'src/b c.ts',
+      'src/a.ts',
+      'a.ts',
+      'src/a.ts',
+      'src/b c.ts',
+    ]);
   });
 
   it('never guesses: a folder, a missing file or a relative path to another place stays an error', () => {
-    for (const wrong of ['src/', 'src', 'b c.ts', '../repo/src/a.ts', 'lib/a.ts'])
-      expect(
-        acceptance(
-          [check],
-          { repoFiles },
-          {
-            updates: { scopeFiles: [wrong], scopeReasons: ['r'] },
-            verdict: v,
-          },
-        ).ok,
-      ).toBe(false);
+    const wrongs = ['src/', 'src', 'b c.ts', '../repo/src/a.ts', 'lib/a.ts'];
+    const accepts = (wrong: string) =>
+      acceptance(
+        [check],
+        { repoFiles },
+        { updates: { scopeFiles: [wrong], scopeReasons: ['r'] }, verdict: v },
+      ).ok;
+    expect(wrongs.map(accepts)).toEqual(wrongs.map(() => false));
     expect(canonicalEntry('/x/src/a.ts', new Set(['src/a.ts', 'a.ts']))).toBe('src/a.ts');
   });
 
@@ -269,7 +289,7 @@ describe('engine: a failed "none of these" check names what it found', () => {
       },
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errors[0]).toMatch(/ Found: "This sentence has far too many words\."\.$/);
+    expect(firstError(r)).toMatch(/ Found: "This sentence has far too many words\."\.$/);
     const fine = acceptance([check], {}, { updates: { summary: 'Short. Fine.' }, verdict: v });
     expect(fine.ok).toBe(true);
   });
@@ -293,7 +313,7 @@ describe('engine: a failed subset check names what is not allowed', () => {
     );
     expect(bad.ok).toBe(false);
     // "./src/b c.ts" is read as "src/b c.ts"; what has no allowed spelling is named.
-    if (!bad.ok) expect(bad.errors[0]).toMatch(/ Not allowed: "src\/", "lib\/x\.ts"\.$/);
+    expect(firstError(bad)).toMatch(/ Not allowed: "src\/", "lib\/x\.ts"\.$/);
     const many = acceptance(
       [check],
       { repoFiles },
@@ -302,13 +322,13 @@ describe('engine: a failed subset check names what is not allowed', () => {
         verdict: v,
       },
     );
-    if (!many.ok) expect(many.errors[0]).toMatch(/"x7" and 2 more\.$/);
+    expect(firstError(many)).toMatch(/"x7" and 2 more\.$/);
     // Passing, or failing for another reason: nothing to name.
     expect(
       acceptance([check], { repoFiles }, { updates: { scopeFiles: ['src/a.ts'] }, verdict: v }).ok,
     ).toBe(true);
     const empty = acceptance([check], { repoFiles }, { updates: { scopeFiles: [] }, verdict: v });
-    if (!empty.ok) expect(empty.errors[0]).not.toMatch(/Not allowed/);
+    expect(firstError(empty)).not.toMatch(/Not allowed/);
   });
 });
 
@@ -361,8 +381,7 @@ describe('engine: response validation', () => {
   });
 
   it('gets stuck after exhausting retries; stopping fails without touching state', () => {
-    let r = createEngine(score);
-    for (let i = 0; i < 3; i += 1) r = answerAgent(score, r, 'not json');
+    let r = answerAgentInTurn(score, createEngine(score), ['not json', 'not json', 'not json']);
     expect(r.state.kind).toBe('running');
     expect(r.state.pause).toMatchObject({ kind: 'stuck', nodeId: 'pick', attempts: 3 });
     expect(r.state.pause?.feedback?.[0]).toMatch(/result must be an object/);
@@ -382,8 +401,7 @@ describe('engine: response validation', () => {
   });
 
   it('a retry gets a fresh budget, the hint and the chosen tier, then completes', () => {
-    let r = createEngine(score);
-    for (let i = 0; i < 3; i += 1) r = answerAgent(score, r, 'not json');
+    let r = answerAgentInTurn(score, createEngine(score), ['not json', 'not json', 'not json']);
     const stuckId = r.state.pause!.pauseId;
     r = recover(score, r, 'retry', { hint: 'answer with one lowercase word', complexity: 4 });
     expect(r.state.pause).toMatchObject({
@@ -501,7 +519,7 @@ describe('engine: loop safety', () => {
     const s = compileScore(raised, { goal: 'g', context: { maxWrong: 3 } });
     let r = createEngine(s);
     r = answerAgent(s, r, ok({ word: 'cat' }));
-    for (const l of ['q', 'w', 'x']) r = guess(s, r, l);
+    r = guessAll(s, r, ['q', 'w', 'x']);
     // Three wrong guesses end the game as the rules say, not at the cap of 2.
     expect(r.state.reason).toBe("reached end 'lose'");
     const nodes = [...raised.nodes];
@@ -548,16 +566,13 @@ describe('engine: approvals, termination, cancel', () => {
   });
 
   it('a step that did its work, or skipped it, and asks to stop goes on: the steps ahead still run', () => {
-    for (const outcome of ['applied', 'skipped']) {
-      const r = answerAgent(
-        score,
-        createEngine(score),
-        ok({ word: 'cat' }, { outcome, shouldTerminate: true }),
-      );
-      expect(r.state.kind).not.toBe('done');
-      expect(r.state.pause?.nodeId).toBe('ask');
-      expect(r.state.steps.at(-1)?.verdict).toMatchObject({ outcome, shouldTerminate: true });
-    }
+    const outcomes = ['applied', 'skipped'];
+    const runs = outcomes.map(stopAskedAfter);
+    expect(runs.map((r) => r.kind)).not.toContain('done');
+    expect(runs.map((r) => r.pause?.nodeId)).toEqual(['ask', 'ask']);
+    expect(runs.map((r) => r.steps.at(-1)?.verdict)).toEqual(
+      outcomes.map((outcome) => expect.objectContaining({ outcome, shouldTerminate: true })),
+    );
   });
 
   it('supports cancel resolutions', () => {

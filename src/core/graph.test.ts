@@ -10,6 +10,10 @@ import {
 } from './graph.js';
 import { validateGraph } from './validate.js';
 
+/** The ids in a chain that are not drawn lower than the id before them. */
+const notBelowPrevious = (chain: readonly string[], y: (id: string) => number): string[] =>
+  chain.filter((id, i) => i > 0 && y(id) <= y(chain[i - 1]!));
+
 describe('patternToGraph', () => {
   it('maps nodes and edges with handles, carries and back edges', () => {
     const g = patternToGraph(hangman);
@@ -46,7 +50,7 @@ describe('patternToGraph', () => {
       'context',
       'gate',
     ];
-    for (let i = 1; i < chain.length; i++) expect(y(chain[i]!)).toBeGreaterThan(y(chain[i - 1]!));
+    expect(notBelowPrevious(chain, y)).toEqual([]);
     const g = patternToGraph(maestro);
     expect(g.edges.find((e) => e.id === 'revise-validate')!.data.back).toBe(false);
     expect(g.edges.find((e) => e.id === 'hasRequirements-cover')!.data.back).toBe(false);

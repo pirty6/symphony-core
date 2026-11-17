@@ -438,3 +438,28 @@ shadow keeps those out of memory.
 To repeat the memory arm: `eval --carry-memory` carries each task's memory from one take to the
 next, so take 1 starts empty and later takes recall what earlier ones learned.
 
+
+## Pillar lenses, 2026-11-17
+
+The lenses (review, and fix, implement and refactor before their PR review) against master
+without them, each arm in its own worktree, played side by side. Live on Copilot, n=3.
+
+| Arm | Solved | Recall | False flags | Premium requests per run | Time |
+|---|---|---|---|---|---|
+| Review, 9 tasks (the 6 of the feature trials, `review-untested`, `review-if-in-test`, `review-sql-injection`) | 24/27 vs 21/27 | TEST 6/6 vs 5/6; BUG, MISSING, SCOPE, SECURITY equal | 12 vs 10 | +61% [+49, +146] (about +12) | +18% |
+| Fix and implement (`fix-off-by-one`, `fix-wrong-index`, `implement-json-option`) | 9/9 vs 9/9 | — | — | +62% [+50, +78] (about +10) | +12% |
+
+The lenses solved three more review runs: the branching test (3/3 vs 2/3), the untested
+discount (3/3 vs 2/3), the clean control (3/3 vs 2/3) and the migration that is there (1/3 vs
+0/3), against one off-by-one (2/3 vs 3/3). Without them, review already caught the injected
+query 3/3: SECURITY was in its categories. On the fix and implement fixtures, small and
+already clean, they changed no result. The cost is the five lens calls: on a review of about 22
+premium requests, they add about 12.
+
+Repeat with two worktrees (one at the commit before the lenses, the fixtures cherry-picked):
+
+```sh
+TASKS=review-off-by-one,review-caller-not-updated,review-missing-migration,review-clean,review-migration-present,review-unrelated-hunk,review-untested,review-if-in-test,review-sql-injection
+npm run cli -- eval --task $TASKS -n 3
+npm run cli -- eval --task fix-off-by-one,fix-wrong-index,implement-json-option -n 3
+```

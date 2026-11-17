@@ -6,6 +6,7 @@ import { compileScore } from '../core/compile.js';
 import { fix } from '../patterns/index.js';
 import { Run, type RunMessage } from './driver.js';
 import { liveRoot, LiveRuns, publishLive, pruneLive, scrubbedFeed } from './live.js';
+import type { Provider } from './provider.js';
 import { ScriptedProvider } from './scripted-provider.js';
 
 const roots: string[] = [];
@@ -25,6 +26,51 @@ const until = async (ok: () => boolean | Promise<boolean>, ms = 5000) => {
     await new Promise((r) => setTimeout(r, 20));
   }
 };
+
+const HOUR_MS = 3600_000;
+/** A process id above any the system hands out: its process is gone. */
+const ENDED_PID = 2 ** 22 + 12345;
+/** A moment more than a day from now: published runs older than a day are let go of. */
+const overADayFromNow = () => Date.now() + 25 * HOUR_MS;
+
+/** A published run's folder, as a process `pid` left it, last touched eight days ago. */
+function weekOldFolder(dir: string, pid: number): void {
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'meta.json'), JSON.stringify({ pid }));
+  const eightDaysAgo = new Date(Date.now() - 8 * 24 * HOUR_MS);
+  utimesSync(dir, eightDaysAgo, eightDaysAgo);
+}
+
+/** A provider that streams `token` in pieces and runs a command with it, then plays `fix`. */
+function leakyProvider(token: string): Provider {
+  const scripted = ScriptedProvider.forPattern(fix);
+  return {
+    name: 'leaky',
+    runAgent: async (req) => {
+      for (const piece of ['the key is gh', token.slice(2, 20), token.slice(20), ' ok\n'])
+        req.onEvent({ type: 'delta', text: piece });
+      req.onEvent({
+        type: 'tool-start',
+        id: '1',
+        name: 'bash',
+        args: { command: `echo ${token}` },
+      });
+      return scripted.runAgent(req);
+    },
+    draft: () => Promise.reject(new Error('n/a')),
+  };
+}
+
+const ENDED: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled']);
+const isEnd = (m: RunMessage) => m.type === 'status' && ENDED.has(m.status);
+
+/** What the one run published under `dir` holds, once its file has the run's end. */
+async function publishedToTheEnd(dir: string): Promise<readonly RunMessage[]> {
+  const [seen] = await new LiveRuns(dir).list();
+  await seen!.open();
+  await until(async () => (await seen!.poll(), seen!.messages.some(isEnd)));
+  return seen!.messages;
+}
 
 const fixRun = () =>
   new Run({
@@ -47,24 +93,9 @@ describe('live runs: a run another process plays, in the studio', () => {
     const dir = root();
     // Built at run time: no literal a secret scanner would flag.
     const token = `ghp_${'a1B2c3D4e5'.repeat(4)}`;
-    const scripted = ScriptedProvider.forPattern(fix);
     const run = new Run({
       score: compileScore(fix, { context: fix.demo!.context!, generatedAt: 't' }),
-      provider: {
-        name: 'leaky',
-        runAgent: async (req) => {
-          for (const piece of ['the key is gh', token.slice(2, 20), token.slice(20), ' ok\n'])
-            req.onEvent({ type: 'delta', text: piece });
-          req.onEvent({
-            type: 'tool-start',
-            id: '1',
-            name: 'bash',
-            args: { command: `echo ${token}` },
-          });
-          return scripted.runAgent(req);
-        },
-        draft: () => Promise.reject(new Error('n/a')),
-      },
+      provider: leakyProvider(token),
       demo: fix.demo,
       autoApprove: true,
       clock: () => 't',
@@ -72,12 +103,10 @@ describe('live runs: a run another process plays, in the studio', () => {
     const stop = await publishLive(run, { source: 'chat', workspace: '/w' }, dir);
     await run.start();
     stop();
-    await new Promise((r) => setTimeout(r, 300));
-    const [seen] = await new LiveRuns(dir).list();
-    await seen!.open();
-    const file = JSON.stringify(seen!.messages);
+    const messages = await publishedToTheEnd(dir);
+    const file = JSON.stringify(messages);
     // Read as anyone reading the file would: the streamed pieces joined up.
-    const streamed = seen!.messages
+    const streamed = messages
       .flatMap((m) => (m.type === 'provider' && m.event.type === 'delta' ? [m.event.text] : []))
       .join('');
     expect(streamed).toContain('the key is [REDACTED:github-token] ok');
@@ -185,7 +214,7 @@ describe('live runs: a run another process plays, in the studio', () => {
     expect(seen!.status).toBe('done');
     expect(seen!.messages).toEqual([]);
     // A day later it is out of the list (and let go of).
-    expect(await live.list(Date.now() + 25 * 3600_000)).toEqual([]);
+    expect(await live.list(overADayFromNow())).toEqual([]);
   });
 
   it('is on by default under the home folder; SYMPHONY_LIVE=off turns it off', () => {
@@ -198,15 +227,8 @@ describe('live runs: a run another process plays, in the studio', () => {
     const dir = root();
     const old = join(dir, 'old');
     const mine = join(dir, 'mine');
-    for (const [d, pid] of [
-      [old, 2 ** 22 + 12345],
-      [mine, process.pid],
-    ] as const) {
-      mkdirSync(d);
-      writeFileSync(join(d, 'meta.json'), JSON.stringify({ pid }));
-      const t = new Date(Date.now() - 8 * 24 * 3600_000);
-      utimesSync(d, t, t);
-    }
+    weekOldFolder(old, ENDED_PID);
+    weekOldFolder(mine, process.pid);
     await pruneLive(dir);
     expect(existsSync(old)).toBe(false);
     expect(existsSync(mine)).toBe(true);

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { formatUsage } from '../core/usage.js';
 import type { SessionConfig } from '@github/copilot-sdk';
 import { compileScore } from '../core/compile.js';
@@ -14,6 +14,7 @@ import {
   emptiedFields,
   hasContent,
   normalizeSubmission,
+  withoutAnnotations,
   retryAfterMs,
   withoutTokenVars,
   parseTiers,
@@ -116,6 +117,155 @@ const required = (r: { session: { cfg: SessionConfig } }) =>
 const fixVerdict = (v: unknown) =>
   (normalizeSubmission({ updates: { a: 1 }, verdict: v }) as { verdict: unknown }).verdict;
 
+type Auth = { gitHubToken?: string };
+const APPLIED = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+
+/** Calls submit_result once per submission, in order; returns each reply as text. */
+async function submitEach(cfg: SessionConfig, submissions: readonly unknown[]): Promise<string[]> {
+  const replies: string[] = [];
+  for (const submission of submissions)
+    replies.push(String(await callTool(cfg, 'submit_result', submission)));
+  return replies;
+}
+
+/** Like a real model: submits the attempts in turn, stopping at the first one not rejected. */
+async function submitUntilAccepted(cfg: SessionConfig, attempts: readonly unknown[]) {
+  for (const attempt of attempts) {
+    const reply = String(await callTool(cfg, 'submit_result', attempt));
+    if (!reply.startsWith('REJECTED')) return;
+  }
+}
+
+/** A session that submits `word` with no verdict, then goes idle. */
+const submitsWord =
+  (word: string): Script =>
+  async (cfg, emit) => {
+    await callTool(cfg, 'submit_result', { updates: { word } });
+    emit('session.idle');
+  };
+
+const CONTENT_FILTERED =
+  'The model returned no content because the response was blocked by content filtering.';
+
+/** A session blocked by content filtering on the models in `blocking`; any other answers "dog". */
+const blockedOn =
+  (blocking: readonly string[]): Script =>
+  async (cfg, emit) => {
+    if (blocking.includes(cfg.model!)) {
+      emit('assistant.usage', { model: cfg.model, inputTokens: 100, outputTokens: 0 });
+      emit('assistant.message', { content: CONTENT_FILTERED, model: cfg.model });
+    } else {
+      await callTool(cfg, 'submit_result', { updates: { word: 'dog' }, verdict: APPLIED });
+      emit('assistant.usage', { model: cfg.model, inputTokens: 100, outputTokens: 10 });
+      emit('assistant.message', { content: 'Done.', model: cfg.model });
+    }
+    emit('session.idle');
+  };
+
+/** Sessions that hit HTTP 429 on their first `limited` plays, then submit "cat". */
+function rateLimitedThenCat(limited: number) {
+  const plays = { count: 0 };
+  const script: Script = async (cfg, emit) => {
+    plays.count += 1;
+    if (plays.count <= limited) emit('session.error', { message: 'HTTP 429 Too Many Requests' });
+    else await callTool(cfg, 'submit_result', { updates: { word: 'cat' }, verdict: APPLIED });
+    emit('session.idle');
+  };
+  return { script, plays };
+}
+
+/** Per auth, a client: a token's cannot list models or start a session; the signed-in one can. */
+function tokenRejectedAtStartup(created: (string | undefined)[]) {
+  return (auth: Auth) => {
+    const { client } = fakeClient(submitsWord('cat'));
+    if (!auth.gitHubToken)
+      return {
+        ...client,
+        listModels,
+        createSession: async (cfg: SessionConfig) => {
+          created.push(cfg.model);
+          return client.createSession(cfg);
+        },
+      };
+    return {
+      ...client,
+      listModels: async () => {
+        throw new Error('Authentication failed (401)');
+      },
+      createSession: async () => {
+        throw new Error('Authentication failed: Bad credentials');
+      },
+    };
+  };
+}
+
+const REFUSED_MID_SESSION =
+  '[Authorization error, you may need to run /login (Request ID: B233:3B33)]';
+const refusedMidSession: Script = async (_cfg, emit) => {
+  emit('assistant.message', { content: REFUSED_MID_SESSION });
+  emit('session.idle');
+};
+const signedInOnly = (auth: Auth) => !auth.gitHubToken;
+const acceptsNone = () => false;
+
+/** Per auth (recorded), a client whose sessions submit "cat" if `accepts` it; else Copilot refuses. */
+function clientsRefusingMidSession(auths: Auth[], accepts: (auth: Auth) => boolean) {
+  return (auth: Auth) => {
+    auths.push(auth);
+    return fakeClient(accepts(auth) ? submitsWord('cat') : refusedMidSession).client;
+  };
+}
+
+/** Per auth (recorded), a client: a token's session cannot start (401); the signed-in one can. */
+function tokenRejectedAtSession(auths: Auth[]) {
+  return (auth: Auth): ClientLike => {
+    auths.push(auth);
+    const { client } = fakeClient(submitsWord('cat'));
+    if (!auth.gitHubToken) return client;
+    return {
+      ...client,
+      createSession: async () => {
+        throw new Error(
+          'Authentication failed: Failed to validate SDK token (401): Bad credentials',
+        );
+      },
+    };
+  };
+}
+
+/** How long the fake client takes to create a session, long enough to stop it meanwhile. */
+const SESSION_CREATE_MS = 30;
+
+/** A client slow to create its session; calls `onCreating` as it starts and records any send. */
+function slowSessionClient(onCreating: () => void) {
+  const sent = { any: false };
+  const client: ClientLike = {
+    start: async () => {},
+    stop: async () => {},
+    createSession: async (cfg) => {
+      onCreating();
+      await new Promise((r) => setTimeout(r, SESSION_CREATE_MS));
+      const s = new FakeSession(cfg, async () => {});
+      s.send = async () => {
+        sent.any = true;
+        return 'm';
+      };
+      return s;
+    },
+  };
+  return { client, sent };
+}
+
+/** A session that searches the web when it has the tool, then submits "x". */
+const searchesWhenItCan: Script = async (cfg, emit) => {
+  if (cfg.tools!.some((t) => t.name === 'web_search')) {
+    const out = await callTool(cfg, 'web_search', { query: 'vitest timers' });
+    emit('assistant.message', { content: String(out) });
+  }
+  await callTool(cfg, 'submit_result', { updates: { word: 'x' } });
+  emit('session.idle');
+};
+
 describe('CopilotProvider', () => {
   it('streams, enforces read-only and captures submit_result', async () => {
     const { client, sessions } = fakeClient(async (cfg, emit) => {
@@ -209,23 +359,7 @@ describe('CopilotProvider', () => {
   });
 
   it('a content filter block is answered by another model, nearest tier first', async () => {
-    const BLOCK =
-      'The model returned no content because the response was blocked by content filtering.';
-    const play = (blocking: string[]) =>
-      fakeClient(async (cfg, emit) => {
-        if (blocking.includes(cfg.model!)) {
-          emit('assistant.usage', { model: cfg.model, inputTokens: 100, outputTokens: 0 });
-          emit('assistant.message', { content: BLOCK, model: cfg.model });
-        } else {
-          await callTool(cfg, 'submit_result', {
-            updates: { word: 'dog' },
-            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
-          });
-          emit('assistant.usage', { model: cfg.model, inputTokens: 100, outputTokens: 10 });
-          emit('assistant.message', { content: 'Done.', model: cfg.model });
-        }
-        emit('session.idle');
-      });
+    const play = (blocking: string[]) => fakeClient(blockedOn(blocking));
     const tiers = {
       1: { model: 'c', effort: 'low' as const },
       2: { model: 'b' },
@@ -283,7 +417,7 @@ describe('CopilotProvider', () => {
     // Every model blocks: the engine gets no result and says why (engine.noResult).
     const blocked = await run(['a', 'b', 'c']);
     expect(blocked.res.result).toBeUndefined();
-    expect(blocked.res.transcript.output).toBe(BLOCK);
+    expect(blocked.res.transcript.output).toBe(CONTENT_FILTERED);
 
     // A normal answer never tries another model.
     expect((await run([])).models).toEqual(['a']);
@@ -340,19 +474,13 @@ describe('CopilotProvider', () => {
     writeFileSync(join(ws, 'a.js'), 'const port = 8081;\n');
     const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
     const replies: string[] = [];
+    const context = ['a.js:1 — [SIMILAR] the port `port = 8081`'];
+    const submissions = [
+      ['B1 a.js:1 — the port `port = 9090`'],
+      ['B1 a.js:1 — the port `port = 8081`'],
+    ].map((behaviours) => ({ updates: { context, behaviours }, verdict }));
     const { client } = fakeClient(async (cfg, emit) => {
-      for (const behaviours of [
-        ['B1 a.js:1 — the port `port = 9090`'],
-        ['B1 a.js:1 — the port `port = 8081`'],
-      ])
-        replies.push(
-          String(
-            await callTool(cfg, 'submit_result', {
-              updates: { context: ['a.js:1 — [SIMILAR] the port `port = 8081`'], behaviours },
-              verdict,
-            }),
-          ),
-        );
+      replies.push(...(await submitEach(cfg, submissions)));
       emit('session.idle');
     });
     const p = new CopilotProvider({ clientFactory: () => client, workingDirectory: ws });
@@ -379,10 +507,9 @@ describe('CopilotProvider', () => {
   it("applies the step's own checks in-session, so an empty answer is sent back at once", async () => {
     const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
     const replies: string[] = [];
+    const submissions = [[], ['cat', 'dog']].map((words) => ({ updates: { words }, verdict }));
     const { client } = fakeClient(async (cfg, emit) => {
-      for (const words of [[], ['cat', 'dog']]) {
-        replies.push(String(await callTool(cfg, 'submit_result', { updates: { words }, verdict })));
-      }
+      replies.push(...(await submitEach(cfg, submissions)));
       emit('session.idle');
     });
     const p = new CopilotProvider({ clientFactory: () => client });
@@ -487,16 +614,10 @@ describe('CopilotProvider', () => {
   });
 
   it('a rate limit before the session did anything waits and starts again; it is recorded', async () => {
-    const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
     const play = async (limited: number, delays = [1, 1, 1]) => {
-      let tries = 0;
       const notes: string[] = [];
-      const { client, sessions } = fakeClient(async (cfg, emit) => {
-        tries += 1;
-        if (tries <= limited) emit('session.error', { message: 'HTTP 429 Too Many Requests' });
-        else await callTool(cfg, 'submit_result', { updates: { word: 'cat' }, verdict });
-        emit('session.idle');
-      });
+      const limits = rateLimitedThenCat(limited);
+      const { client, sessions } = fakeClient(limits.script);
       const res = await new CopilotProvider({
         clientFactory: () => client,
         rateLimitDelaysMs: delays,
@@ -507,7 +628,7 @@ describe('CopilotProvider', () => {
         signal: new AbortController().signal,
         onEvent: (e) => e.type === 'info' && notes.push(e.text),
       });
-      return { res, tries, notes, sessions };
+      return { res, tries: limits.plays.count, notes, sessions };
     };
     const ok = await play(2);
     expect(ok.tries).toBe(3);
@@ -709,7 +830,7 @@ describe('CopilotProvider', () => {
     const play = async (calls: unknown[]) => {
       const replies: string[] = [];
       const { client } = fakeClient(async (cfg, emit) => {
-        for (const c of calls) replies.push(String(await callTool(cfg, 'submit_result', c)));
+        replies.push(...(await submitEach(cfg, calls)));
         emit('session.idle');
       });
       const res = await new CopilotProvider({ clientFactory: () => client }).runAgent({
@@ -755,7 +876,7 @@ describe('CopilotProvider', () => {
       const replies: string[] = [];
       const events: ProviderEvent[] = [];
       const { client } = fakeClient(async (cfg, emit) => {
-        for (const c of calls) replies.push(String(await callTool(cfg, 'submit_result', c)));
+        replies.push(...(await submitEach(cfg, calls)));
         emit('session.idle');
       });
       const res = await new CopilotProvider({ clientFactory: () => client }).runAgent({
@@ -1165,10 +1286,10 @@ describe('CopilotProvider', () => {
   });
 
   it('stops correcting after two tries and lets the engine judge', async () => {
-    const replies: unknown[] = [];
+    const replies: string[] = [];
+    const noVerdict = { updates: { word: 'x' } };
     const { client } = fakeClient(async (cfg, emit) => {
-      for (let i = 0; i < 3; i++)
-        replies.push(await callTool(cfg, 'submit_result', { updates: { word: 'x' } }));
+      replies.push(...(await submitEach(cfg, [noVerdict, noVerdict, noVerdict])));
       emit('session.idle');
     });
     const res = await new CopilotProvider({ clientFactory: () => client }).runAgent({
@@ -1178,39 +1299,14 @@ describe('CopilotProvider', () => {
       signal: new AbortController().signal,
       onEvent: () => {},
     });
-    expect(replies.map((r) => String(r).slice(0, 8))).toEqual(['REJECTED', 'REJECTED', 'Result r']);
+    expect(replies.map((r) => r.slice(0, 8))).toEqual(['REJECTED', 'REJECTED', 'Result r']);
     expect(res.result).toEqual({ updates: { word: 'x' } });
   });
 
   it('re-resolves the model after falling back from a rejected token', async () => {
     const created: (string | undefined)[] = [];
-    const factory = (auth: { gitHubToken?: string }) => {
-      const { client } = fakeClient(async (cfg, emit) => {
-        await callTool(cfg, 'submit_result', { updates: { word: 'cat' } });
-        emit('session.idle');
-      });
-      if (!auth.gitHubToken) {
-        return {
-          ...client,
-          listModels: async () => [{ id: 'claude-haiku-5.5', supportedReasoningEfforts: ['low'] }],
-          createSession: async (cfg: Parameters<typeof client.createSession>[0]) => {
-            created.push(cfg.model);
-            return client.createSession(cfg);
-          },
-        };
-      }
-      return {
-        ...client,
-        listModels: async () => {
-          throw new Error('Authentication failed (401)');
-        },
-        createSession: async () => {
-          throw new Error('Authentication failed: Bad credentials');
-        },
-      };
-    };
     const p = new CopilotProvider({
-      clientFactory: factory,
+      clientFactory: tokenRejectedAtStartup(created),
       gitHubToken: 'bad',
       model: 'gone-model',
     });
@@ -1226,21 +1322,11 @@ describe('CopilotProvider', () => {
   });
 
   it('a token Copilot refuses mid-session gives way to the signed-in account; then it stops with why', async () => {
-    const REFUSED = '[Authorization error, you may need to run /login (Request ID: B233:3B33)]';
-    const play = (signedInWorks: boolean) => {
-      const auths: { gitHubToken?: string }[] = [];
-      const factory = (auth: { gitHubToken?: string }) => {
-        auths.push(auth);
-        const works = !auth.gitHubToken && signedInWorks;
-        return fakeClient(async (cfg, emit) => {
-          if (works) await callTool(cfg, 'submit_result', { updates: { word: 'cat' } });
-          else emit('assistant.message', { content: REFUSED });
-          emit('session.idle');
-        }).client;
-      };
+    const play = (accepts: (auth: Auth) => boolean) => {
+      const auths: Auth[] = [];
       const events: string[] = [];
       const p = new CopilotProvider({
-        clientFactory: factory,
+        clientFactory: clientsRefusingMidSession(auths, accepts),
         gitHubToken: 'ghp_old',
         gitHubTokenSource: 'TOKEN',
       });
@@ -1253,12 +1339,12 @@ describe('CopilotProvider', () => {
       });
       return { run, auths, events };
     };
-    const healed = play(true);
+    const healed = play(signedInOnly);
     expect((await healed.run).result).toEqual({ updates: { word: 'cat' } });
     expect(healed.auths).toEqual([{ gitHubToken: 'ghp_old' }, {}]);
     expect(healed.events.join('\n')).toMatch(/Copilot refused the token in TOKEN/);
 
-    const stuck = play(false);
+    const stuck = play(acceptsNone);
     await expect(stuck.run).rejects.toMatchObject({
       name: 'SetupError',
       message: expect.stringContaining(
@@ -1307,25 +1393,12 @@ describe('CopilotProvider', () => {
   });
 
   it('falls back to the signed-in user when the configured token is rejected', async () => {
-    const auths: { gitHubToken?: string }[] = [];
-    const factory = (auth: { gitHubToken?: string }) => {
-      auths.push(auth);
-      const { client } = fakeClient(async (cfg, emit) => {
-        await callTool(cfg, 'submit_result', { updates: { word: 'cat' } });
-        emit('session.idle');
-      });
-      if (!auth.gitHubToken) return client;
-      return {
-        ...client,
-        createSession: async () => {
-          throw new Error(
-            'Authentication failed: Failed to validate SDK token (401): Bad credentials',
-          );
-        },
-      };
-    };
+    const auths: Auth[] = [];
     const events: ProviderEvent[] = [];
-    const p = new CopilotProvider({ clientFactory: factory, gitHubToken: 'bad' });
+    const p = new CopilotProvider({
+      clientFactory: tokenRejectedAtSession(auths),
+      gitHubToken: 'bad',
+    });
     const res = await p.runAgent({
       pause,
       state: {},
@@ -1373,37 +1446,16 @@ describe('CopilotProvider', () => {
 
   it('honours stop while the session is still being created', async () => {
     const ctrl = new AbortController();
-    let sent = false;
-    const client: ClientLike = {
-      start: async () => {},
-      stop: async () => {},
-      createSession: async (cfg) => {
-        await new Promise((r) => setTimeout(r, 30));
-        const s = new FakeSession(cfg, async () => {});
-        s.send = async () => {
-          sent = true;
-          return 'm';
-        };
-        return s;
-      },
-    };
+    const { client, sent } = slowSessionClient(() => ctrl.abort());
     const p = new CopilotProvider({ clientFactory: () => client });
     const run = p.runAgent({ pause, state: {}, visit: 0, signal: ctrl.signal, onEvent: () => {} });
-    setTimeout(() => ctrl.abort(), 5);
     await expect(run).rejects.toThrow(/aborted/);
-    expect(sent).toBe(false);
+    expect(sent.any).toBe(false);
   });
 
   it('adds web_search and MCP servers only for nodes with those capabilities', async () => {
     const queries: string[] = [];
-    const { client, sessions } = fakeClient(async (cfg, emit) => {
-      if (cfg.tools!.some((t) => t.name === 'web_search')) {
-        const out = await callTool(cfg, 'web_search', { query: 'vitest timers' });
-        emit('assistant.message', { content: String(out) });
-      }
-      await callTool(cfg, 'submit_result', { updates: { word: 'x' } });
-      emit('session.idle');
-    });
+    const { client, sessions } = fakeClient(searchesWhenItCan);
     const p = new CopilotProvider({
       clientFactory: () => client,
       mcpServers: {
@@ -1573,10 +1625,7 @@ describe('CopilotProvider + engine: malformed submissions', () => {
   it('a garbled call and a missing verdict are fixed in-session: one clean engine attempt', async () => {
     // Like a real model: it submits again only when told its call was rejected.
     const { client, sessions } = fakeClient(async (cfg, emit) => {
-      for (const attempt of [garbled, { updates }, { updates, verdict }]) {
-        const reply = String(await callTool(cfg, 'submit_result', attempt));
-        if (!reply.startsWith('REJECTED')) break;
-      }
+      await submitUntilAccepted(cfg, [garbled, { updates }, { updates, verdict }]);
       emit('session.idle');
     });
     const run = new Run({
@@ -1594,11 +1643,12 @@ describe('CopilotProvider + engine: malformed submissions', () => {
   });
 
   it('an answer the AI never fixes is still rejected by the engine and fails the run', async () => {
+    const neverFixed = { updates };
     const { client, sessions } = fakeClient(async (cfg, emit) => {
-      for (let i = 0; i < 5; i++) {
-        const reply = String(await callTool(cfg, 'submit_result', { updates }));
-        if (!reply.startsWith('REJECTED')) break;
-      }
+      await submitUntilAccepted(
+        cfg,
+        Array.from({ length: 5 }, () => neverFixed),
+      );
       emit('session.idle');
     });
     const run = new Run({
@@ -1625,6 +1675,12 @@ const localReq = (p: AgentPause = pause) => ({
   onEvent: () => {},
 });
 
+/** The model servers a test started; each is closed after the test. */
+const openServers: { close: () => void }[] = [];
+afterEach(() => {
+  openServers.splice(0).forEach((server) => server.close());
+});
+
 /** A model server that lists one model, for the time a test needs it. */
 async function modelServer(id = 'openai/gpt-oss-120b') {
   const http = await import('node:http');
@@ -1634,7 +1690,9 @@ async function modelServer(id = 'openai/gpt-oss-120b') {
   });
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
   const { port } = server.address() as { port: number };
-  return { url: `http://127.0.0.1:${port}/v1`, close: () => server.close() };
+  const started = { url: `http://127.0.0.1:${port}/v1`, close: () => server.close() };
+  openServers.push(started);
+  return started;
 }
 /** Nothing listens there: refused at once. */
 const DOWN = 'http://127.0.0.1:1/v1';
@@ -1666,61 +1724,47 @@ describe('a local model server instead of Copilot', () => {
 
   it('every step plays on its model, through its endpoint, with no sign-in and no effort', async () => {
     const server = await modelServer();
-    try {
-      const { client, sessions } = submitting();
-      let asked = false;
-      const p = new CopilotProvider({
-        clientFactory: () => ({
-          ...client,
-          // Copilot would say nobody is signed in: a local model never asks.
-          getAuthStatus: async () => ((asked = true), { isAuthenticated: false }),
-        }),
-        localModel: { baseUrl: server.url, apiKey: 'k', model: 'openai/gpt-oss-120b' },
-      });
-      for (const complexity of [1, 4] as const)
-        await p.runAgent(localReq({ ...pause, complexity }));
-      expect(asked).toBe(false);
-      for (const s of sessions) {
-        expect(s.cfg.model).toBe('openai/gpt-oss-120b');
-        expect(s.cfg.reasoningEffort).toBeUndefined();
-        expect(s.cfg.excludedTools).toEqual(expect.arrayContaining(['task', 'sql', 'skill']));
-        expect(s.cfg.provider).toEqual({
-          type: 'openai',
-          baseUrl: server.url,
-          apiKey: 'k',
-        });
-      }
-      expect((await p.authStatus()).message).toBe(`local model server ${server.url}`);
-    } finally {
-      server.close();
-    }
+    const { client, sessions } = submitting();
+    let asked = false;
+    const p = new CopilotProvider({
+      clientFactory: () => ({
+        ...client,
+        // Copilot would say nobody is signed in: a local model never asks.
+        getAuthStatus: async () => ((asked = true), { isAuthenticated: false }),
+      }),
+      localModel: { baseUrl: server.url, apiKey: 'k', model: 'openai/gpt-oss-120b' },
+    });
+    await p.runAgent(localReq({ ...pause, complexity: 1 }));
+    await p.runAgent(localReq({ ...pause, complexity: 4 }));
+    expect(asked).toBe(false);
+    const onLocalModel = {
+      model: 'openai/gpt-oss-120b',
+      excludedTools: expect.arrayContaining(['task', 'sql', 'skill']),
+      provider: { type: 'openai', baseUrl: server.url, apiKey: 'k' },
+    };
+    expect(sessions.map((s) => s.cfg)).toEqual([
+      expect.objectContaining(onLocalModel),
+      expect.objectContaining(onLocalModel),
+    ]);
+    expect(sessions.map((s) => s.cfg.reasoningEffort)).toEqual([undefined, undefined]);
+    expect((await p.authStatus()).message).toBe(`local model server ${server.url}`);
   });
 
   it('with no model named, the first the server lists', async () => {
-    const http = await import('node:http');
-    const server = http.createServer((q, r) => {
-      r.writeHead(q.url === '/v1/models' ? 200 : 404, { 'content-type': 'application/json' });
-      r.end(JSON.stringify({ data: [{ id: 'Qwen/Qwen3.8-27B' }] }));
+    const server = await modelServer('Qwen/Qwen3.8-27B');
+    const { client, sessions } = submitting();
+    const p = new CopilotProvider({
+      clientFactory: () => client,
+      localModel: { baseUrl: `${server.url}/` },
     });
-    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
-    try {
-      const { port } = server.address() as { port: number };
-      const { client, sessions } = submitting();
-      const p = new CopilotProvider({
-        clientFactory: () => client,
-        localModel: { baseUrl: `http://127.0.0.1:${port}/v1/` },
-      });
-      await p.runAgent(localReq());
-      expect(sessions[0]!.cfg.model).toBe('Qwen/Qwen3.8-27B');
-      // A server that is not there says so, at setup.
-      const gone = new CopilotProvider({
-        clientFactory: () => client,
-        localModel: { baseUrl: 'http://127.0.0.1:1/v1' },
-      });
-      await expect(gone.runAgent(localReq())).rejects.toThrow(/did not answer/);
-    } finally {
-      server.close();
-    }
+    await p.runAgent(localReq());
+    expect(sessions[0]!.cfg.model).toBe('Qwen/Qwen3.8-27B');
+    // A server that is not there says so, at setup.
+    const gone = new CopilotProvider({
+      clientFactory: () => client,
+      localModel: { baseUrl: 'http://127.0.0.1:1/v1' },
+    });
+    await expect(gone.runAgent(localReq())).rejects.toThrow(/did not answer/);
   });
 
   it('without sign-ins and no model server, it refuses rather than run as your Copilot account', async () => {
@@ -1796,5 +1840,30 @@ describe('a local model server instead of Copilot', () => {
     });
     await expect(remote.runAgent(localReq())).rejects.toThrow(/did not answer/);
     expect(none.sessions).toHaveLength(0);
+  });
+});
+
+describe('withoutAnnotations', () => {
+  const verdict = { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' };
+
+  it('drops a note a model adds beside the fields it may write (seen live)', () => {
+    const raw = {
+      updates: { lensFindings: [], lensFindings_note: 'none found', _check: 'ok' },
+      verdict,
+    };
+    expect(withoutAnnotations(raw, ['lensFindings'])).toEqual({
+      updates: { lensFindings: [] },
+      verdict,
+    });
+  });
+
+  it('keeps a writable field even when its name ends like a note', () => {
+    const raw = { updates: { reviewNotes: ['a'] }, verdict };
+    expect(withoutAnnotations(raw, ['reviewNotes'])).toEqual(raw);
+  });
+
+  it('leaves any other unknown field for the schema to reject', () => {
+    const raw = { updates: { findings: [], answer: 'x' }, verdict };
+    expect(withoutAnnotations(raw, ['findings'])).toEqual(raw);
   });
 });

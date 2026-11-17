@@ -1,7 +1,13 @@
 import type { Pattern } from '../core/types.js';
 import { challengePhase, hypothesesPhase, withState } from './phases/debate.js';
 import { editVerifyPhase } from './phases/editVerify.js';
-import { prReviewPhase } from './phases/prReview.js';
+import {
+  CRITICAL_PATH_CHECKS,
+  CRITICAL_PATH_DIRECTIVE,
+  CRITICAL_PATH_FIELD,
+  DEMO_LENSES,
+} from './phases/lenses.js';
+import { PR_REVIEW_ENTRY, prReviewPhase } from './phases/prReview.js';
 import { bullets, READER_STATE, readers } from './phases/readers.js';
 import { stabilityPhases, targetFailed } from './phases/stability.js';
 import { TESTS_KEPT_CHECK, testFirstPhase } from './phases/testFirst.js';
@@ -92,7 +98,16 @@ const edit = editVerifyPhase({
   applyDirective:
     'Implement `plan` by editing `files` (others only if the plan truly needs them). Fix the root cause in `rootCause`, not the symptom, and add or update a test that fails without the fix when that is feasible. ' +
     `Do not hide a failure instead of fixing it (${MASKING}), unless the plan shows the old limit was wrong for work measured to take that long: then say so in \`changes\`. For an intermittent failure (\`flakyTarget\`), put a new regression test in a new test file and leave the flaky test's own file (\`flakyFile\`) as it is unless the plan must change it: an edit there is reviewed as possible masking.`,
-  applyReads: ['issue', 'rootCause', 'files', 'plan', 'reviewComments', 'flakyTarget', 'flakyFile'],
+  applyReads: [
+    'issue',
+    'rootCause',
+    'files',
+    'plan',
+    'criticalPath',
+    'reviewComments',
+    'flakyTarget',
+    'flakyFile',
+  ],
   triageReads: ['issue', 'rootCause', 'plan', 'flakyTarget'],
   triageNote:
     ' A failure of the intermittent test this fix is about (`flakyTarget`) is never ENVIRONMENT: the patch did not make it stable.',
@@ -119,7 +134,7 @@ const reproduce = testFirstPhase({
   subject: 'issue',
   from: ['rootCause', 'plan'],
   implement: 'apply',
-  kept: 'prReview',
+  kept: PR_REVIEW_ENTRY,
   stopped: 'reviewStopped',
 });
 const prReview = prReviewPhase({
@@ -211,6 +226,7 @@ export const fix: Pattern = {
         type: 'string[]',
         description: 'With reproduceFirst: the tests that reproduce the bug',
       },
+      CRITICAL_PATH_FIELD,
       ...EVIDENCE_STATE,
       { name: 'fixStatus', type: 'string', description: 'The end reached (by the engine)' },
       ...READER_STATE,
@@ -304,7 +320,7 @@ export const fix: Pattern = {
         CITE_BY_ID +
         ' Rule on every hypothesis in `rulings`, in order: "H<n>: CONFIRMED | REFUTED | UNKNOWN — evidence". List the files to change in `files` and a short step-by-step `plan` that fixes the cause (not the symptom) and adds a test. If a previous fix failed (`failureReason`, `testOutput`), the new plan must explain why it will not fail the same way. `baselineOutput` is the test run before any edit: tests failing there that the bug does not explain are not yours to fix.' +
         NONDETERMINISM +
-        ` Set \`nondeterministic\` when the failure is intermittent. Then name the test in \`flakyTarget\` exactly as it appears on the line where the runner reports its result (vitest --reporter=verbose: "src/a.test.ts > suite > test"; node --test and jest: the test's name), its file in \`flakyFile\`, and in \`fixTarget\` where the cause is: CODE (the code under test, e.g. a race or a real-clock comparison), TEST (the test waits by time, depends on order or leaks state) or ENVIRONMENT (the machine, not this repository). ${MASKING[0]!.toUpperCase()}${MASKING.slice(1)} hide a flaky test; they do not fix it.`,
+        ` Set \`nondeterministic\` when the failure is intermittent. Then name the test in \`flakyTarget\` exactly as it appears on the line where the runner reports its result (vitest --reporter=verbose: "src/a.test.ts > suite > test"; node --test and jest: the test's name), its file in \`flakyFile\`, and in \`fixTarget\` where the cause is: CODE (the code under test, e.g. a race or a real-clock comparison), TEST (the test waits by time, depends on order or leaks state) or ENVIRONMENT (the machine, not this repository). ${MASKING[0]!.toUpperCase()}${MASKING.slice(1)} hide a flaky test; they do not fix it.${CRITICAL_PATH_DIRECTIVE}`,
       reads: [
         'issue',
         'hint',
@@ -318,6 +334,7 @@ export const fix: Pattern = {
         'rootCause',
         'files',
         'plan',
+        'criticalPath',
         'rulings',
         'nondeterministic',
         'flakyTarget',
@@ -347,6 +364,7 @@ export const fix: Pattern = {
           expr: 'empty(flakyTarget) || !empty(flakyFile)',
           message: "Give flakyTarget's test file in flakyFile.",
         },
+        ...CRITICAL_PATH_CHECKS,
       ],
     },
     ...challenge.nodes,
@@ -357,7 +375,7 @@ export const fix: Pattern = {
       message:
         'Review the root cause, the hypotheses ruled out and the plan. Approve to let the executor edit files; the engine will run the tests.',
       writes: [],
-      shows: ['rootCause', 'rulings', 'files', 'plan'],
+      shows: ['rootCause', 'rulings', 'files', 'plan', 'criticalPath'],
     },
     {
       id: 'reproduceFirstOn',
@@ -427,7 +445,7 @@ export const fix: Pattern = {
     { id: 'planReproduce-tests', from: 'planReproduce', to: reproduce.entry },
     { id: 'reproduce-apply', from: 'reproduceFirstOn', to: edit.entry, branch: 'else' },
     { id: 'reproduced-check', from: 'reproduced', to: TESTS_KEPT_CHECK, branch: 'then' },
-    { id: 'reproduced-review', from: 'reproduced', to: 'prReview', branch: 'else' },
+    { id: 'reproduced-review', from: 'reproduced', to: PR_REVIEW_ENTRY, branch: 'else' },
     ...reproduce.edges,
     { id: 'approve-rejected', from: 'approve', to: 'rejected', branch: 'rejected' },
     ...edit.edges,
@@ -437,6 +455,7 @@ export const fix: Pattern = {
   demo: {
     context: { issue: 'Page 2 repeats the last item of page 1' },
     agents: {
+      ...DEMO_LENSES.agents,
       explain: () => ({
         updates: {
           summary: [
@@ -497,6 +516,9 @@ export const fix: Pattern = {
             'src/paginate.ts:7 slices from start - 1, so each page starts one item early [F1]',
           files: ['src/paginate.ts', 'src/paginate.test.ts'],
           plan: '1. use slice(start, end)\n2. add a test for page boundaries',
+          criticalPath: [
+            'U1 src/paginate.ts — DOMAIN — test: src/paginate.test.ts "page 2 starts after page 1"',
+          ],
           rulings: ((s.hypotheses as string[]) ?? []).map((h, i) =>
             i === 0
               ? `${h.split(':')[0]}: CONFIRMED — src/paginate.ts:7`
@@ -532,6 +554,7 @@ export const fix: Pattern = {
       }),
     },
     tools: {
+      ...DEMO_LENSES.tools,
       baseline: () => ({
         passed: false,
         output: 'FAIL src/paginate.test.ts > page 2 starts after page 1',

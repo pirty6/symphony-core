@@ -20,26 +20,53 @@ const writes: StateField[] = [
 ];
 
 describe('checkValue', () => {
-  it.each([
-    ['string', 'x', true],
-    ['string', 1, false],
-    ['number', 1.5, true],
-    ['number', Number.NaN, false],
-    ['boolean', false, true],
-    ['string[]', ['a'], true],
-    ['string[]', ['a', 1], false],
-    ['number[]', [1, 2], true],
-    ['object', {}, true],
-    ['object', [], false],
-    ['object', null, false],
-  ] as const)('%s accepts %j = %s', (type, value, ok) => {
-    expect(checkValue(type, value) === undefined).toBe(ok);
+  it('a string accepts text', () => {
+    expect(checkValue('string', 'x')).toBeUndefined();
+  });
+
+  it('a string refuses a number', () => {
+    expect(checkValue('string', 1)).toBeDefined();
+  });
+
+  it('a number accepts a fraction', () => {
+    expect(checkValue('number', 1.5)).toBeUndefined();
+  });
+
+  it('a number refuses NaN', () => {
+    expect(checkValue('number', Number.NaN)).toBeDefined();
+  });
+
+  it('a boolean accepts false', () => {
+    expect(checkValue('boolean', false)).toBeUndefined();
+  });
+
+  it('a string list accepts a list of text', () => {
+    expect(checkValue('string[]', ['a'])).toBeUndefined();
+  });
+
+  it('a string list refuses a list with a number in it', () => {
+    expect(checkValue('string[]', ['a', 1])).toBeDefined();
+  });
+
+  it('a number list accepts a list of numbers', () => {
+    expect(checkValue('number[]', [1, 2])).toBeUndefined();
+  });
+
+  it('an object accepts {}', () => {
+    expect(checkValue('object', {})).toBeUndefined();
+  });
+
+  it('an object refuses a list', () => {
+    expect(checkValue('object', [])).toBeDefined();
+  });
+
+  it('an object refuses null', () => {
+    expect(checkValue('object', null)).toBeDefined();
   });
 
   it('zero values pass their own type', () => {
-    for (const t of ['string', 'number', 'boolean', 'string[]', 'number[]', 'object'] as const) {
-      expect(checkValue(t, zeroValue(t))).toBeUndefined();
-    }
+    const types = ['string', 'number', 'boolean', 'string[]', 'number[]', 'object'] as const;
+    expect(types.map((t) => checkValue(t, zeroValue(t)))).toEqual(types.map(() => undefined));
   });
 });
 
@@ -159,18 +186,40 @@ describe('resultJsonSchema', () => {
 });
 
 describe('parseFieldInput / formatFieldInput', () => {
-  it.each([
-    ['number', ' 3 ', 3],
-    ['number', '', 0],
-    ['boolean', 'yes', true],
-    ['boolean', 'no', false],
-    ['string[]', 'a, b,,c', ['a', 'b', 'c']],
-    ['string[]', '["x y"]', ['x y']],
-    ['number[]', '1,2', [1, 2]],
-    ['object', '{"a":1}', { a: 1 }],
-    ['string', ' keep ', ' keep '],
-  ] as const)('%s %j', (type, raw, expected) => {
-    expect(parseFieldInput(type, raw)).toEqual(expected);
+  it('reads a number, ignoring the spaces around it', () => {
+    expect(parseFieldInput('number', ' 3 ')).toEqual(3);
+  });
+
+  it('reads an empty number as 0', () => {
+    expect(parseFieldInput('number', '')).toEqual(0);
+  });
+
+  it('reads yes as true', () => {
+    expect(parseFieldInput('boolean', 'yes')).toEqual(true);
+  });
+
+  it('reads no as false', () => {
+    expect(parseFieldInput('boolean', 'no')).toEqual(false);
+  });
+
+  it('reads a comma list of text, dropping empty items', () => {
+    expect(parseFieldInput('string[]', 'a, b,,c')).toEqual(['a', 'b', 'c']);
+  });
+
+  it('reads a list of text written as JSON', () => {
+    expect(parseFieldInput('string[]', '["x y"]')).toEqual(['x y']);
+  });
+
+  it('reads a comma list of numbers', () => {
+    expect(parseFieldInput('number[]', '1,2')).toEqual([1, 2]);
+  });
+
+  it('reads an object written as JSON', () => {
+    expect(parseFieldInput('object', '{"a":1}')).toEqual({ a: 1 });
+  });
+
+  it('keeps text as typed, spaces and all', () => {
+    expect(parseFieldInput('string', ' keep ')).toEqual(' keep ');
   });
 
   it('formats values back', () => {

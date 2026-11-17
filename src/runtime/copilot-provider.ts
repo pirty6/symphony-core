@@ -458,6 +458,21 @@ export function normalizeSubmission(raw: unknown): unknown {
   };
 }
 
+/** A key a model adds to explain a field (`_check`, `queries_note`, `hypothesesNote`). */
+const ANNOTATION_KEY = /^_|[_-]?(note|notes|comment|comments)$/i;
+
+/**
+ * Drop the annotations a model adds beside the fields it may write: they explain an answer,
+ * they are not part of it. Any other unknown field is left for the schema to reject.
+ */
+export function withoutAnnotations(raw: unknown, writable: readonly string[]): unknown {
+  if (!isRecord(raw) || !isRecord(raw.updates)) return raw;
+  const kept = Object.entries(raw.updates).filter(
+    ([k]) => writable.includes(k) || !ANNOTATION_KEY.test(k),
+  );
+  return { ...raw, updates: Object.fromEntries(kept) };
+}
+
 /** Keep the record small: optional measurements the provider never reported are left out. */
 /** What one session produced. */
 interface SessionOutput {
@@ -1204,10 +1219,12 @@ export class CopilotProvider implements Provider {
       skipPermission: true,
       handler: async (raw: unknown) => {
         // Delta repair: after a rejection, the fields sent replace those of the rejected answer.
+        const writable = pause.outputSchema.map((f) => f.name);
+        const repaired = withoutAnnotations(normalizeSubmission(raw), writable);
         const args =
           this.opts.deltaRepair && invalid !== undefined
-            ? mergeSubmission(invalid, normalizeSubmission(raw))
-            : normalizeSubmission(raw);
+            ? mergeSubmission(invalid, repaired)
+            : repaired;
         // Catch a malformed answer while the AI still has its context, instead of
         // a fresh attempt that redoes all the reading. The engine re-checks anyway.
         const checked = checkAgentResult(args, pause.outputSchema, pause.choices);

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { fix, hangman, investigate } from '../patterns/index.js';
 import { compileScore } from './compile.js';
-import { advance, createEngine, toPerformance } from './engine.js';
+import { advance, createEngine, toPerformance, type AdvanceResult } from './engine.js';
 import { runScripted } from './scripted.js';
 import { divergence, EMPTY_FRAME, framesOf, reduceFrame, replayPerformance } from './replay.js';
-import type { Pattern } from './types.js';
+import type { AgentResolution, ExecutableScore, Pattern, ToolResolution } from './types.js';
 
 function demoRun(p: Pattern) {
   const score = compileScore(p, {
@@ -13,6 +13,50 @@ function demoRun(p: Pattern) {
     generatedAt: 't',
   });
   return { score, perf: toPerformance(runScripted(score, p.demo, { at: 't' }).state) };
+}
+
+/** A demo run replayed: whether it reproduced, its events and the events it recorded. */
+function replayDemo(p: Pattern) {
+  const { score, perf } = demoRun(p);
+  const { result, divergence: d } = replayPerformance(score, perf);
+  return { reproduced: d.reproduced, events: result.state.events, recorded: perf.events };
+}
+
+type AgentAnswer = Omit<AgentResolution, 'pauseId'>;
+
+/** The run after each answer in turn, given to the agent step it is paused on. */
+const answerAgentInTurn = (
+  score: ExecutableScore,
+  run: AdvanceResult,
+  answers: readonly AgentAnswer[],
+) =>
+  answers.reduce(
+    (r, answer) => advance(score, r.state, { ...answer, pauseId: r.state.pause!.pauseId }),
+    run,
+  );
+
+/** An answer the engine rejects, told apart by its number. */
+const invalidAnswer = (n: number): AgentAnswer => ({
+  kind: 'agent',
+  result: { bogus: n },
+  at: 't',
+});
+
+/** An answer the engine rejects, with what the AI said: "try n". */
+const invalidAnswerSaying = (n: number): AgentAnswer => ({
+  ...invalidAnswer(n),
+  transcript: { provider: 'copilot', prompt: 'p', output: `try ${n}`, toolCalls: [] },
+});
+
+/** A run's state once its first step, a tool, returned this. */
+function afterTool(score: ExecutableScore, res: Omit<ToolResolution, 'kind' | 'pauseId'>) {
+  const r0 = createEngine(score, { startedAt: 't' });
+  return advance(score, r0.state, {
+    kind: 'tool',
+    pauseId: r0.state.pause!.pauseId,
+    ...res,
+    at: 't',
+  }).state;
 }
 
 describe('frames', () => {
@@ -54,15 +98,23 @@ describe('frames', () => {
 });
 
 describe('replayPerformance', () => {
-  it.each([hangman, investigate, fix].map((p) => [p.name, p] as const))(
-    '%s reproduces exactly',
-    (_n, p) => {
-      const { score, perf } = demoRun(p);
-      const { result, divergence: d } = replayPerformance(score, perf);
-      expect(d.reproduced).toBe(true);
-      expect(result.state.events).toEqual(perf.events);
-    },
-  );
+  it('hangman reproduces exactly', () => {
+    const replay = replayDemo(hangman);
+    expect(replay.reproduced).toBe(true);
+    expect(replay.events).toEqual(replay.recorded);
+  });
+
+  it('investigate reproduces exactly', () => {
+    const replay = replayDemo(investigate);
+    expect(replay.reproduced).toBe(true);
+    expect(replay.events).toEqual(replay.recorded);
+  });
+
+  it('fix reproduces exactly', () => {
+    const replay = replayDemo(fix);
+    expect(replay.reproduced).toBe(true);
+    expect(replay.events).toEqual(replay.recorded);
+  });
 
   it('detects tampered answers', () => {
     const { score, perf } = demoRun(fix);
@@ -139,14 +191,11 @@ describe('divergence', () => {
     expect(recovered.divergence.reproduced).toBe(true);
     expect(recovered.result.state.events).toEqual(r.state.events);
     // failed: every attempt invalid
-    let f = createEngine(score, { startedAt: 't' });
-    for (let i = 0; i < 3; i += 1)
-      f = advance(score, f.state, {
-        kind: 'agent',
-        pauseId: f.state.pause!.pauseId,
-        result: { bogus: i },
-        at: 't',
-      });
+    let f = answerAgentInTurn(score, createEngine(score, { startedAt: 't' }), [
+      invalidAnswer(0),
+      invalidAnswer(1),
+      invalidAnswer(2),
+    ]);
     expect(f.state.pause?.kind).toBe('stuck');
     f = advance(score, f.state, {
       kind: 'recovery',
@@ -205,15 +254,11 @@ describe('divergence', () => {
 
   it('a run stopped while a step was being retried keeps the rejected answers', () => {
     const score = compileScore(hangman, { goal: 'g', generatedAt: 't' });
-    let r = createEngine(score, { startedAt: 't' });
-    for (let i = 0; i < 3; i += 1)
-      r = advance(score, r.state, {
-        kind: 'agent',
-        pauseId: r.state.pause!.pauseId,
-        result: { bogus: i },
-        transcript: { provider: 'copilot', prompt: 'p', output: `try ${i}`, toolCalls: [] },
-        at: 't',
-      });
+    let r = answerAgentInTurn(score, createEngine(score, { startedAt: 't' }), [
+      invalidAnswerSaying(0),
+      invalidAnswerSaying(1),
+      invalidAnswerSaying(2),
+    ]);
     expect(r.state.pause?.kind).toBe('stuck');
     r = advance(score, r.state, {
       kind: 'cancel',
@@ -241,7 +286,9 @@ describe('divergence', () => {
     const send = (res: Record<string, unknown>) => {
       r = advance(score, r.state, { pauseId: r.state.pause!.pauseId, at: 't', ...res } as never);
     };
-    for (let i = 0; i < 3; i += 1) send({ kind: 'agent', result: { bogus: i } });
+    send({ kind: 'agent', result: { bogus: 0 } });
+    send({ kind: 'agent', result: { bogus: 1 } });
+    send({ kind: 'agent', result: { bogus: 2 } });
     send({ kind: 'recovery', action: 'retry', hint: 'one word', complexity: 3 });
     send({ kind: 'agent', result: { bogus: 9 } });
     send({ kind: 'agent', result: { bogus: 10 } });
@@ -283,21 +330,13 @@ describe('divergence', () => {
       ],
     };
     const score = compileScore(p, { goal: 'g', generatedAt: 't' });
-    for (const res of [
-      { updates: { files: ['x'] } },
-      { error: 'boom' },
-      { updates: { files: 3 } },
-    ]) {
-      const r0 = createEngine(score, { startedAt: 't' });
-      const r = advance(score, r0.state, {
-        kind: 'tool',
-        pauseId: r0.state.pause!.pauseId,
-        ...res,
-        at: 't',
-      });
-      const replay = replayPerformance(score, toPerformance(r.state));
-      expect(replay.divergence.reproduced).toBe(true);
-      expect(replay.result.state.events).toEqual(r.state.events);
-    }
+    const runs = [{ updates: { files: ['x'] } }, { error: 'boom' }, { updates: { files: 3 } }].map(
+      (res) => afterTool(score, res),
+    );
+    const replays = runs.map((run) => replayPerformance(score, toPerformance(run)));
+    expect(replays.map((replay) => replay.divergence.reproduced)).toEqual([true, true, true]);
+    expect(replays.map((replay) => replay.result.state.events)).toEqual(
+      runs.map((run) => run.events),
+    );
   });
 });

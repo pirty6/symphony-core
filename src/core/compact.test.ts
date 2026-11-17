@@ -5,7 +5,7 @@ import { compileScore } from './compile.js';
 import { toPerformance } from './engine.js';
 import { replayPerformance } from './replay.js';
 import { runScripted } from './scripted.js';
-import type { Performance } from './types.js';
+import type { Performance, PerformedStep } from './types.js';
 
 const score = compileScore(investigate, {
   goal: investigate.demo!.goal!,
@@ -37,6 +37,15 @@ const perf: Performance = {
       : s,
   ),
 };
+/** A step as a fanned-out step is recorded: its read record moved onto its one part's transcript. */
+function readRecordOnPart(s: PerformedStep): PerformedStep {
+  const pre = s.transcript?.preloaded;
+  if (!pre) return s;
+  const { preloaded: _p, ...top } = s.transcript!;
+  return Object.assign({}, s, {
+    transcript: { ...top, parts: [{ ...transcript, preloaded: pre }] },
+  });
+}
 const size = (p: Performance) => JSON.stringify(p).length;
 
 describe('compacting old runs', () => {
@@ -72,17 +81,7 @@ describe('compacting old runs', () => {
 
   it("keeps each part's read record: a fanned-out step's files stay read after compaction", () => {
     // As the runtime records a fanned-out step: the read record on each part's transcript.
-    const fanned: Performance = {
-      ...perf,
-      steps: perf.steps.map((s) => {
-        const pre = s.transcript?.preloaded;
-        if (!pre) return s;
-        const { preloaded: _p, ...top } = s.transcript!;
-        return Object.assign({}, s, {
-          transcript: { ...top, parts: [{ ...transcript, preloaded: pre }] },
-        });
-      }),
-    };
+    const fanned: Performance = { ...perf, steps: perf.steps.map(readRecordOnPart) };
     expect(replayPerformance(score, fanned).divergence.reproduced).toBe(true);
     const small = compactPerformance(score, fanned)!;
     expect(small).toBeDefined();

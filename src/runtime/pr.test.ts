@@ -62,21 +62,26 @@ describe('prNumber', () => {
     expect(prNumber('PR #12')).toBe(12);
     expect(prNumber('pull request 9')).toBe(9);
     expect(prNumber('#3')).toBe(3);
-    for (const t of ['main', 'feature/pr-12', 'HEAD~3..HEAD', 'fix 12 bugs'])
-      expect(prNumber(t)).toBeUndefined();
+    expect(['main', 'feature/pr-12', 'HEAD~3..HEAD', 'fix 12 bugs'].map(prNumber)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
   });
 });
 
 describe('repoKey', () => {
   it('names a repository the same way across its URLs', () => {
     const ado = 'ado:office/oc/office-bohemia';
-    for (const u of [
-      'https://dev.azure.com/office/OC/_git/office-bohemia/pullrequest/5952552?_a=files',
-      'https://office@dev.azure.com/office/OC/_git/office-bohemia',
-      'git@ssh.dev.azure.com:v3/office/OC/office-bohemia',
-      'https://office.visualstudio.com/DefaultCollection/OC/_git/office-bohemia',
-    ])
-      expect(repoKey(u)).toBe(ado);
+    expect(
+      [
+        'https://dev.azure.com/office/OC/_git/office-bohemia/pullrequest/5952552?_a=files',
+        'https://office@dev.azure.com/office/OC/_git/office-bohemia',
+        'git@ssh.dev.azure.com:v3/office/OC/office-bohemia',
+        'https://office.visualstudio.com/DefaultCollection/OC/_git/office-bohemia',
+      ].map(repoKey),
+    ).toEqual([ado, ado, ado, ado]);
     expect(repoKey('https://github.com/pirty6/symphony-core/pull/26')).toBe(
       'gh:pirty6/symphony-core',
     );

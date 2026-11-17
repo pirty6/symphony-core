@@ -162,25 +162,28 @@ export function performanceUsage(perf: Pick<Performance, 'steps'>): {
   return { total, byNode, byVisit };
 }
 
-/**
- * Steps visited more than once whose input grows visit by visit, worst first, as
- * "assess: 40k → 120k → 210k in": where re-sent context piles up.
- */
-/** Per node visited more than once: last visit's input over the first's (2 = it doubled). */
-export function growthRatios(byVisit: readonly VisitUsage[]): Record<string, number> {
+/** Per node, the input tokens of each visit, in order. */
+function inputsByNode(byVisit: readonly VisitUsage[]): [string, number[]][] {
   const per = new Map<string, number[]>();
   for (const v of byVisit) per.set(v.nodeId, [...(per.get(v.nodeId) ?? []), v.usage.inputTokens]);
+  return [...per];
+}
+
+/** Per node visited more than once: last visit's input over the first's (2 = it doubled). */
+export function growthRatios(byVisit: readonly VisitUsage[]): Record<string, number> {
   return Object.fromEntries(
-    [...per]
+    inputsByNode(byVisit)
       .filter(([, ins]) => ins.length > 1 && ins[0]! > 0)
       .map(([id, ins]) => [id, +(ins.at(-1)! / ins[0]!).toFixed(2)]),
   );
 }
 
+/**
+ * Steps visited more than once whose input grows visit by visit, worst first, as
+ * "assess: 40k → 120k → 210k in": where re-sent context piles up.
+ */
 export function growth(byVisit: readonly VisitUsage[], n = 5): string[] {
-  const per = new Map<string, number[]>();
-  for (const v of byVisit) per.set(v.nodeId, [...(per.get(v.nodeId) ?? []), v.usage.inputTokens]);
-  return [...per]
+  return inputsByNode(byVisit)
     .filter(([, ins]) => ins.length > 1 && ins.at(-1)! > ins[0]!)
     .toSorted(([, a], [, b]) => b.at(-1)! / Math.max(1, b[0]!) - a.at(-1)! / Math.max(1, a[0]!))
     .slice(0, n)

@@ -40,6 +40,18 @@ worse. A feature that serves none, or that costs more than it gives, is removed.
 | **Memory** | Runs learn from earlier runs, and Symphony stays light on RAM and disk | solved and cost with memory empty vs seeded; saved run and memory sizes |
 | **Visibility** | You can watch the flow and the data live, and stop or answer mid-run | the studio and `get_run` show every step, prompt and answer as it happens |
 | **Ease of use** | Clone, `npm install`, run: no pnpm, no build step, no extra setup | a fresh clone works on Node.js alone (CI's npm job) |
+| **Security** | No step leaks a credential or runs what it should not; untrusted input never becomes a command, query or path | the scrub tests, read-only assessors, sign-ins off for remote callers, the Security lens on every review |
+| **Good practices** | Code is clean ("Clean Code", Robert C. Martin) and its tests are valuable ("Unit Testing Principles, Practices, and Patterns", Vladimir Khorikov) | the Clean code and Tests lenses on every review and on Symphony's own edits; no `if` or loop inside a test |
+
+**The same pillars judge code.** Review, implement, fix and investigate (for questions about
+code) look at a change through one lens per pillar that applies to code: **Correctness,
+Security, Clean code, Tests, Performance and memory, Determinism** (races, flaky tests). Each
+lens is a small sub-algorithm: a deterministic scan of the diff for what a rule can catch
+(an `if` inside a test, a secret, a long parameter list), then one AI reviewer that judges only
+that pillar against its rulebook, then engine checks. The Tests lens also finds the critical
+path: it sorts the changed code into domain logic, trivial code, coordination and
+overcomplicated code, and checks that the critical path has tests that would fail if it broke.
+The rulebooks are in `src/core/pillars.ts`, in our own words.
 
 ## Quick start (only Node.js needed)
 

@@ -83,6 +83,54 @@ function slowFirst() {
   return { provider, seen, most: () => most };
 }
 
+/** A part's answer: it read its own files. */
+const readMine = (mine: string[]) => ({
+  result: {
+    updates: { read: mine },
+    verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+  },
+  transcript: { provider: 'fake', prompt: '', output: '', toolCalls: [] },
+});
+
+const STEP_MS = 20;
+const pause = () => new Promise((r) => setTimeout(r, STEP_MS));
+
+/** Logs when each part starts and when its model starts answering; keeps each part's input. */
+function answersAfterAWhile() {
+  const log: string[] = [];
+  const inputs: string[] = [];
+  const provider: Provider = {
+    name: 'fake',
+    runAgent: async (req: AgentRequest) => {
+      const mine = req.pause.input.files as string[];
+      inputs.push(JSON.stringify(req.pause.input));
+      log.push(`start ${mine.join('')}`);
+      await pause();
+      // The model starts answering: what lets the others go.
+      req.onEvent?.({ type: 'delta', text: 'reading' });
+      log.push(`answering ${mine.join('')}`);
+      await pause();
+      return readMine(mine);
+    },
+    draft: () => Promise.reject(new Error('n/a')),
+  };
+  return { provider, log, inputs };
+}
+
+/** Its second call fails; every other call reads its part. */
+function secondCallFails(): Provider {
+  let calls = 0;
+  return {
+    name: 'fake',
+    runAgent: async (req) => {
+      calls += 1;
+      if (calls === 2) throw new Error('rate limited');
+      return readMine(req.pause.input.files as string[]);
+    },
+    draft: () => Promise.reject(new Error('n/a')),
+  };
+}
+
 describe('fanOut parts play at the same time', () => {
   it('plays parts concurrently (bounded), merges in part order, and replays exactly', async () => {
     const fake = slowFirst();
@@ -118,29 +166,7 @@ describe('fanOut parts play at the same time', () => {
       },
       { goal: 'g', context: { files }, generatedAt: 't' },
     );
-    const log: string[] = [];
-    const inputs: string[] = [];
-    const provider: Provider = {
-      name: 'fake',
-      runAgent: async (req: AgentRequest) => {
-        const mine = req.pause.input.files as string[];
-        inputs.push(JSON.stringify(req.pause.input));
-        log.push(`start ${mine.join('')}`);
-        await new Promise((r) => setTimeout(r, 20));
-        // The model starts answering: what lets the others go.
-        req.onEvent?.({ type: 'delta', text: 'reading' });
-        log.push(`answering ${mine.join('')}`);
-        await new Promise((r) => setTimeout(r, 20));
-        return {
-          result: {
-            updates: { read: mine },
-            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
-          },
-          transcript: { provider: 'fake', prompt: '', output: '', toolCalls: [] },
-        };
-      },
-      draft: () => Promise.reject(new Error('n/a')),
-    };
+    const { provider, log, inputs } = answersAfterAWhile();
     const perf = await new Run({ score: warm, provider, parallel: 3 }).start();
     expect(perf.outcome).toBe('success');
     expect(log.slice(0, 3)).toEqual(['start ab', 'answering ab', 'start cd']);
@@ -150,24 +176,12 @@ describe('fanOut parts play at the same time', () => {
   });
 
   it('a part whose call fails is named, and the others are not lost', async () => {
-    let calls = 0;
-    const provider: Provider = {
-      name: 'fake',
-      runAgent: async (req) => {
-        calls += 1;
-        if (calls === 2) throw new Error('rate limited');
-        const mine = req.pause.input.files as string[];
-        return {
-          result: {
-            updates: { read: mine },
-            verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
-          },
-          transcript: { provider: 'fake', prompt: '', output: '', toolCalls: [] },
-        };
-      },
-      draft: () => Promise.reject(new Error('n/a')),
-    };
-    const perf = await new Run({ score, provider, parallel: 1, autoApprove: true }).start();
+    const perf = await new Run({
+      score,
+      provider: secondCallFails(),
+      parallel: 1,
+      autoApprove: true,
+    }).start();
     // The retry plays every part again and succeeds.
     expect(perf.outcome).toBe('success');
     const step = perf.steps.find((s) => s.nodeId === 'readAll')!;

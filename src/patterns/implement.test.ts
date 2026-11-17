@@ -62,7 +62,15 @@ describe('implement', () => {
 
   it('shows the design and its acceptance criteria at the approval', () => {
     expect(implement.nodes.find((n) => n.id === 'approve')).toMatchObject({
-      shows: ['design', 'acceptanceCriteria', 'testsToAdd', 'rulings', 'files', 'plan'],
+      shows: [
+        'design',
+        'acceptanceCriteria',
+        'testsToAdd',
+        'criticalPath',
+        'rulings',
+        'files',
+        'plan',
+      ],
     });
   });
 
