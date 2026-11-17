@@ -725,16 +725,14 @@ export function createApi(opts: ApiOptions) {
       }
       if (method === 'GET' && path === '/api/runs') {
         // Newest first; every run this server started, so the studio can switch between them.
-        const mine = [...runs.values()]
-          .toReversed()
-          .map((r) => ({
-            id: r.id,
-            pattern: r.score.pattern,
-            goal: r.score.goal,
-            scoreId: r.score.id,
-            status: r.status,
-            ...timing(r.id),
-          }));
+        const mine = [...runs.values()].toReversed().map((r) => ({
+          id: r.id,
+          pattern: r.score.pattern,
+          goal: r.score.goal,
+          scoreId: r.score.id,
+          status: r.status,
+          ...timing(r.id),
+        }));
         // And the runs a chat plays in another process, marked so.
         const theirs = (await shared?.list())?.filter((r) => !runs.has(r.id)) ?? [];
         send(res, 200, [
