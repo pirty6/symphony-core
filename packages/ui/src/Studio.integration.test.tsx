@@ -16,6 +16,8 @@ import Studio from './Studio';
 const runs = new Map<string, Run>();
 let lastBody: Record<string, unknown> = {};
 const sources: FakeEventSource[] = [];
+/** Above the 5 s each test may wait for the studio's first render: slow CI runners (Windows) need both. */
+const STUDIO_TEST_MS = 20_000;
 
 class FakeEventSource {
   onmessage: ((e: { data: string }) => void) | null = null;
@@ -122,7 +124,7 @@ async function guessWord(word: string) {
   for (const letter of word) await guess(letter);
 }
 
-describe('Studio (integration)', () => {
+describe('Studio (integration)', { timeout: STUDIO_TEST_MS }, () => {
   it('loads the library and the requested pattern', async () => {
     renderStudio();
     expect(
