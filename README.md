@@ -45,10 +45,10 @@ worse. A feature that serves none, or that costs more than it gives, is removed.
 
 **The same pillars judge code.** Review, implement and fix always, and investigate for
 questions about code (the AI picks the pillars unless told: `-c pillars=all`, `none`, or
-`SECURITY,TESTS`), look at a change through one lens per pillar that applies to code: **Correctness,
-Robustness, Security, Usability, Clean code** (readability and maintainability),
-**Reusability, Tests** (and testability), **Efficiency** (time and memory) and **Determinism**
-(races, flaky tests). Each
+`SECURITY,TESTS`), look at a change through one lens per pillar that applies to code: **Correctness** (with
+robustness), **Security, Clean code** (readability, maintainability, usability and
+reusability), **Tests** (and testability), **Efficiency** (time and memory) and
+**Determinism** (races, flaky tests). Each
 lens is a small sub-algorithm: a deterministic scan of the diff for what a rule can catch
 (an `if` inside a test, a secret, a swallowed error, a block added twice), then one AI reviewer that judges only
 that pillar against its rulebook, then engine checks. The Tests lens also finds the critical

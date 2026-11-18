@@ -488,6 +488,10 @@ already seeds a copied helper.
   a Tests-lens comment (a lens master has), the other on its design step, before any lens.
 - **Cost:** about 7 more premium requests per review (+19%) and 4 per fix or implement.
 
+Decision: the three lenses cost a fifth more and found nothing the others missed, so they fold
+in. Their rules and scan leads stay: robustness joins Correctness (its leads reach review's own
+reviewers through `diff.scan`), usability and reusability join the Clean code lens.
+
 Repeat with the two worktrees (master with the fixtures cherry-picked, and this branch):
 
 ```sh
