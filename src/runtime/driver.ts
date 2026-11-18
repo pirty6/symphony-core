@@ -25,6 +25,7 @@ import { MAX_AGENTS } from '../core/types.js';
 import { scriptedResolution } from '../core/scripted.js';
 import type {
   AgentPause,
+  AheadAnswer,
   AiTranscript,
   Complexity,
   EditsResult,
@@ -803,6 +804,8 @@ export class Run {
           );
     let result: unknown;
     let transcript: AiTranscript;
+    // A later step played at the same time (AgentNode.ahead): the run waits for both.
+    const playingAhead = pause.ahead ? this.playAhead(pause.ahead, signal) : undefined;
     try {
       const res =
         (await this.fromRepertoire(pause)) ??
@@ -837,6 +840,7 @@ export class Run {
       unwatch();
       this.abort = undefined;
     }
+    const ahead = await playingAhead;
     await this.gate(pause.nodeId, 'after', result);
     if (this.stopRequested) return undefined;
     const envHash = this.opts.envHash ? await this.opts.envHash() : undefined;
@@ -846,8 +850,27 @@ export class Run {
       result,
       transcript,
       ...(envHash !== undefined ? { envHash } : {}),
+      ...(ahead ? { ahead } : {}),
       at: this.now(),
     };
+  }
+
+  /**
+   * A later step's answer, played alongside the current one; undefined when it could not be
+   * played (stopped, or the provider failed): the step then plays when the run reaches it.
+   */
+  private async playAhead(
+    pause: AgentPause,
+    signal: AbortSignal,
+  ): Promise<AheadAnswer | undefined> {
+    try {
+      const res =
+        (await this.fromRepertoire(pause)) ??
+        (pause.parts ? await this.playParts(pause, signal) : await this.play(pause, signal));
+      return { result: res.result, transcript: res.transcript, at: this.now() };
+    } catch {
+      return undefined;
+    }
   }
 
   private async runTool(pause: ToolPause): Promise<Resolution | undefined> {
