@@ -12,6 +12,7 @@ import { EFFORTS } from './types.js';
 import type {
   Capability,
   Complexity,
+  AheadSpec,
   Effort,
   Pattern,
   ScoreEdge,
@@ -94,6 +95,7 @@ function parseNode(raw: unknown, i: number, errors: string[]): ScoreNode | undef
           ? { maxEffort: raw.maxEffort as Effort }
           : {}),
         ...fanOutOf(raw.fanOut),
+        ...aheadOf(raw.ahead),
         ...(Number.isInteger(raw.complexityShift)
           ? { complexityShift: raw.complexityShift as number }
           : {}),
@@ -190,6 +192,23 @@ function fanOutOf(raw: unknown): {
         },
       }
     : {};
+}
+
+/** AgentNode.ahead: lost here, a composed score would play its steps one after the other. */
+function aheadOf(raw: unknown): { ahead?: AheadSpec } {
+  const a = raw as { node?: unknown; when?: unknown; input?: unknown; same?: unknown } | null;
+  if (typeof a?.node !== 'string' || typeof a.when !== 'string') return {};
+  const input = Array.isArray(a.input)
+    ? a.input.filter(isObj).map((x) => ({ field: str(x.field) ?? '', expr: str(x.expr) ?? '' }))
+    : [];
+  return {
+    ahead: {
+      node: a.node,
+      when: a.when,
+      ...(input.length ? { input } : {}),
+      same: strList(a.same),
+    },
+  };
 }
 
 /** AgentNode.preloadReport: the engine's record of what it could not give whole. */

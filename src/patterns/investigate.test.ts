@@ -12,7 +12,9 @@ import type {
   Resolution,
   NodeResult,
 } from '../core/types.js';
+import { performScore } from '../runtime/driver.js';
 import { buildAgentPrompt } from '../runtime/provider.js';
+import { ScriptedProvider } from '../runtime/scripted-provider.js';
 import { itemOf } from '../core/items.js';
 import { CODE_PILLARS } from '../core/pillars.js';
 import { investigate } from './index.js';
@@ -2028,5 +2030,35 @@ describe('investigate rates the code pillars a question bears on', () => {
     const r = playWith(answerRating([rating]));
     expect(answerErrors(r)).toEqual([]);
     expect(String(r.state.state.answer)).toContain(`## Pillars\n\n${rating}`);
+  });
+});
+
+/** The offline demo through the driver (which plays steps ahead), with parallelSweep on. */
+async function demoWithParallelSweep() {
+  const score = compileInvestigate({
+    goal: 'g',
+    context: { ...demo.context!, parallelSweep: true },
+  });
+  const perf = await performScore(score, ScriptedProvider.forPattern(investigate), {
+    clock: () => 't',
+    autoApprove: true,
+    demo,
+  });
+  return { score, perf };
+}
+
+describe('investigate with parallelSweep', () => {
+  it('searches the first sources while the first files are read, and the sweep takes that answer', async () => {
+    const { perf } = await demoWithParallelSweep();
+    const triage = perf.steps.find((s) => s.ahead)!;
+    expect([triage.nodeId, triage.ahead!.nodeId]).toEqual(['triage', 'sweep']);
+    expect(perf.steps.find((s) => s.nodeId === 'sweep')).toMatchObject({
+      aheadFrom: triage.step,
+    });
+  });
+
+  it('replays exactly', async () => {
+    const { score, perf } = await demoWithParallelSweep();
+    expect(replayPerformance(score, perf).divergence.reproduced).toBe(true);
   });
 });

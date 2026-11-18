@@ -291,6 +291,19 @@ const NO_RETRY =
  * `readFully` those it read completely, which then skip the deep read if the engine's own
  * record shows they were given whole.
  */
+/**
+ * parallelSweep: the first sources are searched while the first files are read, instead of
+ * after the reading and experiments. The sweep then steers by the leads as they stood before
+ * the reading; its answer is used only if the sources, sub-questions and search terms it was
+ * given are still the ones its turn would give it.
+ */
+const SWEEP_AHEAD = {
+  node: 'sweep',
+  when: 'parallelSweep && len(consulted) == 0 && len(pendingSources) > 0',
+  input: [{ field: 'currentSources', expr: 'take(pendingSources, agents)' }],
+  same: ['currentSources', 'subQuestions', 'searchTerms'],
+};
+
 function triageStep(deep: boolean): ScoreNode {
   const node: ScoreNode = {
     id: 'triage',
@@ -310,6 +323,7 @@ function triageStep(deep: boolean): ScoreNode {
     cites: 'newFindings',
     retries: 2,
     complexityShift: -1,
+    ahead: SWEEP_AHEAD,
     checks: [
       {
         expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
@@ -691,6 +705,12 @@ export const investigate: Pattern = {
         type: 'string[]',
         description:
           'Files of the triage batch the engine gave whole (engine-filled; empty without a record)',
+      },
+      {
+        name: 'parallelSweep',
+        type: 'boolean',
+        description:
+          'Trial (off): search the first sources while the first files are read, instead of after them',
       },
       {
         name: 'readerHypotheses',
