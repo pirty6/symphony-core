@@ -3,6 +3,7 @@
  * a recording) to perform one agent node. Plus the pure pieces every
  * provider shares: the prompt, result extraction and the role policy.
  */
+import { isAbsolute, relative, resolve } from 'node:path';
 import { preloadSection, type PreloadedFile } from './preload-prompt.js';
 import { codeStandardSection } from '../core/standards.js';
 import type { AgentPause, AiTranscript, Role } from '../core/types.js';
@@ -108,7 +109,7 @@ export function buildAgentPrompt(pause: AgentPause, sources: PromptSources = {})
     pause.isolated
       ? '- Only the input below. You have no workspace or shell tools for this step: reason from what you were given.'
       : pause.role === 'assessor'
-        ? "- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff/ls-files/check-ignore, gh issue/pr/run/search view|list, gh api GETs, az list/show/get/query commands and az devops invoke or az rest GETs for Azure DevOps and Azure, ls, cat, find, jq). No interpreters (python, node, bash -c…): they can write files, so they are refused. Read JSON with jq, e.g. `jq '.results[] | {task, pass}' file.json`. A command line runs only if every part is allowed; a refusal names the part, so run the rest again without it."
+        ? `- Workspace: view, grep, glob and read-only shell commands (git log/show/blame/diff/ls-files/check-ignore, gh issue/pr/run/search view|list, gh api GETs, az list/show/get/query commands, az devops invoke or az rest GETs for Azure DevOps and Azure, az rest POSTs to Kusto, Log Analytics, Application Insights and Resource Graph query endpoints, ls, cat, find, jq).${azureReads(sources.scratchDir)} No interpreters (python, node, bash -c…): they can write files, so they are refused. Read JSON with jq, e.g. \`jq '.results[] | {task, pass}' file.json\`. A command line runs only if every part is allowed; a refusal names the part, so run the rest again without it.`
         : pause.sandbox
           ? '- Workspace: a throwaway copy of the project, made for this step and deleted after it. You may add or change files in it to try something (e.g. a temporary test next to the code it tests); nothing you do here reaches the real project.'
           : `- Workspace: read, edit and run commands as this step needs. Put scripts, notes and other temporary files only in ${sources.scratchDir ? `the run's scratch folder \`${sources.scratchDir}\` (deleted when the run ends)` : 'the system temp folder'}, never in the project.`,
@@ -386,36 +387,123 @@ function ghIsReadOnly(args: readonly string[]): boolean {
 
 /** az verbs that only read: `az repos policy list`, `az pipelines runs show`, `az graph query`. */
 const AZ_READ_VERB = /^(list|show|get|query)(-[a-z-]+)?$/;
-/** az commands that print a credential or write a file, whatever their verb says. */
-const AZ_NEVER = /^(get-access-token|download|export)$/;
+/** az commands that print a credential or write outside the run, whatever their verb says. */
+const AZ_NEVER = /^(get-access-token|export)$/;
 /** Flags that make az write a file (its --output only formats what it prints). */
 const AZ_WRITES = /^--(out-file|output-file|file-path|dest|destination|path)(=|$)/;
+/** az downloads, by command, and the flags that say where they write: only into the scratch folder. */
+const AZ_DOWNLOADS: Readonly<Record<string, readonly string[]>> = {
+  'pipelines runs artifact download': ['--path'],
+  'artifacts universal download': ['--path'],
+  'storage blob download': ['--file', '-f'],
+  'storage blob download-batch': ['--destination', '-d'],
+};
+/** POST endpoints that only answer a query (no body can change anything there). */
+const KUSTO_QUERY =
+  /^https:\/\/[a-z0-9.-]+\.kusto\.(windows\.net|data\.microsoft\.com|fabric\.microsoft\.com)\/v[12]\/rest\/query$/i;
+const AZ_QUERY_POSTS: readonly RegExp[] = [
+  KUSTO_QUERY,
+  /^https:\/\/api\.loganalytics\.(io|azure\.com)\/v1\/workspaces\/[^/]+\/query$/i,
+  /^https:\/\/api\.applicationinsights\.io\/v1\/apps\/[^/]+\/query$/i,
+  /^https:\/\/management\.azure\.com\/providers\/microsoft\.resourcegraph\/resources$/i,
+];
+/** A Kusto control command (`.drop`, `.set`…) at the start of any statement: it can change data. */
+const KUSTO_CONTROL = /(^|[;\n])\s*\./;
+
+/** Where a read-only step may still write: the run's scratch folder, deleted when the run ends. */
+export interface ReadOnlyScope {
+  readonly scratchDir?: string;
+}
+
+/** The value of the first of these flags (`--flag value` or `--flag=value`), if given. */
+function flagValue(args: readonly string[], names: readonly string[]): string | undefined {
+  const i = args.findIndex((a) => names.some((n) => a === n || a.startsWith(`${n}=`)));
+  if (i < 0) return undefined;
+  const a = args[i]!;
+  return a.includes('=') ? a.slice(a.indexOf('=') + 1) : args[i + 1];
+}
+
+/** Every path given to a flag that names where a file is written. */
+function writeTargets(args: readonly string[], destinations: readonly string[]): string[] {
+  return args.flatMap((a, i) => {
+    const name = a.split('=')[0]!;
+    const writes = destinations.includes(name) || AZ_WRITES.test(name);
+    if (!a.startsWith('-') || !writes) return [];
+    return [a.includes('=') ? a.slice(name.length + 1) : (args[i + 1] ?? '')];
+  });
+}
+
+const insideFolder = (path: string, folder: string): boolean => {
+  if (!isAbsolute(path)) return false;
+  const rel = relative(folder, resolve(path));
+  return !rel.startsWith('..') && !isAbsolute(rel);
+};
+
+/** A download reads from Azure; it may write only into the run's scratch folder. */
+function downloadRefusal(
+  said: string,
+  args: readonly string[],
+  destinations: readonly string[],
+  scratchDir: string | undefined,
+): string | undefined {
+  if (!scratchDir) return `${said} (downloads go only to the run's scratch folder; none here)`;
+  const named = flagValue(args, destinations) !== undefined;
+  const targets = writeTargets(args, destinations);
+  return named && targets.every((t) => insideFolder(t, scratchDir))
+    ? undefined
+    : `${said} (only with ${destinations[0]} inside the run's scratch folder ${scratchDir})`;
+}
+
+/** Why a POST body to a query endpoint could change something, or undefined when it only asks. */
+function queryBodyRefusal(said: string, url: string, body: string): string | undefined {
+  if (body.startsWith('@')) return `${said} (the body must be given inline, to be checked)`;
+  if (!KUSTO_QUERY.test(url)) return undefined;
+  let csl: unknown;
+  try {
+    csl = (JSON.parse(body) as { csl?: unknown }).csl;
+  } catch {
+    return `${said} (a Kusto body must be JSON with db and csl)`;
+  }
+  if (typeof csl !== 'string') return `${said} (a Kusto body must be JSON with db and csl)`;
+  return KUSTO_CONTROL.test(csl) ? `${said} (Kusto control commands can change data)` : undefined;
+}
+
+/** `az rest` reads with a GET and no body, or with a POST to a query endpoint. */
+function restRefusal(said: string, args: readonly string[]): string | undefined {
+  const method = (flagValue(args, ['--method', '-m']) ?? 'get').toLowerCase();
+  const body = flagValue(args, ['--body', '-b']);
+  if (method === 'get' && body === undefined) return undefined;
+  const given = flagValue(args, ['--url', '--uri', '-u']) ?? '';
+  const url = URL.canParse(given) ? new URL(given) : undefined;
+  const endpoint = url ? `${url.origin}${url.pathname}` : '';
+  if (method === 'post' && body !== undefined && AZ_QUERY_POSTS.some((q) => q.test(endpoint)))
+    return queryBodyRefusal(said, endpoint, body);
+  return `${said} (only GET requests with no body, or POSTs to a Kusto, Log Analytics, Application Insights or Resource Graph query endpoint)`;
+}
 
 /**
- * az reads when its last command word is a read verb (list, show, get…, query), or for
- * `az devops invoke` and `az rest` when the request is a GET with no body. Anything that
- * prints a token or writes a file is refused.
+ * az reads when its last command word is a read verb (list, show, get…, query); for
+ * `az devops invoke` with a GET and no body; for `az rest` with a GET, or a POST to a query
+ * endpoint (Kusto, Log Analytics, Application Insights, Resource Graph); and for downloads into
+ * the run's scratch folder. Anything that prints a token or writes elsewhere is refused.
  */
-function azRefusal(args: readonly string[]): string | undefined {
+function azRefusal(args: readonly string[], scope: ReadOnlyScope): string | undefined {
   const words: string[] = [];
   for (const a of args) {
     if (a.startsWith('-')) break;
     words.push(a);
   }
   const said = `\`az ${words.join(' ')}\``;
+  const destinations = AZ_DOWNLOADS[words.join(' ')];
+  if (destinations) return downloadRefusal(said, args, destinations, scope.scratchDir);
   const writes = args.find((a) => AZ_WRITES.test(a));
   if (writes) return `${said} ${writes} (writes a file)`;
   const verb = words.at(-1) ?? '';
   if (AZ_NEVER.test(verb)) return `${said} (prints a credential or writes a file)`;
-  const flag = (names: readonly string[]) => {
-    const i = args.findIndex((a) => names.some((n) => a === n || a.startsWith(`${n}=`)));
-    if (i < 0) return undefined;
-    const a = args[i]!;
-    return (a.includes('=') ? a.split('=')[1] : args[i + 1])?.toLowerCase();
-  };
-  if ((words[0] === 'devops' && verb === 'invoke') || words[0] === 'rest') {
-    const method = flag(['--http-method', '--method', '-m']) ?? 'get';
-    const body = args.some((a) => /^--(body|in-file)(=|$)|^-b$/.test(a));
+  if (words[0] === 'rest') return restRefusal(said, args);
+  if (words[0] === 'devops' && verb === 'invoke') {
+    const method = (flagValue(args, ['--http-method']) ?? 'get').toLowerCase();
+    const body = args.some((a) => /^--in-file(=|$)/.test(a));
     return method === 'get' && !body ? undefined : `${said} (only GET requests with no body)`;
   }
   return AZ_READ_VERB.test(verb) ? undefined : `${said} (only list, show, get and query commands)`;
@@ -493,7 +581,7 @@ function awkRefusal(cmd: string, args: readonly string[]): string | undefined {
 }
 
 /** Why one command of a line is not read-only, or undefined when it is. */
-function segmentRefusal(segment: string): string | undefined {
+function segmentRefusal(segment: string, scope: ReadOnlyScope): string | undefined {
   // Subshell and group brackets around a command change nothing about what it does.
   let t = tokens(segment.replace(/^[(\s]+/, '').replace(/[)\s]+$/, ''));
   while (t[0] !== undefined && LEADING_KEYWORDS.has(t[0])) t = t.slice(1);
@@ -516,13 +604,13 @@ function segmentRefusal(segment: string): string | undefined {
     const rest = t.slice(first);
     if (!ENV_PREFIX_SAFE.has(rest[0]!))
       return `\`${cmd} ${rest[0]}\` (variables set before a program can change what it runs)`;
-    return segmentRefusal(rest.join(' '));
+    return segmentRefusal(rest.join(' '), scope);
   }
   if (INTERPRETERS.has(cmd)) return `\`${cmd}\` (interpreters can run any code, including writes)`;
   if (!READ_ONLY_COMMANDS.has(cmd)) return `\`${cmd}\` (not on the read-only list)`;
   const args = t.slice(1);
   // az's --output (-o) chooses a format for what it prints; az's own file flags are checked below.
-  if (cmd === 'az') return azRefusal(args);
+  if (cmd === 'az') return azRefusal(args, scope);
   if (args.some((a) => a.startsWith('--output'))) return `\`${cmd} --output\` (writes a file)`;
   if (AWKS.has(cmd)) return awkRefusal(cmd, args);
   if (cmd === 'sort')
@@ -577,6 +665,7 @@ const MAX_SUBSTITUTION_DEPTH = 3;
  */
 function withoutSubstitutions(
   text: string,
+  scope: ReadOnlyScope,
   depth: number,
 ): { readonly text: string } | { readonly refused: string } {
   let out = '';
@@ -605,7 +694,7 @@ function withoutSubstitutions(
     }
     if (end < 0 || depth >= MAX_SUBSTITUTION_DEPTH)
       return { refused: '`$(…)` (unbalanced or nested too deep)' };
-    const inner = readOnlyRefusal(text.slice(i + 2, end), depth + 1);
+    const inner = readOnlyRefusal(text.slice(i + 2, end), scope, depth + 1);
     if (inner) return { refused: `${inner}, inside $(…)` };
     out += 'SUBSTITUTION';
     i = end;
@@ -623,9 +712,13 @@ const ENV_PREFIX_SAFE: ReadonlySet<string> = new Set(['echo', 'printf', 'true', 
  * redirection are refused. Returns why the line is refused (naming the first
  * offending piece), or undefined when it is read-only.
  */
-export function readOnlyRefusal(text: string, depth = 0): string | undefined {
+export function readOnlyRefusal(
+  text: string,
+  scope: ReadOnlyScope = {},
+  depth = 0,
+): string | undefined {
   // $(…) runs a command too: allowed only when what it runs is itself read-only.
-  const flat = withoutSubstitutions(text, depth);
+  const flat = withoutSubstitutions(text, scope, depth);
   if ('refused' in flat) return flat.refused;
   text = flat.text;
   // Anything left that could run a command: backticks, $( the scanner could not read, <(…), >(…).
@@ -638,18 +731,32 @@ export function readOnlyRefusal(text: string, depth = 0): string | undefined {
     .replace(/[0-9]?>&[0-9]/g, '');
   if (unquoted.includes('>')) return '`>` (writes a file; only 2>&1 and > /dev/null are allowed)';
   for (const seg of splitCommands(text)) {
-    const why = segmentRefusal(seg.trim());
+    const why = segmentRefusal(seg.trim(), scope);
     if (why) return why;
   }
   return undefined;
 }
 
-export function isReadOnlyCommand(text: string, depth = 0): boolean {
-  return readOnlyRefusal(text, depth) === undefined;
+export function isReadOnlyCommand(text: string, scope: ReadOnlyScope = {}): boolean {
+  return readOnlyRefusal(text, scope) === undefined;
+}
+
+/** How a read-only step queries Kusto, and where its Azure downloads may go. */
+function azureReads(scratchDir: string | undefined): string {
+  const kusto =
+    ' Kusto: `az rest --method post --url https://<cluster>.kusto.windows.net/v2/rest/query --resource https://<cluster>.kusto.windows.net --body \'{"db":"<database>","csl":"<query>"}\'` (queries only; control commands starting with "." are refused).';
+  const downloads = scratchDir
+    ? ` Downloads (az pipelines runs artifact download, az artifacts universal download, az storage blob download) only into the run's scratch folder: --path (or --file, --destination) inside \`${scratchDir}\`.`
+    : '';
+  return kusto + downloads;
 }
 
 /** Assessors may read; executors may do anything their step needs. */
-export function decidePermission(role: Role, req: PermissionLike): PolicyDecision {
+export function decidePermission(
+  role: Role,
+  req: PermissionLike,
+  scope: ReadOnlyScope = {},
+): PolicyDecision {
   if (role === 'executor') return { allowed: true, reason: 'executor is read-write' };
   switch (req.kind) {
     case 'read':
@@ -675,14 +782,14 @@ export function decidePermission(role: Role, req: PermissionLike): PolicyDecisio
       if (
         !req.hasWriteFileRedirection &&
         req.fullCommandText &&
-        isReadOnlyCommand(req.fullCommandText)
+        isReadOnlyCommand(req.fullCommandText, scope)
       ) {
         return { allowed: true, reason: 'read-only command (allowlist)' };
       }
       const why = req.hasWriteFileRedirection
         ? '`>` (writes a file)'
         : req.fullCommandText
-          ? readOnlyRefusal(req.fullCommandText)
+          ? readOnlyRefusal(req.fullCommandText, scope)
           : undefined;
       return {
         allowed: false,

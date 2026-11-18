@@ -601,7 +601,133 @@ describe('isReadOnlyCommand', () => {
   it('refuses az extension add', () => {
     expect(isReadOnlyCommand('az extension add --name kusto')).toBe(false);
   });
+});
 
+const SCRATCH = '/tmp/sym-scratch';
+const IN_SCRATCH = { scratchDir: SCRATCH };
+const ARTIFACT = 'az pipelines runs artifact download --run-id 1 --artifact-name logs';
+const KUSTO_URL = 'https://help.kusto.windows.net/v2/rest/query';
+const kustoQuery = (body: string) =>
+  `az rest --method post --url ${KUSTO_URL} --resource https://help.kusto.windows.net --body '${body}'`;
+
+describe('read-only Azure: downloads into the scratch folder', () => {
+  it('allows an artifact download into the scratch folder', () => {
+    expect(readOnlyRefusal(`${ARTIFACT} --path ${SCRATCH}/logs`, IN_SCRATCH)).toBeUndefined();
+  });
+
+  it('allows a blob download into the scratch folder', () => {
+    expect(
+      readOnlyRefusal(
+        `az storage blob download --account-name a -c c -n b.json -f ${SCRATCH}/b.json`,
+        IN_SCRATCH,
+      ),
+    ).toBeUndefined();
+  });
+
+  it('refuses a download outside the scratch folder, naming it', () => {
+    expect(readOnlyRefusal(`${ARTIFACT} --path /tmp/elsewhere`, IN_SCRATCH)).toBe(
+      `\`az pipelines runs artifact download\` (only with --path inside the run's scratch folder ${SCRATCH})`,
+    );
+  });
+
+  it('refuses a download path that climbs out of the scratch folder', () => {
+    expect(readOnlyRefusal(`${ARTIFACT} --path ${SCRATCH}/../x`, IN_SCRATCH)).toMatch(
+      /only with --path inside/,
+    );
+  });
+
+  it('refuses a relative download path', () => {
+    expect(readOnlyRefusal(`${ARTIFACT} --path logs`, IN_SCRATCH)).toMatch(/only with --path/);
+  });
+
+  it('refuses a download that does not say where it writes', () => {
+    expect(readOnlyRefusal(ARTIFACT, IN_SCRATCH)).toMatch(/only with --path/);
+  });
+
+  it('refuses a download when the step has no scratch folder', () => {
+    expect(readOnlyRefusal(`${ARTIFACT} --path ${SCRATCH}/logs`)).toMatch(/none here/);
+  });
+
+  it('lets an assessor download into its scratch folder', () => {
+    const text = `${ARTIFACT} --path ${SCRATCH}/logs`;
+    const req = {
+      kind: 'shell',
+      commands: [{ identifier: text, readOnly: false }],
+      fullCommandText: text,
+    };
+    expect(decidePermission('assessor', req, IN_SCRATCH).allowed).toBe(true);
+  });
+});
+
+describe('read-only Azure: query POSTs', () => {
+  it('allows a Kusto query', () => {
+    expect(
+      readOnlyRefusal(kustoQuery('{"db":"Samples","csl":"StormEvents | take 5"}')),
+    ).toBeUndefined();
+  });
+
+  it('refuses a Kusto control command', () => {
+    expect(readOnlyRefusal(kustoQuery('{"db":"Samples","csl":".drop table StormEvents"}'))).toMatch(
+      /control commands can change data/,
+    );
+  });
+
+  it('refuses a Kusto control command after a query statement', () => {
+    expect(
+      readOnlyRefusal(
+        kustoQuery('{"db":"Samples","csl":"let x = 1;\\n.set-or-append T <| print x"}'),
+      ),
+    ).toMatch(/control commands can change data/);
+  });
+
+  it('refuses a Kusto body read from a file it cannot check', () => {
+    expect(readOnlyRefusal(`az rest --method post --url ${KUSTO_URL} --body @query.json`)).toMatch(
+      /given inline/,
+    );
+  });
+
+  it('refuses a POST to the Kusto management endpoint', () => {
+    expect(
+      isReadOnlyCommand(
+        'az rest --method post --url https://help.kusto.windows.net/v1/rest/mgmt --body \'{"db":"S","csl":".show tables"}\'',
+      ),
+    ).toBe(false);
+  });
+
+  it('allows a Log Analytics query', () => {
+    expect(
+      isReadOnlyCommand(
+        'az rest --method post --url https://api.loganalytics.io/v1/workspaces/abc/query --body \'{"query":"AppRequests | take 5"}\'',
+      ),
+    ).toBe(true);
+  });
+
+  it('allows a Resource Graph query', () => {
+    expect(
+      isReadOnlyCommand(
+        'az rest --method post --url \'https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01\' --body \'{"query":"Resources | take 5"}\'',
+      ),
+    ).toBe(true);
+  });
+
+  it('refuses a POST to any other Azure endpoint', () => {
+    expect(
+      readOnlyRefusal(
+        "az rest --method post --url https://management.azure.com/subscriptions/s/resourceGroups/g/providers/Microsoft.Web/sites/w/restart --body '{}'",
+      ),
+    ).toMatch(/only GET requests with no body, or POSTs to a Kusto/);
+  });
+});
+
+describe('read-only Azure: what the prompt says', () => {
+  it('names the scratch folder for downloads, and how to query Kusto', () => {
+    const p = buildAgentPrompt(pause, { scratchDir: SCRATCH });
+    expect(p).toContain(`--path (or --file, --destination) inside \`${SCRATCH}\``);
+    expect(p).toContain('control commands starting with "." are refused');
+  });
+});
+
+describe('decidePermission for read-only commands', () => {
   it('lets assessors run git diff even when the CLI marks it as a write', () => {
     const text = 'git --no-pager diff HEAD~1..HEAD';
     expect(
