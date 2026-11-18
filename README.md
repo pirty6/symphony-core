@@ -43,8 +43,9 @@ worse. A feature that serves none, or that costs more than it gives, is removed.
 | **Security** | No step leaks a credential or runs what it should not; untrusted input never becomes a command, query or path | the scrub tests, read-only assessors, sign-ins off for remote callers, the Security lens on every review |
 | **Good practices** | Code is clean ("Clean Code", Robert C. Martin), its tests are valuable ("Unit Testing Principles, Practices, and Patterns", Vladimir Khorikov), and it has the software qualities of "Seriously Good Software" (Marco Faella): robust, usable, efficient, readable, reusable, testable and maintainable | the Clean code and Tests lenses on every review and on Symphony's own edits; no `if` or loop inside a test |
 
-**The same pillars judge code.** Review, implement and fix always, and investigate when asked
-(`-c pillars=all` or `-c pillars=SECURITY,TESTS`), look at a change through one lens per pillar that applies to code: **Correctness,
+**The same pillars judge code.** Review, implement and fix always, and investigate for
+questions about code (the AI picks the pillars unless told: `-c pillars=all`, `none`, or
+`SECURITY,TESTS`), look at a change through one lens per pillar that applies to code: **Correctness,
 Robustness, Security, Usability, Clean code** (readability and maintainability),
 **Reusability, Tests** (and testability), **Efficiency** (time and memory) and **Determinism**
 (races, flaky tests). Each

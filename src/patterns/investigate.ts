@@ -57,14 +57,14 @@ const PILLAR_IDS = CODE_PILLARS.map((p) => p.id).join('|');
 /** Every code pillar's id, as an expression list. */
 const PILLAR_LIST = `[${CODE_PILLARS.map((p) => JSON.stringify(p.id)).join(', ')}]`;
 
-/** For the plan: only the pillars the caller asked for become tagged sub-questions. */
-const PILLAR_PLAN_NOTE = ` If \`pillarFocus\` lists pillars, add one sub-question per pillar in it, in its order, about how the code in question fares on that pillar, tagged with the pillar after its number ("S3 [SECURITY] …"). The pillars: ${CODE_PILLARS.map((p) => `${p.id} (${p.asks})`).join('; ')}. The TESTS one asks whether the critical path (the code that decides much) has tests that would fail if it broke. No other sub-question takes a pillar tag, and none does when \`pillarFocus\` is empty.`;
+/** For the plan: the pillars asked for, or else the ones the AI finds bear on the question. */
+const PILLAR_PLAN_NOTE = ` Code pillars: ${CODE_PILLARS.map((p) => `${p.id} (${p.asks})`).join('; ')}. The TESTS one asks whether the critical path (the code that decides much) has tests that would fail if it broke. A pillar sub-question asks how the code in question fares on that pillar, tagged with the pillar after its number ("S3 [SECURITY] …"). If \`pillarsChosen\` is true, add exactly one per pillar in \`pillarFocus\`, in its order, and no other (none when it is empty). Otherwise decide: if the question asks how good, risky or ready some code is (a change, a module, a pull request: should it merge, what could break, is it well tested, is it secure), add one per pillar that bears on it; other questions take no pillar tags.`;
 
-/** The plan's tagged sub-questions are exactly the asked-for pillars, in order. */
+/** When pillars were asked for, the plan's tagged sub-questions are exactly those, in order. */
 const PILLAR_PLAN_CHECK = {
-  expr: `heads(pick(subQuestions, positions(subQuestions, "[[](${PILLAR_IDS})]")), "(?<=[[])(${PILLAR_IDS})(?=])") == pillarFocus`,
+  expr: `!pillarsChosen || heads(pick(subQuestions, positions(subQuestions, "[[](${PILLAR_IDS})]")), "(?<=[[])(${PILLAR_IDS})(?=])") == pillarFocus`,
   message:
-    'Tag one sub-question per pillar in pillarFocus, in its order ("S3 [SECURITY] …"), and no other; with pillarFocus empty, tag none.',
+    'pillarsChosen: tag one sub-question per pillar in pillarFocus, in its order ("S3 [SECURITY] …"), and no other; with pillarFocus empty, tag none.',
 };
 
 /** For the answer: each tagged pillar gets a rating, citing the findings behind it. */
@@ -382,12 +382,17 @@ export const investigate: Pattern = {
         name: 'pillars',
         type: 'string[]',
         description:
-          'Opt-in: judge the code in question by these code pillars, each a sub-question with a rating. Empty (default) for none; "all" for every pillar; or pillar ids such as SECURITY, TESTS. Set it only when the request asks to judge code by the pillars or names one.',
+          'Which code pillars to judge the code in question by, each a sub-question with a rating. Empty (default): the AI picks the pillars that bear on a question about code quality. "all" for every pillar, "none" for no pillars, or pillar ids such as SECURITY, TESTS. Set it only when the request says which pillars, all of them, or none.',
       },
       {
         name: 'pillarFocus',
         type: 'string[]',
         description: 'The pillar ids to judge by, from `pillars`',
+      },
+      {
+        name: 'pillarsChosen',
+        type: 'boolean',
+        description: 'The caller said which pillars (or none); otherwise the AI decides',
       },
       ...READER_STATE,
       { name: 'hintAsked', type: 'boolean', description: 'A person was asked for a hint once' },
@@ -976,8 +981,9 @@ export const investigate: Pattern = {
       assign: [
         {
           field: 'pillarFocus',
-          expr: `if(includes(upper(pillars), "ALL"), ${PILLAR_LIST}, unique(upper(pillars)))`,
+          expr: `if(includes(upper(pillars), "ALL"), ${PILLAR_LIST}, if(includes(upper(pillars), "NONE"), [], unique(upper(pillars))))`,
         },
+        { field: 'pillarsChosen', expr: 'len(pillars) > 0' },
       ],
     },
     {
@@ -993,7 +999,7 @@ export const investigate: Pattern = {
       assign: [
         {
           field: 'summary',
-          expr: `"Unknown pillar: " + join(without(pillarFocus, ${PILLAR_LIST}), ", ") + ". Use all, or any of: " + join(${PILLAR_LIST}, ", ") + "."`,
+          expr: `"Unknown pillar: " + join(without(pillarFocus, ${PILLAR_LIST}), ", ") + ". Use all, none, or any of: " + join(${PILLAR_LIST}, ", ") + "."`,
         },
       ],
     },
@@ -1037,7 +1043,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Plan research',
       directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; why-questions about code usually need \`git-history\`. Always use \`web\` (docs and write-ups check what the code suggests) and \`experiment\` (try the hypotheses with targeted runs: a test file or test name, repeated with retries off, never the whole suite). Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side; the overall answer then writes what holds across them, so never add a part for that (a synthesis, summary, overview or conclusion). Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): ${MAX_AGENTS} unless the question is narrow, 1-3 for one about a few files; parallel calls finish sooner at the same total reading, and an idle slot only costs time.${PILLAR_PLAN_NOTE}`,
-      reads: ['question', 'hint', 'sourceNames', 'sourceInfo', 'pillarFocus'],
+      reads: ['question', 'hint', 'sourceNames', 'sourceInfo', 'pillarsChosen', 'pillarFocus'],
       writes: [
         'subQuestions',
         'searchTerms',

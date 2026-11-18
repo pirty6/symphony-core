@@ -47,9 +47,10 @@ GET) let research read pipelines and branch policies; nothing that writes is all
    every available source whether it can hold evidence (a reason for each skip), chooses
    how many sub-agents to use (1-6), and may split the question into independent parts. The
    web and experiments are always used when they are on offer: a plan that skips either is
-   sent back. Code pillars are opt-in: with the `pillars` input (`all`, or ids such as
-   `SECURITY, TESTS`) the plan must add one sub-question per pillar, in order, tagged
-   (`S3 [SECURITY] …`), and no others; without it, none. An unknown pillar fails the run at once.
+   sent back. A question about how good, risky or ready some code is splits along the code
+   pillars that bear on it, one sub-question each, tagged (`S3 [SECURITY] …`). The AI picks
+   them unless the `pillars` input says: `all`, `none`, or ids such as `SECURITY, TESTS`; then
+   the plan must tag exactly those, in order. An unknown pillar fails the run at once.
 2. **Hypotheses.** Competing answers before any evidence, each with what would confirm or
    refute it. The engine keeps a tally per hypothesis (`hypothesisStatus`: findings for and
    against, *untested*, *challenged*) after every batch, and later steps steer by it.
