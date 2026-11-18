@@ -142,6 +142,80 @@ export function firstCallCache(perf: Pick<Performance, 'steps'>): Record<string,
   return out;
 }
 
+/** Model calls of one cache state: how many, their tokens and time. */
+export interface CallGroup {
+  readonly calls: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly ms: number;
+}
+
+/** A step's model calls, cold (nothing read from the prompt cache) and warm (some read) apart. */
+export interface CacheSplit {
+  readonly cold: CallGroup;
+  readonly warm: CallGroup;
+}
+
+export const NO_CALLS: CallGroup = {
+  calls: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  ms: 0,
+};
+
+const addGroups = (x: CallGroup, y: CallGroup): CallGroup => ({
+  calls: x.calls + y.calls,
+  inputTokens: x.inputTokens + y.inputTokens,
+  outputTokens: x.outputTokens + y.outputTokens,
+  cacheReadTokens: x.cacheReadTokens + y.cacheReadTokens,
+  ms: x.ms + y.ms,
+});
+
+const oneCall = (c: CallUsage): CallGroup => ({
+  calls: 1,
+  inputTokens: c.inputTokens,
+  outputTokens: c.outputTokens,
+  cacheReadTokens: c.cacheReadTokens,
+  ms: c.ms ?? 0,
+});
+
+export const addCacheSplit = (x: CacheSplit, y: CacheSplit): CacheSplit => ({
+  cold: addGroups(x.cold, y.cold),
+  warm: addGroups(x.warm, y.warm),
+});
+
+/** Every model call of an answer: its own session's, its takes' and its parts'. */
+function callsOf(t: AiTranscript | undefined): CallUsage[] {
+  if (!t || t.fromRepertoire) return [];
+  return [
+    ...(t.calls ?? []),
+    ...(t.takes ?? []).flatMap(callsOf),
+    ...(t.parts ?? []).flatMap(callsOf),
+  ];
+}
+
+/**
+ * Per node, every model call of the run (rejected attempts included), cold and warm apart: a
+ * cold call read nothing from the prompt cache. Where a step's time goes, and what a warm cache
+ * saves it.
+ */
+export function cacheSplitByNode(perf: Pick<Performance, 'steps'>): Record<string, CacheSplit> {
+  const out: Record<string, CacheSplit> = {};
+  for (const s of perf.steps)
+    for (const call of [...(s.attempts ?? []).map((a) => a.transcript), s.transcript].flatMap(
+      callsOf,
+    )) {
+      const was = out[s.nodeId] ?? { cold: NO_CALLS, warm: NO_CALLS };
+      out[s.nodeId] =
+        call.cacheReadTokens > 0
+          ? { ...was, warm: addGroups(was.warm, oneCall(call)) }
+          : { ...was, cold: addGroups(was.cold, oneCall(call)) };
+    }
+  return out;
+}
+
 /** Every AI answer of a run (rejected attempts included), per node, per visit and in total. */
 export function performanceUsage(perf: Pick<Performance, 'steps'>): {
   readonly total: TokenUsage;

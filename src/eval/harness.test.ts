@@ -306,6 +306,25 @@ describe('eval harness', { timeout: 30_000 }, () => {
     );
   });
 
+  it("reports each slow step's model calls, cold and warm cache apart", async () => {
+    const report = await evaluate(true, 1);
+    const calls = (n: number, ms: number) => ({
+      calls: n,
+      inputTokens: n * 1000,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      ms,
+    });
+    const r = {
+      ...report.results[0]!,
+      pattern: 'investigate',
+      cacheByNode: { challenge: { cold: calls(2, 90_000), warm: calls(4, 30_000) } },
+    };
+    expect(formatReport({ ...report, results: [r] })).toMatch(
+      /cold vs warm calls: investigate challenge cold 2 calls, 2\.0k in, 90s, warm 4 calls, 4\.0k in, 30s/,
+    );
+  });
+
   it('reports rejection reasons, rate limits and the read record, for the trials', async () => {
     const report = await evaluate(true, 1);
     const [first] = report.results;
