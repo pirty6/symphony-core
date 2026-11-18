@@ -6,6 +6,7 @@ import { unboundedLoops } from './loops.js';
 import { ExprError, exprFields, parseExpr } from './expr.js';
 import { checkFieldValue, isFieldType, isValidFieldName } from './schema.js';
 import {
+  type AheadSpec,
   CAPABILITIES,
   EFFORTS,
   type Pattern,
@@ -48,6 +49,34 @@ function checkExpr(
     const msg = e instanceof ExprError ? e.message : String(e);
     errors.push({ ...where, message: `${what} '${src}' is invalid: ${msg}` });
   }
+}
+
+/** AgentNode.ahead: another agent step, its guard, its input and the fields it depends on. */
+function checkAhead(
+  spec: AheadSpec,
+  nodes: readonly ScoreNode[],
+  at: Omit<Issue, 'message'>,
+  fields: ReadonlySet<string>,
+  guardFields: ReadonlySet<string>,
+  errors: Issue[],
+): void {
+  const target = nodes.find((x) => x.id === spec.node);
+  if (target?.kind !== 'agent' || target.id === at.nodeId) {
+    errors.push({ ...at, message: `ahead.node '${spec.node}' must be another agent step` });
+    return;
+  }
+  checkExpr(spec.when, guardFields, at, 'ahead.when', errors);
+  for (const a of spec.input ?? []) {
+    if (!fields.has(a.field))
+      errors.push({ ...at, message: `ahead.input sets unknown field '${a.field}'` });
+    checkExpr(a.expr, fields, at, `ahead.input '${a.field}'`, errors);
+  }
+  const unread = spec.same.filter((f) => !target.reads.includes(f));
+  if (spec.same.length === 0 || unread.length > 0)
+    errors.push({
+      ...at,
+      message: `ahead.same must list fields '${spec.node}' reads${unread.length ? ` (not: ${unread.join(', ')})` : ''}`,
+    });
 }
 
 function checkOutEdges(
@@ -283,6 +312,7 @@ export function validateGraph(g: PatternGraph): ValidationReport {
         for (const cap of n.capabilities ?? []) {
           if (!CAPS.has(cap)) errors.push({ ...at, message: `unknown capability '${cap}'` });
         }
+        if (n.ahead) checkAhead(n.ahead, g.nodes, at, fieldNames, guardFields, errors);
         break;
       case 'compute':
         if (n.assign.length === 0)
