@@ -47,8 +47,9 @@ GET) let research read pipelines and branch policies; nothing that writes is all
    every available source whether it can hold evidence (a reason for each skip), chooses
    how many sub-agents to use (1-6), and may split the question into independent parts. The
    web and experiments are always used when they are on offer: a plan that skips either is
-   sent back. A question about how good, risky or ready some code is splits along the code
-   pillars that bear on it, one sub-question each, tagged (`S3 [SECURITY] …`).
+   sent back. Code pillars are opt-in: with the `pillars` input (`all`, or ids such as
+   `SECURITY, TESTS`) the plan must add one sub-question per pillar, in order, tagged
+   (`S3 [SECURITY] …`), and no others; without it, none. An unknown pillar fails the run at once.
 2. **Hypotheses.** Competing answers before any evidence, each with what would confirm or
    refute it. The engine keeps a tally per hypothesis (`hypothesisStatus`: findings for and
    against, *untested*, *challenged*) after every batch, and later steps steer by it.
@@ -147,6 +148,9 @@ GET) let research read pipelines and branch policies; nothing that writes is all
 ```mermaid
 flowchart TD
   n_start(["Start"])
+  n_focusPillars["Pillars asked for"]
+  n_pillarsKnown{"Known pillars?"}
+  n_unknownPillars["Name the unknown pillars"]
   n_resolveScope[/"🔧 Resolve located paths"/]
   n_multiPart{"Several parts?"}
   n_answerParts["🤖 Answer each part ×N"]
@@ -162,6 +166,7 @@ flowchart TD
   n_explain["🤖 Write the version for people"]
   n_done(["Answered · success"])
   n_doubts(["Answered, with open doubts · partial"])
+  n_badPillars(["Unknown pillar · failed"])
   n_planPhase[["Plan research · 4 steps"]]
   n_hypothesesPhase[["Competing hypotheses · 3 steps"]]
   n_listPhase[["List evidence · 13 steps"]]
@@ -171,7 +176,11 @@ flowchart TD
   n_sourcePhase[["Search sources · 5 steps"]]
   n_gapPhase[["Close gaps · 25 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
-  n_start --> n_planPhase
+  n_start --> n_focusPillars
+  n_focusPillars --> n_pillarsKnown
+  n_pillarsKnown -->|"yes"| n_planPhase
+  n_pillarsKnown -->|"no"| n_unknownPillars
+  n_unknownPillars --> n_badPillars
   n_planPhase --> n_hypothesesPhase
   n_hypothesesPhase --> n_listPhase
   n_listPhase --> n_resolveScope
