@@ -66,6 +66,16 @@ describe('evaluateGuard', () => {
     expect(evaluateGuard('lower("ABC") == "abc"', state)).toBe(true);
   });
 
+  it('upper capitalises text', () => {
+    expect(evaluateGuard('upper("abc") == "ABC"', state)).toBe(true);
+  });
+
+  it('upper capitalises each text of a list', () => {
+    expect(evaluateGuard('upper(["security", "Tests"]) == ["SECURITY", "TESTS"]', state)).toBe(
+      true,
+    );
+  });
+
   it('parentheses group an or inside an and', () => {
     expect(evaluateGuard('(won || wrongCount > 1) && maxWrong != 5', state)).toBe(true);
   });
