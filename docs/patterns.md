@@ -815,6 +815,7 @@ flowchart TD
   n_prFetched{"PR fetched?"}
   n_noPr["Say why"]
   n_collect["🤖 Collect diff"]
+  n_noClaims["Drop a #quot;no description#quot; claim"]
   n_hasDiff{"Anything changed?"}
   n_capFiles["Files to review"]
   n_scanDiff[/"🔧 Scan the diff"/]
@@ -878,7 +879,8 @@ flowchart TD
   n_prFetched -->|"yes"| n_collect
   n_prFetched -->|"no"| n_noPr
   n_noPr --> n_notReviewed
-  n_collect --> n_hasDiff
+  n_collect --> n_noClaims
+  n_noClaims --> n_hasDiff
   n_hasDiff -->|"yes"| n_capFiles
   n_hasDiff -->|"no"| n_noDiffReport
   n_noDiffReport --> n_noDiff
