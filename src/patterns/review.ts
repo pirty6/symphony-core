@@ -509,7 +509,7 @@ export const review: Pattern = {
       id: 'lensPhase',
       label: 'Pillar lenses',
       description:
-        'Security, clean code, tests (the critical path), performance and determinism: a scan, then one reviewer per pillar',
+        'Robustness, security, usability, clean code, reusability, tests (the critical path), efficiency and determinism: a scan, then one reviewer per pillar',
       nodes: LENSES.nodes.map((n) => n.id),
     },
     {
