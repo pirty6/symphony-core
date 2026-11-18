@@ -3,7 +3,6 @@
  * a recording) to perform one agent node. Plus the pure pieces every
  * provider shares: the prompt, result extraction and the role policy.
  */
-import { isAbsolute, relative, resolve } from 'node:path';
 import { preloadSection, type PreloadedFile } from './preload-prompt.js';
 import { codeStandardSection } from '../core/standards.js';
 import type { AgentPause, AiTranscript, Role } from '../core/types.js';
@@ -433,11 +432,34 @@ function writeTargets(args: readonly string[], destinations: readonly string[]):
   });
 }
 
-const insideFolder = (path: string, folder: string): boolean => {
-  if (!isAbsolute(path)) return false;
-  const rel = relative(folder, resolve(path));
-  return !rel.startsWith('..') && !isAbsolute(rel);
-};
+/** An absolute path (`/x`, `C:\\x`): its drive and its folders after `.` and `..` are applied. */
+interface AbsolutePath {
+  readonly drive: string;
+  readonly parts: readonly string[];
+}
+
+/**
+ * The absolute path `text` names, or undefined when it is relative or climbs above its root.
+ * Written without node:path: the studio's browser build imports this file.
+ */
+function absolutePath(text: string): AbsolutePath | undefined {
+  const root = /^([A-Za-z]:)?[\\/]/.exec(text);
+  if (!root) return undefined;
+  const parts: string[] = [];
+  for (const part of text.slice(root[0].length).split(/[\\/]+/)) {
+    if (part === '..' && parts.pop() === undefined) return undefined;
+    if (part !== '' && part !== '.' && part !== '..') parts.push(part);
+  }
+  return { drive: (root[1] ?? '').toLowerCase(), parts };
+}
+
+/** Whether `path` is `folder` or inside it, once both are resolved. */
+function insideFolder(path: string, folder: string): boolean {
+  const inner = absolutePath(path);
+  const outer = absolutePath(folder);
+  if (!inner || !outer || inner.drive !== outer.drive) return false;
+  return outer.parts.every((part, i) => inner.parts[i] === part);
+}
 
 /** A download reads from Azure; it may write only into the run's scratch folder. */
 function downloadRefusal(

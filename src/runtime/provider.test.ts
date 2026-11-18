@@ -640,6 +640,24 @@ describe('read-only Azure: downloads into the scratch folder', () => {
     expect(readOnlyRefusal(`${ARTIFACT} --path logs`, IN_SCRATCH)).toMatch(/only with --path/);
   });
 
+  it('refuses a sibling folder whose name starts like the scratch folder', () => {
+    expect(readOnlyRefusal(`${ARTIFACT} --path ${SCRATCH}y/logs`, IN_SCRATCH)).toMatch(
+      /only with --path inside/,
+    );
+  });
+
+  it('allows a Windows download into a Windows scratch folder, whatever the slashes', () => {
+    expect(
+      readOnlyRefusal(`${ARTIFACT} --path C:/Temp/run/logs`, { scratchDir: 'c:\\Temp\\run' }),
+    ).toBeUndefined();
+  });
+
+  it('refuses a Windows download onto another drive', () => {
+    expect(
+      readOnlyRefusal(`${ARTIFACT} --path D:/Temp/run/logs`, { scratchDir: 'C:\\Temp\\run' }),
+    ).toMatch(/only with --path inside/);
+  });
+
   it('refuses a download that does not say where it writes', () => {
     expect(readOnlyRefusal(ARTIFACT, IN_SCRATCH)).toMatch(/only with --path/);
   });
