@@ -712,7 +712,8 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    One verdict per entry, by id and in order: an omitted or doubled entry is sent back. Each
    adverse verdict (PARTIAL, NOT MET, WEAK, UNTESTED, ABSENT, unrelated) must also be a finding,
    which is checked and merged like the others.
-7. **Pillar lenses**, once: Security, Clean code, Tests, Performance and memory, Determinism
+7. **Pillar lenses**, once: Robustness, Security, Usability, Clean code, Reusability, Tests,
+   Efficiency, Determinism
    (the steps above are its Correctness). The engine scans the diff and the changed test files
    (`pillars.scan`) and briefs each lens with its rulebook (`src/core/pillars.ts`) and its leads;
    one reviewer per lens, in parallel, judges only that pillar. Each must say what it examined
@@ -940,7 +941,7 @@ flowchart TD
 
 | Phase | What it does | Steps |
 | --- | --- | --- |
-| Pillar lenses | Security, clean code, tests (the critical path), performance and determinism: a scan, then one reviewer per pillar | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play |
+| Pillar lenses | Robustness, security, usability, clean code, reusability, tests (the critical path), efficiency and determinism: a scan, then one reviewer per pillar | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play |
 | Settle open points | investigate's gap research: unclear claims and objections, then judged again | What to settle → Research them? → Settle open points → Check citations → Record what was found |
 | Challenge the review | A second reviewer (4), the skeptic (≥2) and the pragmatist (≥pragmatistFrom), as in investigate | Second reviewer? (4) → Second reviewer → Check citations → Record its issues → Challenge? (≥2) → Skeptic → Challenged? → Note it → Pragmatist? (≥pragmatistFrom) → Pragmatist → Take the challenge → Apply the challenge → Real objections? → Research them? (rounds left, last one found something) → Research objections → Report open objections |
 
