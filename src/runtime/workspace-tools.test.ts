@@ -325,6 +325,16 @@ describe('diff.scan', { timeout: 30_000 }, () => {
     expect(unknown.error).not.toBe('');
   });
 
+  it('adds the robustness leads to the smells the Correctness reviewers read', async () => {
+    const d = dir();
+    writeFileSync(join(d, 'a.js'), 'export const a = 1;\n');
+    execFileSync('git', ['-C', d, 'add', '.']);
+    commitAll(d);
+    writeFileSync(join(d, 'a.js'), 'export const a = 1;\ntry { a(); } catch {}\n');
+    const scanned = await tool('diff.scan').run({ range: '' }, ctx(d));
+    expect(scanned.smells).toEqual(['a.js:2 — an empty catch swallows the error (ROB-7)']);
+  });
+
   it('reports only the breaks on the lines the change adds to a test file', async () => {
     const d = dir();
     const old = "it('old', () => {\n  if (a) expect(a).toBe(1);\n});\n";
