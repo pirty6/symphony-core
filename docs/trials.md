@@ -463,3 +463,36 @@ TASKS=review-off-by-one,review-caller-not-updated,review-missing-migration,revie
 npm run cli -- eval --task $TASKS -n 3
 npm run cli -- eval --task fix-off-by-one,fix-wrong-index,implement-json-option -n 3
 ```
+
+## Robustness, Usability and Reusability lenses, 2026-11-17
+
+Eight lenses (this branch) against the five on master, both with the cheaper lens tier, each
+arm in its own worktree, played side by side. Live on Copilot, n=3. Two fixtures were added to
+both arms for the new lenses: `review-endless-retry` (a retry loop with no limit or pause) and
+`review-vague-error` (`throw new Error('invalid')` for a bad `--port`); `review-duplicate-flag`
+already seeds a copied helper.
+
+| Arm | Solved | Recall | False flags | Premium requests per run | Time |
+|---|---|---|---|---|---|
+| Review, 12 tasks | 30/36 vs 33/36 | 30/30 vs 30/30 | 29 vs 19 | +19% [+14, +26] (about +7) | +6% [-4, +19] |
+| Fix and implement (as before) | 7/9 vs 9/9 | — | — | +15% [+4, +29] (about +4) | +37% [+15, +69] |
+
+- **No recall gain.** Master already caught all three new seeds: the endless retry as ERRPATH
+  or BUG, the vague error as ERRPATH, the copied helper as REDUNDANT. The new lenses named them
+  ROBUST and USABILITY instead.
+- **More noise.** The three lenses wrote 132 findings in 36 reviews (44 ROBUST, 39 USABILITY,
+  9 REDUNDANT, the rest repeats of other lenses); 9 survived to the report, and false flags
+  rose from 19 to 29.
+- **The lost solves are not the lenses'.** Five of the six partial reviews ended on "claims
+  the review could not settle": the claims step wrote "no intent was provided" as an UNCLEAR
+  claim, on both arms (3 of master's 3 partials too). Of the two implement runs, one stopped on
+  a Tests-lens comment (a lens master has), the other on its design step, before any lens.
+- **Cost:** about 7 more premium requests per review (+19%) and 4 per fix or implement.
+
+Repeat with the two worktrees (master with the fixtures cherry-picked, and this branch):
+
+```sh
+TASKS=review-off-by-one,review-caller-not-updated,review-missing-migration,review-clean,review-migration-present,review-unrelated-hunk,review-untested,review-if-in-test,review-sql-injection,review-duplicate-flag,review-endless-retry,review-vague-error
+npm run cli -- eval --task $TASKS -n 3
+npm run cli -- eval --task fix-off-by-one,fix-wrong-index,implement-json-option -n 3
+```
