@@ -565,6 +565,20 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
       ],
     },
   }),
+  'review-endless-retry': () => ({
+    state: {
+      findings: [
+        'F1 src/rates.js:5 — [ROBUST] [HIGH] [ROB-4] retries forever with no pause or limit while the service is down `while (true) {`',
+      ],
+    },
+  }),
+  'review-vague-error': () => ({
+    state: {
+      findings: [
+        "F1 src/port.js:8 — [USABILITY] [MEDIUM] [USE-2] the error names neither the bad value nor the allowed range `throw new Error('invalid');`",
+      ],
+    },
+  }),
   'review-weakened-test': () => ({
     state: {
       findings: [
@@ -872,6 +886,16 @@ describe('eval tasks', () => {
   it(
     'review-sql-injection: the check fails as given and passes with a right answer',
     () => checkTask('review-sql-injection'),
+    TASK_MS,
+  );
+  it(
+    'review-endless-retry: the check fails as given and passes with a right answer',
+    () => checkTask('review-endless-retry'),
+    TASK_MS,
+  );
+  it(
+    'review-vague-error: the check fails as given and passes with a right answer',
+    () => checkTask('review-vague-error'),
     TASK_MS,
   );
   it(
