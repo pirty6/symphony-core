@@ -178,11 +178,11 @@ describe('lens leads from a diff', () => {
     expect(leads.CLEAN).toEqual(['src/f.ts:1 — 4 parameters (F1)']);
   });
 
-  it('names a swallowed error for the Robustness lens', () => {
+  it('names a swallowed error for the Correctness reviewers', () => {
     const leads = lensLeads(
       added('src/load.ts', ['try { load(); } catch {}', 'save().catch(() => undefined);']),
     );
-    expect(leads.ROBUSTNESS).toEqual([
+    expect(leads.CORRECTNESS).toEqual([
       'src/load.ts:1 — an empty catch swallows the error (ROB-7)',
       'src/load.ts:2 — a .catch that drops the error (ROB-7)',
     ]);
@@ -190,7 +190,7 @@ describe('lens leads from a diff', () => {
 
   it('names a network call without a timeout', () => {
     const leads = lensLeads(added('src/api.ts', ['const res = await fetch(url);']));
-    expect(leads.ROBUSTNESS).toEqual(['src/api.ts:1 — a network call without a timeout (ROB-4)']);
+    expect(leads.CORRECTNESS).toEqual(['src/api.ts:1 — a network call without a timeout (ROB-4)']);
   });
 
   it('lets a network call whose options on the next lines carry a signal', () => {
@@ -202,27 +202,27 @@ describe('lens leads from a diff', () => {
         '});',
       ]),
     );
-    expect(leads.ROBUSTNESS).toEqual([]);
+    expect(leads.CORRECTNESS).toEqual([]);
   });
 
   it('names an endless loop and an abrupt exit', () => {
     const leads = lensLeads(added('src/poll.ts', ['while (true) {', '  process.exit(1);', '}']));
-    expect(leads.ROBUSTNESS).toEqual([
+    expect(leads.CORRECTNESS).toEqual([
       'src/poll.ts:1 — an endless loop: when does it give up? (ROB-4)',
       'src/poll.ts:2 — exits at once: is the work so far kept? (ROB-5)',
     ]);
   });
 
-  it('leaves robustness in test files to the Tests lens', () => {
+  it('leaves error handling in test files to the Tests lens', () => {
     const leads = lensLeads(added('src/load.test.ts', ['try { load(); } catch {}']));
-    expect(leads.ROBUSTNESS).toEqual([]);
+    expect(leads.CORRECTNESS).toEqual([]);
   });
 
-  it('names an error that says nothing for the Usability lens', () => {
+  it('names an error that says nothing for the Clean code lens', () => {
     const leads = lensLeads(
       added('src/cli.ts', ["throw new Error('Invalid input');", 'throw new Error();']),
     );
-    expect(leads.USABILITY).toEqual([
+    expect(leads.CLEAN).toEqual([
       'src/cli.ts:1 — an error that says neither what failed nor why (USE-2)',
       'src/cli.ts:2 — an error that says neither what failed nor why (USE-2)',
     ]);
@@ -232,10 +232,10 @@ describe('lens leads from a diff', () => {
     const leads = lensLeads(
       added('src/cli.ts', ['throw new Error(`unknown pattern ${name}: run list to see them`);']),
     );
-    expect(leads.USABILITY).toEqual([]);
+    expect(leads.CLEAN).toEqual([]);
   });
 
-  it('names a block of logic added in two places for the Reusability lens, once', () => {
+  it('names a block of logic added in two places for the Clean code lens, once', () => {
     const block = [
       'const total = items.reduce((sum, item) => sum + item.price, 0);',
       'const taxed = total * (1 + order.taxRate);',
@@ -245,7 +245,7 @@ describe('lens leads from a diff', () => {
     const leads = lensLeads(
       [added('src/cart.ts', block), added('src/invoice.ts', ['', ...block])].join('\n'),
     );
-    expect(leads.REUSABILITY).toEqual([
+    expect(leads.CLEAN).toEqual([
       'src/cart.ts:1 — the same lines are added again at src/invoice.ts:2: one shared helper? (REU-2)',
     ]);
   });
@@ -253,7 +253,7 @@ describe('lens leads from a diff', () => {
   it('does not take repeated closing braces for duplicated logic', () => {
     const closing = ['    }', '  }', '}'];
     const leads = lensLeads([added('src/a.ts', closing), added('src/b.ts', closing)].join('\n'));
-    expect(leads.REUSABILITY).toEqual([]);
+    expect(leads.CLEAN).toEqual([]);
   });
 
   it('gives the Tests lens test.each and what may hide a failing test', () => {

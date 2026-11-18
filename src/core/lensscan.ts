@@ -45,11 +45,8 @@ const DUPLICATE_MIN_CHARS = 60;
 
 const emptyLeads = (): LensLeads => ({
   CORRECTNESS: [],
-  ROBUSTNESS: [],
   SECURITY: [],
-  USABILITY: [],
   CLEAN: [],
-  REUSABILITY: [],
   TESTS: [],
   PERFORMANCE: [],
   DETERMINISM: [],
@@ -212,10 +209,9 @@ export function lensLeads(diff: string): LensLeads {
   const leads = emptyLeads();
   leads.CLEAN.push(...smells);
   leads.TESTS.push(...masking, ...files.flatMap(testDiffLeads));
-  leads.ROBUSTNESS.push(...files.flatMap(robustnessLeads));
+  leads.CORRECTNESS.push(...files.flatMap(robustnessLeads));
   leads.SECURITY.push(...files.flatMap(securityLeads));
-  leads.USABILITY.push(...files.flatMap(usabilityLeads));
-  leads.REUSABILITY.push(...duplicateLeads(files));
+  leads.CLEAN.push(...files.flatMap(usabilityLeads), ...duplicateLeads(files));
   leads.PERFORMANCE.push(...files.flatMap(performanceLeads));
   leads.DETERMINISM.push(...files.flatMap(determinismLeads));
   return leads;
