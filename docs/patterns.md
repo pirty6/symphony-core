@@ -40,8 +40,11 @@ The 🧹 badge on a node in the studio shows which steps are held to it.
 
 Answer a question with evidence, from whatever sources it needs: workspace files, web pages,
 experiments, git history, GitHub, dependencies, Azure DevOps (read-only `az`), MCP servers.
-Read-only `az` commands (`list`, `show`, `get`, `query`; `az rest` and `az devops invoke` only as
-GET) let research read pipelines and branch policies; nothing that writes is allowed.
+Read-only `az` commands (`list`, `show`, `get`, `query`; `az rest` and `az devops invoke` as
+GET) let research read pipelines and branch policies. `az rest` may also POST a query to Kusto
+(no control commands), Log Analytics, Application Insights or Resource Graph, and artifact,
+universal-package and blob downloads may write into the run's scratch folder only. Nothing else
+that writes is allowed, and `az account get-access-token` stays refused: no token reaches the AI.
 
 1. **Plan.** The planner splits the question into sub-questions, decides for
    every available source whether it can hold evidence (a reason for each skip), chooses

@@ -266,7 +266,38 @@ const searchesWhenItCan: Script = async (cfg, emit) => {
   emit('session.idle');
 };
 
+const RUN_SCRATCH = '/tmp/run-scratch';
+const SCRATCH_DOWNLOAD = `az pipelines runs artifact download --run-id 1 --path ${RUN_SCRATCH}/logs`;
+/** Asks to download into the scratch folder, keeps the answer, then submits. */
+const askToDownload =
+  (answers: unknown[]): Script =>
+  async (cfg, emit) => {
+    const request = {
+      kind: 'shell',
+      commands: [{ identifier: SCRATCH_DOWNLOAD, readOnly: false }],
+      fullCommandText: SCRATCH_DOWNLOAD,
+    };
+    answers.push(await cfg.onPermissionRequest!(request as never, { sessionId: 's' }));
+    await callTool(cfg, 'submit_result', { updates: { word: 'x' } });
+    emit('session.idle');
+  };
+
 describe('CopilotProvider', () => {
+  it("lets a read-only step download into its run's scratch folder", async () => {
+    const answers: unknown[] = [];
+    const { client } = fakeClient(askToDownload(answers));
+    const p = new CopilotProvider({ clientFactory: () => client, model: 'm1' });
+    await p.runAgent({
+      pause,
+      state: {},
+      visit: 0,
+      scratchDir: RUN_SCRATCH,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    expect(answers).toEqual([{ kind: 'approve-once' }]);
+  });
+
   it('streams, enforces read-only and captures submit_result', async () => {
     const { client, sessions } = fakeClient(async (cfg, emit) => {
       emit('assistant.message_delta', { deltaContent: 'Think' });
