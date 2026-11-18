@@ -480,9 +480,8 @@ already seeds a copied helper.
 - **No recall gain.** Master already caught all three new seeds: the endless retry as ERRPATH
   or BUG, the vague error as ERRPATH, the copied helper as REDUNDANT. The new lenses named them
   ROBUST and USABILITY instead.
-- **More noise.** The three lenses wrote 132 findings in 36 reviews (44 ROBUST, 39 USABILITY,
-  9 REDUNDANT, the rest repeats of other lenses); 9 survived to the report, and false flags
-  rose from 19 to 29.
+- **More noise.** The three lenses wrote 92 findings in 36 reviews (44 ROBUST, 39 USABILITY,
+  9 REDUNDANT); 9 survived to the report, and false flags rose from 19 to 29.
 - **The lost solves are not the lenses'.** Five of the six partial reviews ended on "claims
   the review could not settle": the claims step wrote "no intent was provided" as an UNCLEAR
   claim, on both arms (3 of master's 3 partials too). Of the two implement runs, one stopped on
