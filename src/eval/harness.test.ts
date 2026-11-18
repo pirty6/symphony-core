@@ -134,6 +134,15 @@ async function memoriesSeen(carryMemory: boolean): Promise<(string | null)[]> {
 }
 
 // Git fixtures and scripted runs: 0.2-0.5 s per test alone, over 5 s when the machine is loaded.
+/** n model calls of 1k input each, taking `ms` in all. */
+const calls = (n: number, ms: number) => ({
+  calls: n,
+  inputTokens: n * 1000,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  ms,
+});
+
 describe('eval harness', { timeout: 30_000 }, () => {
   it('runs each task in a fresh fixture and records solved, citations, tokens and models', async () => {
     const report = await evaluate(true, 2);
@@ -308,13 +317,6 @@ describe('eval harness', { timeout: 30_000 }, () => {
 
   it("reports each slow step's model calls, cold and warm cache apart", async () => {
     const report = await evaluate(true, 1);
-    const calls = (n: number, ms: number) => ({
-      calls: n,
-      inputTokens: n * 1000,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      ms,
-    });
     const r = {
       ...report.results[0]!,
       pattern: 'investigate',
