@@ -54,8 +54,18 @@ const challenge = challengePhase({
 /** The code pillars, tagged on sub-questions as "[SECURITY]" etc. */
 const PILLAR_IDS = CODE_PILLARS.map((p) => p.id).join('|');
 
-/** For the plan: a question about code splits along the pillars that bear on it. */
-const PILLAR_PLAN_NOTE = ` If the question asks how good, risky or ready some code is (a change, a module, a pull request: should it merge, what could break, is it well tested, is it secure), add one sub-question per pillar that bears on it, tagged with the pillar after its number ("S3 [SECURITY] …"). The pillars: ${CODE_PILLARS.map((p) => `${p.id} (${p.asks})`).join('; ')}. The TESTS one asks whether the critical path (the code that decides much) has tests that would fail if it broke. Other questions take no pillar tags.`;
+/** Every code pillar's id, as an expression list. */
+const PILLAR_LIST = `[${CODE_PILLARS.map((p) => JSON.stringify(p.id)).join(', ')}]`;
+
+/** For the plan: only the pillars the caller asked for become tagged sub-questions. */
+const PILLAR_PLAN_NOTE = ` If \`pillarFocus\` lists pillars, add one sub-question per pillar in it, in its order, about how the code in question fares on that pillar, tagged with the pillar after its number ("S3 [SECURITY] …"). The pillars: ${CODE_PILLARS.map((p) => `${p.id} (${p.asks})`).join('; ')}. The TESTS one asks whether the critical path (the code that decides much) has tests that would fail if it broke. No other sub-question takes a pillar tag, and none does when \`pillarFocus\` is empty.`;
+
+/** The plan's tagged sub-questions are exactly the asked-for pillars, in order. */
+const PILLAR_PLAN_CHECK = {
+  expr: `heads(pick(subQuestions, positions(subQuestions, "[[](${PILLAR_IDS})]")), "(?<=[[])(${PILLAR_IDS})(?=])") == pillarFocus`,
+  message:
+    'Tag one sub-question per pillar in pillarFocus, in its order ("S3 [SECURITY] …"), and no other; with pillarFocus empty, tag none.',
+};
 
 /** For the answer: each tagged pillar gets a rating, citing the findings behind it. */
 const PILLAR_ANSWER_NOTE =
@@ -368,6 +378,17 @@ export const investigate: Pattern = {
     [
       { name: 'question', type: 'string', description: 'What to find out' },
       { name: 'hint', type: 'string', description: 'Optional human clarification' },
+      {
+        name: 'pillars',
+        type: 'string[]',
+        description:
+          'Opt-in: judge the code in question by these code pillars, each a sub-question with a rating. Empty (default) for none; "all" for every pillar; or pillar ids such as SECURITY, TESTS. Set it only when the request asks to judge code by the pillars or names one.',
+      },
+      {
+        name: 'pillarFocus',
+        type: 'string[]',
+        description: 'The pillar ids to judge by, from `pillars`',
+      },
       ...READER_STATE,
       { name: 'hintAsked', type: 'boolean', description: 'A person was asked for a hint once' },
       { name: 'sourceNames', type: 'string[]', description: 'Evidence sources available' },
@@ -949,6 +970,34 @@ export const investigate: Pattern = {
   nodes: [
     { id: 'start', kind: 'start', label: 'Start' },
     {
+      id: 'focusPillars',
+      kind: 'compute',
+      label: 'Pillars asked for',
+      assign: [
+        {
+          field: 'pillarFocus',
+          expr: `if(includes(upper(pillars), "ALL"), ${PILLAR_LIST}, unique(upper(pillars)))`,
+        },
+      ],
+    },
+    {
+      id: 'pillarsKnown',
+      kind: 'condition',
+      label: 'Known pillars?',
+      expression: `len(without(pillarFocus, ${PILLAR_LIST})) == 0`,
+    },
+    {
+      id: 'unknownPillars',
+      kind: 'compute',
+      label: 'Name the unknown pillars',
+      assign: [
+        {
+          field: 'summary',
+          expr: `"Unknown pillar: " + join(without(pillarFocus, ${PILLAR_LIST}), ", ") + ". Use all, or any of: " + join(${PILLAR_LIST}, ", ") + "."`,
+        },
+      ],
+    },
+    {
       id: 'applyLean',
       kind: 'compute',
       label: 'Lean run?',
@@ -988,7 +1037,7 @@ export const investigate: Pattern = {
       role: 'assessor',
       label: 'Plan research',
       directive: `Plan a thorough investigation of \`question\` (use \`hint\` if set). Split it into concrete sub-questions. Then decide, for EVERY source in \`sourceInfo\`, whether it can hold evidence for this question: put it in \`useSources\` or in \`skipSources\` with one reason per skip in \`skipReasons\`. Match the evidence to the question: questions about this codebase need \`workspace\`; why-questions about code usually need \`git-history\`. Always use \`web\` (docs and write-ups check what the code suggests) and \`experiment\` (try the hypotheses with targeted runs: a test file or test name, repeated with retries off, never the whole suite). Prefer using a source over skipping it. Write \`searchTerms\` as concrete queries for web, GitHub, history and MCP searches. If the question asks the same thing about several independent subjects (e.g. "how can A, B and C be improved", "compare X, Y and Z"), list each subject once in \`parts\` (2 to ${MAX_PARTS}): the evidence is gathered once for all of them, then each part is answered on its own, side by side; the overall answer then writes what holds across them, so never add a part for that (a synthesis, summary, overview or conclusion). Otherwise leave \`parts\` empty. Set \`agents\` to how many sub-agents should read in parallel (1 to ${MAX_AGENTS}): ${MAX_AGENTS} unless the question is narrow, 1-3 for one about a few files; parallel calls finish sooner at the same total reading, and an idle slot only costs time.${PILLAR_PLAN_NOTE}`,
-      reads: ['question', 'hint', 'sourceNames', 'sourceInfo'],
+      reads: ['question', 'hint', 'sourceNames', 'sourceInfo', 'pillarFocus'],
       writes: [
         'subQuestions',
         'searchTerms',
@@ -1004,6 +1053,7 @@ export const investigate: Pattern = {
           expr: 'len(subQuestions) > 0',
           message: 'Break the question into at least one sub-question.',
         },
+        PILLAR_PLAN_CHECK,
         {
           expr: 'subset(sourceNames, useSources + skipSources)',
           message:
@@ -2099,9 +2149,14 @@ Find real paths, test names and table names with read-only tools first. Use the 
     },
     { id: 'done', kind: 'end', label: 'Answered', outcome: 'success' },
     { id: 'doubts', kind: 'end', label: 'Answered, with open doubts', outcome: 'partial' },
+    { id: 'badPillars', kind: 'end', label: 'Unknown pillar', outcome: 'failed' },
   ],
   edges: [
-    { id: 'start-lean', from: 'start', to: 'applyLean' },
+    { id: 'start-focus', from: 'start', to: 'focusPillars' },
+    { id: 'focus-known', from: 'focusPillars', to: 'pillarsKnown' },
+    { id: 'known-lean', from: 'pillarsKnown', to: 'applyLean', branch: 'then' },
+    { id: 'known-unknown', from: 'pillarsKnown', to: 'unknownPillars', branch: 'else' },
+    { id: 'unknown-end', from: 'unknownPillars', to: 'badPillars' },
     { id: 'lean-catalog', from: 'applyLean', to: 'catalog' },
     { id: 'catalog-plan', from: 'catalog', to: 'plan' },
     { id: 'plan-queue', from: 'plan', to: 'queue' },
