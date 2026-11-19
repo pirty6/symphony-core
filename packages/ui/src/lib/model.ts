@@ -15,6 +15,7 @@ import {
   type VisualGraph,
 } from '@core/graph';
 import { EMPTY_FRAME, framesOf, reduceFrame, type Frame, type NodeStatus } from '@core/replay';
+import { transcriptOf } from '@core/usage';
 import type {
   AiTranscript,
   ExecutableScore,
@@ -518,7 +519,7 @@ export function replayView(
         result: undefined as unknown,
       })),
       {
-        t: s.transcript,
+        t: transcriptOf(perf.steps, s),
         rejected: undefined,
         result: s.verdict ? { updates: s.updates, verdict: s.verdict } : undefined,
       },
@@ -796,8 +797,9 @@ export function parseStoredSettings(raw: string | null): Partial<StoredSettings>
 
 /** True when every AI step was a canned demo answer (played now, or replayed from an earlier demo run). */
 export function isOfflineDemo(perf: Performance | undefined): boolean {
-  const ai = (perf?.steps ?? []).filter((s) => s.kind === 'agent');
-  return ai.length > 0 && ai.every((s) => s.transcript?.provider === 'scripted');
+  const steps = perf?.steps ?? [];
+  const ai = steps.filter((s) => s.kind === 'agent');
+  return ai.length > 0 && ai.every((s) => transcriptOf(steps, s)?.provider === 'scripted');
 }
 
 /** Inputs the user typed that the demo's canned answers were not written for. */
