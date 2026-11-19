@@ -374,8 +374,8 @@ debaters one tier smarter; `shiftUpTo` keeps a shifted step below a tier unless 
 already there (investigate's answer: Sonnet at complexity 3, Opus at 4). A step the run can do
 without (`skipWhenStuck`, the summary for people) says so and the run goes on when it runs out of
 attempts. It may also cap its reasoning effort (`maxEffort`): the maestro's propose
-and skeptic play at most `high`, so on tier 4 they use opus at `high` rather than `xhigh`
-(`SYMPHONY_EFFORT_CAPS=0` lifts the caps).
+and skeptic play at most `high`, so on tier 4 they use opus at `high` rather than `xhigh`;
+investigate's skeptic plays at most `medium` (`SYMPHONY_EFFORT_CAPS=0` lifts the caps).
 
 | Tier | Default model (Copilot) |
 |---|---|
@@ -819,7 +819,7 @@ solved rate or citation validity.
   `SYMPHONY_END_ON_SUBMIT` ends a step's session at its answer instead of letting the model reply
   to "stop now" (45% fewer premium requests in trial 13); `SYMPHONY_EFFORT_CAPS` applies the
   steps' `maxEffort` (the maestro's propose and skeptic play at most `high`, so its
-  tier-4 debate composed 39% faster);
+  tier-4 debate composed 39% faster; investigate's skeptic at most `medium`, about half the time);
   `SYMPHONY_DELTA_REPAIR` lets a rejected `submit_result` be corrected by resending only the
   fields that change; `SYMPHONY_HEADER_IN_SYSTEM` sends each step's fixed instructions as the
   system message and only its input as the prompt.
