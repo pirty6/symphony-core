@@ -9,6 +9,7 @@
 import { ENGINE_VERSION, RUN_SCHEMA_VERSION } from './migrate.js';
 import { advance, createEngine, type AdvanceResult } from './engine.js';
 import type {
+  AheadAnswer,
   EngineEvent,
   ExecutableScore,
   Pause,
@@ -72,6 +73,7 @@ export function reduceFrame(f: Frame, e: EngineEvent): Frame {
       };
     }
     case 'guard-evaluated':
+    case 'ahead-dropped':
       return base;
     case 'edge-taken':
       return {
@@ -266,6 +268,13 @@ function resolutionFrom(
  * recorded step without a decision means 'stop'. Undefined when nothing was
  * recorded (an interrupted or cancelled run).
  */
+/** The answer this step played ahead for a later one, as it came with its first answer. */
+function aheadAnswerOf(step: PerformedStep): AheadAnswer | undefined {
+  if (!step.ahead) return undefined;
+  const { nodeId: _for, ...answer } = step.ahead;
+  return answer;
+}
+
 function recordedAnswers(perf: Performance): (pause: Pause) => Resolution | undefined {
   const fed = new Map<number, number>();
   const decided = new Map<number, number>();
@@ -280,12 +289,16 @@ function recordedAnswers(perf: Performance): (pause: Pause) => Resolution | unde
     }
     const n = fed.get(pause.step) ?? 0;
     fed.set(pause.step, n + 1);
-    return resolutionFrom(
+    // An answer played ahead and sent back is the step's first attempt; the engine feeds it.
+    const heldFirst = recorded.attempts?.[0]?.ahead ? 1 : 0;
+    const res = resolutionFrom(
       recorded,
       pause.pauseId,
-      n,
+      n + heldFirst,
       pause.kind === 'agent' ? pause.outputSchema.map((f) => f.name) : undefined,
     );
+    const ahead = n === 0 ? aheadAnswerOf(recorded) : undefined;
+    return res?.kind === 'agent' && ahead ? { ...res, ahead } : res;
   };
 }
 

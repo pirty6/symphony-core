@@ -29,6 +29,7 @@ import type {
   AgentPause,
   Complexity,
   AgentResolution,
+  AheadAnswer,
   NodeResult,
   ToolPause,
   Recovery,
@@ -70,8 +71,14 @@ export interface EngineState {
     readonly transcript?: AiTranscript;
     /** The raw rejected answer, so replay can feed it back verbatim. */
     readonly result?: unknown;
+    /** The answer played ahead (AgentNode.ahead), sent back at the step it was for. */
+    readonly ahead?: true;
     readonly at?: string;
   }[];
+  /** Answers played ahead, by the step they are for, until the run reaches it. */
+  readonly held?: Readonly<Record<string, HeldAnswer>>;
+  /** The answer played ahead at the current step, recorded with it when it completes. */
+  readonly playedAhead?: AheadAnswer & { readonly nodeId: string };
   /** Human decisions at the current step since it got stuck. */
   readonly recoveries: readonly Recovery[];
   readonly lastVerdict?: MoveVerdict;
@@ -83,6 +90,12 @@ export interface EngineState {
   readonly completedAt?: string;
   readonly outcome: PerformanceOutcome;
   readonly reason?: string;
+}
+
+/** An answer played ahead, kept for its step with the values of its `same` fields then. */
+export interface HeldAnswer extends AheadAnswer {
+  readonly step: number;
+  readonly same: Readonly<Record<string, unknown>>;
 }
 
 export interface AdvanceResult {
@@ -107,6 +120,8 @@ type Ctx = Omit<Mutable<EngineState>, 'events' | 'steps' | 'seenMoves'> & {
   /** seenMoves as a set, to refuse a repeat without scanning the list. */
   seen: Set<string>;
   emitted: EngineEvent[];
+  /** While the answer played ahead at that step is being resolved for its own step. */
+  aheadFrom?: number;
 };
 
 function emit(ctx: Ctx, e: EngineEvent): void {
@@ -186,8 +201,10 @@ function recordStep(
     stateHashBefore: hashBefore,
     stateHashAfter: stateHashOf(ctx.state, ctx.env),
     changes: [],
+    ...(ctx.playedAhead ? { ahead: ctx.playedAhead } : {}),
     ...extra,
   };
+  ctx.playedAhead = undefined;
   ctx.steps.push(performed);
 }
 
@@ -486,7 +503,8 @@ function makePause(
       pause.parts && ctx.attempts.length > 0
         ? partsDoneOf(pause.parts, pause, ctx.attempts, ctx.state)
         : undefined;
-    return done ? { ...pause, partsDone: done } : pause;
+    const ahead = attempt === 1 ? aheadPause(score, ctx, node) : undefined;
+    return { ...pause, ...(done ? { partsDone: done } : {}), ...(ahead ? { ahead } : {}) };
   }
   if (node.kind === 'tool') {
     return {
@@ -522,6 +540,58 @@ function makePause(
     ...(node.unattended ? { unattended: node.unattended } : {}),
     moveKey,
   };
+}
+
+/**
+ * The later step to play at the same time as this one (AgentNode.ahead), paused from the state
+ * as it is now with its `input` fields set; undefined when its guard does not hold, its answer is
+ * already held, or its input cannot be computed.
+ */
+function aheadPause(score: ExecutableScore, ctx: Ctx, node: AgentNode): AgentPause | undefined {
+  const spec = node.ahead;
+  if (!spec || ctx.held?.[spec.node]) return undefined;
+  try {
+    if (!evaluateGuard(spec.when, guardScope(ctx))) return undefined;
+    const state: Record<string, unknown> = { ...ctx.state };
+    for (const a of spec.input ?? [])
+      state[a.field] = freezeJson(evalExpr(parseExpr(a.expr), state));
+    const target = nodeOf(score, spec.node);
+    const pause = makePause(score, { ...ctx, state, attempts: [], recoveries: [] }, target, 1);
+    if (pause.kind !== 'agent') return undefined;
+    const { ahead: _nested, ...plain } = pause;
+    return plain;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Keep the answer played ahead for its step, and record it with this one. */
+function holdAhead(ctx: Ctx, node: ScoreNode, pause: AgentPause, res: AgentResolution): void {
+  if (!pause.ahead || !res.ahead || node.kind !== 'agent' || !node.ahead) return;
+  const answer = freezeJson(structuredClone(res.ahead)) as AheadAnswer;
+  const { nodeId } = pause.ahead;
+  ctx.held = {
+    ...ctx.held,
+    [nodeId]: { ...answer, step: ctx.step, same: pick(pause.ahead.input, node.ahead.same) },
+  };
+  ctx.playedAhead = { nodeId, ...answer };
+}
+
+/**
+ * The answer held for this step, taken out of the hold: for the step to use when the fields it
+ * depended on are unchanged, else dropped (and said so).
+ */
+function takeHeld(ctx: Ctx, node: ScoreNode, pause: AgentPause): HeldAnswer | undefined {
+  const held = ctx.held?.[node.id];
+  if (!held) return undefined;
+  const { [node.id]: _taken, ...rest } = ctx.held!;
+  ctx.held = rest;
+  const changed = Object.keys(held.same).filter(
+    (k) => hashOf(held.same[k]) !== hashOf(pause.input[k]),
+  );
+  if (changed.length === 0) return held;
+  emit(ctx, { type: 'ahead-dropped', nodeId: node.id, changed });
+  return undefined;
 }
 
 /** maxVisits, raised by visitsFrom when a counter on the state is larger. */
@@ -634,6 +704,18 @@ function drive(score: ExecutableScore, ctx: Ctx): void {
         ctx.attempts = [];
         const pause = makePause(score, ctx, node, 1);
         ctx.pause = pause;
+        const held = pause.kind === 'agent' ? takeHeld(ctx, node, pause) : undefined;
+        if (held && pause.kind === 'agent') {
+          // Its answer was played ahead: checked and applied now, as if it had just come.
+          ctx.aheadFrom = held.step;
+          resolveAgent(score, ctx, node, pause, {
+            kind: 'agent',
+            pauseId: pause.pauseId,
+            result: held.result,
+            ...(held.at ? { at: held.at } : {}),
+          });
+          return;
+        }
         emit(ctx, { type: 'paused', pause });
         return;
       }
@@ -653,7 +735,7 @@ function toCtx(st: EngineState): Ctx {
 }
 
 function fromCtx(ctx: Ctx, rejected?: string): AdvanceResult {
-  const { emitted, seen: _seen, ...state } = ctx;
+  const { emitted, seen: _seen, aheadFrom: _aheadFrom, ...state } = ctx;
   return rejected ? { state, events: emitted, rejected } : { state, events: emitted };
 }
 
@@ -1069,6 +1151,9 @@ function resolveAgent(
   pause: Extract<Pause, { kind: 'agent' }>,
   res: AgentResolution,
 ): void {
+  const aheadFrom = ctx.aheadFrom;
+  ctx.aheadFrom = undefined;
+  holdAhead(ctx, node, pause, res);
   const routed: ReturnType<typeof checkAgentResult> =
     checkParts(res.result, pause, res.transcript, ctx.state) ??
     (res.result === undefined
@@ -1101,6 +1186,7 @@ function resolveAgent(
         errors: checked.errors,
         ...(doubt ? { lowConfidence: true as const } : {}),
         result: res.result,
+        ...(aheadFrom !== undefined ? { ahead: true as const } : {}),
         ...(res.transcript ? { transcript: res.transcript } : {}),
         ...(res.at ? { at: res.at } : {}),
       },
@@ -1164,6 +1250,7 @@ function resolveAgent(
       ...(ctx.attempts.length > 0 ? { attempts: ctx.attempts } : {}),
       ...(ctx.recoveries.length > 0 ? { recoveries: ctx.recoveries } : {}),
       ...(res.transcript ? { transcript: res.transcript } : {}),
+      ...(aheadFrom !== undefined ? { aheadFrom } : {}),
       ...(res.at ? { at: res.at } : {}),
     },
     hashBefore,

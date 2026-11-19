@@ -198,6 +198,8 @@ export interface AgentNode extends NodeBase {
   readonly verifyBelow?: number;
   /** Play on a different model family than the tier's (an independent second opinion). */
   readonly otherModel?: boolean;
+  /** Play a later agent step at the same time as this one (see AheadSpec). */
+  readonly ahead?: AheadSpec;
   /**
    * The highest reasoning effort this step asks for, whatever its tier: the tier's model with
    * at most this effort (e.g. the maestro's tier-4 debate on 'high': 39% faster, the planted
@@ -212,6 +214,23 @@ export interface AgentNode extends NodeBase {
 }
 
 /** Deterministic state update: field <- expression, evaluated in order. */
+/**
+ * A later agent step whose first answer is played at the same time as this step's, from the
+ * state as it is now. The engine holds that answer and gives it to the step when the run
+ * reaches it, provided the fields in `same` still hold what they held now; otherwise the step
+ * plays as usual. Both answers are recorded, so a replay reproduces the run exactly.
+ */
+export interface AheadSpec {
+  /** The agent step to play ahead. */
+  readonly node: string;
+  /** Play it ahead only when this holds (a guard on the state). */
+  readonly when: string;
+  /** Fields set for its pause only, as the steps before it would set them (e.g. its batch). */
+  readonly input?: readonly { readonly field: string; readonly expr: string }[];
+  /** Fields it reads whose values must be unchanged when the run reaches it. */
+  readonly same: readonly string[];
+}
+
 export interface ComputeNode extends NodeBase {
   readonly kind: 'compute';
   readonly assign: readonly { readonly field: string; readonly expr: string }[];
@@ -565,6 +584,8 @@ export interface AgentPause {
   readonly warmFirst?: boolean;
   /** AgentNode.preload: the input field listing files the runtime reads into the prompt. */
   readonly preload?: string;
+  /** AgentNode.ahead: the later step to play at the same time as this one. */
+  readonly ahead?: AgentPause;
   /** Independent takes to play before integrating (1 = a single take). */
   readonly takes: number;
   /** Present at an active solo point: the routes the AI may choose from. */
@@ -650,6 +671,15 @@ export interface AgentResolution {
   readonly transcript?: AiTranscript;
   /** Workspace fingerprint after the node ran (e.g. git HEAD + diff hash). */
   readonly envHash?: string;
+  readonly at?: string;
+  /** The answer to the pause's `ahead` step, played at the same time (unvalidated). */
+  readonly ahead?: AheadAnswer;
+}
+
+/** An answer to a step played ahead of time, and when it came. */
+export interface AheadAnswer {
+  readonly result: unknown;
+  readonly transcript?: AiTranscript;
   readonly at?: string;
 }
 
@@ -757,7 +787,13 @@ export type EngineEvent =
       readonly outcome: PerformanceOutcome;
       readonly reason: string;
     }
-  | { readonly type: 'run-failed'; readonly error: string; readonly nodeId?: string };
+  | { readonly type: 'run-failed'; readonly error: string; readonly nodeId?: string }
+  | {
+      /** An answer played ahead was not used: the fields it depended on changed since. */
+      readonly type: 'ahead-dropped';
+      readonly nodeId: string;
+      readonly changed: readonly string[];
+    };
 
 // ── Performance (record) ───────────────────────────────────────────
 
@@ -785,9 +821,15 @@ export interface PerformedStep {
     readonly result?: unknown;
     /** Valid, but sent back once because the AI's confidence was below verifyBelow. */
     readonly lowConfidence?: true;
+    /** The answer played ahead (its transcript is on that step's `ahead`), sent back here. */
+    readonly ahead?: true;
     readonly at?: string;
   }[];
   readonly transcript?: AiTranscript;
+  /** The answer played ahead, at this step, for a later step (AgentNode.ahead). */
+  readonly ahead?: AheadAnswer & { readonly nodeId: string };
+  /** This step took the answer played ahead at that step (its transcript is recorded there). */
+  readonly aheadFrom?: number;
   readonly approval?: {
     readonly approved: boolean;
     readonly by?: string;
