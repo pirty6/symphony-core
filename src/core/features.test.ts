@@ -14,6 +14,7 @@ const SWITCH_FIELDS = [
   'pragmatistFrom',
   'gapsPerChase',
   'maxExpandRounds',
+  'parallelSweep',
   'reproduceFirst',
   'hypothesesPerResearch',
   'plainSummary',
@@ -55,6 +56,10 @@ describe('feature switches', () => {
 
   it('singlePass is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
     expect(switchMisfits('singlePass')).toEqual([]);
+  });
+
+  it('parallelSweep is a field of a library pattern, of the right type, defaulting to one of its choices', () => {
+    expect(switchMisfits('parallelSweep')).toEqual([]);
   });
 
   it('readerHypotheses is a field of a library pattern, of the right type, defaulting to one of its choices', () => {

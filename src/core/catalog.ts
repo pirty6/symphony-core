@@ -114,6 +114,12 @@ export const FEATURES: readonly Feature[] = [
     ],
   },
   {
+    field: 'parallelSweep',
+    label: 'Search sources while reading',
+    description:
+      'On by default: the first sources (git history, GitHub…) are searched while the first files are read, not after them. It saves the search time when sources are slow; the search steers by the leads before the reading.',
+  },
+  {
     field: 'reproduceFirst',
     label: 'Reproduce the bug first',
     description:
