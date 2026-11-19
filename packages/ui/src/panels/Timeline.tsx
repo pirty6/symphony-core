@@ -22,6 +22,7 @@ const ICON: Record<EngineEvent['type'], string> = {
   'node-completed': 'Δ',
   'run-completed': '✔',
   'run-failed': '✘',
+  'ahead-dropped': '⤼',
 };
 
 export function Timeline({ frames, cursor, onSeek, follow, onFollow }: Props) {

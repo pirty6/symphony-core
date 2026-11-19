@@ -189,6 +189,12 @@ describe('Timeline', () => {
     ).toBe('x > 1 → true');
     expect(describeEvent({ type: 'run-failed', error: 'boom' })).toBe('failed: boom');
   });
+
+  it('says which fields changed when an answer played ahead is not used', () => {
+    expect(describeEvent({ type: 'ahead-dropped', nodeId: 'sweep', changed: ['batch'] })).toBe(
+      'sweep: answer played ahead not used (batch changed)',
+    );
+  });
 });
 
 describe('Toolbar', () => {
