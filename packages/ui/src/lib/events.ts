@@ -29,5 +29,7 @@ export function describeEvent(e: EngineEvent): string {
       return `${e.outcome}: ${e.reason}`;
     case 'run-failed':
       return `failed: ${e.error}`;
+    case 'ahead-dropped':
+      return `${e.nodeId}: answer played ahead not used (${e.changed.join(', ')} changed)`;
   }
 }
