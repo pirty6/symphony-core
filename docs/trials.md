@@ -540,7 +540,7 @@ load on the provider, so its times read low), and its last run lost the Copilot 
   the rest warm (the report's "cold vs warm calls"). The time is the volume read: the next lever
   is how many files the triage reads, not the debate or the effort.
 
-Repeat (`--with parallelSweep=true` needs this branch's engine):
+Repeat (`parallelSweep` is now on by default; `--with parallelSweep=false` for the old order):
 
 ```sh
 T="--task investigate-planted-flaw,investigate-real-lean -n 3 --complexity 3"
@@ -550,3 +550,40 @@ npm run cli -- eval $T --with maxDebateRounds=1
 SYMPHONY_NODE_MODELS=challenge=gpt-6.1-sol:medium npm run cli -- eval $T
 npm run cli -- eval $T --with parallelSweep=true
 ```
+
+## Reading fewer files in triage, 2026-11-19
+
+The first triage pass was a third of a real-repo run (about 6 of 18 minutes). `narrowRead`
+cannot shorten it: the lexical search matched 180–216 of the snapshot's 224 files, and it keeps
+every match. `triageLimit` (a trial, 0 = off) triages only the first N files in ranked order;
+the rest are listed in the coverage, and the gap expansion can still bring one in. In 11 earlier
+runs the files the answer cited ranked inside the top 60 in 8 runs (outliers: 69, 76, 86, 173).
+
+Live on Copilot, `--complexity 3`, approvals auto-answered, n=3, three arms side by side:
+
+| Arm | real-lean: solved, minutes, premium requests | real-answer-model: solved, minutes, premium requests | Input tokens |
+|---|---|---|---|
+| Default (every file) | 3/3, 15.7, 193 | 3/3, 16.9, 273 | baseline |
+| `triageLimit=60` | 3/3, 12.8, 141 | 2/3, 14.8, 172 | −29%, −39% |
+| `triageLimit=30` | 3/3, 12.4, 118 | 3/3, 14.4, 156 | −53%, −51% |
+
+- **Triage itself is 4–5× shorter**: 320 s → 61 s (real-lean) and 294 s → 76 s (answer-model)
+  at 30 files. The run is 2.5–3.3 minutes shorter (−15% to −21%) and 40% cheaper; the rest of the
+  run (deep read, experiments, the debate) is unchanged.
+- **No answer lost a file it needed** on these two questions. The miss at 60 was partial with
+  the right answer (an open sub-question); at 30 every run succeeded. The gap expansion never
+  fired, so none needed a skipped file.
+- **The risk is elsewhere**: both questions have their evidence near the top of the ranking.
+  A question whose evidence ranks low (173 in one earlier run) depends on the gap expansion to
+  recover it, which these tasks did not test. Kept off by default until a task with low-ranked
+  evidence is measured.
+
+```sh
+T="--task investigate-real-lean,investigate-real-answer-model -n 3 --complexity 3"
+npm run cli -- eval $T
+npm run cli -- eval $T --with triageLimit=60
+npm run cli -- eval $T --with triageLimit=30
+```
+
+**Adopted** from the 5-minute trial: investigate's skeptic plays at most `medium`
+(`skepticEffort`), and `parallelSweep` is on by default.
