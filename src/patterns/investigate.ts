@@ -117,7 +117,7 @@ const COVERAGE = [
     listed('scopeUnmatched', 'none') +
     ', "")',
   // Only where it narrowed something: above maxTriageFiles, Locate decides (unlocatedFiles).
-  'if(narrowRead && len(narrowedOut) > 0, "\n- Left unread by the narrowed read (opt-in): " + ' +
+  'if(len(narrowedOut) > 0, "\n- Left unread by the narrowed read (opt-in): " + ' +
     listed('narrowedOut', 'none') +
     ', "")',
   '"\n- Pages read: "',
@@ -486,6 +486,13 @@ export const investigate: Pattern = {
         type: 'number',
         initial: 20,
         description: 'With narrowRead: files beyond the matched ones, in ranked order',
+      },
+      {
+        name: 'triageLimit',
+        type: 'number',
+        initial: 0,
+        description:
+          'Trial (0 = off), where every file would be triaged: triage only the first triageLimit files in ranked order; every other file goes unread unless a gap brings it in, each one listed',
       },
       {
         name: 'narrowedOut',
@@ -1201,15 +1208,16 @@ export const investigate: Pattern = {
           expr: 'if(len(rankedFiles) == len(repoFiles) && subset(repoFiles, rankedFiles), rankedFiles, repoFiles)',
         },
         // narrowRead (opt-in): every file the search matched (the floor), then narrowBudget more
-        // in ranked order. The rest are never read, and each is named in the coverage.
+        // in ranked order. triageLimit (a trial): the first triageLimit in ranked order, whatever
+        // matched. The rest are never read unless a gap brings them in, each named in the coverage.
         {
           field: 'narrowedOut',
-          expr: 'if(narrowRead, drop(without(pendingFiles, matchedFiles), narrowBudget), [])',
+          expr: 'if(narrowRead, drop(without(pendingFiles, matchedFiles), narrowBudget), if(triageLimit > 0, drop(pendingFiles, triageLimit), []))',
         },
         { field: 'pendingFiles', expr: 'without(pendingFiles, narrowedOut)' },
         {
           field: 'excludedFiles',
-          expr: 'if(len(narrowedOut) > 0, append(excludedFiles, text(len(narrowedOut)) + " files were left unread by the narrowed read (opt-in: not matched by the search, and past narrowBudget): see narrowedOut"), excludedFiles)',
+          expr: 'if(len(narrowedOut) > 0, append(excludedFiles, text(len(narrowedOut)) + " files were left unread by the narrowed read (opt-in: narrowRead or triageLimit): see narrowedOut"), excludedFiles)',
         },
       ],
     },

@@ -569,6 +569,13 @@ describe('narrowed read (opt-in)', () => {
     expect(all.state.state.narrowedOut).toEqual(['README.md', 'src/cli.ts']);
   });
 
+  it('triageLimit triages the first files in ranked order, matched or not; the rest are named', () => {
+    const { r } = runWith(['workspace'], demo.approvals, { context: { triageLimit: 2 } });
+    expect(triaged(r)).toHaveLength(2);
+    expect(r.state.state.narrowedOut).toHaveLength(3);
+    expect(String(r.state.state.answer)).toContain('- Left unread by the narrowed read (opt-in): ');
+  });
+
   it('off (the default): every file is triaged, and the coverage has no such line', () => {
     const { r } = runWith(['workspace']);
     expect(triaged(r)).toHaveLength(5);
