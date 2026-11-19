@@ -465,6 +465,7 @@ describe('feature switches', () => {
       'pragmatistFrom',
       'gapsPerChase',
       'maxExpandRounds',
+      'parallelSweep',
       'plainSummary',
       'followOpen',
       'narrowRead',
@@ -499,7 +500,7 @@ describe('feature switches', () => {
       'plainSummary',
     ]);
     expect(featureRows(hangman, PATTERNS, {})).toEqual([]);
-    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(14);
+    expect(featureRows(maestro, PATTERNS, {}).map((r) => r.feature.field)).toHaveLength(15);
     expect(featureRows(maestro, PATTERNS, {})[4]!.patterns).toEqual([
       'investigate',
       'fix',
