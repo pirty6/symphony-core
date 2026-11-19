@@ -499,3 +499,91 @@ TASKS=review-off-by-one,review-caller-not-updated,review-missing-migration,revie
 npm run cli -- eval --task $TASKS -n 3
 npm run cli -- eval --task fix-off-by-one,fix-wrong-index,implement-json-option -n 3
 ```
+
+## Investigate in 5 minutes? 2026-11-18
+
+Can a complex investigate run finish in 5 minutes without losing correctness? Live on Copilot,
+`--complexity 3`, approvals auto-answered, n=3 per task: `investigate-planted-flaw` (a flaw the
+first reading misses) and `investigate-real-lean` (a false premise on a 230-file snapshot of this
+repository). Five arms ran side by side; the corrected skeptic arm ran alone afterwards (less
+load on the provider, so its times read low), and its last run lost the Copilot sign-in (n=2).
+
+| Arm | planted-flaw: solved, minutes, premium requests | real-lean: solved, minutes, premium requests |
+|---|---|---|
+| Default (lean on, up to 3 debate rounds) | 3/3, 10.6, 78 | 2/3, 18.1, 208 |
+| Full accuracy, `lean=false` | 3/3, 9.0, 67 | 3/3, 19.7, 203 |
+| One debate round, `maxDebateRounds=1` | 2/3, 9.7, 71 | 1/3, 19.8, 221 |
+| Skeptic `gpt-6.1-sol` at `medium`, not `xhigh` | 3/3, 6.5*, 79 | 2/2, 17.3*, 237 |
+| Skeptic on another model (`claude-opus-5.5:medium`) | 3/3, 12.3, 82 | 3/3, 16.5, 192 |
+| `parallelSweep=true` | 3/3, 7.7, 67 | 3/3, 21.4, 225 |
+
+\* ran alone, after the others.
+
+- **5 minutes is not reached.** The fastest run took 5.3 minutes (planted-flaw, 4 files); no
+  real-repo run took under 15.3. Same arm, same task, runs spread 8.9–13.7 and 16.6–19.6
+  minutes, so differences under about 3 minutes are not measurable at n=3.
+- **Every failure ended `partial` with the right answer**: open doubts, not a wrong answer.
+- **Full accuracy buys nothing measurable here**: same answers, the same time, fewer premium
+  requests than the default.
+- **One debate round saves no time**: four of six default runs play only one round anyway. Where
+  a second round would have come, the objections stay open and the run ends partial: 3 of 6
+  partial against 1 of 6.
+- **A lower skeptic effort halves the skeptic**: 14–38 s per challenge against 27–68 s, and the
+  planted flaw was still caught 3/3. It raised objections that took two real-lean runs to three
+  rounds, so the run as a whole saved about a minute at most.
+- **The sweep played ahead** in 6 of 6 runs and its answer was used every time, never dropped.
+  With one slow source (git history) it took 16–64 s, so it can save under a minute here; it
+  pays only with several or slow sources.
+- **Where the time goes** (default, real-lean): `triageDeep` 349 s (86 calls, 7.1M input tokens),
+  `parallelExperiment` 136 s, `deepRead` 135 s, `challenge` 73 s, `answer` 56 s; AI steps are
+  the whole wall time. **The cache is not the bottleneck**: each step makes 0–1 cold calls and
+  the rest warm (the report's "cold vs warm calls"). The time is the volume read: the next lever
+  is how many files the triage reads, not the debate or the effort.
+
+Repeat (`parallelSweep` is now on by default; `--with parallelSweep=false` for the old order):
+
+```sh
+T="--task investigate-planted-flaw,investigate-real-lean -n 3 --complexity 3"
+npm run cli -- eval $T
+npm run cli -- eval $T --with lean=false
+npm run cli -- eval $T --with maxDebateRounds=1
+SYMPHONY_NODE_MODELS=challenge=gpt-6.1-sol:medium npm run cli -- eval $T
+npm run cli -- eval $T --with parallelSweep=true
+```
+
+## Reading fewer files in triage, 2026-11-19
+
+The first triage pass was a third of a real-repo run (about 6 of 18 minutes). `narrowRead`
+cannot shorten it: the lexical search matched 180–216 of the snapshot's 224 files, and it keeps
+every match. `triageLimit` (a trial, 0 = off) triages only the first N files in ranked order;
+the rest are listed in the coverage, and the gap expansion can still bring one in. In 11 earlier
+runs the files the answer cited ranked inside the top 60 in 8 runs (outliers: 69, 76, 86, 173).
+
+Live on Copilot, `--complexity 3`, approvals auto-answered, n=3, three arms side by side:
+
+| Arm | real-lean: solved, minutes, premium requests | real-answer-model: solved, minutes, premium requests | Input tokens |
+|---|---|---|---|
+| Default (every file) | 3/3, 15.7, 193 | 3/3, 16.9, 273 | baseline |
+| `triageLimit=60` | 3/3, 12.8, 141 | 2/3, 14.8, 172 | −29%, −39% |
+| `triageLimit=30` | 3/3, 12.4, 118 | 3/3, 14.4, 156 | −53%, −51% |
+
+- **Triage itself is 4–5× shorter**: 320 s → 61 s (real-lean) and 294 s → 76 s (answer-model)
+  at 30 files. The run is 2.5–3.3 minutes shorter (−15% to −21%) and 40% cheaper; the rest of the
+  run (deep read, experiments, the debate) is unchanged.
+- **No answer lost a file it needed** on these two questions. The miss at 60 was partial with
+  the right answer (an open sub-question); at 30 every run succeeded. The gap expansion never
+  fired, so none needed a skipped file.
+- **The risk is elsewhere**: both questions have their evidence near the top of the ranking.
+  A question whose evidence ranks low (173 in one earlier run) depends on the gap expansion to
+  recover it, which these tasks did not test. Kept off by default until a task with low-ranked
+  evidence is measured.
+
+```sh
+T="--task investigate-real-lean,investigate-real-answer-model -n 3 --complexity 3"
+npm run cli -- eval $T
+npm run cli -- eval $T --with triageLimit=60
+npm run cli -- eval $T --with triageLimit=30
+```
+
+**Adopted** from the 5-minute trial: investigate's skeptic plays at most `medium`
+(`skepticEffort`), and `parallelSweep` is on by default.
