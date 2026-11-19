@@ -6,6 +6,7 @@ import {
   formatPhases,
   formatWaits,
   humanWaits,
+  cacheSplitByNode,
   firstCallCache,
   growthRatios,
   wallTimeByNode,
@@ -307,6 +308,46 @@ describe('first-call cache', () => {
       parts: { sessions: 2, inputTokens: 200, cacheReadTokens: 90 },
       one: { sessions: 2, inputTokens: 100, cacheReadTokens: 10 },
     });
+  });
+});
+
+/** One session with a cold first call and a warm second one, 2 s and 1 s. */
+const coldThenWarm = {
+  provider: 'p',
+  prompt: '',
+  output: '',
+  toolCalls: [],
+  calls: [
+    { inputTokens: 100, outputTokens: 5, cacheReadTokens: 0, ms: 2000 },
+    { inputTokens: 300, outputTokens: 7, cacheReadTokens: 250, ms: 1000 },
+  ],
+};
+
+describe('cold and warm calls per step', () => {
+  it('splits every call of a step, its parts and rejected attempts included, by cache reads', () => {
+    const steps = [
+      {
+        nodeId: 'read',
+        transcript: { ...coldThenWarm, calls: [], parts: [coldThenWarm, coldThenWarm] },
+      },
+      {
+        nodeId: 'answer',
+        transcript: coldThenWarm,
+        attempts: [{ errors: [], transcript: coldThenWarm }],
+      },
+    ] as never;
+    const twice = {
+      cold: { calls: 2, inputTokens: 200, outputTokens: 10, cacheReadTokens: 0, ms: 4000 },
+      warm: { calls: 2, inputTokens: 600, outputTokens: 14, cacheReadTokens: 500, ms: 2000 },
+    };
+    expect(cacheSplitByNode({ steps })).toEqual({ read: twice, answer: twice });
+  });
+
+  it('counts nothing for an answer replayed from the repertoire', () => {
+    const steps = [
+      { nodeId: 'pick', transcript: { ...coldThenWarm, fromRepertoire: 'r1' } },
+    ] as never;
+    expect(cacheSplitByNode({ steps })).toEqual({});
   });
 });
 

@@ -11,7 +11,10 @@ import { compileScore } from '../core/compile.js';
 import { RUN_SCHEMA_VERSION } from '../core/migrate.js';
 import type { Complexity, Improvisation, Pattern, SavedRun, TokenUsage } from '../core/types.js';
 import {
+  addCacheSplit,
   addUsage,
+  cacheSplitByNode,
+  type CacheSplit,
   costliest,
   growth,
   firstCallCache,
@@ -52,6 +55,8 @@ export interface EvalResult {
   readonly msByNode?: Readonly<Record<string, number>>;
   /** Per step, what each session's first call read from the cache (shared prefixes reused?). */
   readonly firstCalls?: Readonly<Record<string, FirstCalls>>;
+  /** Per step, its model calls cold (nothing read from the prompt cache) and warm apart. */
+  readonly cacheByNode?: Readonly<Record<string, CacheSplit>>;
   readonly models: readonly string[];
   /** Workspace citations among the run's findings: how many were checked, how many held. */
   readonly citations: { readonly checked: number; readonly invalid: number };
@@ -208,6 +213,7 @@ async function runTask(
       growth: growthRatios(performanceUsage(perf).byVisit),
       msByNode: wallTimeByNode(perf),
       firstCalls: firstCallCache(perf),
+      cacheByNode: cacheSplitByNode(perf),
       rejected: (({ attempts, attemptUsage, textUpdates }) => ({
         attempts,
         premiumRequests: attemptUsage.premiumRequests ?? 0,
@@ -327,6 +333,8 @@ export interface EvalSummary {
   readonly growth: Readonly<Record<string, number>>;
   /** First calls per "<pattern> <step>", over every run. */
   readonly firstCalls: Readonly<Record<string, FirstCalls>>;
+  /** Cold and warm calls per "<pattern> <step>", over every run. */
+  readonly cacheByNode: Readonly<Record<string, CacheSplit>>;
 }
 
 const NO_TOKENS: TokenUsage = {
@@ -398,6 +406,13 @@ export function summarize(results: readonly EvalResult[]): EvalSummary {
           inputTokens: was.inputTokens + f.inputTokens,
           cacheReadTokens: was.cacheReadTokens + f.cacheReadTokens,
         };
+      }
+      return acc;
+    }, {}),
+    cacheByNode: results.reduce<Record<string, CacheSplit>>((acc, r) => {
+      for (const [node, c] of Object.entries(r.cacheByNode ?? {})) {
+        const key = `${r.pattern} ${node}`;
+        acc[key] = acc[key] ? addCacheSplit(acc[key], c) : c;
       }
       return acc;
     }, {}),
@@ -544,6 +559,10 @@ export async function saveReport(
   return file;
 }
 
+/** "3 calls, 12.0k in, 40s" for a group of model calls. */
+const callGroupText = (g: CacheSplit['cold']): string =>
+  `${g.calls} calls, ${k(g.inputTokens)} in, ${(g.ms / 1000).toFixed(0)}s`;
+
 export function formatReport(report: EvalReport, baseline?: EvalReport): string {
   const lines = report.results.map(
     (r) =>
@@ -612,6 +631,13 @@ export function formatReport(report: EvalReport, baseline?: EvalReport): string 
   if (shared.length > 0)
     lines.push(
       `first-call cache: ${shared.map(([n, f]) => `${n} ${Math.round((100 * f.cacheReadTokens) / f.inputTokens)}% of ${k(f.inputTokens)} over ${f.sessions} sessions`).join('; ')}`,
+    );
+  const slowCalls = Object.entries(s.cacheByNode)
+    .toSorted(([, x], [, y]) => y.cold.ms + y.warm.ms - (x.cold.ms + x.warm.ms))
+    .slice(0, 5);
+  if (slowCalls.length > 0)
+    lines.push(
+      `cold vs warm calls: ${slowCalls.map(([n, c]) => `${n} cold ${callGroupText(c.cold)}, warm ${callGroupText(c.warm)}`).join('; ')}`,
     );
   // Runs vary (no seed): with repeats, say how much, per task.
   const byTask = new Map<string, EvalResult[]>();
