@@ -117,7 +117,7 @@ const COVERAGE = [
     listed('scopeUnmatched', 'none') +
     ', "")',
   // Only where it narrowed something: above maxTriageFiles, Locate decides (unlocatedFiles).
-  'if(narrowRead && len(narrowedOut) > 0, "\n- Left unread by the narrowed read (opt-in): " + ' +
+  'if(len(narrowedOut) > 0, "\n- Left unread by the narrowed read (opt-in): " + ' +
     listed('narrowedOut', 'none') +
     ', "")',
   '"\n- Pages read: "',
@@ -291,6 +291,19 @@ const NO_RETRY =
  * `readFully` those it read completely, which then skip the deep read if the engine's own
  * record shows they were given whole.
  */
+/**
+ * parallelSweep: the first sources are searched while the first files are read, instead of
+ * after the reading and experiments. The sweep then steers by the leads as they stood before
+ * the reading; its answer is used only if the sources, sub-questions and search terms it was
+ * given are still the ones its turn would give it.
+ */
+const SWEEP_AHEAD = {
+  node: 'sweep',
+  when: 'parallelSweep && len(consulted) == 0 && len(pendingSources) > 0',
+  input: [{ field: 'currentSources', expr: 'take(pendingSources, agents)' }],
+  same: ['currentSources', 'subQuestions', 'searchTerms'],
+};
+
 function triageStep(deep: boolean): ScoreNode {
   const node: ScoreNode = {
     id: 'triage',
@@ -310,6 +323,7 @@ function triageStep(deep: boolean): ScoreNode {
     cites: 'newFindings',
     retries: 2,
     complexityShift: -1,
+    ahead: SWEEP_AHEAD,
     checks: [
       {
         expr: 'readerHypotheses || len(positions(newFindings, "[[]H[0-9]")) == 0',
@@ -472,6 +486,13 @@ export const investigate: Pattern = {
         type: 'number',
         initial: 20,
         description: 'With narrowRead: files beyond the matched ones, in ranked order',
+      },
+      {
+        name: 'triageLimit',
+        type: 'number',
+        initial: 0,
+        description:
+          'Trial (0 = off), where every file would be triaged: triage only the first triageLimit files in ranked order; every other file goes unread unless a gap brings it in, each one listed',
       },
       {
         name: 'narrowedOut',
@@ -691,6 +712,12 @@ export const investigate: Pattern = {
         type: 'string[]',
         description:
           'Files of the triage batch the engine gave whole (engine-filled; empty without a record)',
+      },
+      {
+        name: 'parallelSweep',
+        type: 'boolean',
+        description:
+          'Trial (off): search the first sources while the first files are read, instead of after them',
       },
       {
         name: 'readerHypotheses',
@@ -1181,15 +1208,16 @@ export const investigate: Pattern = {
           expr: 'if(len(rankedFiles) == len(repoFiles) && subset(repoFiles, rankedFiles), rankedFiles, repoFiles)',
         },
         // narrowRead (opt-in): every file the search matched (the floor), then narrowBudget more
-        // in ranked order. The rest are never read, and each is named in the coverage.
+        // in ranked order. triageLimit (a trial): the first triageLimit in ranked order, whatever
+        // matched. The rest are never read unless a gap brings them in, each named in the coverage.
         {
           field: 'narrowedOut',
-          expr: 'if(narrowRead, drop(without(pendingFiles, matchedFiles), narrowBudget), [])',
+          expr: 'if(narrowRead, drop(without(pendingFiles, matchedFiles), narrowBudget), if(triageLimit > 0, drop(pendingFiles, triageLimit), []))',
         },
         { field: 'pendingFiles', expr: 'without(pendingFiles, narrowedOut)' },
         {
           field: 'excludedFiles',
-          expr: 'if(len(narrowedOut) > 0, append(excludedFiles, text(len(narrowedOut)) + " files were left unread by the narrowed read (opt-in: not matched by the search, and past narrowBudget): see narrowedOut"), excludedFiles)',
+          expr: 'if(len(narrowedOut) > 0, append(excludedFiles, text(len(narrowedOut)) + " files were left unread by the narrowed read (opt-in: narrowRead or triageLimit): see narrowedOut"), excludedFiles)',
         },
       ],
     },
