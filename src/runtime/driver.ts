@@ -856,20 +856,42 @@ export class Run {
   }
 
   /**
-   * A later step's answer, played alongside the current one; undefined when it could not be
-   * played (stopped, or the provider failed): the step then plays when the run reaches it.
+   * A later step's answer, played alongside the current one, under the same time limit as any
+   * step (stopped there, keeping what it has; fanned-out parts keep their own clocks).
+   * Undefined when it could not be played (stopped, or the provider failed): the step then
+   * plays when the run reaches it.
    */
   private async playAhead(
     pause: AgentPause,
     signal: AbortSignal,
   ): Promise<AheadAnswer | undefined> {
+    const own = new AbortController();
+    const follow = () => own.abort(signal.reason);
+    signal.addEventListener('abort', follow, { once: true });
+    let timedOut = false;
+    const unwatch = pause.parts
+      ? () => undefined
+      : this.watch(
+          pause.nodeId,
+          () => {
+            timedOut = true;
+            own.abort(KEEP_ANSWER);
+          },
+          false,
+        );
     try {
       const res =
         (await this.fromRepertoire(pause)) ??
-        (pause.parts ? await this.playParts(pause, signal) : await this.play(pause, signal));
-      return { result: res.result, transcript: res.transcript, at: this.now() };
+        (pause.parts
+          ? await this.playParts(pause, own.signal)
+          : await this.play(pause, own.signal));
+      const kept = timedOut ? overTime(res, this.opts.stepTimeoutMs ?? stepTimeLimitMs()) : res;
+      return { result: kept.result, transcript: kept.transcript, at: this.now() };
     } catch {
       return undefined;
+    } finally {
+      unwatch();
+      signal.removeEventListener('abort', follow);
     }
   }
 

@@ -1606,3 +1606,26 @@ describe('a step played ahead', () => {
     ]);
   });
 });
+
+/** read answers at once; search works until its time limit stops it, then hands in what it has. */
+function searchUntilStopped(): Provider {
+  return {
+    name: 'slow-search',
+    runAgent: async (req) => {
+      if (req.pause.nodeId === 'search')
+        await new Promise<void>((resolve) =>
+          req.signal.addEventListener('abort', () => resolve(), { once: true }),
+        );
+      return answer(req.pause.nodeId === 'search' ? { found: ['F1'] } : { notes: ['n'] });
+    },
+    draft: () => Promise.reject(new Error('n/a')),
+  };
+}
+
+describe('a step played ahead, over its time limit', () => {
+  it('is stopped at the limit like any step, keeping what it had, and the run goes on', async () => {
+    const score = compileScore(aheadPattern, { goal: 'g', generatedAt: 't' });
+    const perf = await performScore(score, searchUntilStopped(), { clock, stepTimeoutMs: 20 });
+    expect([perf.outcome, perf.finalState.found]).toEqual(['success', ['F1']]);
+  });
+});
