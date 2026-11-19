@@ -9,6 +9,7 @@ import {
   cacheSplitByNode,
   firstCallCache,
   growthRatios,
+  NO_USAGE,
   wallTimeByNode,
   formatUsage,
   performanceUsage,
@@ -288,6 +289,22 @@ const session = (first: number, cached: number) => ({
     { inputTokens: first, outputTokens: 1, cacheReadTokens: cached },
     { inputTokens: 999, outputTokens: 1, cacheReadTokens: 999 },
   ],
+});
+
+describe('an answer played ahead for a later step', () => {
+  it('counts for the step it answered, not for the step that played it', () => {
+    const played = { ...session(100, 0), usage: { ...NO_USAGE, calls: 2, inputTokens: 1099 } };
+    const steps = [
+      {
+        nodeId: 'read',
+        transcript: session(10, 0),
+        ahead: { nodeId: 'search', transcript: played },
+      },
+      { nodeId: 'search', aheadFrom: 1 },
+    ] as never;
+    expect(Object.keys(performanceUsage({ steps }).byNode)).toEqual(['search']);
+    expect(cacheSplitByNode({ steps }).search!.cold.inputTokens).toBe(100);
+  });
 });
 
 describe('first-call cache', () => {

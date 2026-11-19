@@ -1517,3 +1517,115 @@ describe('sandbox steps', () => {
     expect(failing[0]!.pause.role).toBe('assessor');
   });
 });
+
+/** read plays search ahead; search's batch is set by pick, as read's ahead input sets it. */
+const aheadPattern: Pattern = {
+  name: 'ahead',
+  description: 'd',
+  requiredContext: [],
+  state: [
+    { name: 'sources', type: 'string[]', initial: ['web'] },
+    { name: 'notes', type: 'string[]' },
+    { name: 'batch', type: 'string[]' },
+    { name: 'found', type: 'string[]' },
+  ],
+  start: 's',
+  nodes: [
+    { id: 's', kind: 'start', label: 'S' },
+    {
+      id: 'read',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Read',
+      directive: 'read',
+      reads: ['sources'],
+      writes: ['notes'],
+      ahead: {
+        node: 'search',
+        when: 'true',
+        input: [{ field: 'batch', expr: 'sources' }],
+        same: ['batch'],
+      },
+    },
+    { id: 'pick', kind: 'compute', label: 'Pick', assign: [{ field: 'batch', expr: 'sources' }] },
+    {
+      id: 'search',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Search',
+      directive: 'search',
+      reads: ['batch'],
+      writes: ['found'],
+    },
+    { id: 'e', kind: 'end', label: 'E' },
+  ],
+  edges: [
+    { id: 'a', from: 's', to: 'read' },
+    { id: 'b', from: 'read', to: 'pick' },
+    { id: 'c', from: 'pick', to: 'search' },
+    { id: 'd', from: 'search', to: 'e' },
+  ],
+};
+
+const answer = (updates: Record<string, unknown>): AgentResponse => ({
+  result: {
+    updates,
+    verdict: { outcome: 'applied', confidence: 1, shouldTerminate: false, reason: 'r' },
+  },
+  transcript: { provider: 'p', prompt: '', output: '', toolCalls: [] },
+});
+
+/**
+ * A provider whose read answers only once search has started: a run that does not play them
+ * at the same time never finishes. Records the steps it was asked to play.
+ */
+function readWaitsForSearch(asked: string[]): Provider {
+  let searchStarted!: () => void;
+  const started = new Promise<void>((resolve) => (searchStarted = resolve));
+  return {
+    name: 'together',
+    runAgent: async (req) => {
+      asked.push(req.pause.nodeId);
+      if (req.pause.nodeId === 'search') searchStarted();
+      else await started;
+      return answer(req.pause.nodeId === 'search' ? { found: ['F1'] } : { notes: ['n'] });
+    },
+    draft: () => Promise.reject(new Error('n/a')),
+  };
+}
+
+describe('a step played ahead', () => {
+  it('plays at the same time as the step that plays it, and is not asked for again', async () => {
+    const asked: string[] = [];
+    const score = compileScore(aheadPattern, { goal: 'g', generatedAt: 't' });
+    const perf = await performScore(score, readWaitsForSearch(asked), { clock });
+    expect([perf.outcome, perf.finalState.found, asked.toSorted()]).toEqual([
+      'success',
+      ['F1'],
+      ['read', 'search'],
+    ]);
+  });
+});
+
+/** read answers at once; search works until its time limit stops it, then hands in what it has. */
+function searchUntilStopped(): Provider {
+  return {
+    name: 'slow-search',
+    runAgent: async (req) => {
+      if (req.pause.nodeId === 'search')
+        await new Promise<void>((resolve) =>
+          req.signal.addEventListener('abort', () => resolve(), { once: true }),
+        );
+      return answer(req.pause.nodeId === 'search' ? { found: ['F1'] } : { notes: ['n'] });
+    },
+    draft: () => Promise.reject(new Error('n/a')),
+  };
+}
+
+describe('a step played ahead, over its time limit', () => {
+  it('is stopped at the limit like any step, keeping what it had, and the run goes on', async () => {
+    const score = compileScore(aheadPattern, { goal: 'g', generatedAt: 't' });
+    const perf = await performScore(score, searchUntilStopped(), { clock, stepTimeoutMs: 20 });
+    expect([perf.outcome, perf.finalState.found]).toEqual(['success', ['F1']]);
+  });
+});

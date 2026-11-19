@@ -2,7 +2,7 @@
  * Token accounting for a performance: what the AI steps actually spent.
  * Answers replayed from the repertoire (classical) cost nothing this run.
  */
-import type { AiTranscript, CallUsage, Performance, TokenUsage } from './types.js';
+import type { AiTranscript, CallUsage, Performance, PerformedStep, TokenUsage } from './types.js';
 
 export const NO_USAGE: TokenUsage = {
   calls: 0,
@@ -47,6 +47,24 @@ export function transcriptUsage(t: AiTranscript | undefined): TokenUsage {
   );
 }
 
+/** An answer a step holds, under the step it was for. */
+export interface StepAnswer {
+  readonly nodeId: string;
+  readonly transcript?: AiTranscript;
+}
+
+/**
+ * Every answer a step holds, by the step it was for: its rejected attempts and its own, and one
+ * it played ahead for a later step (AgentNode.ahead), which counts for that step.
+ */
+export function answersOf(s: PerformedStep): StepAnswer[] {
+  return [
+    ...(s.attempts ?? []).map((a) => ({ nodeId: s.nodeId, transcript: a.transcript })),
+    { nodeId: s.nodeId, transcript: s.transcript },
+    ...(s.ahead ? [{ nodeId: s.ahead.nodeId, transcript: s.ahead.transcript }] : []),
+  ];
+}
+
 /** One visit of a step: what it cost then (byNode adds every visit together). */
 export interface VisitUsage {
   readonly nodeId: string;
@@ -60,11 +78,10 @@ export interface VisitUsage {
  */
 export function wallTimeByNode(perf: Pick<Performance, 'steps'>): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const s of perf.steps)
-    for (const t of [...(s.attempts ?? []).map((a) => a.transcript), s.transcript]) {
-      const span = spanOf(t);
-      if (span) out[s.nodeId] = (out[s.nodeId] ?? 0) + (span[1] - span[0]);
-    }
+  for (const { nodeId, transcript } of perf.steps.flatMap(answersOf)) {
+    const span = spanOf(transcript);
+    if (span) out[nodeId] = (out[nodeId] ?? 0) + (span[1] - span[0]);
+  }
   return out;
 }
 
@@ -126,18 +143,16 @@ export interface FirstCalls {
  */
 export function firstCallCache(perf: Pick<Performance, 'steps'>): Record<string, FirstCalls> {
   const out: Record<string, FirstCalls> = {};
-  for (const s of perf.steps)
-    for (const t of [...(s.attempts ?? []).map((a) => a.transcript), s.transcript]) {
-      for (const session of t?.parts ?? (t ? [t] : [])) {
-        const first = session.calls?.[0];
-        if (!first) continue;
-        const was = out[s.nodeId] ?? { sessions: 0, inputTokens: 0, cacheReadTokens: 0 };
-        out[s.nodeId] = {
-          sessions: was.sessions + 1,
-          inputTokens: was.inputTokens + first.inputTokens,
-          cacheReadTokens: was.cacheReadTokens + first.cacheReadTokens,
-        };
-      }
+  for (const { nodeId, transcript: t } of perf.steps.flatMap(answersOf))
+    for (const session of t?.parts ?? (t ? [t] : [])) {
+      const first = session.calls?.[0];
+      if (!first) continue;
+      const was = out[nodeId] ?? { sessions: 0, inputTokens: 0, cacheReadTokens: 0 };
+      out[nodeId] = {
+        sessions: was.sessions + 1,
+        inputTokens: was.inputTokens + first.inputTokens,
+        cacheReadTokens: was.cacheReadTokens + first.cacheReadTokens,
+      };
     }
   return out;
 }
@@ -203,12 +218,10 @@ function callsOf(t: AiTranscript | undefined): CallUsage[] {
  */
 export function cacheSplitByNode(perf: Pick<Performance, 'steps'>): Record<string, CacheSplit> {
   const out: Record<string, CacheSplit> = {};
-  for (const s of perf.steps)
-    for (const call of [...(s.attempts ?? []).map((a) => a.transcript), s.transcript].flatMap(
-      callsOf,
-    )) {
-      const was = out[s.nodeId] ?? { cold: NO_CALLS, warm: NO_CALLS };
-      out[s.nodeId] =
+  for (const { nodeId, transcript } of perf.steps.flatMap(answersOf))
+    for (const call of callsOf(transcript)) {
+      const was = out[nodeId] ?? { cold: NO_CALLS, warm: NO_CALLS };
+      out[nodeId] =
         call.cacheReadTokens > 0
           ? { ...was, warm: addGroups(was.warm, oneCall(call)) }
           : { ...was, cold: addGroups(was.cold, oneCall(call)) };
@@ -226,12 +239,18 @@ export function performanceUsage(perf: Pick<Performance, 'steps'>): {
   const byNode: Record<string, TokenUsage> = {};
   const byVisit: VisitUsage[] = [];
   for (const s of perf.steps) {
-    const answers = [...(s.attempts ?? []).map((a) => a.transcript), s.transcript];
-    const u = answers.reduce((sum, t) => addUsage(sum, transcriptUsage(t)), NO_USAGE);
-    if (u.calls === 0) continue;
-    byNode[s.nodeId] = addUsage(byNode[s.nodeId] ?? NO_USAGE, u);
-    byVisit.push({ nodeId: s.nodeId, step: s.step, usage: u });
-    total = addUsage(total, u);
+    const usageOf = new Map<string, TokenUsage>();
+    for (const a of answersOf(s))
+      usageOf.set(
+        a.nodeId,
+        addUsage(usageOf.get(a.nodeId) ?? NO_USAGE, transcriptUsage(a.transcript)),
+      );
+    for (const [nodeId, u] of usageOf) {
+      if (u.calls === 0) continue;
+      byNode[nodeId] = addUsage(byNode[nodeId] ?? NO_USAGE, u);
+      byVisit.push({ nodeId, step: s.step, usage: u });
+      total = addUsage(total, u);
+    }
   }
   return { total, byNode, byVisit };
 }
@@ -282,7 +301,7 @@ export function rejectionUsage(perf: Pick<Performance, 'steps'>): {
       attempts += 1;
       attemptUsage = addUsage(attemptUsage, transcriptUsage(a.transcript));
     }
-    for (const t of [...(s.attempts ?? []).map((a) => a.transcript), s.transcript]) {
+    for (const { transcript: t } of answersOf(s)) {
       for (const c of t?.toolCalls ?? []) {
         const args = c.args as { updates?: unknown } | undefined;
         if (c.name === 'submit_result' && typeof args?.updates === 'string') textUpdates += 1;
@@ -319,8 +338,10 @@ const everyTranscript = (t: AiTranscript | undefined): AiTranscript[] =>
     ? [t, ...(t.parts ?? []).flatMap(everyTranscript), ...(t.takes ?? []).flatMap(everyTranscript)]
     : [];
 
-const stepTranscripts = (s: Performance['steps'][number]): AiTranscript[] =>
-  [s.transcript, ...(s.attempts ?? []).map((a) => a.transcript)].flatMap(everyTranscript);
+const stepTranscripts = (s: PerformedStep): AiTranscript[] =>
+  answersOf(s)
+    .map((a) => a.transcript)
+    .flatMap(everyTranscript);
 
 /**
  * What each model call of a session was for, from the submit_result outcomes it is tagged with:
@@ -559,7 +580,7 @@ export function humanWaits(perf: Pick<Performance, 'steps'>): HumanWait[] {
     }
     const end = Math.max(
       Number.isFinite(at) ? at : -Infinity,
-      ...[s.transcript, ...(s.attempts ?? []).map((a) => a.transcript)].map((t) => {
+      ...answersOf(s).map(({ transcript: t }) => {
         const span = spanOf(t);
         return span ? span[1] : -Infinity;
       }),
