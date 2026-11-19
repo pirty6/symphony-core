@@ -9,7 +9,8 @@ createEngine+advance -> Performance (JSON audit record).
 
 ## Core pillars
 Correctness, determinism and auditability, speed, token cost, memory (learning and
-footprint), visibility, ease of use, security, good practices (Clean Code; valuable tests).
+footprint), visibility, ease of use, security, good practices (Clean Code; valuable tests;
+Faella's software qualities: robust, usable, efficient, readable, reusable, testable, maintainable).
 Definitions and measures: README "Core pillars".
 A feature must serve one of them without making another measurably worse.
 Tests: no `if`, `switch`, loop or `try/finally` inside a test body, no `test.each`; one act per test.

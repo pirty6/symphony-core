@@ -39,6 +39,7 @@ type FnName =
   | 'empty'
   | 'includes'
   | 'lower'
+  | 'upper'
   | 'append'
   | 'if'
   | 'chars'
@@ -80,6 +81,7 @@ const FNS: Record<FnName, number> = {
   empty: 1,
   includes: 2,
   lower: 1,
+  upper: 1,
   append: 2,
   if: 3,
   chars: 1,
@@ -416,6 +418,10 @@ export function evalExpr(e: Expr, state: Readonly<Record<string, unknown>>): unk
           return false;
         case 'lower':
           return typeof x === 'string' ? x.toLowerCase() : x;
+        case 'upper':
+          // upper(pillars): a text, or each text of a list, in capitals, so input matches ids.
+          if (Array.isArray(x)) return strings(e.fn, x).map((v) => v.toUpperCase());
+          return typeof x === 'string' ? x.toUpperCase() : x;
         case 'append':
           if (!Array.isArray(x)) throw new ExprError('append() needs a list as first argument');
           return [...x, args[1]];

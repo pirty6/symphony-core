@@ -323,8 +323,11 @@ async function rangeDiff(
 export async function scanRange(ctx: ToolContext, range: string): Promise<Record<string, unknown>> {
   const { diff, error } = await rangeDiff(ctx, range);
   if (error) return { diff: '', smells: [], masking: [], error };
+  const { smells, masking } = scanDiff(diff);
   return {
-    ...scanDiff(diff),
+    // The Correctness reviewers read these smells; robustness (a pillar of theirs) joins them.
+    smells: [...smells, ...lensLeads(diff).CORRECTNESS],
+    masking,
     diff: diff.length > MAX_DIFF ? truncateDiff(diff, MAX_DIFF) : diff,
     error: '',
   };

@@ -4,7 +4,7 @@
  * leads); one reviewer per lens judges only that pillar, and the engine checks that each lens
  * says what it examined, and that the Tests lens judges every unit of the critical path.
  */
-import { lensBrief, pillarById, type PillarId } from '../../core/pillars.js';
+import { CODE_PILLARS, lensBrief, pillarById, type PillarId } from '../../core/pillars.js';
 import type {
   AcceptanceCheck,
   DemoScript,
@@ -15,13 +15,9 @@ import type {
 import { CATEGORIES, findingChecks } from './reviewRules.js';
 
 /** The lenses a change is looked at through; Correctness is the pattern's own reviewers. */
-export const CHANGE_PILLARS: readonly PillarId[] = [
-  'SECURITY',
-  'CLEAN',
-  'TESTS',
-  'PERFORMANCE',
-  'DETERMINISM',
-];
+export const CHANGE_PILLARS: readonly PillarId[] = CODE_PILLARS.map((p) => p.id).filter(
+  (id) => id !== 'CORRECTNESS',
+);
 
 export interface LensConfig {
   /** The lenses to look through, in this order. */

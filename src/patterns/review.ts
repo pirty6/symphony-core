@@ -131,6 +131,10 @@ const mergeIssues = (field: string, rejected = 'rejectedFindings') => [
 /** What an objection attacks: a verdict by its id (C2, B1, O3), or a missed issue at path:line. */
 const OBJECTION_TARGET = '(^|[^A-Za-z0-9])[CBO][0-9]+([^0-9]|$)|[^ :]+:[0-9]+';
 
+/** A claims text that only says there is no description or commit message. */
+const NO_CLAIMS =
+  '^[^A-Za-z]*(No|None|N/A|Nothing|There (is|are) no|Not (provided|available))[^A-Za-z][^.]*(description|commit|message|claims?|intent|provided|available)';
+
 /** Investigate's gap research (phases/chase), aimed at what the review could not settle. */
 /** The demo's lenses find nothing new: what each examined, and the critical path judged tested. */
 const demoLens = (s: Readonly<Record<string, unknown>>) => {
@@ -509,7 +513,7 @@ export const review: Pattern = {
       id: 'lensPhase',
       label: 'Pillar lenses',
       description:
-        'Security, clean code, tests (the critical path), performance and determinism: a scan, then one reviewer per pillar',
+        'Security, clean code (with usability and reusability), tests (the critical path), efficiency and determinism: a scan, then one reviewer per pillar',
       nodes: LENSES.nodes.map((n) => n.id),
     },
     {
@@ -599,6 +603,13 @@ export const review: Pattern = {
       ],
     },
     {
+      id: 'noClaims',
+      kind: 'compute',
+      label: 'Drop a "no description" claim',
+      // collect sometimes writes that there is no description instead of leaving claims empty.
+      assign: [{ field: 'claims', expr: `if(count([claims], "${NO_CLAIMS}") > 0, "", claims)` }],
+    },
+    {
       id: 'hasDiff',
       kind: 'condition',
       label: 'Anything changed?',
@@ -631,7 +642,7 @@ export const review: Pattern = {
       role: 'assessor',
       label: 'Gather context',
       directive: `Before anyone judges the change, gather what it must be judged against. You see the whole change (\`diff\`; read more with git diff \`diffRange\`, or git diff HEAD when it is empty) and can read the whole workspace (read-only). Write:
-- \`claimList\`: what \`claims\` says the change does and what \`intent\` asks for, split into separate claims, one per entry: "C1 …", "C2 …" (empty only when both are empty).
+- \`claimList\`: what \`claims\` says the change does and what \`intent\` asks for, split into separate claims, one per entry: "C1 …", "C2 …". Empty when both are empty: never list that there are none, nor claims you infer from the diff or its comments.
 - \`context\`: for each file of \`files\` (documentation and change/*.json release notes need none), 1 to 3 entries of what a reviewer should compare it with, each citing that code or rule (not the changed file) and naming the changed file it is for: "path:line — [CONVENTION|SIMILAR|CALLER] (for: changed path) why \`exact quote\`", e.g. "src/api.ts:40 — [SIMILAR] (for: src/client.ts) fetchUser already retries this way \`await retry(() => get(url))\`" or "AGENTS.md:3 — [CONVENTION] (for: db/schema.sql) a schema change needs a migration \`needs a new numbered migration\`". CONVENTION: a rule in AGENTS.md, the docs or a linter config; SIMILAR: existing code that does similar work (how the codebase already does it); CALLER: code that calls what changed. For each file of \`deleted\`, give the CALLER entries that still use what it deleted, "(for: the deleted path)" (none when nothing does).
 - \`behaviours\`: each behaviour the change adds or changes: "B1 path:line — the behaviour \`exact quote\`", path:line at the changed line.
 - \`obligations\`: each other change this codebase requires for this one to be complete, and only those: one a rule asks for (AGENTS.md, the docs, a linter), one every similar change includes (cite such a change), or one without which code breaks (a caller of a renamed or removed name). Not what would merely be nice: a new function nobody calls yet, docs or tooling the project does not have. Write each as "O1 [CALLER|MIGRATION|CONFIG|DOCS|ERRPATH] path:line — what must exist \`exact quote\`". e.g. "O1 [CALLER] src/greet.js:1 — greet.js must import the new name \`import { fullName }\`". path:line is the changed line (or a line that still uses deleted code) that creates the need; name what must exist in words, without a line number (it may not exist).
@@ -656,6 +667,12 @@ Every path:line must be a real line in this workspace with its quote: code the c
         orFailed({
           expr: '(empty(claims) && empty(intent)) || len(claimList) > 0',
           message: 'List what claims and intent say in claimList: "C1 …".',
+        }),
+        orFailed({
+          // A claim made up for an empty description can never be settled, and kept reviews open.
+          expr: '!(empty(claims) && empty(intent)) || len(claimList) == 0',
+          message:
+            'claims and intent are both empty: leave claimList empty, with no claim that there are none and none inferred from the diff.',
         }),
         numberedList('claimList', 'C', '.', 'Number claimList in order: "C1 …", "C2 …".'),
         numberedList(
@@ -1358,7 +1375,8 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     { id: 'fetched-collect', from: 'prFetched', to: 'collect', branch: 'then' },
     { id: 'fetched-noPr', from: 'prFetched', to: 'noPr', branch: 'else' },
     { id: 'noPr-notReviewed', from: 'noPr', to: 'notReviewed' },
-    { id: 'collect-hasDiff', from: 'collect', to: 'hasDiff' },
+    { id: 'collect-noClaims', from: 'collect', to: 'noClaims' },
+    { id: 'noClaims-hasDiff', from: 'noClaims', to: 'hasDiff' },
     { id: 'hasDiff-cap', from: 'hasDiff', to: 'capFiles', branch: 'then' },
     { id: 'hasDiff-noDiff', from: 'hasDiff', to: 'noDiffReport', branch: 'else' },
     { id: 'noDiffReport-end', from: 'noDiffReport', to: 'noDiff' },

@@ -40,15 +40,20 @@ The 🧹 badge on a node in the studio shows which steps are held to it.
 
 Answer a question with evidence, from whatever sources it needs: workspace files, web pages,
 experiments, git history, GitHub, dependencies, Azure DevOps (read-only `az`), MCP servers.
-Read-only `az` commands (`list`, `show`, `get`, `query`; `az rest` and `az devops invoke` only as
-GET) let research read pipelines and branch policies; nothing that writes is allowed.
+Read-only `az` commands (`list`, `show`, `get`, `query`; `az rest` and `az devops invoke` as
+GET) let research read pipelines and branch policies. `az rest` may also POST a query to Kusto
+(no control commands), Log Analytics, Application Insights or Resource Graph, and artifact,
+universal-package and blob downloads may write into the run's scratch folder only. Nothing else
+that writes is allowed, and `az account get-access-token` stays refused: no token reaches the AI.
 
 1. **Plan.** The planner splits the question into sub-questions, decides for
    every available source whether it can hold evidence (a reason for each skip), chooses
    how many sub-agents to use (1-6), and may split the question into independent parts. The
    web and experiments are always used when they are on offer: a plan that skips either is
    sent back. A question about how good, risky or ready some code is splits along the code
-   pillars that bear on it, one sub-question each, tagged (`S3 [SECURITY] …`).
+   pillars that bear on it, one sub-question each, tagged (`S3 [SECURITY] …`). The AI picks
+   them unless the `pillars` input says: `all`, `none`, or ids such as `SECURITY, TESTS`; then
+   the plan must tag exactly those, in order. An unknown pillar fails the run at once.
 2. **Hypotheses.** Competing answers before any evidence, each with what would confirm or
    refute it. The engine keeps a tally per hypothesis (`hypothesisStatus`: findings for and
    against, *untested*, *challenged*) after every batch, and later steps steer by it.
@@ -147,6 +152,9 @@ GET) let research read pipelines and branch policies; nothing that writes is all
 ```mermaid
 flowchart TD
   n_start(["Start"])
+  n_focusPillars["Pillars asked for"]
+  n_pillarsKnown{"Known pillars?"}
+  n_unknownPillars["Name the unknown pillars"]
   n_resolveScope[/"🔧 Resolve located paths"/]
   n_multiPart{"Several parts?"}
   n_answerParts["🤖 Answer each part ×N"]
@@ -162,6 +170,7 @@ flowchart TD
   n_explain["🤖 Write the version for people"]
   n_done(["Answered · success"])
   n_doubts(["Answered, with open doubts · partial"])
+  n_badPillars(["Unknown pillar · failed"])
   n_planPhase[["Plan research · 4 steps"]]
   n_hypothesesPhase[["Competing hypotheses · 3 steps"]]
   n_listPhase[["List evidence · 13 steps"]]
@@ -171,7 +180,11 @@ flowchart TD
   n_sourcePhase[["Search sources · 5 steps"]]
   n_gapPhase[["Close gaps · 25 steps"]]
   n_challengePhase[["Challenge the answer · 18 steps"]]
-  n_start --> n_planPhase
+  n_start --> n_focusPillars
+  n_focusPillars --> n_pillarsKnown
+  n_pillarsKnown -->|"yes"| n_planPhase
+  n_pillarsKnown -->|"no"| n_unknownPillars
+  n_unknownPillars --> n_badPillars
   n_planPhase --> n_hypothesesPhase
   n_hypothesesPhase --> n_listPhase
   n_listPhase --> n_resolveScope
@@ -712,8 +725,9 @@ Review a branch or PR. Only real issues are reported, each cited and checked.
    One verdict per entry, by id and in order: an omitted or doubled entry is sent back. Each
    adverse verdict (PARTIAL, NOT MET, WEAK, UNTESTED, ABSENT, unrelated) must also be a finding,
    which is checked and merged like the others.
-7. **Pillar lenses**, once: Security, Clean code, Tests, Performance and memory, Determinism
-   (the steps above are its Correctness). The engine scans the diff and the changed test files
+7. **Pillar lenses**, once: Security, Clean code (with usability and reusability), Tests,
+   Efficiency, Determinism (the steps above are its Correctness, with robustness; the engine's
+   robustness leads join their smell hints). The engine scans the diff and the changed test files
    (`pillars.scan`) and briefs each lens with its rulebook (`src/core/pillars.ts`) and its leads;
    one reviewer per lens, in parallel, judges only that pillar. Each must say what it examined
    (`SECURITY: NONE — …`). The Tests lens sorts every changed unit of production code into a
@@ -804,6 +818,7 @@ flowchart TD
   n_prFetched{"PR fetched?"}
   n_noPr["Say why"]
   n_collect["🤖 Collect diff"]
+  n_noClaims["Drop a #quot;no description#quot; claim"]
   n_hasDiff{"Anything changed?"}
   n_capFiles["Files to review"]
   n_scanDiff[/"🔧 Scan the diff"/]
@@ -867,7 +882,8 @@ flowchart TD
   n_prFetched -->|"yes"| n_collect
   n_prFetched -->|"no"| n_noPr
   n_noPr --> n_notReviewed
-  n_collect --> n_hasDiff
+  n_collect --> n_noClaims
+  n_noClaims --> n_hasDiff
   n_hasDiff -->|"yes"| n_capFiles
   n_hasDiff -->|"no"| n_noDiffReport
   n_noDiffReport --> n_noDiff
@@ -940,7 +956,7 @@ flowchart TD
 
 | Phase | What it does | Steps |
 | --- | --- | --- |
-| Pillar lenses | Security, clean code, tests (the critical path), performance and determinism: a scan, then one reviewer per pillar | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play |
+| Pillar lenses | Security, clean code (with usability and reusability), tests (the critical path), efficiency and determinism: a scan, then one reviewer per pillar | Lenses not played yet? → Brief the pillar lenses → Lenses to play? → Look through each pillar → Check citations → Record what the lenses found → No lens to play |
 | Settle open points | investigate's gap research: unclear claims and objections, then judged again | What to settle → Research them? → Settle open points → Check citations → Record what was found |
 | Challenge the review | A second reviewer (4), the skeptic (≥2) and the pragmatist (≥pragmatistFrom), as in investigate | Second reviewer? (4) → Second reviewer → Check citations → Record its issues → Challenge? (≥2) → Skeptic → Challenged? → Note it → Pragmatist? (≥pragmatistFrom) → Pragmatist → Take the challenge → Apply the challenge → Real objections? → Research them? (rounds left, last one found something) → Research objections → Report open objections |
 

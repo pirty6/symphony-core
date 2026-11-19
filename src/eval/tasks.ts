@@ -414,6 +414,10 @@ const DISCOUNT_BRANCHING_TEST = `${TEST_HEAD}import { discount } from '../src/di
 const USERS_JS =
   "export const findUser = (db, id) => db.query('SELECT * FROM users WHERE id = ?', [id]);\n";
 const USERS_SEARCH = `${USERS_JS}\n/** Users whose name matches what the caller typed. */\nexport const searchUsers = (db, name) => db.query(\`SELECT * FROM users WHERE name = '\${name}'\`);\n`;
+const RATES_JS = "export const RATES_URL = 'https://rates.example/eur';\n";
+const RATES_RETRY = `${RATES_JS}\n/** The current rate from the rates service; asks until it answers. */\nexport async function currentRate(fetchRate) {\n  while (true) {\n    try {\n      return await fetchRate(RATES_URL);\n    } catch {\n      // the service is busy: ask again\n    }\n  }\n}\n`;
+const PORT_JS = 'export const DEFAULT_PORT = 8080;\n';
+const PORT_PARSE = `${PORT_JS}\n/** The port from the command line ("--port 3000"), or the default. */\nexport function portFrom(args) {\n  const i = args.indexOf('--port');\n  if (i === -1) return DEFAULT_PORT;\n  const port = Number(args[i + 1]);\n  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid');\n  return port;\n}\n`;
 
 const CART_JS =
   'export function total(items) {\n  let sum = 0;\n  for (const item of items) sum += item.price * item.qty;\n  return sum;\n}\n';
@@ -541,6 +545,32 @@ const SEEDED_REVIEWS: readonly EvalTask[] = [
       category: 'SECURITY',
       accept: ['SECURITY'],
       at: [{ file: 'src/users.js', text: USERS_SEARCH, near: "WHERE name = '${name}'" }],
+    }),
+  },
+  {
+    // Retries with no limit and no pause when a service fails (the Robustness lens, ROB-4).
+    id: 'review-endless-retry',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: { 'package.json': PKG, '.gitignore': IGNORE, 'src/rates.js': RATES_JS },
+    changes: { 'src/rates.js': RATES_RETRY },
+    check: seededReview({
+      category: 'ROBUST',
+      accept: ['ROBUST', 'ERRPATH', 'BUG', 'PERF'],
+      at: [{ file: 'src/rates.js', text: RATES_RETRY, near: 'while (true)' }],
+    }),
+  },
+  {
+    // A bad --port fails with an error that names neither the value nor the range (USE-2).
+    id: 'review-vague-error',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: { 'package.json': PKG, '.gitignore': IGNORE, 'src/port.js': PORT_JS },
+    changes: { 'src/port.js': PORT_PARSE },
+    check: seededReview({
+      category: 'USABILITY',
+      accept: ['USABILITY', 'ERRPATH', 'CLEAN'],
+      at: [{ file: 'src/port.js', text: PORT_PARSE, near: "throw new Error('invalid')" }],
     }),
   },
   {

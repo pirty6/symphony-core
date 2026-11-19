@@ -25,8 +25,23 @@ const DEEP_COPY = /JSON\.parse\(\s*JSON\.stringify\(/;
 const INTERVAL = /\bsetInterval\s*\(/;
 const LOOP_START = /\b(for|foreach|while)\s*\(|\.forEach\s*\(/;
 const ASYNC_FOREACH = /\.forEach\s*\(\s*async\b/;
+const EMPTY_CATCH = /\bcatch\s*(\([^)]*\))?\s*\{\s*\}/;
+const DROPPED_REJECTION = /\.catch\(\s*(\(\s*\w*\s*\)|\w+)\s*=>\s*(\{\s*\}|undefined|null|"")\s*\)/;
+const FETCH = /\bfetch\s*\(/;
+const TIMEOUT_NAMED = /\bsignal\b|timeout/i;
+const ENDLESS_LOOP = /\bwhile\s*\(\s*true\s*\)|\bfor\s*\(\s*;\s*;\s*\)/;
+const ABRUPT_EXIT = /\bprocess\.exit\s*\(/;
+/** `new Error()` with no message, or one that names neither what went wrong nor why. */
+const VAGUE_ERROR =
+  /\bnew Error\(\s*(?:(['"`])\s*(error|failed|failure|invalid|invalid input|bad input|oops|something went wrong|unknown error|not found)?\s*[.!]?\s*\1)?\s*\)/i;
 /** Added lines after a loop opens in which an `await` means one awaited call per item. */
 const LOOP_REACH = 6;
+/** Added lines after a `fetch(` in which its options may name a signal or timeout. */
+const OPTIONS_REACH = 6;
+/** Consecutive added lines that, added again elsewhere, are duplicated logic. */
+const DUPLICATE_LINES = 3;
+/** Fewer characters than this across the lines is boilerplate (closing braces, returns), not logic. */
+const DUPLICATE_MIN_CHARS = 60;
 
 const emptyLeads = (): LensLeads => ({
   CORRECTNESS: [],
@@ -109,6 +124,75 @@ function determinismLeads(f: FileDiff): string[] {
   return out;
 }
 
+/** Whether one of the added lines from `i` on, while consecutive, names a signal or timeout. */
+function namesTimeout(f: FileDiff, i: number): boolean {
+  const [line] = f.added[i]!;
+  return f.added
+    .slice(i, i + 1 + OPTIONS_REACH)
+    .some(([at, text], j) => at === line + j && TIMEOUT_NAMED.test(codeOnly(text)));
+}
+
+function robustnessLeads(f: FileDiff): string[] {
+  if (TEST_FILE.test(f.path)) return [];
+  const out: string[] = [];
+  f.added.forEach(([line, text], i) => {
+    const code = codeOnly(text);
+    const at = (hint: string) => out.push(`${f.path}:${line} — ${hint}`);
+    if (EMPTY_CATCH.test(code)) at('an empty catch swallows the error (ROB-7)');
+    if (DROPPED_REJECTION.test(code)) at('a .catch that drops the error (ROB-7)');
+    if (FETCH.test(code) && !namesTimeout(f, i)) at('a network call without a timeout (ROB-4)');
+    if (ENDLESS_LOOP.test(code)) at('an endless loop: when does it give up? (ROB-4)');
+    if (ABRUPT_EXIT.test(code)) at('exits at once: is the work so far kept? (ROB-5)');
+  });
+  return out;
+}
+
+function usabilityLeads(f: FileDiff): string[] {
+  if (TEST_FILE.test(f.path)) return [];
+  return f.added
+    .filter(([, text]) => /\bnew Error\(/.test(codeOnly(text)) && VAGUE_ERROR.test(text))
+    .map(([line]) => `${f.path}:${line} — an error that says neither what failed nor why (USE-2)`);
+}
+
+interface Place {
+  readonly path: string;
+  readonly line: number;
+}
+
+const placeText = (p: Place): string => `${p.path}:${p.line}`;
+
+/** Each run of DUPLICATE_LINES consecutive added lines of logic, keyed by its code. */
+function addedWindows(f: FileDiff): (readonly [key: string, at: Place])[] {
+  const out: (readonly [string, Place])[] = [];
+  f.added.forEach(([line], i) => {
+    const window = f.added.slice(i, i + DUPLICATE_LINES);
+    const consecutive = window.every(([at], j) => at === line + j);
+    const code = window.map(([, text]) => codeOnly(text).trim());
+    const logic = code.every(Boolean) && code.join('').length >= DUPLICATE_MIN_CHARS;
+    if (window.length === DUPLICATE_LINES && consecutive && logic)
+      out.push([code.join('\n'), { path: f.path, line }]);
+  });
+  return out;
+}
+
+/**
+ * Blocks of production code the change adds in more than one place. A longer block repeats
+ * window after window; it is reported once, at its first line.
+ */
+function duplicateLeads(files: readonly FileDiff[]): string[] {
+  const places = new Map<string, Place[]>();
+  for (const [key, at] of files.filter((f) => !TEST_FILE.test(f.path)).flatMap(addedWindows))
+    places.set(key, [...(places.get(key) ?? []), at]);
+  const repeated = [...places.values()].filter((at) => at.length > 1);
+  const firsts = new Set(repeated.map(([first]) => placeText(first!)));
+  return repeated
+    .filter(([first]) => !firsts.has(placeText({ ...first!, line: first!.line - 1 })))
+    .map(
+      ([first, ...others]) =>
+        `${placeText(first!)} — the same lines are added again at ${others.map(placeText).join(', ')}: one shared helper? (REU-2)`,
+    );
+}
+
 function testDiffLeads(f: FileDiff): string[] {
   if (!TEST_FILE.test(f.path)) return [];
   return f.added
@@ -125,7 +209,9 @@ export function lensLeads(diff: string): LensLeads {
   const leads = emptyLeads();
   leads.CLEAN.push(...smells);
   leads.TESTS.push(...masking, ...files.flatMap(testDiffLeads));
+  leads.CORRECTNESS.push(...files.flatMap(robustnessLeads));
   leads.SECURITY.push(...files.flatMap(securityLeads));
+  leads.CLEAN.push(...files.flatMap(usabilityLeads), ...duplicateLeads(files));
   leads.PERFORMANCE.push(...files.flatMap(performanceLeads));
   leads.DETERMINISM.push(...files.flatMap(determinismLeads));
   return leads;

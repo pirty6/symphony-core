@@ -14,6 +14,7 @@ import type {
 } from '../core/types.js';
 import { buildAgentPrompt } from '../runtime/provider.js';
 import { itemOf } from '../core/items.js';
+import { CODE_PILLARS } from '../core/pillars.js';
 import { investigate } from './index.js';
 import { assessFor } from './investigate.js';
 
@@ -1937,6 +1938,12 @@ const answerErrors = (r: ReturnType<typeof runScripted>) =>
     e.type === 'response-rejected' && e.nodeId === 'answer' ? e.errors : [],
   );
 
+/** The errors the plan step was sent back with. */
+const planErrors = (r: ReturnType<typeof runScripted>) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'plan' ? e.errors : [],
+  );
+
 describe('investigate rates the code pillars a question bears on', () => {
   const agents = demo.agents!;
   /** The plan tags its first sub-question with the Security pillar. */
@@ -1955,11 +1962,59 @@ describe('investigate rates the code pillars a question bears on', () => {
       const good = agents.answer!(s, visit);
       return { ...good, updates: { ...good.updates, pillarRatings: ratings } };
     };
-  const playWith = (answer: NonNullable<DemoScript['agents']>[string]) =>
-    runScripted(compileInvestigate({ goal: 'g', context: demo.context! }), {
+  /** A run asking for these pillars, with this plan and answer. */
+  const playAsking = (
+    pillars: string[],
+    plan: NonNullable<DemoScript['agents']>[string],
+    answer: NonNullable<DemoScript['agents']>[string] = agents.answer!,
+  ) =>
+    runScripted(compileInvestigate({ goal: 'g', context: { ...demo.context!, pillars } }), {
       ...demo,
-      agents: { ...agents, plan: taggedPlan, answer },
+      agents: { ...agents, plan, answer },
     });
+  const playWith = (answer: NonNullable<DemoScript['agents']>[string]) =>
+    playAsking([], taggedPlan, answer);
+  const TAG_MESSAGE = /tag one sub-question per pillar in pillarFocus/;
+
+  it('without pillars named, the AI may tag the pillars it finds bear on the question', () => {
+    const r = playAsking([], taggedPlan);
+    expect(planErrors(r)).toEqual([]);
+    expect(r.state.state.pillarsChosen).toBe(false);
+  });
+
+  it('without pillars named, an untagged plan is taken and nothing is rated', () => {
+    const r = playAsking([], agents.plan!);
+    expect(planErrors(r)).toEqual([]);
+    expect(String(r.state.state.answer)).not.toContain('## Pillars');
+  });
+
+  it('"none" sends back a plan that tags a pillar', () => {
+    const r = playAsking(['none'], taggedPlan);
+    expect(planErrors(r).join()).toMatch(TAG_MESSAGE);
+  });
+
+  it('a named pillar is taken when the plan tags it', () => {
+    const r = playAsking(['security'], taggedPlan);
+    expect(planErrors(r)).toEqual([]);
+  });
+
+  it('a pillar asked for must become a tagged sub-question', () => {
+    const r = playAsking(['TESTS'], agents.plan!);
+    expect(planErrors(r).join()).toMatch(TAG_MESSAGE);
+  });
+
+  it('"all" asks for every code pillar, in order', () => {
+    const r = playAsking(['all'], agents.plan!);
+    expect(r.state.state.pillarFocus).toEqual(CODE_PILLARS.map((p) => p.id));
+  });
+
+  it('an unknown pillar fails the run at once, naming it and the known ones', () => {
+    const r = playAsking(['speed'], agents.plan!);
+    expect(r.state.outcome).toBe('failed');
+    expect(String(r.state.state.summary)).toMatch(
+      /^Unknown pillar: SPEED\. Use all, none, or any of: CORRECTNESS, /,
+    );
+  });
 
   it('a tagged sub-question without its pillar rating is sent back', () => {
     const r = playWith(answerRating([]));

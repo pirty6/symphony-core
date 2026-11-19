@@ -35,6 +35,14 @@ export const REVIEW_CATEGORIES: readonly (readonly [name: string, covers: string
     'MISSING',
     'a change the diff needs but does not contain, other than tests (a caller not updated, a migration, config, docs, an error path): cite the changed line that creates the need, and name what is missing in words, without a line number (it does not exist)',
   ],
+  [
+    'ROBUST',
+    'bad input or a failing environment (missing file, refused connection, timeout, malformed data) crashes, hangs or leaves half-written state; misuse not rejected with a clear error',
+  ],
+  [
+    'USABILITY',
+    'an API, CLI or UI that is hard to learn or easy to misuse: vague errors, surprising defaults, names unlike the rest of the codebase, a user-visible change without docs',
+  ],
   ['REDUNDANT', 'code that duplicates an existing helper or another part of the change'],
   [
     'DESIGN',

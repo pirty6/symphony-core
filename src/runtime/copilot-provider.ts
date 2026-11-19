@@ -241,6 +241,8 @@ interface SessionRun {
   readonly onlyCustomTools: boolean;
   /** Where the session works instead of the workspace (a sandbox step's throwaway copy). */
   readonly cwd?: string;
+  /** The run's scratch folder: the one place a read-only step's downloads may go. */
+  readonly scratchDir?: string;
   readonly mcpServers?: Readonly<Record<string, MCPServerConfig>>;
   readonly model?: string;
   readonly effort?: ReasoningEffort;
@@ -704,6 +706,7 @@ export class CopilotProvider implements Provider {
         const decision = decidePermission(
           run.role,
           request as Parameters<typeof decidePermission>[1],
+          { scratchDir: run.scratchDir },
         );
         run.onEvent({
           type: 'permission',
@@ -1308,6 +1311,7 @@ export class CopilotProvider implements Provider {
         mcpServers,
         onlyCustomTools: isolated,
         ...(req.cwd ? { cwd: req.cwd } : {}),
+        ...(req.scratchDir ? { scratchDir: req.scratchDir } : {}),
         ...(m.model ? { model: m.model } : {}),
         ...(m.effort ? { effort: m.effort } : {}),
         complexity: pause.complexity,

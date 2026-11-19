@@ -706,6 +706,56 @@ describe('review: intent', () => {
   });
 });
 
+/** collect, reporting `claims` as the change's description. */
+const collectingClaims =
+  (claims: string): Agent =>
+  () => ({
+    updates: {
+      diffSummary: 'd',
+      claims,
+      files: ['src/a.ts'],
+      skipped: [],
+      deleted: [],
+      agents: 1,
+      diffRange: '',
+    },
+    verdict: v,
+  });
+const NO_DESCRIPTION =
+  'No PR description or commit messages available; these are uncommitted working-tree changes.';
+/** gatherContext's demo answer, but listing a claim that there is none. */
+const claimingNone: Agent = (s, visit) => {
+  const good = demo.agents!.gatherContext!(s, visit);
+  return { ...good, updates: { ...good.updates, claimList: ['C1 intent: none provided (empty)'] } };
+};
+/** Why gatherContext's answers were sent back. */
+const gatherRejections = (r: ReturnType<typeof play>['r']) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === 'gatherContext' ? e.errors : [],
+  );
+
+describe('review: claims only from a description that exists', () => {
+  it('a claims text saying there is no description is dropped', () => {
+    const { state } = play({ agents: { collect: collectingClaims(NO_DESCRIPTION) } });
+    expect(state.claims).toBe('');
+    expect(state.claimList).toEqual([]);
+  });
+
+  it('a real description is kept as the claims', () => {
+    const { state } = play({
+      agents: { collect: collectingClaims('Adds 10% off orders over 100.') },
+    });
+    expect(state.claims).toBe('Adds 10% off orders over 100.');
+  });
+
+  it('with no claims and no intent, a listed claim is sent back', () => {
+    const { r } = play({ agents: { collect: collectingClaims(''), gatherContext: claimingNone } });
+    expect(gatherRejections(r).join()).toMatch(
+      /claims and intent are both empty: leave claimList empty/,
+    );
+  });
+});
+
 describe('review: what live runs taught', () => {
   it('a whole-change finding at the same place and category as one already found is not repeated', () => {
     const { state } = play({
