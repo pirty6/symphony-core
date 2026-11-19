@@ -25,6 +25,9 @@ const hypotheses = hypothesesPhase({
 });
 const challenge = challengePhase({
   subject: 'question',
+  // Trial "Investigate in 5 minutes?": at medium instead of the tier's xhigh, each challenge
+  // took about half as long and the planted flaw was still caught 3/3.
+  skepticEffort: 'medium',
   // The debaters read findings without their (already checked) quotes.
   evidence: 'findingsBrief',
   draft: 'answer',
@@ -292,7 +295,7 @@ const NO_RETRY =
  * record shows they were given whole.
  */
 /**
- * parallelSweep: the first sources are searched while the first files are read, instead of
+ * parallelSweep (on by default): the first sources are searched while the first files are read, instead of
  * after the reading and experiments. The sweep then steers by the leads as they stood before
  * the reading; its answer is used only if the sources, sub-questions and search terms it was
  * given are still the ones its turn would give it.
@@ -716,8 +719,9 @@ export const investigate: Pattern = {
       {
         name: 'parallelSweep',
         type: 'boolean',
+        initial: true,
         description:
-          'Trial (off): search the first sources while the first files are read, instead of after them',
+          'Search the first sources while the first files are read, instead of after them (off: one after the other)',
       },
       {
         name: 'readerHypotheses',

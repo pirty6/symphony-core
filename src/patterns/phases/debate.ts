@@ -14,7 +14,7 @@
  * Fragments return their state, nodes, edges and a phase; the pattern wires an
  * edge into `entry` and supplies where the fragment exits.
  */
-import type { ScoreEdge, ScoreGroup, ScoreNode, StateField } from '../../core/types.js';
+import type { Effort, ScoreEdge, ScoreGroup, ScoreNode, StateField } from '../../core/types.js';
 import {
   checkFindings,
   CITE_BY_ID,
@@ -187,6 +187,8 @@ export interface ChallengeConfig {
   readonly resetOnReopen?: string;
   /** A string[] of parts of the subject (e.g. sub-questions): each objection names the one it bears on, "S<n>: …". */
   readonly about?: string;
+  /** The skeptic's highest reasoning effort, whatever its tier (its maxEffort). */
+  readonly skepticEffort?: Effort;
 }
 
 /** A triage reason that names its ground: an F-id or the S<n> it would change (no backslashes). */
@@ -301,6 +303,7 @@ export function challengePhase(cfg: ChallengeConfig): Fragment {
         writes: ['objections'],
         retries: 2,
         complexityShift: 1,
+        ...(cfg.skepticEffort ? { maxEffort: cfg.skepticEffort } : {}),
         checks: [
           {
             // Single-quoted: the pattern itself holds double quotes.
