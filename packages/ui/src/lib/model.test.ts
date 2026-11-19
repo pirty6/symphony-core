@@ -182,6 +182,27 @@ describe('origins', () => {
   });
 });
 
+/** A scripted run whose second AI step was answered ahead, at the first (its transcript is there). */
+const SCRIPTED = { provider: 'scripted', prompt: '', output: 'searched', toolCalls: [] };
+const answeredAhead = {
+  steps: [
+    {
+      step: 1,
+      nodeId: 'triage',
+      kind: 'agent',
+      transcript: SCRIPTED,
+      ahead: { nodeId: 'sweep', result: {}, transcript: SCRIPTED },
+    },
+    { step: 2, nodeId: 'sweep', kind: 'agent', aheadFrom: 1 },
+  ],
+} as never;
+
+describe('a step answered ahead', () => {
+  it('counts as played by the AI that played it ahead: a demo run stays a demo run', () => {
+    expect(isOfflineDemo(answeredAhead)).toBe(true);
+  });
+});
+
 describe('offline demo', () => {
   it('keeps the AI choice, flags canned results and inputs the demo ignores', async () => {
     expect(parseStoredSettings('{"provider":"copilot","model":"m","x":1}')).toEqual({

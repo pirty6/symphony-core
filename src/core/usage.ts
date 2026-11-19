@@ -65,6 +65,18 @@ export function answersOf(s: PerformedStep): StepAnswer[] {
   ];
 }
 
+/**
+ * The transcript of a step's answer: its own, or, for an answer played ahead (aheadFrom), the
+ * one recorded with the step that played it.
+ */
+export function transcriptOf(
+  steps: readonly PerformedStep[],
+  s: PerformedStep,
+): AiTranscript | undefined {
+  if (s.transcript || s.aheadFrom === undefined) return s.transcript;
+  return steps.find((x) => x.step === s.aheadFrom)?.ahead?.transcript;
+}
+
 /** One visit of a step: what it cost then (byNode adds every visit together). */
 export interface VisitUsage {
   readonly nodeId: string;
