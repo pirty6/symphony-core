@@ -709,7 +709,7 @@ function wrongState(t: EvalTask): Record<string, unknown> {
       : t.id === 'review-refactor-same-output'
         ? {
             findings: [
-              "F1 test/label.test.js:3 — [TEST] [LOW] the title still says it joins an empty list `test('joins an empty list`",
+              "F1 test/label.test.js:4 — [CLEAN] [LOW] [C2] the title no longer matches the implementation `test('joins an empty list`",
             ],
           }
         : t.id === 'review-migration-present'

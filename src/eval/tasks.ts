@@ -1272,7 +1272,7 @@ export const EVAL_TASKS: readonly EvalTask[] = [
     changes: { 'src/label.js': LABEL_JOINED.replace("return [].join('');", "return '';") },
     check: async ({ outcome, state }) => {
       const findings = (state.findings as string[] | undefined) ?? [];
-      const flagged = findings.filter((f) => /— \[(TEST|MISSING)\]|^test\//.test(f));
+      const flagged = findings.filter((f) => /— \[(TEST|MISSING)\]|(^|\s)test\//.test(f));
       return {
         pass: outcome === 'success' && flagged.length === 0,
         review: { category: '', hit: false, falseFlags: findings.length },
