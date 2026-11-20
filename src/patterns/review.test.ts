@@ -806,6 +806,21 @@ const judgingWith =
     const found = (good.updates.wholeFindings as string[]) ?? [];
     return { ...good, updates: { ...good.updates, wholeFindings: [...found, finding] } };
   };
+/** The demo lens, adding one finding (and saying the TESTS lens found an issue). */
+const lensFinding =
+  (finding: string): Agent =>
+  (s, visit) => {
+    const good = demo.agents!.lens!(s, visit);
+    const pillar = String((s.lenses as string[])[0]).split(' ')[0];
+    return {
+      ...good,
+      updates: {
+        ...good.updates,
+        lensFindings: [finding],
+        lensNotes: [`${pillar}: ISSUES — read the test`],
+      },
+    };
+  };
 const rejectionsOf = (r: ReturnType<typeof play>['r'], nodeId: string) =>
   r.state.events.flatMap((e) =>
     e.type === 'response-rejected' && e.nodeId === nodeId ? e.errors : [],
@@ -835,6 +850,28 @@ describe('review: a refactor is not asked to change tests that still hold', () =
       },
     });
     expect(rejectionsOf(r, 'wholeChange').join()).toMatch(/a test file it does not touch/);
+  });
+
+  it("the TESTS lens's naming finding on a test the change does not touch is sent back", () => {
+    const { r } = play({
+      agents: {
+        lens: lensFinding(
+          "packages/labels/src/viewv9/tests/shared/LabelValueComponentView.test.tsx:136 — [TEST] [LOW] [UT-3.3] test name still describes the old behaviour `test('calls renderToElement with an empty fragment when label is undefined', async () => {`",
+        ),
+      },
+    });
+    expect(rejectionsOf(r, 'lens').join()).toMatch(/a test file it does not touch/);
+  });
+
+  it("the TESTS lens's finding that an untouched test does not check the change is kept", () => {
+    const { r } = play({
+      agents: {
+        lens: lensFinding(
+          "test/cart.test.js:4 — [TEST] [MEDIUM] [UT-T] the only test sums to 6, so the new discount is never run `test('sums', () => assert.equal(total([1, 2, 3]), 6));`",
+        ),
+      },
+    });
+    expect(rejectionsOf(r, 'lens')).toEqual([]);
   });
 
   it('a Clean Code finding on code the change left without callers is kept', () => {

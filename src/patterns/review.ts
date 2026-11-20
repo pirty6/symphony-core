@@ -193,7 +193,7 @@ const LENSES = lensPhase({
     'changeKind',
     'observable',
   ],
-  checks: [refactorGate('unitVerdicts', 'U', 'NONE NEEDED')],
+  checks: [refactorGate('unitVerdicts', 'U', 'NONE NEEDED'), untouchedTestCheck('lensFindings')],
   next: 'aimChase',
   merge: mergeIssues('lensFindings', 'lensRejected'),
 });

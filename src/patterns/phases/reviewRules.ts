@@ -101,16 +101,20 @@ export function findingChecks(field: string): AcceptanceCheck[] {
 }
 
 /**
- * Clean Code is judged on the code the change adds or edits, so a CLEAN finding in a test file
- * is kept only for a file of \`files\` (seen live: the title of a test the PR did not touch).
- * Not in findingChecks: patterns without \`files\` use those.
+ * Clean Code and the rules for how a test is written (UT-3: one act, no branches, its name, no
+ * shared state) are judged on the code the change adds or edits, so such a finding in a test
+ * file is kept only for a file of \`files\` (seen live: the title of a test the PR did not
+ * touch, as [CLEAN] [C2] and as [TEST] [UT-3.3]). Whether an untouched test still checks the
+ * change is still a TEST finding. Not in findingChecks: patterns without \`files\` use those.
  */
+const STYLE_RULE = '([[]CLEAN] |[[][A-Z]+] [[](HIGH|MEDIUM|LOW)] [[]UT-3[.][0-9]+])';
+
 export function untouchedTestCheck(field: string): AcceptanceCheck {
-  const cleanInTests = `pick(${field}, positions(${field}, "^[^ ]*(${TEST_FILE})[^ ]*:[0-9]+(-[0-9]+)? — [[]CLEAN] "))`;
+  const styleInTests = `pick(${field}, positions(${field}, "^[^ ]*(${TEST_FILE})[^ ]*:[0-9]+(-[0-9]+)? — ${STYLE_RULE}"))`;
   return {
-    expr: `subset(heads(${cleanInTests}, "^[^:]+"), files)`,
+    expr: `subset(heads(${styleInTests}, "^[^:]+"), files)`,
     message:
-      'Clean Code applies to code the change adds or edits: a test file it does not touch (not in files) is judged only on whether its assertions still hold (TEST), not on its name or style.',
+      'Clean Code and how a test is written (UT-3) apply to code the change adds or edits: a test file it does not touch (not in files) is judged only on whether it still checks the change (TEST), not on its name or style.',
   };
 }
 
