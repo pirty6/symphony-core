@@ -756,6 +756,66 @@ describe('review: claims only from a description that exists', () => {
   });
 });
 
+/** The live run's stale-title test: still passes, since it asserts the dispatch, not the fragment. */
+const STALE_TITLE =
+  "packages/labels/src/viewv9/tests/shared/LabelValueComponentView.test.tsx:136 — the test must be updated to the new null rendering `test('calls renderToElement with an empty fragment when label is undefined', async () => {`";
+/** gatherContext's demo answer, plus that test listed as a required change. */
+const obligingStaleTitle: Agent = (s, visit) => {
+  const good = demo.agents!.gatherContext!(s, visit);
+  return { ...good, updates: { ...good.updates, obligations: [`O1 [CALLER] ${STALE_TITLE}`] } };
+};
+/** analyze reporting that test as a MISSING change. */
+const missingStaleTest: Agent = (s, visit) => {
+  const good = demo.agents!.analyze!(s, visit);
+  return {
+    ...good,
+    updates: {
+      ...good.updates,
+      newFindings: [
+        'src/view.tsx:276 — [MISSING] [MEDIUM] packages/labels/src/viewv9/tests/shared/LabelValueComponentView.test.tsx:136 was not updated to the null rendering `return null;`',
+      ],
+    },
+  };
+};
+/** analyze reporting a real MISSING change that only names a test file (seen live). */
+const missingConsumer: Agent = (s, visit) => {
+  const good = demo.agents!.analyze!(s, visit);
+  return {
+    ...good,
+    updates: {
+      ...good.updates,
+      newFindings: [
+        'src/results.js:1 — [MISSING] [MEDIUM] summarize is exported but nothing calls it; only results.test.js exercises it `module.exports = { summarize };`',
+      ],
+    },
+  };
+};
+const rejectionsOf = (r: ReturnType<typeof play>['r'], nodeId: string) =>
+  r.state.events.flatMap((e) =>
+    e.type === 'response-rejected' && e.nodeId === nodeId ? e.errors : [],
+  );
+
+describe('review: a refactor is not asked to change tests that still hold', () => {
+  it("a test's title listed as a required change is sent back", () => {
+    const { r } = play({ agents: { gatherContext: obligingStaleTitle } });
+    expect(rejectionsOf(r, 'gatherContext').join()).toMatch(
+      /A test's title is not a required change/,
+    );
+  });
+
+  it('an outdated test reported as MISSING is sent back as a TEST matter', () => {
+    const { r } = play({ agents: { analyze: missingStaleTest } });
+    expect(rejectionsOf(r, 'analyze').join()).toMatch(
+      /A missing or outdated test is TEST, not MISSING/,
+    );
+  });
+
+  it('a MISSING change that only names a test file is kept', () => {
+    const { r } = play({ agents: { analyze: missingConsumer } });
+    expect(rejectionsOf(r, 'analyze')).toEqual([]);
+  });
+});
+
 describe('review: what live runs taught', () => {
   it('a whole-change finding at the same place and category as one already found is not repeated', () => {
     const { state } = play({

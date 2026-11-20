@@ -25,7 +25,7 @@ export const REVIEW_CATEGORIES: readonly (readonly [name: string, covers: string
   ],
   [
     'TEST',
-    'changed behaviour no test covers (cite the changed line), tests removed, skipped or loosened, assertions that would pass without the change; a missing test is TEST, not MISSING',
+    'changed behaviour no test covers (cite the changed line), tests removed, skipped or loosened, assertions that would pass without a change callers can observe; a refactor (same results, output, events and errors for every caller) needs no test that tells the old code from the new, and its title naming the old implementation is a LOW naming nit at most; a missing or outdated test is TEST, not MISSING',
   ],
   [
     'FLAKY',
@@ -61,6 +61,12 @@ export const CATEGORIES = REVIEW_CATEGORIES.map(([c]) => c).join('|');
 /** A finding: "path:line — [CATEGORY] [SEVERITY] problem `exact quote`". */
 export const FINDING_FORMAT = `^.+:[0-9]+(-[0-9]+)? — [[](${CATEGORIES})] [[](HIGH|MEDIUM|LOW)] `;
 
+/**
+ * A place in a test file: x.test.ts:3, x.spec.js:3, x.playwright-test.ts:3, tests/…:3. A test
+ * file merely named is not one (seen live: "only a.test.js calls it" in a real MISSING finding).
+ */
+const TEST_PLACE = '([-_.](test|spec)[.][A-Za-z]+|/(tests?|__tests__|e2e)/[^ `]*):[0-9]+';
+
 /** The categories as directive bullets. */
 export const categoryBullets = (): string =>
   REVIEW_CATEGORIES.map(([c, covers]) => `- ${c}: ${covers};`).join('\n');
@@ -77,12 +83,19 @@ export function cleanIdCheck(field: string, example: string): AcceptanceCheck {
 
 /** The format of each finding, and a catalogue rule id on each CLEAN one. */
 export function findingChecks(field: string): AcceptanceCheck[] {
+  const missing = `pick(${field}, positions(${field}, " — [[]MISSING] "))`;
   return [
     {
       expr: `len(unmatched(${field}, "${FINDING_FORMAT}")) == 0`,
       message: `Write each finding as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`quote\`", CATEGORY one of ${CATEGORIES.split('|').join(', ')}.`,
     },
     cleanIdCheck(field, '"[CLEAN] [MEDIUM] [G5] …", after the severity'),
+    {
+      // Seen live: an outdated test title published as a MISSING change.
+      expr: `len(pick(${missing}, positions(${missing}, "${TEST_PLACE}"))) == 0`,
+      message:
+        'A missing or outdated test is TEST, not MISSING: MISSING is a change other than tests. A test whose assertions still hold needs no change.',
+    },
   ];
 }
 
