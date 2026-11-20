@@ -975,6 +975,31 @@ describe('review: a refactor, as the goal says, is not asked for tests of its in
     expect(rejectionsOf(r, 'wholeChange')).toEqual([]);
   });
 
+  it('a TEST finding on a test the refactor does not touch is sent back', () => {
+    const { r } = play({
+      agents: {
+        goal: REFACTOR_GOAL,
+        wholeChange: judgingWith(
+          "packages/labels/src/viewv9/tests/shared/LabelValueComponentView.test.tsx:136 — [TEST] [LOW] unit test name still says the missing-label path renders 'an empty fragment' `test('calls renderToElement with an empty fragment when label is undefined', async () => {`",
+        ),
+      },
+    });
+    expect(rejectionsOf(r, 'wholeChange').join()).toMatch(
+      /the tests it does not touch pass before and after/,
+    );
+  });
+
+  it('a TEST finding on a test a feature does not touch is kept', () => {
+    const { r } = play({
+      agents: {
+        wholeChange: judgingWith(
+          "test/cart.test.js:4 — [TEST] [MEDIUM] the only test sums to 6, so the new discount is never run `test('sums', () => assert.equal(total([1, 2, 3]), 6));`",
+        ),
+      },
+    });
+    expect(rejectionsOf(r, 'wholeChange')).toEqual([]);
+  });
+
   it("the TESTS lens's WEAK unit that names no difference callers see is sent back", () => {
     const { r } = play({
       agents: {

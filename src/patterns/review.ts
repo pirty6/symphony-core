@@ -14,6 +14,7 @@ import {
   categoryBullets,
   findingChecks,
   orFailed,
+  TEST_FILE,
   untouchedTestCheck,
 } from './phases/reviewRules.js';
 
@@ -94,6 +95,16 @@ const GOAL_BRIEF =
 /** How a REFACTOR's test verdict names a difference callers see (the only way it is WEAK or UNTESTED). */
 const CALLERS_SEE = 'callers see:';
 /** A REFACTOR's behaviours or units are WEAK or UNTESTED only with what callers see differently. */
+/**
+ * For a REFACTOR, the tests the change does not touch pass before and after: that is their
+ * coverage, so a TEST finding on one has nothing to report (seen live: "the test name still says
+ * an empty fragment", from wholeChange, on PR 6061030).
+ */
+const refactorUntouchedTests = (field: string): AcceptanceCheck => ({
+  expr: `changeKind != "REFACTOR" || subset(heads(pick(${field}, positions(${field}, "^[^ ]*(${TEST_FILE})[^ ]*:[0-9]+(-[0-9]+)? — [[]TEST] ")), "^[^:]+"), files)`,
+  message:
+    'This change is a REFACTOR (see goal): the tests it does not touch pass before and after, and that is their coverage. No TEST finding on a test file outside files.',
+});
 const refactorGate = (field: string, id: string, otherwise: string): AcceptanceCheck => ({
   expr: `changeKind != "REFACTOR" || count(${field}, "^${id}[0-9]+ (WEAK|UNTESTED) ") == count(${field}, "^${id}[0-9]+ (WEAK|UNTESTED) — ${CALLERS_SEE} ")`,
   message: `This change is a REFACTOR (see goal): callers see nothing different, so its tests passing before and after are its coverage. Mark one WEAK or UNTESTED only by naming what callers see differently: "${id}1 WEAK — ${CALLERS_SEE} …"; otherwise ${otherwise}.`,
@@ -193,7 +204,11 @@ const LENSES = lensPhase({
     'changeKind',
     'observable',
   ],
-  checks: [refactorGate('unitVerdicts', 'U', 'NONE NEEDED'), untouchedTestCheck('lensFindings')],
+  checks: [
+    refactorGate('unitVerdicts', 'U', 'NONE NEEDED'),
+    untouchedTestCheck('lensFindings'),
+    refactorUntouchedTests('lensFindings'),
+  ],
   next: 'aimChase',
   merge: mergeIssues('lensFindings', 'lensRejected'),
 });
@@ -893,6 +908,7 @@ ${ATTESTATION_DIRECTIVE}`,
         },
         ...findingChecks('newFindings'),
         untouchedTestCheck('newFindings'),
+        refactorUntouchedTests('newFindings'),
         ...attestationChecks('newFindings').map(orFailed),
       ],
     },
@@ -963,7 +979,11 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       cites: 'wholeFindings',
       retries: 2,
       checks: [
-        ...[...findingChecks('wholeFindings'), untouchedTestCheck('wholeFindings')].map(orFailed),
+        ...[
+          ...findingChecks('wholeFindings'),
+          untouchedTestCheck('wholeFindings'),
+          refactorUntouchedTests('wholeFindings'),
+        ].map(orFailed),
         verdictPerEntry('claimVerdicts', 'claimList', 'C', 'MET|PARTIAL|NOT MET|UNCLEAR'),
         verdictPerEntry('testVerdicts', 'behaviours', 'B', 'TESTED|WEAK|UNTESTED|NA'),
         orFailed(refactorGate('testVerdicts', 'B', 'NA')),
@@ -1080,7 +1100,11 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       writes: ['newFindings'],
       cites: 'newFindings',
       retries: 2,
-      checks: [...findingChecks('newFindings'), untouchedTestCheck('newFindings')].map(orFailed),
+      checks: [
+        ...findingChecks('newFindings'),
+        untouchedTestCheck('newFindings'),
+        refactorUntouchedTests('newFindings'),
+      ].map(orFailed),
     },
     checkFindings('checkSecond'),
     {

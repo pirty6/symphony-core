@@ -65,7 +65,7 @@ export const FINDING_FORMAT = `^.+:[0-9]+(-[0-9]+)? — [[](${CATEGORIES})] [[](
  * A place in a test file: x.test.ts:3, x.spec.js:3, x.playwright-test.ts:3, tests/…:3. A test
  * file merely named is not one (seen live: "only a.test.js calls it" in a real MISSING finding).
  */
-const TEST_FILE = '[-_.](test|spec)[.][A-Za-z]+|/(tests?|__tests__|e2e)/';
+export const TEST_FILE = '[-_.](test|spec)[.][A-Za-z]+|/(tests?|__tests__|e2e)/';
 const TEST_PLACE = `(${TEST_FILE})[^ \`]*:[0-9]+`;
 
 /** The categories as directive bullets. */
