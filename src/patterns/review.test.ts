@@ -790,6 +790,14 @@ const missingConsumer: Agent = (s, visit) => {
     },
   };
 };
+/** wholeChange's demo answer, with one more finding. */
+const judgingWith =
+  (finding: string): Agent =>
+  (s, visit) => {
+    const good = demo.agents!.wholeChange!(s, visit);
+    const found = (good.updates.wholeFindings as string[]) ?? [];
+    return { ...good, updates: { ...good.updates, wholeFindings: [...found, finding] } };
+  };
 const rejectionsOf = (r: ReturnType<typeof play>['r'], nodeId: string) =>
   r.state.events.flatMap((e) =>
     e.type === 'response-rejected' && e.nodeId === nodeId ? e.errors : [],
@@ -808,6 +816,28 @@ describe('review: a refactor is not asked to change tests that still hold', () =
     expect(rejectionsOf(r, 'analyze').join()).toMatch(
       /A missing or outdated test is TEST, not MISSING/,
     );
+  });
+
+  it('a Clean Code finding on a test the change does not touch is sent back', () => {
+    const { r } = play({
+      agents: {
+        wholeChange: judgingWith(
+          "packages/labels/src/viewv9/tests/shared/LabelValueComponentView.test.tsx:136 — [CLEAN] [LOW] [C2] test name still says empty fragment `test('calls renderToElement with an empty fragment when label is undefined', async () => {`",
+        ),
+      },
+    });
+    expect(rejectionsOf(r, 'wholeChange').join()).toMatch(/a test file it does not touch/);
+  });
+
+  it('a Clean Code finding on code the change left without callers is kept', () => {
+    const { r } = play({
+      agents: {
+        wholeChange: judgingWith(
+          'src/lockfileChecks.ts:60 — [CLEAN] [MEDIUM] [G9] findMissingEntries lost its only caller `export function findMissingEntries(`',
+        ),
+      },
+    });
+    expect(rejectionsOf(r, 'wholeChange')).toEqual([]);
   });
 
   it('a MISSING change that only names a test file is kept', () => {

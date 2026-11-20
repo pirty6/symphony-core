@@ -14,6 +14,7 @@ import {
   categoryBullets,
   findingChecks,
   orFailed,
+  untouchedTestCheck,
 } from './phases/reviewRules.js';
 
 /**
@@ -784,6 +785,7 @@ ${ATTESTATION_DIRECTIVE}`,
           message: 'Read every file in files; list each in reviewed.',
         },
         ...findingChecks('newFindings'),
+        untouchedTestCheck('newFindings'),
         ...attestationChecks('newFindings').map(orFailed),
       ],
     },
@@ -849,7 +851,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       cites: 'wholeFindings',
       retries: 2,
       checks: [
-        ...findingChecks('wholeFindings').map(orFailed),
+        ...[...findingChecks('wholeFindings'), untouchedTestCheck('wholeFindings')].map(orFailed),
         verdictPerEntry('claimVerdicts', 'claimList', 'C', 'MET|PARTIAL|NOT MET|UNCLEAR'),
         verdictPerEntry('testVerdicts', 'behaviours', 'B', 'TESTED|WEAK|UNTESTED|NA'),
         verdictPerEntry('obligationVerdicts', 'obligations', 'O', 'FOUND|ABSENT'),
@@ -965,7 +967,7 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       writes: ['newFindings'],
       cites: 'newFindings',
       retries: 2,
-      checks: findingChecks('newFindings').map(orFailed),
+      checks: [...findingChecks('newFindings'), untouchedTestCheck('newFindings')].map(orFailed),
     },
     checkFindings('checkSecond'),
     {
