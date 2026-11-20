@@ -818,7 +818,7 @@ flowchart TD
   n_prFetched{"PR fetched?"}
   n_noPr["Say why"]
   n_collect["🤖 Collect diff"]
-  n_noClaims["Drop a #quot;no description#quot; claim"]
+  n_noClaims["Claims: the description, else what collect found"]
   n_hasDiff{"Anything changed?"}
   n_capFiles["Files to review"]
   n_scanDiff[/"🔧 Scan the diff"/]

@@ -748,6 +748,14 @@ describe('review: claims only from a description that exists', () => {
     expect(state.claims).toBe('Adds 10% off orders over 100.');
   });
 
+  it("the caller's PR title and description are the claims, over what collect found", () => {
+    const { state } = play(
+      { agents: { collect: collectingClaims('Render missing labels without an empty fragment') } },
+      { description: 'refactor(labels): render missing values as null' },
+    );
+    expect(state.claims).toBe('refactor(labels): render missing values as null');
+  });
+
   it('with no claims and no intent, a listed claim is sent back', () => {
     const { r } = play({ agents: { collect: collectingClaims(''), gatherContext: claimingNone } });
     expect(gatherRejections(r).join()).toMatch(

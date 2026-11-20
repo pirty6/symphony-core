@@ -269,6 +269,12 @@ export const review: Pattern = {
     },
     { name: 'hint', type: 'string', description: 'Optional: what to focus on' },
     {
+      name: 'description',
+      type: 'string',
+      description:
+        "Optional: the PR's title and description, when the caller has them (an Azure DevOps PR's are not in git): they are the change's claims",
+    },
+    {
       name: 'intent',
       type: 'string',
       description:
@@ -634,9 +640,15 @@ export const review: Pattern = {
     {
       id: 'noClaims',
       kind: 'compute',
-      label: 'Drop a "no description" claim',
+      label: 'Claims: the description, else what collect found',
       // collect sometimes writes that there is no description instead of leaving claims empty.
-      assign: [{ field: 'claims', expr: `if(count([claims], "${NO_CLAIMS}") > 0, "", claims)` }],
+      assign: [
+        {
+          field: 'claims',
+          // The caller's copy of the PR page is what the author wrote: it wins over what collect found.
+          expr: `if(!empty(description), description, if(count([claims], "${NO_CLAIMS}") > 0, "", claims))`,
+        },
+      ],
     },
     {
       id: 'hasDiff',
