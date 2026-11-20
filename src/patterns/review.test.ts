@@ -886,6 +886,70 @@ describe('review: the goal comes first', () => {
   });
 });
 
+const REFACTOR_GOAL = goalWith({
+  changeKind: 'REFACTOR',
+  observable: 'nothing: a missing label still renders an empty host',
+});
+/** wholeChange's demo answer, with these test verdicts for its behaviours. */
+const judgingTests =
+  (verdict: string): Agent =>
+  (s, visit) => {
+    const good = demo.agents!.wholeChange!(s, visit);
+    const behaviours = (s.behaviours as string[]) ?? [];
+    return {
+      ...good,
+      updates: {
+        ...good.updates,
+        testVerdicts: behaviours.map((b) => `${b.split(' ')[0]} ${verdict}`),
+      },
+    };
+  };
+/** The demo lens, judging the TESTS lens's critical unit WEAK in these words. */
+const lensJudgingUnit =
+  (verdict: string): Agent =>
+  (s, visit) => {
+    const good = demo.agents!.lens!(s, visit);
+    const tests = ((good.updates.unitVerdicts as string[]) ?? []).length > 0;
+    return tests
+      ? {
+          ...good,
+          updates: {
+            ...good.updates,
+            unitVerdicts: [`U1 WEAK — ${verdict}`],
+            lensFindings: ['src/core/engine.ts:120 — [TEST] [LOW] [UT-T] weak `attempts += 1`'],
+          },
+        }
+      : good;
+  };
+
+describe('review: a refactor, as the goal says, is not asked for tests of its internals', () => {
+  it('a WEAK or UNTESTED behaviour that names no difference callers see is sent back', () => {
+    const { r } = play({ agents: { goal: REFACTOR_GOAL } });
+    expect(rejectionsOf(r, 'wholeChange').join()).toMatch(/This change is a REFACTOR/);
+  });
+
+  it('a WEAK behaviour that names what callers see differently is kept', () => {
+    const { r } = play({
+      agents: {
+        goal: REFACTOR_GOAL,
+        wholeChange: judgingTests('WEAK — callers see: an error instead of an empty host'),
+      },
+    });
+    expect(rejectionsOf(r, 'wholeChange')).toEqual([]);
+  });
+
+  it("the TESTS lens's WEAK unit that names no difference callers see is sent back", () => {
+    const { r } = play({
+      agents: {
+        goal: REFACTOR_GOAL,
+        wholeChange: judgingTests('NA — the tests pass before and after'),
+        lens: lensJudgingUnit('would still pass with the old code'),
+      },
+    });
+    expect(rejectionsOf(r, 'lens').join()).toMatch(/This change is a REFACTOR/);
+  });
+});
+
 describe('review: what live runs taught', () => {
   it('a whole-change finding at the same place and category as one already found is not repeated', () => {
     const { state } = play({
