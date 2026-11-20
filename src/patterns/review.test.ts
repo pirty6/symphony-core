@@ -846,6 +846,38 @@ describe('review: a refactor is not asked to change tests that still hold', () =
   });
 });
 
+/** The goal step's demo answer, with some of it replaced. */
+const goalWith =
+  (over: Record<string, unknown>): Agent =>
+  (s, visit) => {
+    const good = demo.agents!.goal!(s, visit);
+    return { ...good, updates: { ...good.updates, ...over } };
+  };
+
+describe('review: the goal comes first', () => {
+  it('a changed file left without a part in the goal is sent back', () => {
+    const { r } = play({ agents: { goal: goalWith({ fileRoles: [] }) } });
+    expect(rejectionsOf(r, 'goal').join()).toMatch(/one fileRoles entry per file of files/);
+  });
+
+  it('a REFACTOR that names a difference callers see is sent back', () => {
+    const { r } = play({
+      agents: { goal: goalWith({ changeKind: 'REFACTOR', observable: 'renders null' }) },
+    });
+    expect(rejectionsOf(r, 'goal').join()).toMatch(/A REFACTOR changes nothing callers see/);
+  });
+
+  it('with no description, a goal not marked as inferred is sent back', () => {
+    const { r } = play({ agents: { collect: collectingClaims('') } });
+    expect(rejectionsOf(r, 'goal').join()).toMatch(/end goal with "\(inferred from the diff\)"/);
+  });
+
+  it('a goal step that keeps failing its checks does not stop the review', () => {
+    const { r } = play({ agents: { goal: goalWith({ changeKind: 'CHORE' }) } });
+    expect(r.state.outcome).toBe('success');
+  });
+});
+
 describe('review: what live runs taught', () => {
   it('a whole-change finding at the same place and category as one already found is not repeated', () => {
     const { state } = play({

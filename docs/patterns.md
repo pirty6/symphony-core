@@ -822,6 +822,7 @@ flowchart TD
   n_hasDiff{"Anything changed?"}
   n_capFiles["Files to review"]
   n_scanDiff[/"🔧 Scan the diff"/]
+  n_goal["🤖 Understand the goal"]
   n_gatherContext["🤖 Gather context"]
   n_contextOk{"Context gathered?"}
   n_noteContextFailed["Note it"]
@@ -888,7 +889,8 @@ flowchart TD
   n_hasDiff -->|"no"| n_noDiffReport
   n_noDiffReport --> n_noDiff
   n_capFiles --> n_scanDiff
-  n_scanDiff --> n_gatherContext
+  n_scanDiff --> n_goal
+  n_goal --> n_gatherContext
   n_gatherContext --> n_contextOk
   n_contextOk -->|"yes"| n_checkContext
   n_contextOk -->|"no"| n_noteContextFailed

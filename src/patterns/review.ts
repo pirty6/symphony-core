@@ -88,6 +88,9 @@ const PLACE = '^[^ ]+:[0-9]+(-[0-9]+)? — [[][A-Z]+]';
 /** A finding's severity tag, for the skeptic's downgrades. */
 const SEVERITY = '[[](HIGH|MEDIUM|LOW)]';
 
+const CHANGE_KINDS = ['FEATURE', 'FIX', 'REFACTOR', 'CONFIG', 'DOCS', 'TEST'];
+const INFERRED = '(inferred from the diff)';
+
 /** An entry quoting a test's declaration: `test('…`, `it.only('…`, `describe('…`. */
 const TEST_TITLE_QUOTE = '`[ ]*(it|test|describe)([.][a-z]+)?[(]';
 /** Files that are only documentation: no test needs to run for them. */
@@ -340,6 +343,28 @@ export const review: Pattern = {
       description: `Parallel reviewers (1 to ${MAX_AGENTS}), chosen from the size of the diff`,
     },
     { name: 'filesPerAgent', type: 'number', initial: 3 },
+    { name: 'goal', type: 'string', description: 'What the change is for, in one sentence' },
+    {
+      name: 'changeKind',
+      type: 'string',
+      description: 'FEATURE, FIX, REFACTOR, CONFIG, DOCS or TEST',
+    },
+    {
+      name: 'observable',
+      type: 'string',
+      description: 'What callers will see differently ("nothing: …" for a REFACTOR)',
+    },
+    {
+      name: 'fileRoles',
+      type: 'string[]',
+      description: 'One per changed file, in order: "path — its part in the goal"',
+    },
+    {
+      name: 'expectedElsewhere',
+      type: 'string[]',
+      description:
+        'Other places the goal implies a change that the files lack: leads, not findings',
+    },
     {
       name: 'claimList',
       type: 'string[]',
@@ -639,6 +664,46 @@ export const review: Pattern = {
       tool: 'diff.scan',
       inputs: { range: 'diffRange' },
       output: { diff: 'diff', smells: 'smellHints', masking: 'maskingFlags', error: 'diffError' },
+    },
+    {
+      // A reviewer reads the PR page before the code: what it is for, and what should differ.
+      id: 'goal',
+      kind: 'agent',
+      role: 'assessor',
+      label: 'Understand the goal',
+      isolated: true,
+      complexityShift: -1,
+      directive: `Before anyone reads the code, say what this change is for, as a reviewer does from the PR page. You have its description (\`claims\`), what was asked (\`intent\`), a summary of the diff (\`diffSummary\`) and its files (\`files\`, \`deleted\`); no code. Write:
+- \`goal\`: what the change is for, in one sentence, from \`claims\` and \`intent\`. When both are empty, from \`diffSummary\`, ending "${INFERRED}".
+- \`changeKind\`: one of ${CHANGE_KINDS.join(', ')}. REFACTOR: the code changes, but no caller should see a difference.
+- \`observable\`: what callers (users, other code, other services) will see differently once it is in: results, output, UI, events, errors, files, defaults. For a REFACTOR, "nothing: what stays the same".
+- \`fileRoles\`: one entry per file of \`files\`, in order: "path — its part in the goal". A file you cannot tie to the goal: "path — no part in the goal: what it does".
+- \`expectedElsewhere\`: other places the goal implies a change that \`files\` lacks (a caller, a test, docs, a migration), "what — why": leads for the reviewers, not findings. Empty when none.`,
+      reads: ['target', 'intent', 'claims', 'diffSummary', 'files', 'deleted'],
+      writes: ['goal', 'changeKind', 'observable', 'fileRoles', 'expectedElsewhere'],
+      retries: 2,
+      // The goal frames the review; without it the review still runs, judged as before.
+      skipWhenStuck: { field: 'goal', text: '' },
+      checks: [
+        {
+          expr: `includes(${JSON.stringify(CHANGE_KINDS)}, changeKind)`,
+          message: `Set changeKind to one of ${CHANGE_KINDS.join(', ')}.`,
+        },
+        {
+          expr: 'changeKind != "REFACTOR" || len(unmatched([observable], "^nothing")) == 0',
+          message:
+            'A REFACTOR changes nothing callers see: write observable as "nothing: what stays the same", or pick another changeKind.',
+        },
+        {
+          expr: 'heads(fileRoles, "^[^ ]+") == files',
+          message:
+            'Write one fileRoles entry per file of files, in order: "path — its part in the goal".',
+        },
+        {
+          expr: `!(empty(claims) && empty(intent)) || len(unmatched([goal], "${INFERRED.replace('(', '[(]').replace(')', '[)]')}$")) == 0`,
+          message: `claims and intent are both empty: end goal with "${INFERRED}".`,
+        },
+      ],
     },
     {
       id: 'gatherContext',
@@ -1392,7 +1457,8 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
     { id: 'hasDiff-noDiff', from: 'hasDiff', to: 'noDiffReport', branch: 'else' },
     { id: 'noDiffReport-end', from: 'noDiffReport', to: 'noDiff' },
     { id: 'cap-scan', from: 'capFiles', to: 'scanDiff' },
-    { id: 'scan-context', from: 'scanDiff', to: 'gatherContext' },
+    { id: 'scan-goal', from: 'scanDiff', to: 'goal' },
+    { id: 'goal-context', from: 'goal', to: 'gatherContext' },
     { id: 'context-ok', from: 'gatherContext', to: 'contextOk' },
     { id: 'contextOk-check', from: 'contextOk', to: 'checkContext', branch: 'then' },
     { id: 'contextOk-note', from: 'contextOk', to: 'noteContextFailed', branch: 'else' },
@@ -1525,6 +1591,16 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         verdict: v('diff read'),
       }),
       // Data-driven, so a test can swap the files: a context entry per file, a verdict per entry.
+      goal: (s) => ({
+        updates: {
+          goal: 'A failed step is tried again, at most three times.',
+          changeKind: 'FIX',
+          observable: 'a step that fails once is retried instead of ending the run',
+          fileRoles: ((s.files as string[]) ?? []).map((f) => `${f} — counts the retries`),
+          expectedElsewhere: [],
+        },
+        verdict: v('goal understood'),
+      }),
       gatherContext: (s) => {
         const files = (s.files as string[]) ?? [];
         return {
