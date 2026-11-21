@@ -748,6 +748,14 @@ describe('review: claims only from a description that exists', () => {
     expect(state.claims).toBe('Adds 10% off orders over 100.');
   });
 
+  it("the caller's PR title and description are the claims, over what collect found", () => {
+    const { state } = play(
+      { agents: { collect: collectingClaims('Render missing labels without an empty fragment') } },
+      { description: 'refactor(labels): render missing values as null' },
+    );
+    expect(state.claims).toBe('refactor(labels): render missing values as null');
+  });
+
   it('with no claims and no intent, a listed claim is sent back', () => {
     const { r } = play({ agents: { collect: collectingClaims(''), gatherContext: claimingNone } });
     expect(gatherRejections(r).join()).toMatch(
@@ -843,6 +851,38 @@ describe('review: a refactor is not asked to change tests that still hold', () =
   it('a MISSING change that only names a test file is kept', () => {
     const { r } = play({ agents: { analyze: missingConsumer } });
     expect(rejectionsOf(r, 'analyze')).toEqual([]);
+  });
+});
+
+/** The goal step's demo answer, with some of it replaced. */
+const goalWith =
+  (over: Record<string, unknown>): Agent =>
+  (s, visit) => {
+    const good = demo.agents!.goal!(s, visit);
+    return { ...good, updates: { ...good.updates, ...over } };
+  };
+
+describe('review: the goal comes first', () => {
+  it('a changed file left without a part in the goal is sent back', () => {
+    const { r } = play({ agents: { goal: goalWith({ fileRoles: [] }) } });
+    expect(rejectionsOf(r, 'goal').join()).toMatch(/one fileRoles entry per file of files/);
+  });
+
+  it('a REFACTOR that names a difference callers see is sent back', () => {
+    const { r } = play({
+      agents: { goal: goalWith({ changeKind: 'REFACTOR', observable: 'renders null' }) },
+    });
+    expect(rejectionsOf(r, 'goal').join()).toMatch(/A REFACTOR changes nothing callers see/);
+  });
+
+  it('with no description, a goal not marked as inferred is sent back', () => {
+    const { r } = play({ agents: { collect: collectingClaims('') } });
+    expect(rejectionsOf(r, 'goal').join()).toMatch(/end goal with "\(inferred from the diff\)"/);
+  });
+
+  it('a goal step that keeps failing its checks does not stop the review', () => {
+    const { r } = play({ agents: { goal: goalWith({ changeKind: 'CHORE' }) } });
+    expect(r.state.outcome).toBe('success');
   });
 });
 
