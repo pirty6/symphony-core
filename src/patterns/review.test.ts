@@ -806,6 +806,21 @@ const judgingWith =
     const found = (good.updates.wholeFindings as string[]) ?? [];
     return { ...good, updates: { ...good.updates, wholeFindings: [...found, finding] } };
   };
+/** The demo lens, adding one finding (and saying the TESTS lens found an issue). */
+const lensFinding =
+  (finding: string): Agent =>
+  (s, visit) => {
+    const good = demo.agents!.lens!(s, visit);
+    const pillar = String((s.lenses as string[])[0]).split(' ')[0];
+    return {
+      ...good,
+      updates: {
+        ...good.updates,
+        lensFindings: [finding],
+        lensNotes: [`${pillar}: ISSUES — read the test`],
+      },
+    };
+  };
 const rejectionsOf = (r: ReturnType<typeof play>['r'], nodeId: string) =>
   r.state.events.flatMap((e) =>
     e.type === 'response-rejected' && e.nodeId === nodeId ? e.errors : [],
@@ -835,6 +850,28 @@ describe('review: a refactor is not asked to change tests that still hold', () =
       },
     });
     expect(rejectionsOf(r, 'wholeChange').join()).toMatch(/a test file it does not touch/);
+  });
+
+  it("the TESTS lens's naming finding on a test the change does not touch is sent back", () => {
+    const { r } = play({
+      agents: {
+        lens: lensFinding(
+          "packages/labels/src/viewv9/tests/shared/LabelValueComponentView.test.tsx:136 — [TEST] [LOW] [UT-3.3] test name still describes the old behaviour `test('calls renderToElement with an empty fragment when label is undefined', async () => {`",
+        ),
+      },
+    });
+    expect(rejectionsOf(r, 'lens').join()).toMatch(/a test file it does not touch/);
+  });
+
+  it("the TESTS lens's finding that an untouched test does not check the change is kept", () => {
+    const { r } = play({
+      agents: {
+        lens: lensFinding(
+          "test/cart.test.js:4 — [TEST] [MEDIUM] [UT-T] the only test sums to 6, so the new discount is never run `test('sums', () => assert.equal(total([1, 2, 3]), 6));`",
+        ),
+      },
+    });
+    expect(rejectionsOf(r, 'lens')).toEqual([]);
   });
 
   it('a Clean Code finding on code the change left without callers is kept', () => {
@@ -883,6 +920,95 @@ describe('review: the goal comes first', () => {
   it('a goal step that keeps failing its checks does not stop the review', () => {
     const { r } = play({ agents: { goal: goalWith({ changeKind: 'CHORE' }) } });
     expect(r.state.outcome).toBe('success');
+  });
+});
+
+const REFACTOR_GOAL = goalWith({
+  changeKind: 'REFACTOR',
+  observable: 'nothing: a missing label still renders an empty host',
+});
+/** wholeChange's demo answer, with these test verdicts for its behaviours. */
+const judgingTests =
+  (verdict: string): Agent =>
+  (s, visit) => {
+    const good = demo.agents!.wholeChange!(s, visit);
+    const behaviours = (s.behaviours as string[]) ?? [];
+    return {
+      ...good,
+      updates: {
+        ...good.updates,
+        testVerdicts: behaviours.map((b) => `${b.split(' ')[0]} ${verdict}`),
+      },
+    };
+  };
+/** The demo lens, judging the TESTS lens's critical unit WEAK in these words. */
+const lensJudgingUnit =
+  (verdict: string): Agent =>
+  (s, visit) => {
+    const good = demo.agents!.lens!(s, visit);
+    const tests = ((good.updates.unitVerdicts as string[]) ?? []).length > 0;
+    return tests
+      ? {
+          ...good,
+          updates: {
+            ...good.updates,
+            unitVerdicts: [`U1 WEAK — ${verdict}`],
+            lensFindings: ['src/core/engine.ts:120 — [TEST] [LOW] [UT-T] weak `attempts += 1`'],
+          },
+        }
+      : good;
+  };
+
+describe('review: a refactor, as the goal says, is not asked for tests of its internals', () => {
+  it('a WEAK or UNTESTED behaviour that names no difference callers see is sent back', () => {
+    const { r } = play({ agents: { goal: REFACTOR_GOAL } });
+    expect(rejectionsOf(r, 'wholeChange').join()).toMatch(/This change is a REFACTOR/);
+  });
+
+  it('a WEAK behaviour that names what callers see differently is kept', () => {
+    const { r } = play({
+      agents: {
+        goal: REFACTOR_GOAL,
+        wholeChange: judgingTests('WEAK — callers see: an error instead of an empty host'),
+      },
+    });
+    expect(rejectionsOf(r, 'wholeChange')).toEqual([]);
+  });
+
+  it('a TEST finding on a test the refactor does not touch is sent back', () => {
+    const { r } = play({
+      agents: {
+        goal: REFACTOR_GOAL,
+        wholeChange: judgingWith(
+          "packages/labels/src/viewv9/tests/shared/LabelValueComponentView.test.tsx:136 — [TEST] [LOW] unit test name still says the missing-label path renders 'an empty fragment' `test('calls renderToElement with an empty fragment when label is undefined', async () => {`",
+        ),
+      },
+    });
+    expect(rejectionsOf(r, 'wholeChange').join()).toMatch(
+      /the tests it does not touch pass before and after/,
+    );
+  });
+
+  it('a TEST finding on a test a feature does not touch is kept', () => {
+    const { r } = play({
+      agents: {
+        wholeChange: judgingWith(
+          "test/cart.test.js:4 — [TEST] [MEDIUM] the only test sums to 6, so the new discount is never run `test('sums', () => assert.equal(total([1, 2, 3]), 6));`",
+        ),
+      },
+    });
+    expect(rejectionsOf(r, 'wholeChange')).toEqual([]);
+  });
+
+  it("the TESTS lens's WEAK unit that names no difference callers see is sent back", () => {
+    const { r } = play({
+      agents: {
+        goal: REFACTOR_GOAL,
+        wholeChange: judgingTests('NA — the tests pass before and after'),
+        lens: lensJudgingUnit('would still pass with the old code'),
+      },
+    });
+    expect(rejectionsOf(r, 'lens').join()).toMatch(/This change is a REFACTOR/);
   });
 });
 

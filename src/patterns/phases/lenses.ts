@@ -28,6 +28,8 @@ export interface LensConfig {
   readonly reads: readonly string[];
   /** Where the phase goes when it is done (or has no lens to play). */
   readonly next: string;
+  /** More checks on the lens answer, on fields of the pattern's own (e.g. the kind of change). */
+  readonly checks?: readonly AcceptanceCheck[];
   /** How the checked lens findings join the pattern's own (assignments of a compute node). */
   readonly merge: readonly { readonly field: string; readonly expr: string }[];
 }
@@ -143,7 +145,7 @@ export function lensPhase(cfg: LensConfig): {
       complexityShift: -1,
       maxVisits: 1,
       retries: 2,
-      checks: [...LENS_CHECKS],
+      checks: [...LENS_CHECKS, ...(cfg.checks ?? [])],
     },
     {
       // Its own rejected list: a pattern without investigate's evidence fields can play it.

@@ -1,4 +1,4 @@
-import { MAX_AGENTS, type Pattern, type ScoreNode } from '../core/types.js';
+import { MAX_AGENTS, type AcceptanceCheck, type Pattern, type ScoreNode } from '../core/types.js';
 import { TEST_PATH } from './phases/stability.js';
 import { bullets, READER_STATE, readers } from './phases/readers.js';
 import { chaseSteps } from './phases/chase.js';
@@ -14,6 +14,7 @@ import {
   categoryBullets,
   findingChecks,
   orFailed,
+  TEST_FILE,
   untouchedTestCheck,
 } from './phases/reviewRules.js';
 
@@ -89,6 +90,25 @@ const PLACE = '^[^ ]+:[0-9]+(-[0-9]+)? — [[][A-Z]+]';
 const SEVERITY = '[[](HIGH|MEDIUM|LOW)]';
 
 const CHANGE_KINDS = ['FEATURE', 'FIX', 'REFACTOR', 'CONFIG', 'DOCS', 'TEST'];
+const GOAL_BRIEF =
+  "`goal` says what the change is for, `changeKind` what kind of change it is, `observable` what callers will see differently, and `fileRoles` each file's part in the goal (written from the description, before the code was read).";
+/** How a REFACTOR's test verdict names a difference callers see (the only way it is WEAK or UNTESTED). */
+const CALLERS_SEE = 'callers see:';
+/** A REFACTOR's behaviours or units are WEAK or UNTESTED only with what callers see differently. */
+/**
+ * For a REFACTOR, the tests the change does not touch pass before and after: that is their
+ * coverage, so a TEST finding on one has nothing to report (seen live: "the test name still says
+ * an empty fragment", from wholeChange, on PR 6061030).
+ */
+const refactorUntouchedTests = (field: string): AcceptanceCheck => ({
+  expr: `changeKind != "REFACTOR" || subset(heads(pick(${field}, positions(${field}, "^[^ ]*(${TEST_FILE})[^ ]*:[0-9]+(-[0-9]+)? — [[]TEST] ")), "^[^:]+"), files)`,
+  message:
+    'This change is a REFACTOR (see goal): the tests it does not touch pass before and after, and that is their coverage. No TEST finding on a test file outside files.',
+});
+const refactorGate = (field: string, id: string, otherwise: string): AcceptanceCheck => ({
+  expr: `changeKind != "REFACTOR" || count(${field}, "^${id}[0-9]+ (WEAK|UNTESTED) ") == count(${field}, "^${id}[0-9]+ (WEAK|UNTESTED) — ${CALLERS_SEE} ")`,
+  message: `This change is a REFACTOR (see goal): callers see nothing different, so its tests passing before and after are its coverage. Mark one WEAK or UNTESTED only by naming what callers see differently: "${id}1 WEAK — ${CALLERS_SEE} …"; otherwise ${otherwise}.`,
+});
 const INFERRED = '(inferred from the diff)';
 
 /** An entry quoting a test's declaration: `test('…`, `it.only('…`, `describe('…`. */
@@ -173,7 +193,22 @@ const demoLens = (s: Readonly<Record<string, unknown>>) => {
 const LENSES = lensPhase({
   pillars: CHANGE_PILLARS,
   range: 'diffRange',
-  reads: ['target', 'intent', 'claims', 'diffSummary', 'changedTests', 'context'],
+  reads: [
+    'target',
+    'intent',
+    'claims',
+    'diffSummary',
+    'changedTests',
+    'context',
+    'goal',
+    'changeKind',
+    'observable',
+  ],
+  checks: [
+    refactorGate('unitVerdicts', 'U', 'NONE NEEDED'),
+    untouchedTestCheck('lensFindings'),
+    refactorUntouchedTests('lensFindings'),
+  ],
   next: 'aimChase',
   merge: mergeIssues('lensFindings', 'lensRejected'),
 });
@@ -727,8 +762,14 @@ export const review: Pattern = {
 - \`context\`: for each file of \`files\` (documentation and change/*.json release notes need none), 1 to 3 entries of what a reviewer should compare it with, each citing that code or rule (not the changed file) and naming the changed file it is for: "path:line — [CONVENTION|SIMILAR|CALLER] (for: changed path) why \`exact quote\`", e.g. "src/api.ts:40 — [SIMILAR] (for: src/client.ts) fetchUser already retries this way \`await retry(() => get(url))\`" or "AGENTS.md:3 — [CONVENTION] (for: db/schema.sql) a schema change needs a migration \`needs a new numbered migration\`". CONVENTION: a rule in AGENTS.md, the docs or a linter config; SIMILAR: existing code that does similar work (how the codebase already does it); CALLER: code that calls what changed. For each file of \`deleted\`, give the CALLER entries that still use what it deleted, "(for: the deleted path)" (none when nothing does).
 - \`behaviours\`: each behaviour the change adds or changes: "B1 path:line — the behaviour \`exact quote\`", path:line at the changed line.
 - \`obligations\`: each other change this codebase requires for this one to be complete, and only those: one a rule asks for (AGENTS.md, the docs, a linter), one every similar change includes (cite such a change), or one without which code breaks (a caller of a renamed or removed name). Not what would merely be nice: a new function nobody calls yet, docs or tooling the project does not have. A test is one only when it calls a name the change renames or removes, or one of its assertions fails with the change: a test title or comment naming the old implementation is not. Write each as "O1 [CALLER|MIGRATION|CONFIG|DOCS|ERRPATH] path:line — what must exist \`exact quote\`". e.g. "O1 [CALLER] src/greet.js:1 — greet.js must import the new name \`import { fullName }\`". path:line is the changed line (or a line that still uses deleted code) that creates the need; name what must exist in words, without a line number (it may not exist).
-Every path:line must be a real line in this workspace with its quote: code the change deletes is not here, so cite the line that still uses it.`,
+Every path:line must be a real line in this workspace with its quote: code the change deletes is not here, so cite the line that still uses it.
+${GOAL_BRIEF} \`expectedElsewhere\` lists places the goal implies a change the files lack: check each, and list a real one as an obligation.`,
       reads: [
+        'goal',
+        'changeKind',
+        'observable',
+        'fileRoles',
+        'expectedElsewhere',
         'target',
         'hint',
         'intent',
@@ -828,11 +869,15 @@ Every path:line must be a real line in this workspace with its quote: code the c
       role: 'assessor',
       label: 'Find issues',
       reviewsCode: true,
-      directive: `Review the changes to the files in \`files\` (yours only) for \`target\`: each file is given to you whole at the end of this prompt; read its diff hunks (git diff \`diffRange\`, or git diff HEAD when it is empty) against it, and the code it calls and is called by where an issue depends on it. \`context\` lists the conventions, similar code and callers to compare it with; \`behaviours\` and \`obligations\` what the change does and needs; \`smellHints\` and \`maskingFlags\` are leads from the engine's scan of the diff: check each, and report only real issues. Look for, ignoring formatting:
+      directive: `Review the changes to the files in \`files\` (yours only) for \`target\` as a reviewer does: top-down, then bottom-up. ${GOAL_BRIEF} Each file is given to you whole at the end of this prompt; read its diff hunks (git diff \`diffRange\`, or git diff HEAD when it is empty) against it, and the code it calls and is called by where an issue depends on it. Then check each hunk bottom-up, each rung against the one above: does each name and value make sense in its line, each line in its function, each function in its file's part in the goal (\`fileRoles\`), and does that part serve \`goal\`, changing for callers only what \`observable\` says? Say in the finding which rung fails ("in its function: …"). \`context\` lists the conventions, similar code and callers to compare it with; \`behaviours\` and \`obligations\` what the change does and needs; \`smellHints\` and \`maskingFlags\` are leads from the engine's scan of the diff: check each, and report only real issues. Look for, ignoring formatting:
 ${categoryBullets()}
 Write one issue per \`newFindings\` entry as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", only for issues you can point to. List in \`reviewed\` every file of \`files\` you read. An empty \`newFindings\` is right when the changes are sound. If you could not read the changes at all, say so with verdict outcome "failed" (\`reviewed\` may then be empty).
 ${ATTESTATION_DIRECTIVE}`,
       reads: [
+        'goal',
+        'changeKind',
+        'observable',
+        'fileRoles',
         'target',
         'hint',
         'intent',
@@ -863,6 +908,7 @@ ${ATTESTATION_DIRECTIVE}`,
         },
         ...findingChecks('newFindings'),
         untouchedTestCheck('newFindings'),
+        refactorUntouchedTests('newFindings'),
         ...attestationChecks('newFindings').map(orFailed),
       ],
     },
@@ -891,13 +937,18 @@ ${ATTESTATION_DIRECTIVE}`,
       maxVisits: 4,
       visitsFrom: 'maxChaseRounds + maxDebateRounds + 1',
       directive: `You see the whole change at once (\`diff\`; read more with git diff \`diffRange\`, or git diff HEAD when it is empty, and the workspace, read-only). The per-file reviewers' checked findings are in \`findingsBrief\`: do not repeat them. \`evidence\` holds checked facts research found on what was unclear or objected to before: settle verdicts with them.
+0. Goal: ${GOAL_BRIEF} Does the change do what \`goal\` says, and change for callers exactly what \`observable\` says, no more? A difference callers would see that \`observable\` does not name is a finding (BUG): for a REFACTOR, any difference.
 1. Claims: for each entry of \`claimList\`, in order, write a \`claimVerdicts\` entry "C<n> MET|PARTIAL|NOT MET|UNCLEAR — path:line — why".
 2. Approach: is this the right place and the right approach? Compare it with the SIMILAR and CONVENTION entries of \`context\`; name one alternative and why it is worse; say which callers (CALLER entries) or behaviours could regress. A wrong approach or a likely regression is a finding (BUG or DESIGN).
-3. Tests: for each entry of \`behaviours\`, in order, write a \`testVerdicts\` entry "B<n> TESTED|WEAK|UNTESTED|NA — the test path:line that checks it, or why". WEAK: the change alters what callers observe, and a test runs it but would pass without the change. When the old and the new code look the same to every caller (a refactor: same results, output, events and errors), the behaviour is NA: the tests that pass before and after are its coverage; never ask for a test that tells two implementations apart (UT-4.1). Judge the tests' quality with the T and FIRST rules.
+3. Tests: for each entry of \`behaviours\`, in order, write a \`testVerdicts\` entry "B<n> TESTED|WEAK|UNTESTED|NA — the test path:line that checks it, or why". WEAK: the change alters what callers observe, and a test runs it but would pass without the change. When the old and the new code look the same to every caller (a refactor: same results, output, events and errors), the behaviour is NA: the tests that pass before and after are its coverage; never ask for a test that tells two implementations apart (UT-4.1). When \`changeKind\` is REFACTOR, a behaviour is WEAK or UNTESTED only with what callers see differently: "B1 WEAK — ${CALLERS_SEE} …". Judge the tests' quality with the T and FIRST rules.
 4. Required changes: for each entry of \`obligations\`, in order, write an \`obligationVerdicts\` entry "O<n> FOUND|ABSENT — where it is, or what is missing".
 5. Scope: put each path of \`files\` in \`related\` or \`unrelated\` (to what \`claims\` and \`intent\` say the change is for).
 Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required change and unrelated file is also a finding in \`wholeFindings\` (CLAIM, TEST, MISSING or SCOPE), unless \`findingsBrief\` already has it. Code the change deletes is not in the workspace: cite the line that still uses it, and name what was deleted in words. Write each finding as "path:line — [CATEGORY] [HIGH|MEDIUM|LOW] problem \`exact quote of that line\`", CATEGORY one of ${CATEGORIES.split('|').join(', ')}. \`smellHints\` and \`maskingFlags\` are leads from the engine's scan: check each, and report only real issues.`,
       reads: [
+        'goal',
+        'changeKind',
+        'observable',
+        'fileRoles',
         'target',
         'hint',
         'intent',
@@ -928,9 +979,14 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       cites: 'wholeFindings',
       retries: 2,
       checks: [
-        ...[...findingChecks('wholeFindings'), untouchedTestCheck('wholeFindings')].map(orFailed),
+        ...[
+          ...findingChecks('wholeFindings'),
+          untouchedTestCheck('wholeFindings'),
+          refactorUntouchedTests('wholeFindings'),
+        ].map(orFailed),
         verdictPerEntry('claimVerdicts', 'claimList', 'C', 'MET|PARTIAL|NOT MET|UNCLEAR'),
         verdictPerEntry('testVerdicts', 'behaviours', 'B', 'TESTED|WEAK|UNTESTED|NA'),
+        orFailed(refactorGate('testVerdicts', 'B', 'NA')),
         verdictPerEntry('obligationVerdicts', 'obligations', 'O', 'FOUND|ABSENT'),
         orFailed({
           expr: 'len(without(files, related + unrelated)) == 0',
@@ -1044,7 +1100,11 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       writes: ['newFindings'],
       cites: 'newFindings',
       retries: 2,
-      checks: [...findingChecks('newFindings'), untouchedTestCheck('newFindings')].map(orFailed),
+      checks: [
+        ...findingChecks('newFindings'),
+        untouchedTestCheck('newFindings'),
+        refactorUntouchedTests('newFindings'),
+      ].map(orFailed),
     },
     checkFindings('checkSecond'),
     {
@@ -1079,8 +1139,8 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
       maxVisits: 3,
       visitsFrom: 'maxDebateRounds + 1',
       directive: `You are the SKEPTIC of this review of \`target\`. Read the code each finding cites, and the code around it, in the workspace (read-only).
-1. Write one \`proposedDispositions\` entry per finding, in the order of \`findings\`: "F<n> KEEP — why it holds", "F<n> DOWNGRADE MEDIUM — why it is less severe" (or DOWNGRADE LOW), "F<n> DROP — why it is wrong, with the code that shows it \`exact quote\`", or "F<n> DROP — duplicates F<m>" when an earlier finding already says the same problem. Also DROP a finding that asks for something nothing in the codebase requires (no rule, no similar change, no code that breaks without it), quoting the code or rule it misreads, and one that asks for a test telling the old code from the new when callers see the same results, output, DOM, events and errors (a refactor: UT-4.1). When unsure, KEEP.
-2. Attack the review's conclusions in \`objections\` (at most ${MAX_OBJECTIONS}, the ones most likely to change the review first): a verdict of \`claimVerdicts\`, \`testVerdicts\` or \`obligationVerdicts\` the code does not support (name it by its id: C2, B1, O3), or an issue every reviewer missed (name the file and line, "path:line"). Each must be concrete and checkable, and say what reading would settle it. That a test cannot tell two implementations callers cannot tell apart is not an objection. An empty list is fine and better than invented concerns. \`pastObjections\` were raised and researched before (the facts found are in \`evidence\`): raise one again only with something new.`,
+1. Write one \`proposedDispositions\` entry per finding, in the order of \`findings\`: "F<n> KEEP — why it holds", "F<n> DOWNGRADE MEDIUM — why it is less severe" (or DOWNGRADE LOW), "F<n> DROP — why it is wrong, with the code that shows it \`exact quote\`", or "F<n> DROP — duplicates F<m>" when an earlier finding already says the same problem. Also DROP a finding that asks for something nothing in the codebase requires (no rule, no similar change, no code that breaks without it), quoting the code or rule it misreads. Separately, DROP one that asks for a test telling the old code from the new when callers see the same results, output, DOM, events and errors (a refactor: UT-4.1). That callers would see a change is no reason to KEEP a finding the first rule drops. When unsure, KEEP.
+2. Attack the review's conclusions in \`objections\` (at most ${MAX_OBJECTIONS}, the ones most likely to change the review first): a verdict of \`claimVerdicts\`, \`testVerdicts\` or \`obligationVerdicts\` the code does not support (name it by its id: C2, B1, O3), or an issue every reviewer missed (name the file and line, "path:line"). Each must be concrete and checkable, and say what reading would settle it. That a test cannot tell two implementations callers cannot tell apart is not an objection. \`goal\`, \`changeKind\` and \`observable\` were written from the description before anyone read the code: when the code shows callers see a difference \`observable\` does not name (a REFACTOR that is not one), object at the line that shows it. An empty list is fine and better than invented concerns. \`pastObjections\` were raised and researched before (the facts found are in \`evidence\`): raise one again only with something new.`,
       reads: [
         'target',
         'claims',
@@ -1093,6 +1153,9 @@ Every PARTIAL or NOT MET claim, WEAK or UNTESTED behaviour, ABSENT required chan
         'evidence',
         'diffRange',
         'pastObjections',
+        'goal',
+        'changeKind',
+        'observable',
       ],
       writes: ['proposedDispositions', 'objections'],
       retries: 2,
