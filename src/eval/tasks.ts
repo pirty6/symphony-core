@@ -285,6 +285,13 @@ function misreadQuote(): EvalTask[] {
 const SUM_RIGHT =
   '/** Sum of the numbers from 1 to n. */\nexport function sumTo(n) {\n  let total = 0;\n  for (let i = 1; i <= n; i++) total += i;\n  return total;\n}\n';
 const TEST_HEAD = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n";
+/** A label's text, building the empty case the long way (the refactor returns '' directly). */
+const LABEL_JOINED = `/** The text shown for a label: nothing when it has no name. */
+export function labelText(label) {
+  if (!label?.name) return [].join('');
+  return \`#\${label.name}\`;
+}
+`;
 
 /** A task whose check runs the visible tests plus a hidden one the AI never saw. */
 function withHiddenTest(task: Omit<EvalTask, 'check'>, visible: string, hidden: string): EvalTask {
@@ -1245,6 +1252,33 @@ export const EVAL_TASKS: readonly EvalTask[] = [
         notes: [
           `outcome ${outcome}`,
           findings.length === 0 ? 'no false flags' : `false flags: ${findings.join('; ')}`,
+        ],
+      };
+    },
+  },
+  {
+    // A refactor callers cannot observe, beside a test whose title names the old implementation
+    // but whose assertion still holds (seen live, office-bohemia PR 6061030: null for <></>).
+    // Nothing to flag: no test of the implementation detail, no renaming of an untouched test.
+    id: 'review-refactor-same-output',
+    pattern: 'review',
+    inputs: { target: REVIEW_TARGET },
+    files: {
+      'package.json': PKG,
+      '.gitignore': IGNORE,
+      'src/label.js': LABEL_JOINED,
+      'test/label.test.js': `${TEST_HEAD}import { labelText } from '../src/label.js';\ntest('joins an empty list when the label has no name', () => assert.equal(labelText({}), ''));\ntest('shows the name with a hash', () => assert.equal(labelText({ name: 'bug' }), '#bug'));\n`,
+    },
+    changes: { 'src/label.js': LABEL_JOINED.replace("return [].join('');", "return '';") },
+    check: async ({ outcome, state }) => {
+      const findings = (state.findings as string[] | undefined) ?? [];
+      const flagged = findings.filter((f) => /— \[(TEST|MISSING)\]|(^|\s)test\//.test(f));
+      return {
+        pass: outcome === 'success' && flagged.length === 0,
+        review: { category: '', hit: false, falseFlags: findings.length },
+        notes: [
+          `outcome ${outcome}`,
+          flagged.length === 0 ? 'no test asked of the refactor' : `asked: ${flagged.join('; ')}`,
         ],
       };
     },
