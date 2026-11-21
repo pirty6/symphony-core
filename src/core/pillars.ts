@@ -241,7 +241,10 @@ const TESTS: CodePillar = {
       'Private behaviour is tested through the public API: no test-only accessors, flags or branches in production code.',
     ],
     ['UT-11.2', 'Time and randomness are inputs; no sleeps or retries hide nondeterminism.'],
-    ['UT-T', 'A test that would still pass without the change it covers is WEAK.'],
+    [
+      'UT-T',
+      'When the change alters what callers observe, a test that would still pass without it is WEAK. A refactor (callers see the same results, output, DOM, events and errors) needs no test that fails without it: the tests that pass before and after are its coverage, and one that told the old code from the new would test an implementation detail (UT-4.1).',
+    ],
     [
       'TST-1',
       'Controllable: the code under test takes its inputs as arguments, not only from files, the network, the clock or a UI.',
