@@ -560,6 +560,9 @@ const SOLUTIONS: Record<string, (dir: string) => { state: Record<string, unknown
   'maestro-planted-concern': () => ({ state: { finalPattern: SUM_SCORE } }),
   'maestro-planted-concern-tier3': () => ({ state: { finalPattern: SUM_SCORE } }),
   'review-clean': () => ({ state: { findings: [], report: 'No real issues found.' } }),
+  'review-refactor-same-output': () => ({
+    state: { findings: [], report: 'No real issues found.' },
+  }),
   'review-wrong-place': () => ({
     state: {
       findings: [
@@ -703,11 +706,17 @@ function wrongState(t: EvalTask): Record<string, unknown> {
   return t.pattern !== 'investigate'
     ? t.id === 'review-clean'
       ? { findings: ['F1 src/sum.js:3 — [DESIGN] [LOW] the name changed `let sum = 0;`'] }
-      : t.id === 'review-migration-present'
+      : t.id === 'review-refactor-same-output'
         ? {
-            findings: ['F1 db/schema.sql:4 — [MISSING] [HIGH] no migration `email_verified`'],
+            findings: [
+              "F1 test/label.test.js:4 — [CLEAN] [LOW] [C2] the title no longer matches the implementation `test('joins an empty list`",
+            ],
           }
-        : {}
+        : t.id === 'review-migration-present'
+          ? {
+              findings: ['F1 db/schema.sql:4 — [MISSING] [HIGH] no migration `email_verified`'],
+            }
+          : {}
     : t.id === 'investigate-false-premise'
       ? { answer: 'It retries three times because the network is flaky.' }
       : t.id === 'investigate-real-lean'
@@ -887,6 +896,11 @@ describe('eval tasks', () => {
   it(
     'review-clean: the check fails as given and passes with a right answer',
     () => checkTask('review-clean'),
+    TASK_MS,
+  );
+  it(
+    'review-refactor-same-output: the check fails as given and passes with a right answer',
+    () => checkTask('review-refactor-same-output'),
     TASK_MS,
   );
   it(
