@@ -69,6 +69,7 @@ flowchart TD
   n_load["Load template"]
   n_outline[/"🔧 Outline template"/]
   n_debate{"Debate needed?"}
+  n_ground["🤖 Look at the code first"]
   n_propose["🤖 Proposer"]
   n_hasSkeptic{"Skeptic? (≥2)"}
   n_skeptic["🤖 Skeptic"]
@@ -111,7 +112,8 @@ flowchart TD
   n_keepPreset --> n_load
   n_load --> n_outline
   n_outline --> n_debate
-  n_debate -->|"yes"| n_propose
+  n_debate -->|"yes"| n_ground
+  n_ground --> n_propose
   n_debate -->|"pattern fits as is"| n_validate
   n_propose --> n_hasSkeptic
   n_hasSkeptic -->|"yes"| n_skeptic

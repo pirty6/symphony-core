@@ -375,6 +375,7 @@ describe('main', () => {
     expect(four.text).toMatch(/♪ composed 'fix' complexity 4/);
     expect(four.steps).toEqual([
       'classify',
+      'ground',
       'propose',
       'skeptic',
       'critic',
