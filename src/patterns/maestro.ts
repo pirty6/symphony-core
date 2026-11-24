@@ -363,10 +363,10 @@ export const maestro: Pattern = {
       complexityShift: -1,
       maxEffort: 'medium',
       label: 'Look at the code first',
-      directive: `Before anyone plans, look in this workspace (read-only) at what \`request\` is about, so the plan starts from how the code really is, not from the request's wording. Search for the names it uses (tools, packages, files, flags, commands); read only what settles how they fit together, at most about ${GROUND_FILES} files. Write:
+      directive: `Before anyone plans, look in this workspace (read-only) at what \`request\` is about, so the plan starts from how the code really is, not from the request's wording. Search for the names it uses (tools, packages, files, flags, commands) as the code may spell them: their stems and other forms ("flaky gate" is also flakiness, flakinessGate, flakiness-gate), in file and folder names (git ls-files) as well as in the text. Read only what settles how they fit together, at most about ${GROUND_FILES} files. Write:
 - \`groundSummary\`: how the things the request names fit together in the code, in a sentence or two ("" when the workspace has nothing on it).
-- \`groundFacts\`: up to ${GROUND_FACTS} facts the planners need, each "path:line — fact \`exact quote\`": where each named thing lives, which calls which, what it is given, how it is configured.
-- \`premiseNotes\`: each reading of the request that the code contradicts, with the fact that shows it, e.g. "the request reads as A calling B; B calls A (see the run.ts fact)". Empty when none.
+- \`groundFacts\`: up to ${GROUND_FACTS} facts the planners need, each "path:line — what it shows \`exact quote\`", e.g. "scripts/gate/run.js:88 — the gate runs lage with these arguments \`'lage',\`": where each named thing lives, which calls which, what it is given, how it is configured.
+- \`premiseNotes\`: each reading of the request that the code contradicts, with the fact that shows it, e.g. "the request reads as A calling B; B calls A (see the run.ts fact)". When more than one thing could be what the request names, do not pick one: note each candidate with its path, "unsure which X is meant: A (path) or B (path)". Empty when none.
 The lists are empty when the workspace has nothing on it. Do not answer or diagnose the request: only say what is there.`,
       reads: ['request', 'requirements', 'chosen'],
       writes: ['groundSummary', 'groundFacts', 'premiseNotes'],
@@ -397,7 +397,7 @@ The lists are empty when the workspace has nothing on it. Do not answer or diagn
 - Every entry of \`requirements\` (the request's requirements, then each piece of go-gate feedback, which outranks earlier rounds) must be met by some step. \`draftErrors\` may name requirements a check found not covered.
 - Revise rather than restart when \`adaptation\` or \`draft\` already holds a previous round: address \`draftErrors\`, \`feedback\`, and concrete concerns in \`failureModes\`, and follow the template-critic's \`fit\`/\`criticReason\`.
 - Start with grounding (observe, reproduce, define) and end with verification (test, confirm). Prefer compute/condition/tool nodes for anything mechanical: AI only where judgement is needed. Bound every loop.
-- \`groundSummary\` and \`groundFacts\` say, with citations, how what the request names fits together in this workspace, and \`premiseNotes\` where its wording and the code disagree: frame every step on them, never on a guess about how the code fits together. A premise they already settle is not a step to check it again.
+- \`groundSummary\` and \`groundFacts\` say, with citations, how what the request names fits together in this workspace, and \`premiseNotes\` where its wording and the code disagree: frame every step on them, never on a guess about how the code fits together. A premise they already settle is not a step to check it again; when \`premiseNotes\` name candidates for what the request means, the first step settles which.
 - Do not investigate the codebase: you plan, you do not diagnose.
 - State 2-4 \`assumptions\`: what you assumed about this problem when choosing the steps. The skeptic attacks them.
 
