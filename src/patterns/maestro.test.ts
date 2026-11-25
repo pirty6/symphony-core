@@ -45,6 +45,43 @@ const classifyAs =
     verdict: { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' },
   });
 
+/** A grounding step that answers with these facts and premise notes. */
+const groundingWith =
+  (groundFacts: string[], premiseNotes: string[] = []) =>
+  () => ({
+    updates: { groundSummary: 'the gate runs lage for its rounds', groundFacts, premiseNotes },
+    verdict: { outcome: 'applied' as const, confidence: 1, shouldTerminate: false, reason: 'r' },
+  });
+const REVERSED =
+  'the request reads as lage calling the gate; the gate calls lage (runLage in run.ts)';
+
+describe('maestro: the code is looked at before the plan', () => {
+  it('the workspace is read right before the proposer plans', () => {
+    const ran = nodesRun(run('Fix the flaky login test that fails on CI').r);
+    expect(ran.slice(ran.indexOf('ground'), ran.indexOf('ground') + 2)).toEqual([
+      'ground',
+      'propose',
+    ]);
+  });
+
+  it('where the request and the code differ is shown at the go-gate', () => {
+    const { r } = run('Fix the flaky login test that fails on CI', {
+      ground: groundingWith([], [REVERSED]),
+    });
+    expect(String(r.state.state.composition)).toContain(
+      `Where the request and the code differ: ${REVERSED}`,
+    );
+  });
+
+  it('a grounding step that never answers within its checks does not stop the composing', () => {
+    const tooMany = Array.from({ length: 9 }, (_, i) => `a.ts:${i + 1} — fact \`x\``);
+    const { r } = run('Fix the flaky login test that fails on CI', {
+      ground: groundingWith(tooMany),
+    });
+    expect(r.state.state.groundSummary).toMatch(/^The workspace could not be read first/);
+  });
+});
+
 describe('maestro', () => {
   it('may chain a second pattern after the composed score, never the same one or itself', () => {
     // The demo library holds fix and analyze.

@@ -295,7 +295,11 @@ replayable:
 1. **Route** (tools + AI): list the library, match verb triggers deterministically, then the AI
    confirms the pattern (or `new`) and classifies **complexity 1-4**.
 2. **Debate**, roster by complexity. All debaters are isolated (no workspace tools): they plan,
-   they don't diagnose.
+   they don't diagnose. Before them, one cheap read-only step (`ground`, a tier down) looks at the
+   code the request names and writes cited facts on how it fits together, and where the request's
+   wording and the code disagree (shown at the go-gate): the plan is framed on the code, not on a
+   guess (seen live: "flags to pass to the flaky gate from lage" was planned as lage calling the
+   gate; the gate calls lage).
 
    | Complexity | Debate |
    |---|---|

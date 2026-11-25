@@ -55,7 +55,13 @@ const COMPOSITION_LOG = [
   'if(empty(classifyReason), [], ["Why: " + classifyReason])',
   '["Rounds: " + text(round) + " of " + text(maxRounds)]',
   'if(len(draftErrors) > 0, ["Last validation errors: " + join(draftErrors, "; ")], [])',
+  'if(empty(groundSummary), [], ["In the code: " + groundSummary])',
+  'if(empty(premiseNotes), [], ["Where the request and the code differ: " + join(premiseNotes, "; ")])',
 ].join(' + ');
+
+/** How much the grounding step reads and reports: enough to frame the plan, not to answer it. */
+const GROUND_FILES = 10;
+const GROUND_FACTS = 8;
 
 export const maestro: Pattern = {
   name: 'maestro',
@@ -150,6 +156,23 @@ export const maestro: Pattern = {
     { name: 'outline', type: 'string[]', description: "The chosen pattern's steps, compactly" },
     { name: 'settings', type: 'string[]', description: "The chosen pattern's tunable settings" },
     { name: 'assumptions', type: 'string[]' },
+    {
+      name: 'groundFacts',
+      type: 'string[]',
+      description:
+        'Cited facts from the workspace on what the request is about: "path:line — fact `quote`"',
+    },
+    {
+      name: 'premiseNotes',
+      type: 'string[]',
+      description: "Where the request's wording and the code disagree",
+    },
+    {
+      name: 'groundSummary',
+      type: 'string',
+      description:
+        'How the things the request names fit together in the code, in a sentence or two',
+    },
     { name: 'failureModes', type: 'string[]', description: 'Skeptic: concrete failure scenarios' },
     { name: 'contested', type: 'string[]', description: 'Skeptic: assumptions likely false here' },
     { name: 'edits', type: 'string[]', description: 'Skeptic: concrete suggested edits' },
@@ -331,6 +354,34 @@ export const maestro: Pattern = {
       expression: '(complexity > 1 || chosen == "new") && !reused',
     },
     {
+      // Every other composing step is isolated: without this, the plan's framing could only be as
+      // good as the request's wording (seen live: "flags to pass to the flaky gate from lage" was
+      // planned as lage calling the gate; the gate calls lage).
+      id: 'ground',
+      kind: 'agent',
+      role: 'assessor',
+      complexityShift: -1,
+      maxEffort: 'medium',
+      label: 'Look at the code first',
+      directive: `Before anyone plans, look in this workspace (read-only) at what \`request\` is about, so the plan starts from how the code really is, not from the request's wording. Search for the names it uses (tools, packages, files, flags, commands) as the code may spell them: their stems and other forms ("flaky gate" is also flakiness, flakinessGate, flakiness-gate), in file and folder names (git ls-files) as well as in the text. Read only what settles how they fit together, at most about ${GROUND_FILES} files. Write:
+- \`groundSummary\`: how the things the request names fit together in the code, in a sentence or two ("" when the workspace has nothing on it).
+- \`groundFacts\`: up to ${GROUND_FACTS} facts the planners need, each "path:line — what it shows \`exact quote\`", e.g. "scripts/gate/run.js:88 — the gate runs lage with these arguments \`'lage',\`": where each named thing lives, which calls which, what it is given, how it is configured.
+- \`premiseNotes\`: each reading of the request that the code contradicts, with the fact that shows it, e.g. "the request reads as A calling B; B calls A (see the run.ts fact)". When more than one thing could be what the request names, do not pick one: note each candidate with its path, "unsure which X is meant: A (path) or B (path)". Empty when none.
+The lists are empty when the workspace has nothing on it. Do not answer or diagnose the request: only say what is there.`,
+      reads: ['request', 'requirements', 'chosen'],
+      writes: ['groundSummary', 'groundFacts', 'premiseNotes'],
+      cites: 'groundFacts',
+      retries: 2,
+      // Planning without it is how the maestro planned before: worse, but not a reason to stop.
+      skipWhenStuck: { field: 'groundSummary', text: 'The workspace could not be read first' },
+      checks: [
+        {
+          expr: `len(groundFacts) <= ${GROUND_FACTS}`,
+          message: `At most ${GROUND_FACTS} groundFacts: the ones the plan depends on.`,
+        },
+      ],
+    },
+    {
       id: 'propose',
       kind: 'agent',
       role: 'assessor',
@@ -346,6 +397,7 @@ export const maestro: Pattern = {
 - Every entry of \`requirements\` (the request's requirements, then each piece of go-gate feedback, which outranks earlier rounds) must be met by some step. \`draftErrors\` may name requirements a check found not covered.
 - Revise rather than restart when \`adaptation\` or \`draft\` already holds a previous round: address \`draftErrors\`, \`feedback\`, and concrete concerns in \`failureModes\`, and follow the template-critic's \`fit\`/\`criticReason\`.
 - Start with grounding (observe, reproduce, define) and end with verification (test, confirm). Prefer compute/condition/tool nodes for anything mechanical: AI only where judgement is needed. Bound every loop.
+- \`groundSummary\` and \`groundFacts\` say, with citations, how what the request names fits together in this workspace, and \`premiseNotes\` where its wording and the code disagree: frame every step on them, never on a guess about how the code fits together. A premise they already settle is not a step to check it again; when \`premiseNotes\` name candidates for what the request means, the first step settles which.
 - Do not investigate the codebase: you plan, you do not diagnose.
 - State 2-4 \`assumptions\`: what you assumed about this problem when choosing the steps. The skeptic attacks them.
 
@@ -355,6 +407,9 @@ ${SCORE_FORMAT}${HOW_RUNS_PLAY}`,
         'request',
         'requirements',
         'chosen',
+        'groundSummary',
+        'groundFacts',
+        'premiseNotes',
         'outline',
         'settings',
         'adaptation',
@@ -386,11 +441,14 @@ ${SCORE_FORMAT}${HOW_RUNS_PLAY}`,
       maxEffort: 'high',
       label: 'Skeptic',
       directive:
-        "You are the SKEPTIC: hunt for CONCRETE failure modes of the score applied to `request`: `draft` when it is not empty, otherwise the library pattern in `outline` tailored by `adaptation`. You are not a contrarian. Each `failureModes` entry must name a specific scenario where this score produces a wrong result (bad: 'step 3 might miss cases'; good: 'diagnose assumes the bug is deterministic; on a race it passes verification without fixing it'). `contested`: which of `assumptions` are most likely false for this request. `edits`: concrete Add/Remove/Reword/Reorder edits, one reason each. Empty lists are fine and better than invented concerns. No style comments, no full alternative algorithm. If the shape is wrong, say 'template mismatch' in one entry. Any entry of `requirements` the score does not meet is a failure mode." +
+        "You are the SKEPTIC: hunt for CONCRETE failure modes of the score applied to `request`: `draft` when it is not empty, otherwise the library pattern in `outline` tailored by `adaptation`. You are not a contrarian. Each `failureModes` entry must name a specific scenario where this score produces a wrong result (bad: 'step 3 might miss cases'; good: 'diagnose assumes the bug is deterministic; on a race it passes verification without fixing it'). `contested`: which of `assumptions` are most likely false for this request. `edits`: concrete Add/Remove/Reword/Reorder edits, one reason each. Empty lists are fine and better than invented concerns. No style comments, no full alternative algorithm. If the shape is wrong, say 'template mismatch' in one entry. Any entry of `requirements` the score does not meet is a failure mode, and so is a step built on a reading of the request that `groundFacts` or `premiseNotes` contradict (cite the fact)." +
         HOW_RUNS_PLAY,
       reads: [
         'request',
         'requirements',
+        'groundSummary',
+        'groundFacts',
+        'premiseNotes',
         'draft',
         'outline',
         'adaptation',
@@ -690,7 +748,8 @@ ${SCORE_FORMAT}`,
     { id: 'keepPreset-load', from: 'keepPreset', to: 'load' },
     { id: 'load-outline', from: 'load', to: 'outline' },
     { id: 'outline-debate', from: 'outline', to: 'debate' },
-    { id: 'debate-propose', from: 'debate', to: 'propose', branch: 'then' },
+    { id: 'debate-ground', from: 'debate', to: 'ground', branch: 'then' },
+    { id: 'ground-propose', from: 'ground', to: 'propose' },
     {
       id: 'debate-validate',
       from: 'debate',
@@ -814,6 +873,15 @@ ${SCORE_FORMAT}`,
           requirements: [String(s.request)],
         },
         verdict: v('routed'),
+      }),
+      ground: () => ({
+        updates: { groundSummary: '', groundFacts: [], premiseNotes: [] },
+        verdict: {
+          outcome: 'applied',
+          confidence: 0.6,
+          shouldTerminate: false,
+          reason: 'the demo has no workspace to look at',
+        },
       }),
       propose: (s) => {
         return {
